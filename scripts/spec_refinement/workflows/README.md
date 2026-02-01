@@ -63,6 +63,125 @@ summarize_all("my_run_001")
 synthesize_libraries("my_run_001")
 ```
 
+## Phase 1: Sectionization, Atomization, and Term Indexing
+
+### Overview
+
+Phase 1 converts each file in the spec snapshot into deterministic, line-based
+atoms, section spans, and term indexes. It combines LLM-driven section and term
+extraction with deterministic validators so downstream phases can rely on stable
+identifiers and full line coverage.
+
+### Commands
+
+- `uv run spec spec sectionize <run_id>`: Run sectionization for all snapshot files
+
+### Agents
+
+- **glm-section-span-lister**: Emits JSON section spans with stable section IDs
+- **glm-section-map-builder**: Produces a hierarchical section map in Markdown
+- **glm-terms-per-section**: Extracts section-level and global domain terms
+
+### Outputs
+
+- `runs/<run_id>/manifest/sections/{file_id}.sections.json`
+- `runs/<run_id>/manifest/sections/{file_id}.section_map.md`
+- `runs/<run_id>/manifest/atoms/{file_id}.atoms.jsonl`
+- `runs/<run_id>/manifest/terms/{file_id}.terms.json`
+- `runs/<run_id>/workspace/intermediates/pass_01/evidence.jsonl`
+- `runs/<run_id>/workspace/intermediates/pass_01/gaps.json`
+
+### Validation
+
+Phase 1 runs deterministic validation gates for section coverage, atom coverage,
+and schema compliance. If any validator emits evidence, the phase is marked as
+failed and issues are recorded in `runs/<run_id>/state.json`.
+
+### Evidence Pointer Format Migration
+
+Phase 1 introduces a new evidence pointer format to support stable section IDs.
+
+**Old format** (deprecated):
+- `[file_001::SECTION]` - Uses file_id and section label
+- `[alpha.md::INTRO]` - Uses basename and section label
+- Section labels are unstable and change when LLM regenerates sections
+
+**New format** (Phase 1+):
+- `[spec_snapshot/<relpath>::SEC-F0001-0001]` - Uses relpath and stable section_id
+- `[spec_snapshot/alpha.md::SEC-F0001-0001]` - Explicit file path with section ID
+- Section IDs are deterministic: `SEC-{file_id}-{ordinal:04d}`
+
+**Migration touchpoints**:
+- `scripts/spec_refinement/workflows/formats.py` - Updated `EVIDENCE_POINTER_RE` regex
+- `scripts/spec_refinement/workflows/summarization.py` - Passes section IDs to agents
+- `scripts/spec_refinement/workflows/evidence_expansion.py` - Reads section IDs from sections.json
+- `scripts/spec_refinement/qa/bad_signatures.py` - Updated validation patterns
+
+**Backward compatibility**: The old format is still recognized during migration
+but will be removed in Phase 2.
+
+### Newline Handling
+
+All Phase 1 inputs are normalized to LF (`\\n`) before processing. CRLF (`\\r\\n`)
+and CR (`\\r`) sequences are converted to LF to ensure deterministic atom IDs and
+hashes across platforms.
+
+### Example Outputs
+
+**Example sections.json**:
+```json
+{
+  "file_id": "F0001",
+  "sections": [
+    {
+      "section_id": "SEC-F0001-0001",
+      "start_line": 1,
+      "end_line": 15,
+      "label": "OVERVIEW"
+    },
+    {
+      "section_id": "SEC-F0001-0002",
+      "start_line": 16,
+      "end_line": 42,
+      "label": "REQUIREMENTS"
+    }
+  ],
+  "total_lines": 42
+}
+```
+
+**Example atoms.jsonl** (2 lines):
+```jsonl
+{"atom_id":"ATOM-F0001-L0001","line_no":1,"section_id":"SEC-F0001-0001","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","text":"# Project Overview"}
+{"atom_id":"ATOM-F0001-L0002","line_no":2,"section_id":"SEC-F0001-0001","sha256":"01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b","text":""}
+```
+
+**Example terms.json**:
+```json
+{
+  "file_id": "F0001",
+  "section_terms": [
+    {
+      "section_id": "SEC-F0001-0001",
+      "terms": ["authentication", "authorization", "JWT"],
+      "confidence": 0.85
+    }
+  ],
+  "global_terms": ["API", "REST", "microservice"]
+}
+```
+
+**Example section_map.md**:
+```markdown
+# Section Map: F0001
+- SEC-F0001-0001: OVERVIEW
+  - Project goals
+  - Architecture summary
+- SEC-F0001-0002: REQUIREMENTS
+  - Functional requirements
+  - Non-functional requirements
+```
+
 ## Phase 6: Architecture Proposal, Selection & Mapping
 
 ### Commands
@@ -135,4 +254,55 @@ sequenceDiagram
     Map->>Manager: Write architecture/mapping.md
     Map->>Manager: Complete phase
     Map-->>User: Libraries mapped: 12
+```
+
+## Phase 1 Workflow Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Init as init_workspace
+    participant Sectionize as sectionize_all
+    participant SpanAgent as glm-section-span-lister
+    participant MapAgent as glm-section-map-builder
+    participant TermsAgent as glm-terms-per-section
+    participant Validator as section_validator
+    participant Emitter as atom_emitter
+    participant Manager as WorkspaceManager
+
+    User->>Init: spec init run_001 ./specs
+    Init->>Manager: Create workspace structure
+    Init->>Manager: Write manifest/files.json
+    Init-->>User: Workspace initialized
+
+    User->>Sectionize: spec sectionize run_001
+    Sectionize->>Manager: Validate workspace initialized
+    Sectionize->>Manager: Load file manifest
+
+    loop For each file (parallel)
+        Sectionize->>SpanAgent: Generate section spans
+        SpanAgent-->>Sectionize: JSON array of sections
+        Sectionize->>Manager: Write {file_id}.sections.json
+
+        Sectionize->>Validator: Validate section coverage
+        Validator-->>Sectionize: Validation result + evidence
+
+        Sectionize->>Emitter: Emit line atoms
+        Emitter-->>Sectionize: Atoms written + evidence
+
+        Sectionize->>MapAgent: Generate section map
+        MapAgent-->>Sectionize: Markdown section map
+        Sectionize->>Manager: Write {file_id}.section_map.md
+
+        Sectionize->>TermsAgent: Extract domain terms
+        TermsAgent-->>Sectionize: JSON terms payload
+        Sectionize->>Manager: Write {file_id}.terms.json
+    end
+
+    Sectionize->>Sectionize: Aggregate evidence
+    Sectionize->>Manager: Write evidence.jsonl
+    Sectionize->>Sectionize: Synthesize gaps
+    Sectionize->>Manager: Write gaps.json
+    Sectionize->>Manager: Complete phase
+    Sectionize-->>User: Sectionization complete
 ```
