@@ -206,29 +206,16 @@ class WorkspaceManager:
         else:
             self.state.mode = detected_mode
 
-        section_manifest: dict[str, list[str]] = {file_id: [] for file_id in file_manifest}
-        section_files = sorted(self.structure.manifest_sections_dir.glob("*.sections.json"))
-        for section_file in section_files:
-            file_id = section_file.stem.replace(".sections", "")
-            if file_id not in section_manifest:
-                continue
-            try:
-                sections_data = json.loads(section_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as exc:
-                issues.append(f"Failed to read sections manifest {section_file}: {exc}")
-                continue
-            if not isinstance(sections_data, dict) or "sections" not in sections_data:
-                issues.append(f"Invalid sections manifest format in {section_file}")
-                continue
-            try:
-                section_manifest[file_id] = [
-                    section["section_id"] for section in sections_data["sections"]
-                ]
-            except (KeyError, TypeError) as exc:
-                issues.append(f"Invalid section entries in {section_file}: {exc}")
-                continue
+        section_manifest, has_per_file_sections = self._load_section_manifest(
+            file_manifest,
+            issues=issues,
+        )
 
-        self._write_manifest_files(file_manifest)
+        self._write_manifest_files(
+            file_manifest,
+            section_manifest=section_manifest,
+            has_per_file_sections=has_per_file_sections,
+        )
 
         self.state.run_id = self.run_id
         self.state.input_folder = str(self.input_folder)
@@ -258,26 +245,7 @@ class WorkspaceManager:
             self.state.file_manifest = json.loads(
                 self.structure.files_json.read_text(encoding="utf-8")
             )
-        section_manifest: dict[str, list[str]] = {
-            file_id: [] for file_id in self.state.file_manifest
-        }
-        if self.structure.manifest_sections_dir.exists():
-            for section_file in self.structure.manifest_sections_dir.glob("*.sections.json"):
-                file_id = section_file.stem.replace(".sections", "")
-                if file_id not in section_manifest:
-                    continue
-                try:
-                    sections_data = json.loads(section_file.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    continue
-                if not isinstance(sections_data, dict) or "sections" not in sections_data:
-                    continue
-                try:
-                    section_manifest[file_id] = [
-                        section["section_id"] for section in sections_data["sections"]
-                    ]
-                except (KeyError, TypeError):
-                    continue
+        section_manifest, _ = self._load_section_manifest(self.state.file_manifest)
         self.state.section_manifest = section_manifest
         self._save_state()
 
@@ -558,10 +526,164 @@ class WorkspaceManager:
                 return "patch_stream"
         return "snapshot"
 
-    def _write_manifest_files(self, file_manifest: dict[str, dict[str, str]]) -> None:
+    def _write_manifest_files(
+        self,
+        file_manifest: dict[str, dict[str, str]],
+        *,
+        section_manifest: dict[str, list[str]] | None = None,
+        has_per_file_sections: bool = False,
+    ) -> None:
         """Write manifest files to disk."""
         self.structure.manifest_dir.mkdir(parents=True, exist_ok=True)
         self.structure.files_json.write_text(json.dumps(file_manifest, indent=2), encoding="utf-8")
+        if has_per_file_sections:
+            return
+        if section_manifest is None:
+            section_manifest = self.state.section_manifest
+        if section_manifest is not None:
+            self.structure.sections_json.write_text(
+                json.dumps(section_manifest, indent=2),
+                encoding="utf-8",
+            )
+
+    def _load_section_manifest(
+        self,
+        file_manifest: dict[str, dict[str, str]] | dict[str, str],
+        *,
+        issues: list[str] | None = None,
+    ) -> tuple[dict[str, list[str]], bool]:
+        section_manifest: dict[str, list[str]] = {file_id: [] for file_id in file_manifest}
+        per_file_loaded = self._load_per_file_section_manifest(section_manifest, issues=issues)
+        if per_file_loaded:
+            return section_manifest, True
+
+        legacy_manifest = self._load_legacy_section_manifest(issues=issues)
+        if legacy_manifest is not None:
+            section_manifest.update(legacy_manifest)
+            return section_manifest, False
+
+        fallback_manifest = self._extract_section_manifest_fallback(file_manifest, issues=issues)
+        if fallback_manifest:
+            section_manifest.update(fallback_manifest)
+        return section_manifest, False
+
+    def _load_per_file_section_manifest(
+        self,
+        section_manifest: dict[str, list[str]],
+        *,
+        issues: list[str] | None = None,
+    ) -> bool:
+        if not self.structure.manifest_sections_dir.exists():
+            return False
+        section_files = sorted(self.structure.manifest_sections_dir.glob("*.sections.json"))
+        if not section_files:
+            return False
+        for section_file in section_files:
+            file_id = section_file.stem.replace(".sections", "")
+            if file_id not in section_manifest:
+                continue
+            try:
+                sections_data = json.loads(section_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                if issues is not None:
+                    issues.append(f"Failed to read sections manifest {section_file}: {exc}")
+                continue
+            if not isinstance(sections_data, dict) or "sections" not in sections_data:
+                if issues is not None:
+                    issues.append(f"Invalid sections manifest format in {section_file}")
+                continue
+            try:
+                section_manifest[file_id] = [
+                    section["section_id"] for section in sections_data["sections"]
+                ]
+            except (KeyError, TypeError) as exc:
+                if issues is not None:
+                    issues.append(f"Invalid section entries in {section_file}: {exc}")
+                continue
+        return True
+
+    def _load_legacy_section_manifest(
+        self,
+        *,
+        issues: list[str] | None = None,
+    ) -> dict[str, list[str]] | None:
+        if not self.structure.sections_json.exists():
+            return None
+        try:
+            raw = json.loads(self.structure.sections_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            if issues is not None:
+                issues.append(f"Failed to read legacy sections manifest: {exc}")
+            return None
+        if not isinstance(raw, dict):
+            if issues is not None:
+                issues.append("Invalid legacy sections manifest format.")
+            return None
+        legacy_manifest: dict[str, list[str]] = {}
+        for file_id, sections in raw.items():
+            if not isinstance(file_id, str):
+                continue
+            if isinstance(sections, list):
+                legacy_manifest[file_id] = [
+                    item for item in sections if isinstance(item, str) and item
+                ]
+            elif isinstance(sections, str) and sections:
+                legacy_manifest[file_id] = [sections]
+        return legacy_manifest
+
+    def _extract_section_manifest_fallback(
+        self,
+        file_manifest: dict[str, dict[str, str]] | dict[str, str],
+        *,
+        issues: list[str] | None = None,
+    ) -> dict[str, list[str]]:
+        fallback_manifest: dict[str, list[str]] = {}
+        for file_id, file_data in file_manifest.items():
+            relpath: str | None
+            if isinstance(file_data, dict):
+                relpath = file_data.get("relpath")
+            elif isinstance(file_data, str):
+                relpath = file_data
+            else:
+                relpath = None
+            if not relpath:
+                continue
+            file_path = self.structure.spec_snapshot_dir / relpath
+            if not file_path.exists():
+                continue
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                if issues is not None:
+                    issues.append(
+                        f"Failed to read snapshot file {relpath} for section fallback: {exc}"
+                    )
+                continue
+            labels = self._extract_section_labels(content)
+            if labels:
+                fallback_manifest[file_id] = labels
+        return fallback_manifest
+
+    @staticmethod
+    def _extract_section_labels(content: str) -> list[str]:
+        import re
+
+        labels: list[str] = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            label: str | None = None
+            match = re.search(r"\[([A-Z_]+)\]", stripped)
+            if match:
+                label = match.group(1).strip()
+            elif stripped.startswith("## "):
+                heading = stripped[3:].strip()
+                if heading:
+                    label = heading.upper().replace(" ", "_")
+            if label:
+                labels.append(label)
+        return labels
 
     # --- Agent Interface ---
 
