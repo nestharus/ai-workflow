@@ -61,6 +61,10 @@ class PhaseResult:
     completed_at: str | None = None
     error: str | None = None
     outputs: dict[str, Any] = field(default_factory=dict)
+    # Expected keys:
+    #   - "run_level_gaps": Path to run_level_gaps.json (if compliance gate failed)
+    #   - "final_plan": Path to final plan.md (if workflow completed)
+    #   - "final_libraries": List of paths to library files (if workflow completed)
     issues: list[dict[str, Any]] = field(default_factory=list)
 
 

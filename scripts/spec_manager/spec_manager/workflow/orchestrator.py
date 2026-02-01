@@ -19,6 +19,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from ..compliance.run_level_gaps_schema import RunLevelGapsReport
 from ..compliance.scorer import ComplianceScorer
 from ..core.data_structures import ComplianceMetrics
 from ..core.gaps import detect_gaps, format_gaps_md
@@ -341,6 +342,24 @@ class WorkflowOrchestrator:
         try:
             self._phase_init()
             self._phase_cleaning()
+            logger.info(
+                "Cleaning phase completed: compliance_passed=%s, score=%.1f%%, mode=%s",
+                self.state.compliance_passed,
+                self.state.compliance_score * 100.0,
+                self.config.compliance_gate_mode,
+            )
+
+            if not self.state.compliance_passed and self.config.compliance_gate_mode == "block":
+                logger.error("=" * 80)
+                logger.error("RUN-LEVEL COMPLIANCE GATE: BLOCKED")
+                logger.error("=" * 80)
+                logger.error("Compliance gate BLOCKED: Cannot proceed to downstream phases")
+                self._generate_run_level_gaps_report()
+                raise RuntimeError(
+                    f"Compliance gate failed after {self.state.cleaning_pass} passes. "
+                    f"Score: {self.state.compliance_score:.1%}, "
+                    f"Blockers: {len(self.state.compliance_details.get('blockers', []))}"
+                )
             self._phase_compositing()
             self._phase_discovery()
             self._phase_review()
@@ -350,6 +369,12 @@ class WorkflowOrchestrator:
             self.state.phase = WorkflowPhase.COMPLETE
             logger.info("Workflow completed successfully")
 
+        except RuntimeError as e:
+            if "Compliance gate failed" in str(e):
+                logger.exception("Workflow halted by compliance gate")
+                self.state.phase = WorkflowPhase.COMPLETE
+                return self.state
+            raise
         except Exception as e:
             logger.exception("Workflow failed")
             self.state.errors.append(str(e))
@@ -801,8 +826,10 @@ class WorkflowOrchestrator:
                             }
                             handle.write(json.dumps(membership_record) + "\n")
 
-                # NOTE: lineage.jsonl is written after compositing finishes
-                # (see _phase_compositing) so it includes compositing edges.
+                # Save lineage.jsonl snapshot for this pass
+                with (pass_dir / "lineage.jsonl").open("w", encoding="utf-8") as handle:
+                    for edge in self.lineage_table.to_dict():
+                        handle.write(json.dumps(edge) + "\n")
 
                 # Save gaps.json
                 content, registry, libraries_dir = self._collect_gap_inputs(current_projection_path)
@@ -885,6 +912,259 @@ class WorkflowOrchestrator:
 
         # Store projection path in state for finalize phase
         self.state.current_projection_path = current_projection_path
+
+    def _generate_run_level_gaps_report(self) -> None:
+        """Generate comprehensive run-level gaps report when compliance gate fails."""
+        pass_num = self.state.cleaning_pass
+        pass_dir = self.workspace_mgr.get_pass_directory(pass_num)
+        compliance_path = pass_dir / "compliance.json"
+        evidence_path = pass_dir / "evidence.jsonl"
+        gaps_path = pass_dir / "gaps.json"
+
+        compliance_data: dict[str, Any] = {}
+        if compliance_path.exists():
+            with suppress(json.JSONDecodeError, OSError):
+                compliance_data = json.loads(compliance_path.read_text(encoding="utf-8"))
+        else:
+            logger.warning("Compliance artifact missing: %s", compliance_path)
+
+        evidence_items: list[dict[str, Any]] = []
+        if evidence_path.exists():
+            with evidence_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    with suppress(json.JSONDecodeError):
+                        evidence_items.append(json.loads(stripped))
+        else:
+            logger.warning("Evidence artifact missing: %s", evidence_path)
+
+        gaps_data: list[dict[str, Any]] = []
+        if gaps_path.exists():
+            with suppress(json.JSONDecodeError, OSError):
+                loaded = json.loads(gaps_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    gaps_data = loaded
+        else:
+            logger.warning("Gaps artifact missing: %s", gaps_path)
+
+        evidence_by_severity: dict[str, int] = {}
+        evidence_by_detector: dict[str, int] = {}
+        evidence_by_category: dict[str, int] = {}
+
+        for item in evidence_items:
+            severity = str(item.get("severity", "unknown")).lower()
+            detector = str(item.get("detector", "unknown"))
+            details = item.get("details") or {}
+            category = None
+            if isinstance(details, dict):
+                category = details.get("category")
+            category = category or item.get("category") or "uncategorized"
+
+            evidence_by_severity[severity] = evidence_by_severity.get(severity, 0) + 1
+            evidence_by_detector[detector] = evidence_by_detector.get(detector, 0) + 1
+            evidence_by_category[category] = evidence_by_category.get(category, 0) + 1
+
+        gaps_by_severity: dict[str, int] = {}
+        gaps_by_type: dict[str, int] = {}
+        for gap in gaps_data:
+            severity = str(gap.get("severity", "unknown")).lower()
+            gap_type = str(gap.get("type", "unknown"))
+            gaps_by_severity[severity] = gaps_by_severity.get(severity, 0) + 1
+            gaps_by_type[gap_type] = gaps_by_type.get(gap_type, 0) + 1
+
+        evidence_summary = {
+            "total_evidence_items": len(evidence_items),
+            "by_severity": evidence_by_severity,
+            "by_detector": evidence_by_detector,
+            "by_category": evidence_by_category,
+        }
+        gaps_summary = {
+            "total_gaps": len(gaps_data),
+            "by_severity": gaps_by_severity,
+            "by_type": gaps_by_type,
+        }
+
+        strategies_attempted: list[str] = []
+        strategies_dir = self.workspace / "strategies"
+        if strategies_dir.exists():
+            import yaml
+
+            for strategy_file in sorted(strategies_dir.glob("pass_*_strategies.yaml")):
+                payload = None
+                with suppress(OSError, yaml.YAMLError):
+                    payload = yaml.safe_load(strategy_file.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    continue
+                for entry in payload.get("strategies", []):
+                    name = entry.get("name") if isinstance(entry, dict) else str(entry)
+                    if name and name not in strategies_attempted:
+                        strategies_attempted.append(name)
+
+        convergence_failure = {
+            "max_passes_reached": pass_num >= self.config.max_cleaning_passes,
+            "remaining_blockers": len(self.state.compliance_details.get("blockers", [])),
+            "strategies_attempted": strategies_attempted,
+        }
+
+        report = RunLevelGapsReport(
+            run_id=self.workspace_mgr.state.run_id,
+            final_pass=pass_num,
+            compliance_score=float(compliance_data.get("score", self.state.compliance_score)),
+            compliance_threshold=self.config.compliance_threshold,
+            gate_mode=self.config.compliance_gate_mode,
+            status="BLOCKED",
+            blockers=self.state.compliance_details.get("blockers", []),
+            warnings=self.state.compliance_details.get("warnings", []),
+            evidence_summary=evidence_summary,
+            gaps_summary=gaps_summary,
+            convergence_failure=convergence_failure,
+        )
+
+        run_level_gaps = report.to_dict()
+        run_level_gaps_path = self.workspace / "run_level_gaps.json"
+        run_level_gaps_path.write_text(json.dumps(run_level_gaps, indent=2), encoding="utf-8")
+
+        run_level_md_path = self.workspace / "run_level_gaps.md"
+        run_level_md_path.write_text(
+            self._format_run_level_gaps_markdown(run_level_gaps), encoding="utf-8"
+        )
+
+        self.workspace_mgr.state.errors.append("Run-level compliance gate failed")
+        self.workspace_mgr.state.outputs["run_level_gaps"] = str(run_level_gaps_path)
+        self.workspace_mgr.state.save(self.workspace / "state.json")
+
+    def _format_run_level_gaps_markdown(self, gaps_data: dict[str, Any]) -> str:
+        """Format run-level gaps as human-readable markdown."""
+        run_id = gaps_data.get("run_id") or "unknown"
+        final_pass = int(gaps_data.get("final_pass", 0))
+        score = float(gaps_data.get("compliance_score", 0.0))
+        threshold = float(gaps_data.get("compliance_threshold", self.config.compliance_threshold))
+        blockers = gaps_data.get("blockers", [])
+        warnings = gaps_data.get("warnings", [])
+        evidence_summary = gaps_data.get("evidence_summary", {})
+        gaps_summary = gaps_data.get("gaps_summary", {})
+        convergence = gaps_data.get("convergence_failure", {})
+
+        def format_counts(
+            counts: dict[str, int],
+            preferred: list[str] | None = None,
+            uppercase: bool = False,
+        ) -> str:
+            if not counts:
+                return "None"
+            items: list[str] = []
+            seen: set[str] = set()
+            if preferred:
+                for key in preferred:
+                    if key in counts:
+                        label = key.upper() if uppercase else key
+                        items.append(f"{label} ({counts[key]})")
+                        seen.add(key)
+            for key in sorted(k for k in counts if k not in seen):
+                label = key.upper() if uppercase else key
+                items.append(f"{label} ({counts[key]})")
+            return ", ".join(items) if items else "None"
+
+        strategies = convergence.get("strategies_attempted", [])
+        strategies_text = ", ".join(strategies) if strategies else "None"
+
+        lines = [
+            "# Run-Level Compliance Gate Failure",
+            "",
+            f"**Run ID:** {run_id}",
+            f"**Final Pass:** {final_pass}/{self.config.max_cleaning_passes}",
+            (f"**Compliance Score:** {score:.1%} (threshold: {threshold:.1%})"),
+            "**Status:** BLOCKED",
+            "",
+            "## Convergence Failure Summary",
+            "",
+            (f"- Max passes reached: {'yes' if convergence.get('max_passes_reached') else 'no'}"),
+            f"- Remaining blockers: {convergence.get('remaining_blockers', 0)}",
+            f"- Strategies attempted: {strategies_text}",
+            "",
+            f"## Blockers ({len(blockers)})",
+            "",
+        ]
+
+        if blockers:
+            for blocker in blockers:
+                block_type = blocker.get("type", "unknown")
+                message = blocker.get("message", "")
+                details = blocker.get("details")
+                details_text = ""
+                if details is not None:
+                    if isinstance(details, (dict, list)):
+                        details_text = json.dumps(details)
+                    else:
+                        details_text = str(details)
+                lines.extend(
+                    [
+                        f"### {block_type}",
+                        "- **Severity:** ERROR",
+                        f"- **Message:** {message}",
+                    ]
+                )
+                if details_text:
+                    lines.append(f"- **Details:** {details_text}")
+                lines.append("")
+        else:
+            lines.extend(["_None_", ""])
+
+        lines.extend([f"## Warnings ({len(warnings)})", ""])
+        if warnings:
+            for warning in warnings:
+                warn_type = warning.get("type", "unknown")
+                message = warning.get("message", "")
+                lines.extend(
+                    [
+                        f"### {warn_type}",
+                        "- **Severity:** WARNING",
+                        f"- **Message:** {message}",
+                        "",
+                    ]
+                )
+        else:
+            lines.extend(["_None_", ""])
+
+        evidence_by_severity = evidence_summary.get("by_severity", {})
+        evidence_by_category = evidence_summary.get("by_category", {})
+        gaps_by_severity = gaps_summary.get("by_severity", {})
+        gaps_by_type = gaps_summary.get("by_type", {})
+
+        by_category_counts = format_counts(
+            evidence_by_category, ["format", "coverage", "resolution", "truncation"]
+        )
+
+        lines.extend(
+            [
+                "## Evidence Summary",
+                "",
+                (f"- Total evidence items: {evidence_summary.get('total_evidence_items', 0)}"),
+                (
+                    "- By severity: "
+                    f"{format_counts(evidence_by_severity, ['error', 'warning', 'info'], True)}"
+                ),
+                ("- By category: " + f"{by_category_counts}"),
+                "",
+                "## Gaps Summary",
+                "",
+                f"- Total gaps: {gaps_summary.get('total_gaps', 0)}",
+                (f"- By severity: {format_counts(gaps_by_severity, ['error', 'warning'], True)}"),
+                f"- By type: {format_counts(gaps_by_type)}",
+                "",
+                "## Next Steps",
+                "",
+                "1. Review blockers above to identify root causes",
+                "2. Check per-pass artifacts in `workspace/intermediates/pass_{NN}/`",
+                "3. Examine strategy execution in `workspace/strategies/`",
+                "4. Fix blocking issues and re-run workflow",
+                "",
+            ]
+        )
+
+        return "\n".join(lines)
 
     def _collect_evidence(self, projection_path: Path | None) -> list[WorkflowEvidence]:
         """Collect gap evidence from a path."""
