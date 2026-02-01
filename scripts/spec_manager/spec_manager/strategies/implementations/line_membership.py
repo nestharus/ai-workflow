@@ -5,6 +5,7 @@ Tracks line-level membership to ensure every line is accounted for.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from spec_manager.core.provenance import UnitStatus
@@ -24,23 +25,28 @@ class LineMembershipStrategy(Strategy):
     def __init__(
         self, definition: StrategyDefinition | None = None, tools: dict[str, Tool] | None = None
     ) -> None:
+        """Initialize line membership strategy with optional definition and tools."""
         self.definition = definition
         self.tools = tools or {}
 
     @property
     def name(self) -> str:
+        """Return strategy identifier."""
         return "line_membership"
 
     @property
     def purpose(self) -> str:
+        """Return strategy purpose description."""
         return "Track source-to-target line mapping to ensure every line is accounted for"
 
     @property
     def risk_addressed(self) -> str:
+        """Return the risk this strategy addresses."""
         return "Lines dropped without notice during transformation"
 
     @property
     def phases(self) -> list[StrategyPhase]:
+        """Return the processing phases where this strategy applies."""
         return [StrategyPhase.VERIFICATION, StrategyPhase.CLEANING]
 
     def applies_to(self, context: ProcessingContext) -> bool:
@@ -60,9 +66,10 @@ class LineMembershipStrategy(Strategy):
             atom_id = atom["id"]
             if unit.target:
                 target_id = str(unit.target)
+                atom_target_id = f"{target_id}::atom:{atom_id}"
                 unit.add_membership(
-                    target_id,
-                    rationale="line-level mapping",
+                    atom_target_id,
+                    rationale=f"line-level mapping for {atom_id}",
                     confidence=1.0,
                     method="exact",
                 )
@@ -97,7 +104,8 @@ class LineMembershipStrategy(Strategy):
             for line_number, line in enumerate(unit.content.split("\n"), start=1):
                 if not line.strip():
                     continue
-                atom_id = f"{unit_id}_L{line_number}_{hash(line) % 10000:04d}"
+                line_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:8]
+                atom_id = f"{unit_id}_L{line_number}_{line_hash}"
                 atoms.append(
                     {
                         "id": atom_id,

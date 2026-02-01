@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
-from spec_manager.core.provenance import TrackedUnit
+from spec_manager.core.provenance import LineageTable, TrackedUnit
 
 
 class StrategyPhase(Enum):
@@ -23,6 +23,7 @@ class StrategyPhase(Enum):
     """
 
     CLEANING = "cleaning"  # Input normalization
+    COMPOSITING = "compositing"  # Merge + remainder partition
     DECOMPOSITION = "decomposition"  # Breaking content into atoms
     EXTRACTION = "extraction"  # Pulling structured content
     RESOLUTION = "resolution"  # Resolving ambiguities
@@ -63,6 +64,9 @@ class ProcessingContext:
     # Compliance and evidence summaries for strategy gating
     compliance_summary: dict[str, Any] = field(default_factory=dict)
     evidence_summary: dict[str, float] = field(default_factory=dict)
+
+    # Optional lineage tracking for derived units
+    lineage_table: LineageTable | None = None
 
 
 @dataclass

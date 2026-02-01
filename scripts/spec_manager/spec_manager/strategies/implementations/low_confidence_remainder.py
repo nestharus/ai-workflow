@@ -6,7 +6,7 @@ instead of allowing them to overwrite authoritative content.
 
 from __future__ import annotations
 
-from spec_manager.core.provenance import UnitStatus
+from spec_manager.core.provenance import TrackedUnit, UnitStatus
 from spec_manager.strategies.base import (
     ProcessingContext,
     Strategy,
@@ -53,11 +53,13 @@ class LowConfidenceRemainderStrategy(Strategy):
     @property
     def phases(self) -> list[StrategyPhase]:
         """Return applicable strategy phases."""
-        return [StrategyPhase.CLEANING, StrategyPhase.RESOLUTION]
+        return [StrategyPhase.CLEANING, StrategyPhase.COMPOSITING]
 
     def applies_to(self, context: ProcessingContext) -> bool:
-        """Applies when there are units with low-confidence membership evidence."""
+        """Applies when units lack or have low-confidence membership evidence."""
         for unit in context.units:
+            if not unit.membership_evidence:
+                return True
             for evidence in unit.membership_evidence.values():
                 if evidence.confidence < self.threshold:
                     return True
@@ -72,8 +74,7 @@ class LowConfidenceRemainderStrategy(Strategy):
         remainder_count = 0
 
         for unit in context.units:
-            confidences = [evidence.confidence for evidence in unit.membership_evidence.values()]
-            target_ids = list(unit.membership_evidence.keys())
+            target_ids, confidences = self._group_membership_evidence(unit)
 
             if self._is_ambiguous(confidences):
                 unit.status = UnitStatus.REMAINDER
@@ -116,6 +117,16 @@ class LowConfidenceRemainderStrategy(Strategy):
             },
             should_repeat=False,
         )
+
+    def _group_membership_evidence(self, unit: TrackedUnit) -> tuple[list[str], list[float]]:
+        """Group membership evidence by base target id."""
+        grouped: dict[str, list[float]] = {}
+        for target_id, evidence in unit.membership_evidence.items():
+            base_target = target_id.split("::atom:", 1)[0]
+            grouped.setdefault(base_target, []).append(evidence.confidence)
+        target_ids = list(grouped.keys())
+        confidences = [min(conf_list) for conf_list in grouped.values()]
+        return target_ids, confidences
 
     def _is_ambiguous(self, confidences: list[float]) -> bool:
         """Check for ambiguous mappings with similar confidence scores."""

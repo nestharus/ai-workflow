@@ -601,6 +601,7 @@ class WorkflowOrchestrator:
                             "unresolved_references": float(resolution_failures),
                             "low_confidence_mappings": float(low_confidence_mappings),
                         },
+                        lineage_table=self.lineage_table,
                     )
 
                     applicable_strategies = self.strategy_registry.get_applicable(context)
@@ -674,6 +675,7 @@ class WorkflowOrchestrator:
                         "remainders": getattr(self, "_previous_remainders", []),
                         "prose_ratio": getattr(self, "_previous_prose_ratio", 1.0),
                     },
+                    lineage_table=self.lineage_table,
                 )
 
                 triggers = self.strategy_registry.check_evolution_triggers(

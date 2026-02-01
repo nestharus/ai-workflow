@@ -45,24 +45,29 @@ class EntityResolutionStrategy(Strategy):
     def __init__(
         self, definition: StrategyDefinition | None = None, tools: dict[str, Tool] | None = None
     ) -> None:
+        """Initialize entity resolution strategy with optional definition and tools."""
         self.definition = definition
         self.tools = tools or {}
         self._llm = self.tools.get("llm_client")
 
     @property
     def name(self) -> str:
+        """Return strategy identifier."""
         return "entity_resolution"
 
     @property
     def purpose(self) -> str:
+        """Return strategy purpose description."""
         return "Resolve vague references like 'the algorithm' to specific IDs"
 
     @property
     def risk_addressed(self) -> str:
+        """Return the risk this strategy addresses."""
         return "Vague references make it unclear what is being modified"
 
     @property
     def phases(self) -> list[StrategyPhase]:
+        """Return the processing phases where this strategy applies."""
         return [StrategyPhase.RESOLUTION]
 
     def applies_to(self, context: ProcessingContext) -> bool:
@@ -140,15 +145,21 @@ class EntityResolutionStrategy(Strategy):
                 existing_ids.add(new_id)
                 new_unit.add_parent(unit.id)
                 unit.add_child(new_unit.id)
+                lineage_table = getattr(context, "lineage_table", None)
+                if lineage_table is not None:
+                    lineage_table.add_edge(
+                        from_unit=unit.id,
+                        to_unit=new_unit.id,
+                        transformation="transform",
+                    )
 
                 for target_id, confidence, rationale, method, reference_text in resolutions:
                     new_unit.add_membership(
                         target_id, rationale=rationale, confidence=confidence, method=method
                     )
                     actions.append(
-                        "Resolved '{}' -> '{}' in {} (confidence: {:.2f})".format(
-                            reference_text, target_id, unit.id, confidence
-                        )
+                        f"Resolved '{reference_text}' -> '{target_id}' in {unit.id} "
+                        f"(confidence: {confidence:.2f})"
                     )
 
                 if used_heuristic:
@@ -158,9 +169,7 @@ class EntityResolutionStrategy(Strategy):
             else:
                 output_units.append(unit)
 
-        resolution_rate = (
-            resolved_count / total_references if total_references > 0 else 0.0
-        )
+        resolution_rate = resolved_count / total_references if total_references > 0 else 0.0
 
         return StrategyResult(
             units=output_units,
@@ -185,18 +194,14 @@ class EntityResolutionStrategy(Strategy):
         filtered: list[str] = []
         for reference in matches:
             has_longer_match = any(
-                reference != other
-                and reference in other
-                and len(other) > len(reference)
+                reference != other and reference in other and len(other) > len(reference)
                 for other in matches
             )
             if not has_longer_match:
                 filtered.append(reference)
         return filtered
 
-    def _build_resolution_context(
-        self, context: ProcessingContext, index: int
-    ) -> dict[str, Any]:
+    def _build_resolution_context(self, context: ProcessingContext, index: int) -> dict[str, Any]:
         """Build resolution context for LLM-based inference."""
         window = 2
         before = context.units[max(0, index - window) : index]

@@ -125,6 +125,13 @@ class SentenceDecompositionStrategy(Strategy):
                 )
                 # Add parent to lineage edges
                 new_unit.add_parent(unit.id)
+                lineage_table = getattr(context, "lineage_table", None)
+                if lineage_table is not None:
+                    lineage_table.add_edge(
+                        from_unit=unit.id,
+                        to_unit=new_unit.id,
+                        transformation="split",
+                    )
                 output_units.append(new_unit)
 
             # Update parent unit to track children

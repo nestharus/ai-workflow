@@ -230,6 +230,7 @@ class StagingPipeline:
                 units=units,
                 phase=StrategyPhase.CLEANING,
                 config={"pass_number": pass_num},
+                lineage_table=self.lineage,
             )
 
             # Get applicable strategies
