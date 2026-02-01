@@ -30,7 +30,7 @@ class FileSections(BaseModel):
 
     @model_validator(mode="after")
     def validate_section_coverage(self) -> FileSections:
-        """Validate sections cover exactly all lines with no gaps or overlaps."""
+        """Validate structural requirements for sections."""
         if self.total_lines == 0:
             if self.sections:
                 raise ValueError("sections must be empty when total_lines is 0")
@@ -38,18 +38,5 @@ class FileSections(BaseModel):
 
         if not self.sections:
             raise ValueError("sections must not be empty")
-
-        expected_start = 1
-        for ordinal, section in enumerate(self.sections, start=1):
-            expected_section_id = f"SEC-{self.file_id}-{ordinal:04d}"
-            if section.section_id != expected_section_id:
-                raise ValueError(
-                    f"section_id must match {expected_section_id} for ordinal {ordinal}"
-                )
-            if section.start_line != expected_start:
-                raise ValueError(
-                    "sections must cover all lines exactly once with no gaps or overlaps"
-                )
-            expected_start = section.end_line + 1
 
         return self

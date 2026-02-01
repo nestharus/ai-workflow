@@ -1,6 +1,5 @@
-"""
-Newline Handling:
------------------
+r"""Newline Handling.
+
 All input files are normalized to LF (\n) newlines before processing to ensure
 deterministic line-atom generation across platforms. This means:
 
@@ -68,11 +67,7 @@ def validate_sections(
     issues.extend(coverage_issues)
 
     for index, section in enumerate(sections.sections, start=1):
-        if not _validate_section_format(section, file_id):
-            issues.append(
-                f"section {index} section_id {section.section_id} does not match "
-                f"SEC-{file_id}-{{ordinal:04d}} format"
-            )
+        issues.extend(_validate_section_format(section, file_id, index))
 
     if issues:
         evidence = GapEvidence(
@@ -93,8 +88,35 @@ def validate_sections(
     return {"valid": not issues, "issues": issues, "evidence_count": evidence_count}
 
 
-def _validate_section_format(section: SectionSpan, file_id: str) -> bool:
-    return validate_section_id_format(section.section_id, file_id)
+def _validate_section_format(
+    section: SectionSpan,
+    file_id: str,
+    index: int,
+) -> list[str]:
+    issues: list[str] = []
+    if not validate_section_id_format(section.section_id, file_id):
+        issues.append(
+            f"section {index} section_id {section.section_id} does not match "
+            f"SEC-{file_id}-{{ordinal:04d}} format"
+        )
+        return issues
+
+    try:
+        ordinal = int(section.section_id.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        issues.append(
+            f"section {index} section_id {section.section_id} does not match "
+            f"SEC-{file_id}-{{ordinal:04d}} format"
+        )
+        return issues
+
+    if ordinal != index:
+        issues.append(
+            f"section {index} section_id {section.section_id} does not match "
+            f"expected ordinal {index:04d}"
+        )
+
+    return issues
 
 
 def _emit_evidence(evidence: GapEvidence, output_path: Path) -> None:

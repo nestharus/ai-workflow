@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.spec_refinement.workflows.section_validator import validate_sections
 
 
@@ -106,7 +108,9 @@ def test_validate_sections_overlap_detection(fs) -> None:
     )
 
     assert result["valid"] is False
-    assert any("Failed to parse sections file" in issue for issue in result["issues"])
+    assert any(
+        "start_line" in issue or "do not cover all lines" in issue for issue in result["issues"]
+    )
     assert evidence_path.exists()
 
 
@@ -119,7 +123,7 @@ def test_validate_sections_section_id_format(fs) -> None:
         "file_id": "F0004",
         "sections": [
             {
-                "section_id": "SEC-F0004-9999",
+                "section_id": "SEC-F0004-01",
                 "start_line": 1,
                 "end_line": 2,
                 "label": "INTRO",
@@ -137,11 +141,12 @@ def test_validate_sections_section_id_format(fs) -> None:
     )
 
     assert result["valid"] is False
-    assert any("section_id" in issue for issue in result["issues"])
+    assert any("format" in issue for issue in result["issues"])
     assert evidence_path.exists()
 
 
-def test_validate_sections_ordinal_sequence(fs) -> None:
+@pytest.mark.parametrize("section_id", ["SEC-F0005-0002", "SEC-F0005-9999"])
+def test_validate_sections_ordinal_sequence(fs, section_id: str) -> None:
     base = Path("/work")
     sections_path = base / "manifest" / "F0005.sections.json"
     evidence_path = base / "evidence" / "F0005.jsonl"
@@ -150,7 +155,7 @@ def test_validate_sections_ordinal_sequence(fs) -> None:
         "file_id": "F0005",
         "sections": [
             {
-                "section_id": "SEC-F0005-0002",
+                "section_id": section_id,
                 "start_line": 1,
                 "end_line": 1,
                 "label": "INTRO",
@@ -168,7 +173,7 @@ def test_validate_sections_ordinal_sequence(fs) -> None:
     )
 
     assert result["valid"] is False
-    assert any("section_id" in issue for issue in result["issues"])
+    assert any("expected ordinal" in issue for issue in result["issues"])
     assert evidence_path.exists()
 
 
