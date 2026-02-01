@@ -17,12 +17,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Unpack
+from typing import Any
 
 from spec_manager.compliance.scorer import ComplianceScorer
 from spec_manager.core.data_structures import ComplianceMetrics
 from spec_manager.core.gaps import detect_gaps, format_gaps_md
 from spec_manager.core.libs_registry import LibsRegistry
+from spec_manager.core.provenance import LineageTable
 from spec_manager.core.sections import SectionExtractor
 from spec_manager.workflow.config import (
     TrackedUnit,
@@ -88,16 +89,19 @@ class IntermediateManager:
         phase: str,
         description: str,
         tracker: ProvenanceTracker | None = None,
+        lineage_table: LineageTable | None = None,
         **extra: object,
     ) -> dict[str, object]:
         """Create a snapshot of the current state."""
         self._version += 1
+        lineage_edges = lineage_table.to_dict() if lineage_table else []
         return {
             "version": self._version,
             "phase": phase,
             "description": description,
             "timestamp": datetime.now().isoformat(),
             "coverage_percent": 100.0,  # Placeholder
+            "lineage_edges": lineage_edges,
             **extra,
         }
 
@@ -240,6 +244,7 @@ class WorkflowOrchestrator:
 
         self.tracker = ProvenanceTracker()
         self.intermediate_mgr = IntermediateManager(self.workspace)
+        self.lineage_table = LineageTable()
 
         # Patch-chain + context index for entity resolution
         self.patch_graph = PatchDependencyGraph()
@@ -272,7 +277,7 @@ class WorkflowOrchestrator:
             logger.info("Workflow completed successfully")
 
         except Exception as e:
-            logger.exception(f"Workflow failed: {e}")
+            logger.exception("Workflow failed")
             self.state.errors.append(str(e))
             raise
 
@@ -366,7 +371,10 @@ class WorkflowOrchestrator:
         # Save initial state
         if self.config.save_intermediates:
             state = self.intermediate_mgr.create_snapshot(
-                phase="init", description="Initial extraction from patches", tracker=self.tracker
+                phase="init",
+                description="Initial extraction from patches",
+                tracker=self.tracker,
+                lineage_table=self.lineage_table,
             )
             self.intermediate_mgr.save(state)
 
@@ -516,6 +524,23 @@ class WorkflowOrchestrator:
                     for e in evidence:
                         handle.write(json.dumps(e.to_dict()) + "\n")
 
+                # Save membership.jsonl (one JSON object per line)
+                with (pass_dir / "membership.jsonl").open("w", encoding="utf-8") as handle:
+                    for unit in self.state.units:
+                        for target_id, evidence_item in unit.membership_evidence.items():
+                            membership_record = {
+                                "source_unit_id": unit.id,
+                                "target_element_id": target_id,
+                                "rationale": evidence_item.rationale,
+                                "confidence": evidence_item.confidence,
+                                "method": evidence_item.method,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                            handle.write(json.dumps(membership_record) + "\n")
+
+                # NOTE: lineage.jsonl is written after compositing finishes
+                # (see _phase_compositing) so it includes compositing edges.
+
                 # Save gaps.json
                 content, registry, libraries_dir = self._collect_gap_inputs(current_projection_path)
                 gaps_data = detect_gaps(content, registry, libraries_dir)
@@ -555,6 +580,7 @@ class WorkflowOrchestrator:
                         f"(compliance: {result.score:.1%}, prose: {prose_ratio:.1%})"
                     ),
                     tracker=self.tracker,
+                    lineage_table=self.lineage_table,
                 )
                 self.intermediate_mgr.save(state)
 
@@ -742,8 +768,18 @@ class WorkflowOrchestrator:
                     f"{len(remainder_units)} remainders"
                 ),
                 tracker=self.tracker,
+                lineage_table=self.lineage_table,
             )
             self.intermediate_mgr.save(state)
+
+            # Write lineage.jsonl to each pass directory now that
+            # compositing has recorded all lineage edges.
+            lineage_data = self.lineage_table.to_dict()
+            for pass_num in self.workspace_mgr.list_passes():
+                pass_dir = self.workspace_mgr.get_pass_directory(pass_num)
+                with (pass_dir / "lineage.jsonl").open("w", encoding="utf-8") as handle:
+                    for edge in lineage_data:
+                        handle.write(json.dumps(edge) + "\n")
 
     def _select_compositing_granularity(self) -> str:
         """Select the appropriate granularity level for compositing.
@@ -809,12 +845,22 @@ class WorkflowOrchestrator:
 
         # Convert to atoms with stable IDs
         base_atoms = self._content_to_atoms(base.content, base.introduced_by, granularity)
-        membership_evidence: dict[str, dict[str, Any]] = {}
+        remainder_unit_id = f"{base.id}_remainder"
+
+        merged = TrackedUnit(
+            id=base.id,
+            content="",
+            unit_type=base.unit_type,
+            source=sorted_units[-1].source,
+            introduced_by=base.introduced_by,
+            modified_by=[u.introduced_by for u in sorted_units[1:]],
+            declarations=sorted_units[-1].declarations,
+            references=sorted_units[-1].references,
+        )
 
         # Track all atoms through transformations
         all_atoms = list(base_atoms)  # Ordered list, not set
         remainder_atoms: list[dict[str, Any]] = []
-        lineage_edges: list[dict[str, Any]] = []
 
         # Apply each subsequent patch using diff hunks
         for later_unit in sorted_units[1:]:
@@ -835,12 +881,12 @@ class WorkflowOrchestrator:
                         atom = all_atoms[idx].copy()
                         atom["status"] = "unchanged"
                         new_atoms.append(atom)
-                        # Record membership evidence
-                        membership_evidence[atom["id"]] = {
-                            "rationale": "Unchanged through patch",
-                            "confidence": 1.0,
-                            "method": "exact_match",
-                        }
+                        merged.add_membership(
+                            target_id=atom["id"],
+                            rationale="Unchanged through patch",
+                            confidence=1.0,
+                            method="exact_match",
+                        )
 
                 elif tag == "replace":
                     # Modified atoms - later patch wins, old goes to remainder
@@ -860,23 +906,34 @@ class WorkflowOrchestrator:
                         new_atoms.append(new_atom)
                         # Record lineage edge (many-to-many possible)
                         for old_idx in range(i1, i2):
-                            lineage_edges.append(
-                                {
-                                    "from": all_atoms[old_idx]["id"],
-                                    "to": new_atom["id"],
-                                    "transformation": "replace",
+                            self.lineage_table.add_edge(
+                                from_unit=all_atoms[old_idx]["id"],
+                                to_unit=new_atom["id"],
+                                transformation="transform",
+                                details={
+                                    "reason": "replace",
                                     "patch": later_unit.introduced_by,
-                                }
+                                },
                             )
-                        membership_evidence[new_atom["id"]] = {
-                            "rationale": f"Replaced by {later_unit.introduced_by}",
-                            "confidence": 0.9,
-                            "method": "diff_replace",
-                        }
+                        merged.add_membership(
+                            target_id=new_atom["id"],
+                            rationale=f"Replaced by {later_unit.introduced_by}",
+                            confidence=0.9,
+                            method="diff_replace",
+                        )
 
                 elif tag == "delete":
                     # Deleted atoms - go to remainder
                     for idx in range(i1, i2):
+                        self.lineage_table.add_edge(
+                            from_unit=all_atoms[idx]["id"],
+                            to_unit=remainder_unit_id,
+                            transformation="transform",
+                            details={
+                                "reason": "delete",
+                                "patch": later_unit.introduced_by,
+                            },
+                        )
                         remainder_atoms.append(
                             {
                                 **all_atoms[idx],
@@ -891,31 +948,38 @@ class WorkflowOrchestrator:
                         new_atom = later_atoms[idx].copy()
                         new_atom["status"] = "added"
                         new_atoms.append(new_atom)
-                        membership_evidence[new_atom["id"]] = {
-                            "rationale": f"Added by {later_unit.introduced_by}",
-                            "confidence": 1.0,
-                            "method": "diff_insert",
-                        }
+                        self.lineage_table.add_edge(
+                            from_unit=later_unit.id,
+                            to_unit=new_atom["id"],
+                            transformation="infer",
+                            details={
+                                "reason": "insert",
+                                "patch": later_unit.introduced_by,
+                            },
+                        )
+                        merged.add_membership(
+                            target_id=new_atom["id"],
+                            rationale=f"Added by {later_unit.introduced_by}",
+                            confidence=1.0,
+                            method="diff_insert",
+                        )
 
             all_atoms = new_atoms
 
         # Convert atoms back to content (preserves order)
         merged_content = "\n".join(a["content"] for a in all_atoms)
+        merged.content = merged_content
+        merged.source_atom_ids = [a["id"] for a in all_atoms]
 
-        # Create merged unit with membership tracking
-        merged = TrackedUnit(
-            id=base.id,
-            content=merged_content,
-            unit_type=base.unit_type,
-            source=sorted_units[-1].source,
-            introduced_by=base.introduced_by,
-            modified_by=[u.introduced_by for u in sorted_units[1:]],
-            declarations=sorted_units[-1].declarations,
-            references=sorted_units[-1].references,
-            source_atom_ids=[a["id"] for a in all_atoms],
-            membership_evidence=membership_evidence,
-            lineage_edges=lineage_edges,
-        )
+        merged.parents = [u.id for u in sorted_units]
+        for u in sorted_units:
+            u.add_child(merged.id)
+            self.lineage_table.add_edge(
+                from_unit=u.id,
+                to_unit=merged.id,
+                transformation="merge",
+                details={"reason": "merge_with_remainder"},
+            )
 
         # Create remainder units for unresolved content
         remainders: list[TrackedUnit] = []
@@ -925,7 +989,7 @@ class WorkflowOrchestrator:
                 for a in remainder_atoms
             )
             remainder_unit = TrackedUnit(
-                id=f"{base.id}_remainder",
+                id=remainder_unit_id,
                 content=remainder_content,
                 unit_type=UnitType.PROSE,
                 source=base.source,
@@ -933,6 +997,15 @@ class WorkflowOrchestrator:
                 status=UnitStatus.PENDING,
                 source_atom_ids=[a["id"] for a in remainder_atoms],
             )
+            remainder_unit.parents = [u.id for u in sorted_units]
+            for u in sorted_units:
+                u.add_child(remainder_unit.id)
+                self.lineage_table.add_edge(
+                    from_unit=u.id,
+                    to_unit=remainder_unit.id,
+                    transformation="split",
+                    details={"reason": "remainder_split"},
+                )
             remainders.append(remainder_unit)
 
         return merged, remainders
@@ -1043,6 +1116,14 @@ class WorkflowOrchestrator:
         lines.append(f"Units: {len(units)}\n\n")
 
         for unit in sorted(units, key=lambda u: u.id):
+            for source_atom_id in unit.source_atom_ids:
+                if source_atom_id not in unit.membership_evidence:
+                    unit.add_membership(
+                        target_id=source_atom_id,
+                        rationale="Projection from source atom",
+                        confidence=1.0,
+                        method="projection",
+                    )
             lines.append(f"## {unit.id}\n")
             unit_type = (
                 unit.unit_type.value if hasattr(unit.unit_type, "value") else str(unit.unit_type)
@@ -1067,6 +1148,14 @@ class WorkflowOrchestrator:
         # Group by unit type
         by_type: dict[str, list[TrackedUnit]] = {}
         for unit in units:
+            for source_atom_id in unit.source_atom_ids:
+                if source_atom_id not in unit.membership_evidence:
+                    unit.add_membership(
+                        target_id=source_atom_id,
+                        rationale="Projection from source atom",
+                        confidence=1.0,
+                        method="projection",
+                    )
             type_name = (
                 unit.unit_type.value if hasattr(unit.unit_type, "value") else str(unit.unit_type)
             )
@@ -1173,6 +1262,7 @@ class WorkflowOrchestrator:
                 phase="discovery",
                 description="After library discovery",
                 tracker=self.tracker,
+                lineage_table=self.lineage_table,
                 candidate_libraries=self.state.candidate_libraries,
                 library_shapes=self.state.library_shapes,
             )
@@ -1339,6 +1429,7 @@ class WorkflowOrchestrator:
                 phase="review",
                 description="After library review",
                 tracker=self.tracker,
+                lineage_table=self.lineage_table,
                 candidate_libraries=self.state.candidate_libraries,
                 library_shapes=self.state.library_shapes,
                 review_actions=self.state.review_actions,

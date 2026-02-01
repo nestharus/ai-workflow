@@ -11,6 +11,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from spec_manager.core.provenance import MembershipEvidence
+
 
 class WorkflowPhase(Enum):
     """Phases in the ingest workflow."""
@@ -69,12 +71,33 @@ class TrackedUnit:
 
     # Atom-based membership tracking
     source_atom_ids: list[str] = field(default_factory=list)
-    membership_evidence: dict[str, Any] = field(default_factory=dict)
-    lineage_edges: list[dict] = field(default_factory=list)
+    membership_evidence: dict[str, MembershipEvidence] = field(default_factory=dict)
+
+    # Explicit lineage tracking
+    parents: list[str] = field(default_factory=list)
+    children: list[str] = field(default_factory=list)
 
     # Library assignment
     primary_library: str | None = None
     relation_libraries: list[str] = field(default_factory=list)
+
+    def add_membership(
+        self, target_id: str, rationale: str, confidence: float = 1.0, method: str = "exact"
+    ) -> None:
+        """Record a membership mapping with evidence."""
+        self.membership_evidence[target_id] = MembershipEvidence(
+            rationale=rationale, confidence=confidence, method=method
+        )
+
+    def add_parent(self, parent_id: str) -> None:
+        """Record a lineage parent."""
+        if parent_id not in self.parents:
+            self.parents.append(parent_id)
+
+    def add_child(self, child_id: str) -> None:
+        """Record a lineage child."""
+        if child_id not in self.children:
+            self.children.append(child_id)
 
 
 @dataclass

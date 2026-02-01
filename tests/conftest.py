@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 
 from app.core.factory import create_app
 from app.core.settings import Settings
-from scripts.spec_refinement.workspace import WorkspaceManager
+from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 from tests.spec_refinement.fixtures.agent_mocks import MockAgentController
 from tests.spec_refinement.fixtures.test_corpus import create_test_corpus
 from tests.spec_refinement.test_performance import PerformanceBenchmark
@@ -351,6 +351,8 @@ def spec_refinement_workspace(fs, monkeypatch):
         manager = WorkspaceManager(run_id=run_id, input_folder=input_dir)
         issues = manager.initialize(force=True)
         assert issues == []
+        manager.start_phase(Phase.SECTIONIZATION)
+        manager.complete_phase(Phase.SECTIONIZATION, outputs={"files_processed": 0})
         return manager, manifest
 
     return _factory

@@ -523,6 +523,7 @@ def mock_repair_agent(
         return json.dumps(payload)
 
     if artifact_type == "spec_patches":
+        repair_sections = sections if sections else [target_section]
         payload = {
             "file_id": target_file,
             "lib_id": target_lib,
@@ -532,7 +533,7 @@ def mock_repair_agent(
                     "section": "Requirements",
                     "bullet_index": None,
                     "content": "Repair: restore missing content.",
-                    "citations": [f"[{target_file}::{target_section}]"],
+                    "citations": [f"[{target_file}::{s}]" for s in repair_sections],
                 }
             ],
         }

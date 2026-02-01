@@ -68,14 +68,25 @@ class UnitStatus(Enum):
 class SourceLocation:
     """A location in a source file."""
 
-    file: str
-    line_start: int
-    line_end: int
-    column_start: int | None = None
-    column_end: int | None = None
-    patch_id: str | None = None  # e.g., "p1", "p5"
+    def __init__(
+        self,
+        file: str,
+        line_start: int,
+        line_end: int,
+        column_start: int | None = None,
+        column_end: int | None = None,
+        patch_id: str | None = None,
+    ) -> None:
+        """Initialize source location."""
+        self.file = file
+        self.line_start = line_start
+        self.line_end = line_end
+        self.column_start = column_start
+        self.column_end = column_end
+        self.patch_id = patch_id
 
     def __str__(self) -> str:
+        """Return a string representation of the source location."""
         loc = f"{self.file}:{self.line_start}"
         if self.line_end != self.line_start:
             loc += f"-{self.line_end}"
@@ -116,6 +127,7 @@ class TargetLocation:
     line_end: int
 
     def __str__(self) -> str:
+        """Return a string representation of the target location."""
         return f"{self.file}:{self.line_start}-{self.line_end}"
 
     def to_dict(self) -> dict[str, Any]:
@@ -466,6 +478,7 @@ class LineageTable:
     """
 
     def __init__(self) -> None:
+        """Initialize the lineage table."""
         self.edges: list[LineageEdge] = []
         self._by_from: dict[str, list[LineageEdge]] = defaultdict(list)
         self._by_to: dict[str, list[LineageEdge]] = defaultdict(list)
@@ -478,6 +491,12 @@ class LineageTable:
         details: dict[str, Any] | None = None,
     ) -> None:
         """Record a lineage edge."""
+        valid_transformations = {"split", "merge", "infer", "transform"}
+        if transformation not in valid_transformations:
+            raise ValueError(
+                f"Invalid transformation type: {transformation}. "
+                f"Must be one of {valid_transformations}"
+            )
         edge = LineageEdge(
             from_unit=from_unit,
             to_unit=to_unit,
@@ -536,7 +555,7 @@ class LineageTable:
             visited.add(current)
 
             for edge in self._by_from.get(current, []):
-                queue.append((edge.to_unit, path + [edge]))
+                queue.append((edge.to_unit, [*path, edge]))
 
         return None
 
@@ -578,6 +597,7 @@ class ProvenanceTracker:
     """
 
     def __init__(self) -> None:
+        """Initialize the provenance tracker."""
         self.units: dict[str, TrackedUnit] = {}
         self.transformations: list[dict[str, Any]] = []
         self._next_id = 1
@@ -806,7 +826,7 @@ class ProvenanceTracker:
             return []
 
         unit = self.units[unit_id]
-        return [unit.introduced_by] + unit.modified_by
+        return [unit.introduced_by, *unit.modified_by]
 
     def get_coverage_report(self) -> dict[str, Any]:
         """Generate a coverage report."""

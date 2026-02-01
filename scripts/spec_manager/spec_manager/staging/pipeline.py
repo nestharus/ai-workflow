@@ -129,12 +129,11 @@ class StagingPipeline:
         workspace_path: Path,
         strategy_definitions_path: Path | None = None,
         max_passes: int = 10,
-        llm_client: Any = None,
     ) -> None:
+        """Initialize the staging pipeline."""
         self.workspace_path = workspace_path
         self.staging_dir = workspace_path / "staging"
         self.max_passes = max_passes
-        self.llm_client = llm_client
 
         # Initialize strategy registry
         self.registry = StrategyRegistry()
@@ -382,8 +381,8 @@ class StagingPipeline:
                 self.lineage.add_edge(
                     from_unit="source",  # Would need actual IDs
                     to_unit="target",
-                    transformation=strategy_name,
-                    details={"action": action},
+                    transformation="split",
+                    details={"action": action, "strategy": strategy_name},
                 )
 
     def _handle_evolution_trigger(
@@ -406,15 +405,16 @@ class StagingPipeline:
         )
 
         # Try to propose a new strategy via LLM
-        if self.llm_client:
-            proposed = self.registry.propose_strategy_via_llm(
-                gap_evidence=gap_evidence, llm_client=self.llm_client
-            )
-
-            if proposed:
-                # Register as experimental
-                self.registry.register_experimental_from_gap(gap_evidence)
-                print(f"Proposed new strategy: {proposed.name}")
+        # LLM strategy proposal is not yet implemented
+        # if self.llm_client:
+        #     proposed = self.registry.propose_strategy_via_llm(
+        #         gap_evidence=gap_evidence, llm_client=self.llm_client
+        #     )
+        #
+        #     if proposed:
+        #         # Register as experimental
+        #         self.registry.register_experimental_from_gap(gap_evidence)
+        #         print(f"Proposed new strategy: {proposed.name}")
 
         return {
             "failure_mode": gap_evidence.failure_mode,

@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .provenance import ProvenanceTracker
+    from .provenance import LineageTable, ProvenanceTracker
 
-from .provenance import TrackedUnit
+from .provenance import LineageTable, TrackedUnit
 
 
 @dataclass
@@ -79,6 +79,9 @@ class IntermediateState:
     # Processing metrics
     metrics: dict[str, Any] = field(default_factory=dict)
 
+    # Lineage tracking (Gap 12)
+    lineage_edges: list[dict[str, Any]] = field(default_factory=list)
+
 
 class IntermediateManager:
     """Manages intermediate states during processing.
@@ -102,6 +105,7 @@ class IntermediateManager:
     """
 
     def __init__(self, workspace_path: Path) -> None:
+        """Initialize the intermediate manager with a workspace path."""
         self.workspace_path = workspace_path
         self.intermediates_dir = workspace_path / "intermediates"
         self.intermediates_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +115,7 @@ class IntermediateManager:
         phase: str,
         description: str,
         tracker: ProvenanceTracker,
+        lineage_table: LineageTable | None = None,
         candidate_libraries: list[str] | None = None,
         library_shapes: dict[str, dict[str, Any]] | None = None,
         # Gap 4 fix: Accept additional snapshot data
@@ -151,7 +156,7 @@ class IntermediateManager:
                 # Create FileSnapshot for this source file
                 file_snapshots[unit.source.file] = FileSnapshot(
                     path=unit.source.file,
-                    content_hash=hashlib.md5(unit.content.encode()).hexdigest(),
+                    content_hash=hashlib.sha256(unit.content.encode()).hexdigest(),
                     line_count=unit.source.line_end - unit.source.line_start + 1,
                     unit_count=sum(
                         1 for u in tracker.units.values() if u.source.file == unit.source.file
@@ -177,7 +182,7 @@ class IntermediateManager:
         if not computed_intermediate_files:
             # Reconstruct per-library intermediate markdown
             by_library: dict[str, list[str]] = {}
-            for uid, unit in tracker.units.items():
+            for _, unit in tracker.units.items():
                 lib = unit.primary_library or "unassigned"
                 if lib not in by_library:
                     by_library[lib] = []
@@ -185,6 +190,8 @@ class IntermediateManager:
 
             for lib_name, contents in by_library.items():
                 computed_intermediate_files[f"{lib_name}.md"] = "\n\n".join(contents)
+
+        lineage_edges = lineage_table.to_dict() if lineage_table else []
 
         return IntermediateState(
             version=version,
@@ -205,6 +212,7 @@ class IntermediateManager:
                 "unaccounted": report["unaccounted"],
                 "coverage_percent": report["coverage_percent"],
             },
+            lineage_edges=lineage_edges,
         )
 
     def _serialize_unit(self, unit: TrackedUnit) -> dict[str, Any]:
@@ -217,7 +225,7 @@ class IntermediateManager:
         return {
             "id": unit.id,
             "content": unit.content,  # FULL content, not preview
-            "content_hash": hashlib.md5(unit.content.encode()).hexdigest(),
+            "content_hash": hashlib.sha256(unit.content.encode()).hexdigest(),
             "unit_type": unit.unit_type.value,
             "source": {
                 "file": unit.source.file,
@@ -276,6 +284,7 @@ class IntermediateManager:
             "file_snapshots": serialized_file_snapshots,
             "intermediate_files": state.intermediate_files,
             "atom_mapping": state.atom_mapping,
+            "lineage_edges": state.lineage_edges,
         }
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -328,6 +337,7 @@ class IntermediateManager:
             file_snapshots=file_snapshots,
             intermediate_files=data.get("intermediate_files", {}),
             atom_mapping=data.get("atom_mapping", {}),
+            lineage_edges=data.get("lineage_edges", []),
         )
 
     def load_latest(self) -> IntermediateState | None:
@@ -366,6 +376,7 @@ class IntermediateManager:
             file_snapshots=file_snapshots,
             intermediate_files=data.get("intermediate_files", {}),
             atom_mapping=data.get("atom_mapping", {}),
+            lineage_edges=data.get("lineage_edges", []),
         )
 
     def compare(
