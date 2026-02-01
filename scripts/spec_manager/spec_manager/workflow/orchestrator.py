@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Unpack
 
 from spec_manager.compliance.scorer import ComplianceScorer
 from spec_manager.core.data_structures import ComplianceMetrics
@@ -84,8 +84,12 @@ class IntermediateManager:
         self._version = 0
 
     def create_snapshot(
-        self, phase: str, description: str, tracker: ProvenanceTracker | None = None, **extra: Any
-    ) -> dict[str, Any]:
+        self,
+        phase: str,
+        description: str,
+        tracker: ProvenanceTracker | None = None,
+        **extra: object,
+    ) -> dict[str, object]:
         """Create a snapshot of the current state."""
         self._version += 1
         return {
@@ -268,7 +272,7 @@ class WorkflowOrchestrator:
             logger.info("Workflow completed successfully")
 
         except Exception as e:
-            logger.error(f"Workflow failed: {e}")
+            logger.exception(f"Workflow failed: {e}")
             self.state.errors.append(str(e))
             raise
 
@@ -396,6 +400,55 @@ class WorkflowOrchestrator:
             result = scorer.score_compliance(evidence, self.state, self.spec_folder)
             result.pass_num = pass_num
             logger.info(f"    Compliance score: {result.score:.1%}")
+
+            gate_blockers: list[dict[str, Any]] = []
+            if result.score < self.config.compliance_threshold:
+                gate_blockers.append(
+                    {
+                        "type": "compliance_below_threshold",
+                        "severity": Severity.ERROR,
+                        "message": (
+                            f"Compliance score {result.score:.1%} below threshold "
+                            f"{self.config.compliance_threshold:.1%}"
+                        ),
+                        "details": {
+                            "score": result.score,
+                            "threshold": self.config.compliance_threshold,
+                        },
+                    }
+                )
+
+            if self.config.require_no_critical_errors:
+                critical_evidence = [
+                    e
+                    for e in evidence
+                    if str(getattr(e.severity, "value", e.severity)).lower() == Severity.ERROR
+                ]
+                if critical_evidence:
+                    gate_blockers.append(
+                        {
+                            "type": "critical_evidence",
+                            "severity": Severity.ERROR,
+                            "message": (
+                                f"{len(critical_evidence)} critical evidence item(s) detected"
+                            ),
+                            "details": {
+                                "count": len(critical_evidence),
+                                "sample": [
+                                    {
+                                        "detector": e.detector,
+                                        "location": e.location,
+                                        "message": e.message,
+                                    }
+                                    for e in critical_evidence[:5]
+                                ],
+                            },
+                        }
+                    )
+
+            if gate_blockers:
+                result.blockers.extend(gate_blockers)
+            result.passed = len(result.blockers) == 0
 
             pass_dir = self.workspace_mgr.create_pass_directory(pass_num)
             result.save(pass_dir / "compliance.json")

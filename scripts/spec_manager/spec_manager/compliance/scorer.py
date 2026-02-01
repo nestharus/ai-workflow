@@ -6,7 +6,7 @@ import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.core.data_structures import ComplianceMetrics
 from spec_manager.core.gaps import Severity
@@ -48,13 +48,14 @@ class ComplianceScorer:
     """Scores compliance and categorizes blockers/warnings."""
 
     def __init__(self, blocker_threshold: float = 0.0, warning_threshold: float = 0.05) -> None:
+        """Initialize compliance scorer with thresholds."""
         self.blocker_threshold = blocker_threshold
         self.warning_threshold = warning_threshold
         self._previous_state: WorkspaceState | None = None
 
     def score_compliance(
         self,
-        evidence: list["WorkflowEvidence"],
+        evidence: list[WorkflowEvidence],
         state: WorkspaceState,
         spec_folder: Path,
     ) -> ComplianceResult:
@@ -310,7 +311,7 @@ class ComplianceScorer:
 
         return blockers
 
-    def _compute_metrics_from_evidence(self, evidence: list["WorkflowEvidence"]) -> ComplianceMetrics:
+    def _compute_metrics_from_evidence(self, evidence: list[WorkflowEvidence]) -> ComplianceMetrics:
         errors = sum(1 for e in evidence if self._severity_value(e.severity) == "error")
         warnings = sum(1 for e in evidence if self._severity_value(e.severity) == "warning")
         penalty = (errors * 0.10) + (warnings * 0.02)
@@ -336,12 +337,8 @@ class ComplianceScorer:
         return len(remainders) / max(len(units), 1)
 
     @staticmethod
-    def _count_unresolved_references(evidence: list["WorkflowEvidence"]) -> int:
-        return sum(
-            1
-            for e in evidence
-            if getattr(e, "detector", "") == "undefined_reference"
-        )
+    def _count_unresolved_references(evidence: list[WorkflowEvidence]) -> int:
+        return sum(1 for e in evidence if getattr(e, "detector", "") == "undefined_reference")
 
     def _count_low_confidence_mappings(self, state: WorkspaceState) -> int:
         final_labels = getattr(state, "final_labels", {})
@@ -393,7 +390,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from scripts.spec_refinement.schemas.sections import FileSections
+        from spec_refinement.schemas.sections import FileSections
 
         for path in files:
             try:
@@ -415,7 +412,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from scripts.spec_refinement.schemas.atoms import LineAtom
+        from spec_refinement.schemas.atoms import LineAtom
 
         for path in files:
             try:
@@ -456,7 +453,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from scripts.spec_refinement.schemas.terms import FileTerms
+        from spec_refinement.schemas.terms import FileTerms
 
         for path in files:
             try:

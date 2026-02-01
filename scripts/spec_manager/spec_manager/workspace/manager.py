@@ -15,6 +15,7 @@ The reports/ subdirectory contains:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -165,19 +166,41 @@ class WorkspaceManager:
 
         return []
 
+    def _ensure_run_id(self) -> str:
+        if self.state.run_id:
+            return self.state.run_id
+
+        base_name = self.spec_folder.name or "spec"
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "-", base_name).strip("-") or "spec"
+        timestamp_source = self.state.created_at or datetime.now().isoformat()
+        safe_timestamp = re.sub(r"[^0-9]+", "", timestamp_source)
+        if not safe_timestamp:
+            safe_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+
+        run_id = f"{slug}-{safe_timestamp}"
+        self.state.run_id = run_id
+        self._save_state()
+        return run_id
+
+    def _run_intermediates_dir(self) -> Path:
+        run_id = self._ensure_run_id()
+        intermediates_dir = Path("runs") / run_id / "workspace" / "intermediates"
+        intermediates_dir.mkdir(parents=True, exist_ok=True)
+        return intermediates_dir
+
     def create_pass_directory(self, pass_num: int) -> Path:
         """Create and return a pass-based intermediates directory."""
-        pass_dir = self._workspace / "intermediates" / f"pass_{pass_num:02d}"
+        pass_dir = self._run_intermediates_dir() / f"pass_{pass_num:02d}"
         pass_dir.mkdir(parents=True, exist_ok=True)
         return pass_dir
 
     def get_pass_directory(self, pass_num: int) -> Path:
         """Get the path to a pass-based intermediates directory."""
-        return self._workspace / "intermediates" / f"pass_{pass_num:02d}"
+        return self._run_intermediates_dir() / f"pass_{pass_num:02d}"
 
     def list_passes(self) -> list[int]:
         """List existing pass numbers in intermediates."""
-        intermediates_dir = self._workspace / "intermediates"
+        intermediates_dir = self._run_intermediates_dir()
         if not intermediates_dir.exists():
             return []
 
