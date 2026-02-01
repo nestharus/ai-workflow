@@ -43,8 +43,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
         invalid_output=(
-            "Here is the rationale:\n\n"
-            "Decision uses [lib_001::spec.md::CONSTRAINTS] for latency."
+            "Here is the rationale:\n\nDecision uses [lib_001::spec.md::CONSTRAINTS] for latency."
         ),
         expected_errors=[{"type": "stray_preamble"}],
         allowlists=_allowlists(),
@@ -52,10 +51,7 @@ FIXTURES: list[RepairFixture] = [
     ),
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
-        invalid_output=(
-            "Decision uses [lib_001::spec.md::CONSTRAINTS] for latency.\n"
-            "```\n"
-        ),
+        invalid_output=("Decision uses [lib_001::spec.md::CONSTRAINTS] for latency.\n```\n"),
         expected_errors=[{"type": "trailing_fence"}],
         allowlists=_allowlists(),
         description="Trailing fence after architecture rationale.",
@@ -63,8 +59,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
         invalid_output=(
-            "Decision uses [lib_001::spec.md::CONSTRAINTS, lib_001::spec.md::RISKS]"
-            " for latency."
+            "Decision uses [lib_001::spec.md::CONSTRAINTS, lib_001::spec.md::RISKS] for latency."
         ),
         expected_errors=[{"type": "compound_pointer"}],
         allowlists=_allowlists(),

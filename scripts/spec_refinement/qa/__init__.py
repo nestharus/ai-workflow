@@ -8,4 +8,3 @@ from scripts.spec_refinement.qa.cases import QA_CASES
 from scripts.spec_refinement.qa.runner import run_qa_case, run_qa_suite
 
 __all__ = ["QA_CASES", "run_qa_case", "run_qa_suite"]
-

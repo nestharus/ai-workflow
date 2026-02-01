@@ -60,6 +60,10 @@ class ProcessingContext:
     # Accumulated results during processing
     results: dict[str, Any] = field(default_factory=dict)
 
+    # Compliance and evidence summaries for strategy gating
+    compliance_summary: dict[str, Any] = field(default_factory=dict)
+    evidence_summary: dict[str, float] = field(default_factory=dict)
+
 
 @dataclass
 class StrategyResult:
@@ -133,9 +137,14 @@ class Strategy(ABC):
 
 
 class Tool(Protocol):
-    """Protocol for tools that strategies use."""
+    """Protocol for tools that strategies use.
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    Tools handle dynamic inputs and outputs, so the signature accepts
+    arbitrary arguments. Strategies are responsible for passing
+    arguments correctly based on the tool's documented interface.
+    """
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
         """Execute the tool."""
         ...
 
@@ -156,6 +165,7 @@ class StrategyDefinition:
     # When to apply
     phases: list[str] = field(default_factory=list)
     when_conditions: list[str] = field(default_factory=list)
+    risk_category: str | None = None
 
     # Implementation
     tools_used: list[str] = field(default_factory=list)
@@ -168,6 +178,22 @@ class StrategyDefinition:
     # Metadata for runtime strategy management
     # Used by: capture_strategy_gap, propose_strategy_via_llm, promote_experimental
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize definition to dict for YAML persistence."""
+        data: dict[str, Any] = {
+            "name": self.name,
+            "version": self.version,
+            "purpose": self.purpose,
+            "risk_addressed": self.risk_addressed,
+            "phases": self.phases,
+            "when_conditions": self.when_conditions,
+            "tools_used": self.tools_used,
+            "implementation_class": self.implementation_class,
+        }
+        if self.risk_category:
+            data["risk_category"] = self.risk_category
+        return data
 
     def to_strategy(self, tools: dict[str, Tool]) -> Strategy:
         """Convert definition to executable Strategy.

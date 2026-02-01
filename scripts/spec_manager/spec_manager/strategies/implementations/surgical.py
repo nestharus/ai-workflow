@@ -44,6 +44,8 @@ class SurgeonResponse:
     success: bool
     result: dict[str, Any]
     raw_output: str
+    used_fallback: bool = False
+    format_repair: bool = False
 
 
 class SurgicalDecompositionStrategy(Strategy):
@@ -138,6 +140,10 @@ class SurgicalDecompositionStrategy(Strategy):
             if not response.success:
                 issues.append(f"Surgeon failed on {fragment.id}: {response.raw_output}")
                 continue
+            if response.format_repair:
+                issues.append(f"Format repair: extracted JSON for {fragment.id}")
+            if response.used_fallback:
+                issues.append(f"Heuristic surgeon decision for {fragment.id}: {response.operation}")
 
             # Apply the surgeon's decision
             action = self._apply_surgeon_response(tracker, fragment, response)
@@ -239,11 +245,13 @@ Output your decision as JSON:
                 if start >= 0 and end > start:
                     json_str = output[start:end]
                     data = json.loads(json_str)
+                    format_repair = output.strip() != json_str.strip()
                     return SurgeonResponse(
                         operation=data.get("operation", "unknown"),
                         success=True,
                         result=data.get("details", {}),
                         raw_output=output,
+                        format_repair=format_repair,
                     )
             except json.JSONDecodeError:
                 pass
@@ -256,6 +264,7 @@ Output your decision as JSON:
                     success=True,
                     result={"reason": "Detected ambiguity"},
                     raw_output=output,
+                    used_fallback=True,
                 )
             elif "split" in output_lower:
                 return SurgeonResponse(
@@ -263,6 +272,7 @@ Output your decision as JSON:
                     success=True,
                     result={},
                     raw_output=output,
+                    used_fallback=True,
                 )
 
             return SurgeonResponse(

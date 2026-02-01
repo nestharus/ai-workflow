@@ -10,6 +10,8 @@ risk_addressed: |
   Compound meaning lost in translation. When "A and B" becomes
   just "A" in the output, B is silently dropped.
 
+risk_category: compound_loss
+
 phases:
   - decomposition
   - cleaning

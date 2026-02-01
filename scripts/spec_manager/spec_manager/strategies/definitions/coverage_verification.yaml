@@ -9,6 +9,8 @@ risk_addressed: |
   Content silently dropped during projection/merge operations.
   Without verification, we can't know if transformation was lossless.
 
+risk_category: content_loss
+
 phases:
   - verification
 

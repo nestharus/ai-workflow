@@ -33,24 +33,34 @@ class SentenceDecompositionStrategy(Strategy):
     def __init__(
         self, definition: StrategyDefinition | None = None, tools: dict[str, Tool] | None = None
     ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            definition: Strategy definition from YAML.
+            tools: Dictionary of available tools.
+        """
         self.definition = definition
         self.tools = tools or {}
         self._splitter = self.tools.get("spacy_splitter") or self._simple_split
 
     @property
     def name(self) -> str:
+        """Get strategy name."""
         return "sentence_decomposition"
 
     @property
     def purpose(self) -> str:
+        """Get strategy purpose."""
         return "Split compound sentences to track atomic claims independently"
 
     @property
     def risk_addressed(self) -> str:
+        """Get addressed risk."""
         return "Compound meaning lost in translation - 'A and B' becomes just 'A'"
 
     @property
     def phases(self) -> list[StrategyPhase]:
+        """Get applicable phases."""
         return [StrategyPhase.DECOMPOSITION, StrategyPhase.CLEANING]
 
     def applies_to(self, context: ProcessingContext) -> bool:
@@ -89,6 +99,8 @@ class SentenceDecompositionStrategy(Strategy):
 
             # Create new units for each sentence
             actions.append(f"Split {unit.id} into {len(sentences)} atoms")
+            if self._splitter == self._simple_split:
+                issues.append(f"Heuristic sentence split used for {unit.id}")
             child_unit_ids = []
 
             for i, sentence in enumerate(sentences):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Callable
 
 
 @dataclass
@@ -69,7 +69,12 @@ def benchmark_phase(
 
 
 def generate_performance_report(tracker: PerformanceBenchmark) -> str:
-    lines = ["# Performance Report", "", "| Phase | Latency (s) | Calls | Tokens | Cost ($) |", "| --- | --- | --- | --- | --- |"]
+    lines = [
+        "# Performance Report",
+        "",
+        "| Phase | Latency (s) | Calls | Tokens | Cost ($) |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for name, metric in tracker.phases.items():
         lines.append(
             f"| {name} | {metric.latency_seconds:.2f} | {metric.agent_calls} | {metric.token_usage} | {metric.cost_estimate:.4f} |"

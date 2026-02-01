@@ -114,6 +114,7 @@ class WorkflowConfig:
     compliance_threshold: float = 0.90  # 90% format compliance required
     compliance_gate_mode: str = "block"  # "block" (default) or "warn"
     max_remainder_ratio: float = 0.05  # Max 5% atoms in remainder queue
+    max_unit_content_length: int = 50_000  # Max chars per unit before truncation guard
     require_no_critical_errors: bool = True  # Block on any critical error
 
 

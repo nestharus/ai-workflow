@@ -11,6 +11,8 @@ risk_addressed: |
   "Patch the relaxation algorithm" - which one? Without resolution,
   changes might be applied to wrong element.
 
+risk_category: vague_references
+
 phases:
   - resolution
 

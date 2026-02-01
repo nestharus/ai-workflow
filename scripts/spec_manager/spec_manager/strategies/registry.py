@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import yaml
 
@@ -36,15 +36,47 @@ class StrategyGapEvidence:
 
     @property
     def severity(self) -> str:
+        """Evidence severity level."""
         return "warning"
 
     @property
     def message(self) -> str:
+        """Human-readable message describing the gap."""
         return f"Strategy gap: {self.failure_mode}"
 
     @property
     def location(self) -> str:
+        """Location identifier for the failed context."""
         return self.fixture.get("context", {}).get("patch_id", "unknown")
+
+
+# Maps risk categories to the evidence_summary keys they depend on.
+# A strategy is only considered if its risk category's evidence exceeds the threshold.
+_RISK_TO_EVIDENCE: dict[str, str] = {
+    "compound_loss": "prose_ratio",
+    "content_loss": "remainder_ratio",
+    "information_loss": "prose_ratio",
+    "vague_references": "unresolved_references",
+    "low_confidence": "low_confidence_mappings",
+}
+
+# Default thresholds per risk category. Strategies whose evidence is at or below
+# this level are skipped (the risk is not present enough to warrant running them).
+_DEFAULT_RISK_THRESHOLDS: dict[str, float] = {
+    "compound_loss": 0.1,
+    "content_loss": 0.01,
+    "information_loss": 0.1,
+    "vague_references": 1.0,
+    "low_confidence": 1.0,
+}
+
+
+class LLMClient(Protocol):
+    """Protocol for LLM clients used in strategy proposal."""
+
+    def complete(self, prompt: str) -> str:
+        """Return the LLM completion for the given prompt."""
+        ...
 
 
 class StrategyRegistry:
@@ -64,6 +96,7 @@ class StrategyRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize an empty registry."""
         self.definitions: dict[str, StrategyDefinition] = {}
         self.strategies: dict[str, Strategy] = {}
         self.tools: dict[str, Tool] = {}
@@ -84,6 +117,7 @@ class StrategyRegistry:
             risk_addressed=data["risk_addressed"],
             phases=data.get("phases", []),
             when_conditions=data.get("when_conditions", []),
+            risk_category=data.get("risk_category"),
             tools_used=data.get("tools_used", []),
             implementation_class=data.get("implementation_class"),
             example_input=data.get("example", {}).get("input")
@@ -112,7 +146,10 @@ class StrategyRegistry:
         return count
 
     def instantiate(self, name: str) -> Strategy:
-        """Instantiate a strategy from its definition."""
+        """Instantiate a strategy from its definition.
+
+        Raises ValueError if the strategy is unknown or has no implementation_class.
+        """
         if name in self.strategies:
             return self.strategies[name]
 
@@ -120,22 +157,43 @@ class StrategyRegistry:
             raise ValueError(f"Unknown strategy: {name}")
 
         definition = self.definitions[name]
+        if not definition.implementation_class:
+            raise ValueError(
+                f"Strategy '{name}' has no implementation_class and cannot be instantiated"
+            )
+
         strategy = definition.to_strategy(self.tools)
         self.strategies[name] = strategy
         return strategy
 
     def get_applicable(self, context: ProcessingContext) -> list[Strategy]:
-        """Get all strategies that apply to the given context."""
+        """Get all strategies that apply to the given context.
+
+        Gating order:
+        1. Phase match (existing)
+        2. Evidence/threshold gating - skip if the strategy's risk category
+           has evidence below the configured threshold
+        3. Strategy-level applies_to check (existing)
+        """
         applicable = []
+        risk_thresholds: dict[str, float] = context.config.get("risk_thresholds", {})
 
         for name, definition in self.definitions.items():
-            # Check phase match
+            # 1. Check phase match
             phase_match = not definition.phases or context.phase.value in definition.phases
 
             if not phase_match:
                 continue
 
-            # Instantiate and check applies_to
+            # 2. Evidence/threshold gating
+            if not self._risk_exceeds_threshold(definition, context, risk_thresholds):
+                continue
+
+            # 3. Skip definitions without an implementation class
+            if not definition.implementation_class:
+                continue
+
+            # 4. Instantiate and check applies_to
             try:
                 strategy = self.instantiate(name)
                 if strategy.applies_to(context):
@@ -144,6 +202,39 @@ class StrategyRegistry:
                 print(f"Warning: Failed to check {name}: {e}")
 
         return applicable
+
+    def _risk_exceeds_threshold(
+        self,
+        definition: StrategyDefinition,
+        context: ProcessingContext,
+        risk_thresholds: dict[str, float],
+    ) -> bool:
+        """Check whether evidence justifies running this strategy.
+
+        Returns True (allow strategy) when:
+        - The definition has no risk_category (ungated, always eligible)
+        - The context has no evidence_summary (no data to gate on)
+        - The evidence level for the risk category exceeds the threshold
+        """
+        risk_category = definition.risk_category
+        if not risk_category:
+            return True
+
+        if not context.evidence_summary:
+            return True
+
+        evidence_key = _RISK_TO_EVIDENCE.get(risk_category)
+        if not evidence_key:
+            return True
+
+        evidence_level = context.evidence_summary.get(evidence_key)
+        if evidence_level is None:
+            return True
+
+        threshold = risk_thresholds.get(
+            risk_category, _DEFAULT_RISK_THRESHOLDS.get(risk_category, 0.0)
+        )
+        return evidence_level > threshold
 
     def add_strategy(self, definition: StrategyDefinition) -> None:
         """Add a new strategy definition at runtime."""
@@ -165,6 +256,8 @@ class StrategyRegistry:
             "tools_used": definition.tools_used,
             "implementation_class": definition.implementation_class,
         }
+        if definition.risk_category:
+            data["risk_category"] = definition.risk_category
 
         if definition.example_input:
             data["example"] = {
@@ -314,7 +407,7 @@ class StrategyRegistry:
         return evidence
 
     def propose_strategy_via_llm(
-        self, gap_evidence: StrategyGapEvidence, llm_client: Any = None
+        self, gap_evidence: StrategyGapEvidence, llm_client: LLMClient | None = None
     ) -> StrategyDefinition | None:
         """Use LLM to propose a new strategy for a captured gap.
 
@@ -328,7 +421,8 @@ class StrategyRegistry:
         if not llm_client:
             return None
 
-        prompt = f"""A spec processing workflow encountered a failure that no existing strategy handles.
+        prompt = f"""A spec processing workflow encountered a failure that no existing \
+strategy handles.
 
 FAILURE MODE: {gap_evidence.failure_mode}
 
@@ -346,7 +440,8 @@ Design a new strategy to handle this failure. Provide:
 5. Risk addressed
 
 Output as JSON:
-{{"name": "...", "purpose": "...", "when_conditions": {{...}}, "tools_used": ["..."], "risk_addressed": "..."}}"""
+{{"name": "...", "purpose": "...", "when_conditions": {{...}}, \
+"tools_used": ["..."], "risk_addressed": "..."}}"""
 
         try:
             response = llm_client.complete(prompt)

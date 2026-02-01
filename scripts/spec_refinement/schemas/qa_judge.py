@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class QaCriterionResult(BaseModel):
+    """Result for a single QA criterion check."""
+
     criterion: str
     passed: bool
     evidence: str | None = None
@@ -29,4 +31,3 @@ class QaJudgeOutput(BaseModel):
 
     # Optional: observations from stderr / runner traces provided by the harness.
     trace_findings: list[str] = Field(default_factory=list)
-

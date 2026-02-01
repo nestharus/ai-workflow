@@ -25,6 +25,8 @@ from spec_manager.core.gaps import detect_gaps, format_gaps_md
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.core.provenance import LineageTable
 from spec_manager.core.sections import SectionExtractor
+from spec_manager.strategies.base import ProcessingContext, StrategyPhase
+from spec_manager.strategies.registry import StrategyRegistry
 from spec_manager.workflow.config import (
     TrackedUnit,
     UnitLabels,
@@ -252,6 +254,64 @@ class WorkflowOrchestrator:
 
         # State
         self.state = WorkflowState()
+
+        # Strategy registry
+        self.strategy_registry = StrategyRegistry()
+        self.strategy_registry.load_from_directory(
+            Path(__file__).parent.parent / "strategies" / "definitions"
+        )
+        self._register_strategy_tools()
+
+    def _register_strategy_tools(self) -> None:
+        """Register tools that strategies can use."""
+
+        def simple_splitter(text: str) -> list[str]:
+            sentences = re.split(r"(?<=[.!?])\s+", text)
+            return [s.strip() for s in sentences if s.strip()]
+
+        self.strategy_registry.register_tool("spacy_splitter", simple_splitter)
+
+        def analyze_context(text: str, patch_id: str) -> dict[str, Any]:
+            return {
+                "terms": self.context_index.get_terms_for_patch(patch_id),
+                "sections": self.context_index.get_sections_for_patch(patch_id),
+            }
+
+        self.strategy_registry.register_tool("context_analyzer", analyze_context)
+
+        def match_id(reference: str) -> str | None:
+            return reference if reference.startswith("@") else None
+
+        self.strategy_registry.register_tool("id_matcher", match_id)
+
+        def resolve_reference(ref: str, context: dict[str, Any]) -> str:
+            # Pass-through until a full reference resolver is wired.
+            return ref
+
+        self.strategy_registry.register_tool("reference_resolver", resolve_reference)
+
+        def compare_lines(source: str, target: str) -> float:
+            return SequenceMatcher(None, source, target).ratio()
+
+        self.strategy_registry.register_tool("line_comparator", compare_lines)
+        self.strategy_registry.register_tool("similarity_scorer", compare_lines)
+
+        def score_confidence(evidence: dict[str, Any]) -> float:
+            method = evidence.get("method", "unknown")
+            if method == "exact":
+                return 1.0
+            elif method == "fuzzy":
+                return evidence.get("similarity", 0.5)
+            else:
+                return 0.3
+
+        self.strategy_registry.register_tool("confidence_scorer", score_confidence)
+
+        def route_to_remainder(unit: TrackedUnit, reason: str) -> None:
+            self.state.remainders.append(unit)
+            logger.info(f"      Routed {unit.id} to remainder: {reason}")
+
+        self.strategy_registry.register_tool("remainder_router", route_to_remainder)
 
     def run(self) -> WorkflowState:
         """Run the full workflow.
@@ -495,16 +555,148 @@ class WorkflowOrchestrator:
                 else:
                     logger.warning("  Compliance warnings present (mode=warn)")
 
-            # Step 3: Apply fix strategies (placeholder - strategies module not implemented)
-            # In a full implementation, this would apply registered fix strategies
-            if any(b.get("type") == "schema_invalid" for b in result.blockers):
-                # Placeholder for repair strategy integration (subsequent phases).
-                # repair_artifact will be wired to normalize invalid JSON outputs.
-                pass
+            # Step 3: Select and execute fix strategies
+            strategy_evidence: list[WorkflowEvidence] = []
+            selected_strategy_names: list[str] = []
+            context: ProcessingContext | None = None
+
+            if self.config.apply_strategies:
+                if not result.passed or pass_num < self.config.max_cleaning_passes:
+                    context_prose_ratio = self._compute_prose_ratio(self.state.units)
+                    resolution_failures = sum(
+                        1 for e in evidence if e.detector == "undefined_reference"
+                    )
+                    low_confidence_mappings = result.details.get("low_confidence_mappings", 0)
+                    remainder_ratio = result.details.get("remainder_ratio", 0.0)
+                    context = ProcessingContext(
+                        units=self.state.units,
+                        phase=StrategyPhase.CLEANING,
+                        source_file=str(self.spec_folder),
+                        patch_id=None,
+                        reference_files={},
+                        previous_results={
+                            "evidence": evidence,
+                            "compliance": result.to_dict(),
+                        },
+                        config={
+                            "pass_num": pass_num,
+                            "risk_thresholds": {
+                                "compound_loss": self.config.max_remainder_ratio,
+                                "content_loss": self.config.max_remainder_ratio,
+                                "information_loss": self.config.max_remainder_ratio,
+                                "vague_references": 1.0,
+                                "low_confidence": 1.0,
+                            },
+                        },
+                        results={
+                            "remainders": self.state.remainders,
+                            "resolution_failures": resolution_failures,
+                            "total_references": sum(len(u.references) for u in self.state.units),
+                            "prose_ratio": context_prose_ratio,
+                        },
+                        compliance_summary=result.to_dict(),
+                        evidence_summary={
+                            "prose_ratio": context_prose_ratio,
+                            "remainder_ratio": remainder_ratio,
+                            "unresolved_references": float(resolution_failures),
+                            "low_confidence_mappings": float(low_confidence_mappings),
+                        },
+                    )
+
+                    applicable_strategies = self.strategy_registry.get_applicable(context)
+                    logger.info(f"    Selected {len(applicable_strategies)} strategies")
+
+                    for strategy in applicable_strategies:
+                        logger.info(f"      Executing: {strategy.name}")
+                        selected_strategy_names.append(strategy.name)
+
+                        strategy_result = strategy.execute(context)
+
+                        # Update units with strategy output
+                        self.state.units = strategy_result.units
+
+                        # Collect evidence from strategy
+                        for action in strategy_result.actions_taken:
+                            strategy_evidence.append(
+                                WorkflowEvidence(
+                                    severity=Severity.INFO,
+                                    message=action,
+                                    location=strategy.name,
+                                    detector=f"strategy:{strategy.name}",
+                                    details={"metrics": strategy_result.metrics},
+                                )
+                            )
+
+                        for issue in strategy_result.issues:
+                            if issue.startswith("Format repair:"):
+                                detector = "strategy:format_repair"
+                            else:
+                                detector = f"strategy:{strategy.name}"
+                            strategy_evidence.append(
+                                WorkflowEvidence(
+                                    severity=Severity.WARNING,
+                                    message=issue,
+                                    location=strategy.name,
+                                    detector=detector,
+                                    details={},
+                                )
+                            )
+
+                        # Update context for next strategy
+                        context.units = self.state.units
+                        context.previous_results["last_strategy"] = strategy.name
+
+                    # Merge strategy evidence into main evidence
+                    evidence.extend(strategy_evidence)
+
+                    # Apply truncation guard after strategies
+                    self._apply_truncation_guard(evidence)
+
+                    # Save selected strategies for this pass
+                    if selected_strategy_names:
+                        self._save_selected_strategies(pass_num, selected_strategy_names)
+            else:
+                logger.info("    Strategies disabled by config")
 
             # Compute prose_ratio for this pass
             prose_ratio = self._compute_prose_ratio(self.state.units)
             logger.info(f"    Prose ratio: {prose_ratio:.1%}")
+
+            if context is not None:
+                context.results["prose_ratio"] = prose_ratio
+
+            # Check if strategy evolution is warranted
+            if self.config.apply_strategies and context is not None and pass_num > 1:
+                previous_context = ProcessingContext(
+                    units=[],
+                    phase=StrategyPhase.CLEANING,
+                    results={
+                        "remainders": getattr(self, "_previous_remainders", []),
+                        "prose_ratio": getattr(self, "_previous_prose_ratio", 1.0),
+                    },
+                )
+
+                triggers = self.strategy_registry.check_evolution_triggers(
+                    context, previous_context
+                )
+                if triggers:
+                    logger.warning(f"    Strategy evolution triggers: {triggers}")
+                    # Log to evidence
+                    for trigger in triggers:
+                        evidence.append(
+                            WorkflowEvidence(
+                                severity=Severity.WARNING,
+                                message=f"Strategy evolution trigger: {trigger}",
+                                location="strategy_registry",
+                                detector="evolution_check",
+                                details={"trigger": trigger},
+                            )
+                        )
+
+            # Save state for next pass comparison
+            if self.config.apply_strategies:
+                self._previous_remainders = self.state.remainders.copy()
+                self._previous_prose_ratio = prose_ratio
 
             # Step 4: Snapshot (versioned per pass) - BECOMES NEXT INPUT
             if self.config.save_intermediates:
@@ -567,6 +759,12 @@ class WorkflowOrchestrator:
                         if u.unit_type
                         in (UnitType.ALGORITHM, UnitType.CLAIM, UnitType.INVARIANT, UnitType.GOAL)
                     ),
+                    "strategies_executed": selected_strategy_names
+                    if self.config.apply_strategies
+                    else [],
+                    "strategy_evidence_count": len(strategy_evidence)
+                    if self.config.apply_strategies
+                    else 0,
                 }
                 (pass_dir / "metrics.json").write_text(
                     json.dumps(metrics_data, indent=2), encoding="utf-8"
@@ -625,6 +823,32 @@ class WorkflowOrchestrator:
             json.dumps(context_index, indent=2),
             encoding="utf-8",
         )
+
+    def _apply_truncation_guard(self, evidence: list[WorkflowEvidence]) -> None:
+        """Check unit content lengths and emit evidence when truncation caps are applied."""
+        cap = self.config.max_unit_content_length
+        for unit in self.state.units:
+            original_length = len(unit.content)
+            if original_length > cap:
+                unit.content = unit.content[:cap]
+                severity = Severity.ERROR if original_length > cap * 2 else Severity.WARNING
+                evidence.append(
+                    WorkflowEvidence(
+                        severity=severity,
+                        message=(
+                            f"Content truncated from {original_length} to {cap} chars"
+                            f" for unit {unit.id}"
+                        ),
+                        location=unit.id,
+                        detector="strategy:truncation_guard",
+                        details={
+                            "unit_id": unit.id,
+                            "original_length": original_length,
+                            "truncated_length": cap,
+                            "chars_removed": original_length - cap,
+                        },
+                    )
+                )
 
     def _collect_evidence(self, projection_path: Path | None) -> list[WorkflowEvidence]:
         """Collect gap evidence from a path."""
@@ -711,6 +935,34 @@ class WorkflowOrchestrator:
                 }
 
         return index
+
+    def _save_selected_strategies(self, pass_num: int, strategy_names: list[str]) -> None:
+        """Save selected strategies for this pass to workspace/strategies/."""
+        strategies_dir = self.workspace / "strategies"
+        strategies_dir.mkdir(exist_ok=True)
+
+        pass_strategies_file = strategies_dir / f"pass_{pass_num:02d}_strategies.yaml"
+
+        strategies_data = {
+            "pass": pass_num,
+            "timestamp": datetime.now().isoformat(),
+            "strategies": [
+                {
+                    "name": name,
+                    "definition": self.strategy_registry.definitions[name].to_dict()
+                    if name in self.strategy_registry.definitions
+                    else {"name": name, "status": "unknown"},
+                }
+                for name in strategy_names
+            ],
+        }
+
+        import yaml
+
+        pass_strategies_file.write_text(
+            yaml.dump(strategies_data, default_flow_style=False),
+            encoding="utf-8",
+        )
 
     def _phase_compositing(self) -> None:
         """Composite units using MERGE + REMAINDER PARTITION.

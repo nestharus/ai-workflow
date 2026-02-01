@@ -10,6 +10,8 @@ ATOM_ID_PATTERN = re.compile(r"^ATOM-(?P<file_id>[^-]+)-L(?P<line_no>\d{4})$")
 
 
 class LineAtom(BaseModel):
+    """A single line atom with hash-based identity."""
+
     atom_id: str
     line_no: int = Field(ge=1)
     section_id: str
@@ -19,12 +21,14 @@ class LineAtom(BaseModel):
     @field_validator("sha256")
     @classmethod
     def validate_sha256(cls, value: str) -> str:
+        """Validate SHA256 format."""
         if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
             raise ValueError("sha256 must be 64 hex characters")
         return value
 
     @model_validator(mode="after")
-    def validate_atom_id(self) -> "LineAtom":
+    def validate_atom_id(self) -> LineAtom:
+        """Validate atom_id format and consistency with line_no."""
         match = ATOM_ID_PATTERN.fullmatch(self.atom_id)
         if not match:
             raise ValueError("atom_id must match ATOM-{file_id}-L{line_no:04d} pattern")

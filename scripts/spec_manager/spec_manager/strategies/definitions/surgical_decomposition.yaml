@@ -3,6 +3,8 @@ version: "2.0"
 purpose: Surgically decompose prose into structured forms with full traceability and classification
 risk_addressed: Information loss during decomposition - every byte must be accounted for
 
+risk_category: information_loss
+
 phases:
   - decomposition
   - cleaning

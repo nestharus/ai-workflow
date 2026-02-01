@@ -9,6 +9,8 @@ risk_addressed: |
   Lines dropped without notice during transformation. The
   membership guarantee ensures we know where every line went.
 
+risk_category: content_loss
+
 phases:
   - verification
   - cleaning

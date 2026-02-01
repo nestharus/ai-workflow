@@ -1,0 +1,23 @@
+name: low_confidence_remainder
+version: "1.0"
+purpose: |
+  Route low-confidence integrations to remainder queue instead of
+  overwriting authoritative content. Preserves "never drop details"
+  guarantee.
+risk_addressed: |
+  Low-confidence mappings silently overwrite high-quality content.
+  By routing to remainder, we preserve both versions for review.
+
+risk_category: low_confidence
+
+phases:
+  - cleaning
+  - compositing
+when_conditions:
+  - Membership confidence below threshold (< 0.7)
+  - Ambiguous entity resolution
+  - Conflicting source atoms
+tools_used:
+  - confidence_scorer
+  - remainder_router
+implementation_class: spec_manager.strategies.implementations.low_confidence_remainder.LowConfidenceRemainderStrategy

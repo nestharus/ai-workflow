@@ -295,6 +295,46 @@ class ContextIndex:
 
         return unique[:10]  # Top 10 candidates
 
+    def get_terms_for_patch(self, patch_id: str) -> list[str]:
+        """Extract declared terms and IDs for a patch."""
+        if not patch_id:
+            return []
+
+        terms: set[str] = set()
+        for stratum in self._strata:
+            path_name = Path(stratum["path"]).name
+            if patch_id not in path_name:
+                continue
+
+            content = stratum["content"]
+            for match in re.finditer(r"\(\[=([^\]]+)\]\)", content):
+                terms.add(match.group(1))
+            for match in re.finditer(
+                r"^(#{1,6})\s+(Algorithm\s+\d+|D\d+|G\d+|P\d+C\d+|P\d+I\d+|Lean\d+)",
+                content,
+                re.MULTILINE,
+            ):
+                terms.add(match.group(2))
+
+        return sorted(terms)
+
+    def get_sections_for_patch(self, patch_id: str) -> list[str]:
+        """Extract section headings for a patch."""
+        if not patch_id:
+            return []
+
+        sections: set[str] = set()
+        for stratum in self._strata:
+            path_name = Path(stratum["path"]).name
+            if patch_id not in path_name:
+                continue
+
+            content = stratum["content"]
+            for match in re.finditer(r"^(#{1,6})\s+(.+)$", content, re.MULTILINE):
+                sections.add(match.group(2).strip())
+
+        return sorted(sections)
+
     def refresh_from_intermediates(self) -> None:
         """Refresh index from all intermediate projections."""
         intermediates_dir = self.workspace / "intermediates"

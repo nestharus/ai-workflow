@@ -28,23 +28,33 @@ class CoverageVerificationStrategy(Strategy):
     def __init__(
         self, definition: StrategyDefinition | None = None, tools: dict[str, Tool] | None = None
     ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            definition: Strategy definition from YAML.
+            tools: Dictionary of available tools.
+        """
         self.definition = definition
         self.tools = tools or {}
 
     @property
     def name(self) -> str:
+        """Get strategy name."""
         return "coverage_verification"
 
     @property
     def purpose(self) -> str:
+        """Get strategy purpose."""
         return "Verify nothing was lost during transformation"
 
     @property
     def risk_addressed(self) -> str:
+        """Get addressed risk."""
         return "Content silently dropped during projection/merge"
 
     @property
     def phases(self) -> list[StrategyPhase]:
+        """Get applicable phases."""
         return [StrategyPhase.VERIFICATION]
 
     def applies_to(self, context: ProcessingContext) -> bool:
@@ -155,6 +165,10 @@ class CoverageVerificationStrategy(Strategy):
 
         if unmatched_atoms:
             actions.append(f"Found {len(unmatched_atoms)} unmatched atoms (remainder)")
+        if fuzzy_matched_atoms:
+            issues.append(
+                f"{len(fuzzy_matched_atoms)} atoms matched via heuristic similarity scoring"
+            )
 
         return StrategyResult(
             units=target_units,

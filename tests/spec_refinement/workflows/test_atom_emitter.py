@@ -69,7 +69,7 @@ def test_emit_atoms_normalizes_newlines_and_hashes(fs) -> None:
     assert atoms[1]["atom_id"] == "ATOM-F0001-L0002"
     assert atoms[2]["atom_id"] == "ATOM-F0001-L0003"
 
-    expected_hash = hashlib.sha256("line1".encode("utf-8")).hexdigest()
+    expected_hash = hashlib.sha256(b"line1").hexdigest()
     assert atoms[0]["sha256"] == expected_hash
 
     assert atoms[0]["section_id"] == "SEC-F0001-0001"

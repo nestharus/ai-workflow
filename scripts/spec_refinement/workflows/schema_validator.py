@@ -1,6 +1,5 @@
-"""
-Newline Handling:
------------------
+r"""Newline handling.
+
 All input files are normalized to LF (\n) newlines before processing to ensure
 deterministic line-atom generation across platforms. This means:
 
@@ -15,6 +14,7 @@ SHA-256 hashes are computed on the normalized line text (UTF-8 encoded).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +113,7 @@ def _validate_json_schema(
     schema_name: str,
     file_id: str,
     evidence_output: Path,
-    validator: Any,
+    validator: Callable[[str], object],
 ) -> dict[str, Any]:
     issues: list[str] = []
 
