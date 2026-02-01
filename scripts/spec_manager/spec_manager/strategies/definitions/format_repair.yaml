@@ -1,0 +1,18 @@
+name: format_repair
+version: "1.0"
+purpose: "Normalize LLM outputs with format violations (code fences, preambles, invalid JSON)"
+risk_addressed: "Format violations causing downstream parsing failures"
+phases:
+  - cleaning
+when_conditions:
+  - "content contains code fences"
+  - "content has JSON preambles"
+  - "content has agent-exec noise"
+risk_category: "format_violations"
+tools_used:
+  - json_extractor
+  - repair_agent
+implementation_class: "spec_manager.strategies.implementations.format_repair.FormatRepairStrategy"
+example:
+  input: "```json\n{\"key\": \"value\"}\n```"
+  output: "{\"key\": \"value\"}"

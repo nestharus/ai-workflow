@@ -36,11 +36,16 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
         raise RuntimeError("Sub-library detection must be completed before architecture proposal.")
 
     manager.start_phase(Phase.ARCHITECTURE_PROPOSAL)
+    format_evidence: list[dict[str, Any]] = []
 
     libraries = manager.get_all_libraries_recursive()
     if not libraries:
         manager.fail_phase(Phase.ARCHITECTURE_PROPOSAL, error="No libraries found for proposal.")
-        return {"candidates_created": 0, "issues": [{"type": "no_libraries"}]}
+        return {
+            "candidates_created": 0,
+            "issues": [{"type": "no_libraries"}],
+            "format_evidence": format_evidence,
+        }
 
     lib_charters: dict[str, str] = {}
     lib_specs: dict[str, str] = {}
@@ -52,7 +57,7 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
         if spec_path.exists():
             lib_specs[lib_id] = spec_path.read_text(encoding="utf-8")
 
-    briefs = _extract_architecture_briefs(libraries, manager)
+    briefs = _extract_architecture_briefs(libraries, manager, format_evidence)
     prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
 
     try:
@@ -63,19 +68,31 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
         )
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_PROPOSAL, error=f"Agent execution failed: {exc}")
-        return {"candidates_created": 0, "issues": [{"type": "agent_error", "error": str(exc)}]}
+        return {
+            "candidates_created": 0,
+            "issues": [{"type": "agent_error", "error": str(exc)}],
+            "format_evidence": format_evidence,
+        }
 
     try:
-        candidates = _parse_architecture_candidates(output)
+        candidates = _parse_architecture_candidates(output, format_evidence)
     except Exception as exc:
         manager.fail_phase(Phase.ARCHITECTURE_PROPOSAL, error=f"Failed to parse output: {exc}")
-        return {"candidates_created": 0, "issues": [{"type": "parse_error", "error": str(exc)}]}
+        return {
+            "candidates_created": 0,
+            "issues": [{"type": "parse_error", "error": str(exc)}],
+            "format_evidence": format_evidence,
+        }
 
     if not candidates:
         manager.fail_phase(
             Phase.ARCHITECTURE_PROPOSAL, error="No architecture candidates returned."
         )
-        return {"candidates_created": 0, "issues": [{"type": "no_candidates"}]}
+        return {
+            "candidates_created": 0,
+            "issues": [{"type": "no_candidates"}],
+            "format_evidence": format_evidence,
+        }
 
     candidates_dir = manager.structure.architecture_dir / "candidates"
     candidates_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +117,11 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
     outputs = {"candidates_count": len(candidates)}
     manager.complete_phase(Phase.ARCHITECTURE_PROPOSAL, outputs=outputs)
 
-    return {"candidates_created": len(candidates), "issues": []}
+    return {
+        "candidates_created": len(candidates),
+        "issues": [],
+        "format_evidence": format_evidence,
+    }
 
 
 def select_architecture(run_id: str) -> dict[str, Any]:
@@ -114,16 +135,17 @@ def select_architecture(run_id: str) -> dict[str, Any]:
         raise RuntimeError("Architecture proposal must be completed before selection.")
 
     manager.start_phase(Phase.ARCHITECTURE_SELECTION)
+    format_evidence: list[dict[str, Any]] = []
 
     candidates_dir = manager.structure.architecture_dir / "candidates"
     if not candidates_dir.exists():
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error="No candidates directory found.")
-        return {"selected_arch_id": None, "rejected_count": 0}
+        return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     candidate_files = sorted(candidates_dir.glob("arch_*.md"))
     if not candidate_files:
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error="No candidate files found.")
-        return {"selected_arch_id": None, "rejected_count": 0}
+        return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     candidates: dict[str, str] = {}
     for candidate_path in candidate_files:
@@ -145,25 +167,25 @@ def select_architecture(run_id: str) -> dict[str, Any]:
         )
     except RuntimeError as exc:
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error=f"Agent execution failed: {exc}")
-        return {"selected_arch_id": None, "rejected_count": 0}
+        return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     try:
-        selection = _parse_architecture_selection(output)
+        selection = _parse_architecture_selection(output, format_evidence)
     except Exception as exc:
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error=f"Failed to parse output: {exc}")
-        return {"selected_arch_id": None, "rejected_count": 0}
+        return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     selected_arch_id = selection.get("selected_arch_id")
     if selected_arch_id is None:
         manager.fail_phase(Phase.ARCHITECTURE_SELECTION, error="No architecture selected.")
-        return {"selected_arch_id": None, "rejected_count": 0}
+        return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     if selected_arch_id not in candidates:
         manager.fail_phase(
             Phase.ARCHITECTURE_SELECTION,
             error=f"Selected architecture {selected_arch_id} not found in candidates.",
         )
-        return {"selected_arch_id": None, "rejected_count": 0}
+        return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     rationale = str(selection.get("rationale", "")).strip()
     rationale = strip_invalid_file_pointers(
@@ -178,7 +200,7 @@ def select_architecture(run_id: str) -> dict[str, Any]:
 
         libraries = manager.get_all_libraries_recursive()
         try:
-            repaired_rationale = repair_artifact(
+            repaired_rationale, repair_evidence = repair_artifact(
                 output=rationale,
                 errors=issues,
                 allowlists={
@@ -189,6 +211,7 @@ def select_architecture(run_id: str) -> dict[str, Any]:
                 model_override=get_repair_model(),
                 manager=manager,
             )
+            format_evidence.extend(repair_evidence)
             repaired_issues = _validate_architecture_citations(repaired_rationale, manager)
             if not repaired_issues:
                 rationale = repaired_rationale
@@ -219,7 +242,11 @@ def select_architecture(run_id: str) -> dict[str, Any]:
             error=f"Architecture selection citation validation failed ({len(issues)} issue(s)).",
         )
         rejected = selection.get("rejected_architectures", [])
-        return {"selected_arch_id": selected_arch_id, "rejected_count": len(rejected)}
+        return {
+            "selected_arch_id": selected_arch_id,
+            "rejected_count": len(rejected),
+            "format_evidence": format_evidence,
+        }
 
     selected_path = manager.structure.architecture_dir / "selected.md"
     selected_path.write_text(
@@ -234,7 +261,11 @@ def select_architecture(run_id: str) -> dict[str, Any]:
     manager.complete_phase(Phase.ARCHITECTURE_SELECTION, outputs=outputs)
 
     rejected = selection.get("rejected_architectures", [])
-    return {"selected_arch_id": selected_arch_id, "rejected_count": len(rejected)}
+    return {
+        "selected_arch_id": selected_arch_id,
+        "rejected_count": len(rejected),
+        "format_evidence": format_evidence,
+    }
 
 
 def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
@@ -248,11 +279,17 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
         raise RuntimeError("Architecture selection must be completed before mapping.")
 
     manager.start_phase(Phase.ARCHITECTURE_MAPPING)
+    format_evidence: list[dict[str, Any]] = []
 
     selected_path = manager.structure.architecture_dir / "selected.md"
     if not selected_path.exists():
         manager.fail_phase(Phase.ARCHITECTURE_MAPPING, error="Selected architecture not found.")
-        return {"libraries_mapped": 0, "unmapped_libraries": [], "issues": []}
+        return {
+            "libraries_mapped": 0,
+            "unmapped_libraries": [],
+            "issues": [],
+            "format_evidence": format_evidence,
+        }
 
     selected_content = selected_path.read_text(encoding="utf-8")
 
@@ -307,7 +344,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
 
         libraries = manager.get_all_libraries_recursive()
         try:
-            repaired_output = repair_artifact(
+            repaired_output, repair_evidence = repair_artifact(
                 output=formatted_output,
                 errors=citation_issues,
                 allowlists={
@@ -318,6 +355,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
                 model_override=get_repair_model(),
                 manager=manager,
             )
+            format_evidence.extend(repair_evidence)
             repaired_citation_issues = _validate_architecture_citations(repaired_output, manager)
             if not repaired_citation_issues:
                 formatted_output = repaired_output
@@ -347,6 +385,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
             "libraries_mapped": len(mapped_libs),
             "unmapped_libraries": unmapped,
             "issues": issues,
+            "format_evidence": format_evidence,
         }
 
     mapping_path = manager.structure.architecture_dir / "mapping.md"
@@ -362,11 +401,14 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
         "libraries_mapped": len(mapped_libs),
         "unmapped_libraries": unmapped,
         "issues": issues,
+        "format_evidence": format_evidence,
     }
 
 
 def _extract_architecture_briefs(
-    libraries: dict[str, Path], manager: WorkspaceManager
+    libraries: dict[str, Path],
+    manager: WorkspaceManager,
+    format_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Extract architecture briefs from all libraries in parallel."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -390,7 +432,7 @@ def _extract_architecture_briefs(
             prompt=prompt,
             workspace=manager.workspace_path,
         )
-        brief = parse_architecture_brief_output(output)
+        brief = parse_architecture_brief_output(output, format_evidence)
         _validate_architecture_brief(brief, lib_id)
         return lib_id, brief
 
@@ -536,15 +578,19 @@ def _format_brief_entry(entry: dict[str, Any]) -> str:
     return content.strip()
 
 
-def _parse_architecture_candidates(output: str) -> list[dict[str, Any]]:
+def _parse_architecture_candidates(
+    output: str, format_evidence: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
     payload = _extract_json_payload(output)
-    candidates = parse_architecture_proposal(payload)
+    candidates = parse_architecture_proposal(payload, format_evidence)
     return [asdict(candidate) for candidate in candidates]
 
 
-def _parse_architecture_selection(output: str) -> dict[str, Any]:
+def _parse_architecture_selection(
+    output: str, format_evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     payload = _extract_json_payload(output)
-    return parse_architecture_selection(payload)
+    return parse_architecture_selection(payload, format_evidence)
 
 
 def _validate_architecture_citations(

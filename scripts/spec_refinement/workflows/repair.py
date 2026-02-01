@@ -77,11 +77,12 @@ def repair_artifact(
     artifact_type: ArtifactType,
     model_override: str,
     manager: WorkspaceManager,
-) -> str:
+) -> tuple[str, list[dict[str, Any]]]:
     """Attempt to repair a non-compliant artifact using a specialized repair agent."""
+    evidence_records: list[dict[str, Any]] = []
     if not errors:
         logger.info("Repair skipped; no validation errors (artifact_type=%s).", artifact_type.value)
-        return output
+        return output, evidence_records
     prompt = _build_repair_prompt(
         output=output,
         errors=errors,
@@ -122,7 +123,19 @@ def repair_artifact(
         selection.model_name,
         latency_ms,
     )
-    return repaired
+    evidence_records.append(
+        {
+            "category": "format",
+            "type": "repair_agent_invoked",
+            "details": {
+                "artifact_type": artifact_type.value,
+                "error_count": len(errors),
+                "model_used": selection.model_name,
+                "latency_ms": latency_ms,
+            },
+        }
+    )
+    return repaired, evidence_records
 
 
 def get_repair_model() -> str:

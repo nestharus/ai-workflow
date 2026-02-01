@@ -706,7 +706,7 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
                 from .repair import ArtifactType, get_repair_model, repair_artifact
 
                 try:
-                    repaired_output = repair_artifact(
+                    repaired_output, _ = repair_artifact(
                         output=str(output),
                         errors=citation_issues,
                         allowlists={

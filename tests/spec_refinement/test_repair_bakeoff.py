@@ -52,12 +52,15 @@ def test_model_runner(monkeypatch, tmp_path: Path) -> None:
     )
     bakeoff._index_fixtures([fixture])
 
-    def _fake_repair_artifact(**_kwargs: object) -> str:
+    def _fake_repair_artifact(**_kwargs: object) -> tuple[str, list[dict[str, object]]]:
         return (
-            "# File Summary: F0001\n"
-            "File ID: F0001\n\n"
-            "## Algorithms\n"
-            "- Algo A | Does X | Evidence: [F0001::INTRO]\n"
+            (
+                "# File Summary: F0001\n"
+                "File ID: F0001\n\n"
+                "## Algorithms\n"
+                "- Algo A | Does X | Evidence: [F0001::INTRO]\n"
+            ),
+            [],
         )
 
     monkeypatch.setattr(bakeoff, "repair_artifact", _fake_repair_artifact)

@@ -88,6 +88,9 @@ class StrategyResult:
     # Whether strategy recommends re-running (iterative strategies)
     should_repeat: bool = False
 
+    # Structured evidence records (category/type/details dicts)
+    evidence_records: list[dict[str, Any]] = field(default_factory=list)
+
 
 class Strategy(ABC):
     """Base class for all strategies.

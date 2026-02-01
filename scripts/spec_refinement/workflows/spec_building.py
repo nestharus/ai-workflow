@@ -821,6 +821,7 @@ def _build_library_spec(
     lib_id = lib_dir.name
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
     iterations = 0
     converged = False
 
@@ -967,7 +968,7 @@ def _build_library_spec(
             output_text = output
 
             try:
-                patch_payload = parse_spec_patch_output(output)
+                patch_payload = parse_spec_patch_output(output, format_evidence)
                 patch_json = json.dumps(
                     {
                         "operations": patch_payload.get("patches", []),
@@ -975,7 +976,7 @@ def _build_library_spec(
                         "file_id": patch_payload.get("file_id", "unknown"),
                     }
                 )
-                patch_set = parse_patch_json(patch_json)
+                patch_set = parse_patch_json(patch_json, format_evidence)
             except Exception as exc:
                 errors.append(
                     {
@@ -1035,7 +1036,7 @@ def _build_library_spec(
                 from .repair import ArtifactType, get_repair_model, repair_artifact
 
                 try:
-                    repaired_output = repair_artifact(
+                    repaired_output, repair_evidence = repair_artifact(
                         output=output_text,
                         errors=citation_issues,
                         allowlists={
@@ -1046,7 +1047,8 @@ def _build_library_spec(
                         model_override=get_repair_model(),
                         manager=manager,
                     )
-                    repaired_patch_set = parse_patch_json(repaired_output)
+                    format_evidence.extend(repair_evidence)
+                    repaired_patch_set = parse_patch_json(repaired_output, format_evidence)
                     repaired_ops = []
                     for operation in repaired_patch_set.operations:
                         op_errors = validate_patch_operation(operation, VALID_SPEC_SECTIONS)
@@ -1159,7 +1161,7 @@ def _build_library_spec(
                 continue
 
             try:
-                data = parse_gap_judge_output(output)
+                data = parse_gap_judge_output(output, format_evidence)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {
@@ -1204,7 +1206,7 @@ def _build_library_spec(
             )
         else:
             try:
-                audit_data = parse_gap_judge_output(audit_output)
+                audit_data = parse_gap_judge_output(audit_output, format_evidence)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {
@@ -1276,6 +1278,7 @@ def _build_library_spec(
         "lib_id": lib_id,
         "errors": errors,
         "issues": issues,
+        "format_evidence": format_evidence,
         "iterations": iterations,
         "converged": converged,
         "failed": not converged and bool(existing_gaps),
@@ -1322,6 +1325,7 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
     total_prompt_size_new = 0
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
     failed_libraries = 0
     coverage_ratios: list[float] = []
     coverage_by_library: dict[str, dict[str, Any]] = {}
@@ -1335,6 +1339,7 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
         total_prompt_size_new += result.get("prompt_size_new", 0)
         errors.extend(result.get("errors", []))
         issues.extend(result.get("issues", []))
+        format_evidence.extend(result.get("format_evidence", []))
         metrics = result.get("coverage_metrics")
         if isinstance(metrics, dict) and metrics:
             coverage_by_library[lib_dir.name] = metrics
@@ -1391,6 +1396,7 @@ def build_specs(run_id: str, max_iterations: int = MAX_ITERATIONS_DEFAULT) -> di
         "converged_count": converged_count,
         "errors": errors,
         "issues": issues,
+        "format_evidence": format_evidence,
         "outputs": outputs,
         "coverage_metrics": coverage_by_library,
         "total_coverage_ratio": avg_convergence_ratio,

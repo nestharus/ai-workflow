@@ -65,7 +65,7 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
         "scripts.spec_refinement.workflows.repair.run_agent",
         return_value="fixed",
     ) as mock_run:
-        result = repair_artifact(
+        repaired, evidence = repair_artifact(
             output="bad output",
             errors=errors,
             allowlists={"file_ids": ["F0001"]},
@@ -74,7 +74,8 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
             manager=manager,
         )
 
-    assert result == "fixed"
+    assert repaired == "fixed"
+    assert evidence and evidence[0]["type"] == "repair_agent_invoked"
     assert mock_run.call_args.kwargs["agent_name"] == "repair-summary"
     assert mock_run.call_args.kwargs["extra_env"]["REPAIR_MODEL"] == get_repair_model()
     prompt = mock_run.call_args.kwargs["prompt"]
@@ -88,7 +89,7 @@ def test_repair_artifact_skips_when_no_errors() -> None:
     manager = _DummyManager(Path("/workspace"))
 
     with patch("scripts.spec_refinement.workflows.repair.run_agent") as mock_run:
-        result = repair_artifact(
+        repaired, evidence = repair_artifact(
             output="ok",
             errors=[],
             allowlists={},
@@ -97,7 +98,8 @@ def test_repair_artifact_skips_when_no_errors() -> None:
             manager=manager,
         )
 
-    assert result == "ok"
+    assert repaired == "ok"
+    assert evidence == []
     mock_run.assert_not_called()
 
 

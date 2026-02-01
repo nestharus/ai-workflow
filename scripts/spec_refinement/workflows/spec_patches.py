@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .formats import EVIDENCE_POINTER_RE, _extract_json_payload
+from .formats import EVIDENCE_POINTER_RE, _extract_json_payload, _record_json_extraction_evidence
 from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
@@ -121,16 +121,19 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
     return errors
 
 
-def parse_patch_json(json_str: str) -> SpecPatchSet:
+def parse_patch_json(json_str: str, evidence: list[dict[str, Any]] | None = None) -> SpecPatchSet:
     """Parse patch JSON into a structured SpecPatchSet.
 
     Args:
         json_str: JSON string containing patch operations.
+        evidence: Optional list to record extraction evidence.
 
     Returns:
         Parsed SpecPatchSet with lib_id, file_id, and operations.
     """
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(json_str, extracted, evidence, location="parse_patch_json")
+    data = json.loads(extracted)
     if isinstance(data, dict):
         operations_data = data.get("operations")
         if operations_data is None:

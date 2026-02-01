@@ -151,6 +151,7 @@ def label_file_to_libraries(
     """Label a single file summary into candidate libraries."""
     summary = summary_path.read_text(encoding="utf-8")
     prompt = _build_label_prompt(file_id, summary)
+    format_evidence: list[dict[str, Any]] = []
 
     try:
         output = run_agent(
@@ -177,7 +178,7 @@ def label_file_to_libraries(
 
     if issues:
         try:
-            repaired = repair_artifact(
+            repaired, repair_evidence = repair_artifact(
                 output=output_text,
                 errors=issues,
                 allowlists={
@@ -188,7 +189,8 @@ def label_file_to_libraries(
                 model_override=get_repair_model(),
                 manager=manager,
             )
-            repaired_data = parse_library_labeler_output(repaired)
+            format_evidence.extend(repair_evidence)
+            repaired_data = parse_library_labeler_output(repaired, format_evidence)
             output_text = repaired
             data = repaired_data
             issues = []
@@ -214,6 +216,7 @@ def label_file_to_libraries(
         "uncertain_labels": uncertain_labels,
         "raw_output": output_text,
         "issues": issues,
+        "format_evidence": format_evidence,
     }
 
 
@@ -228,6 +231,7 @@ def label_all_files(manager: WorkspaceManager) -> dict[str, Any]:
 
     file_labels: dict[str, dict[str, Any]] = {}
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
 
     if summary_files:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -242,6 +246,7 @@ def label_all_files(manager: WorkspaceManager) -> dict[str, Any]:
             }
             for future in as_completed(futures):
                 result = future.result()
+                format_evidence.extend(result.get("format_evidence", []))
                 file_id = result.get("file_id")
                 if not file_id:
                     continue
@@ -271,6 +276,7 @@ def label_all_files(manager: WorkspaceManager) -> dict[str, Any]:
         "total_labels": total_labels,
         "uncertain_count": uncertain_count,
         "issues": issues,
+        "format_evidence": format_evidence,
     }
 
 
@@ -667,13 +673,14 @@ def generate_library_charter(
     )
 
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
     issues.extend(_validate_library_ids([charter]))
     issues.extend(_validate_evidence_sources([charter], manager))
     issues.extend(_validate_overlap_resolutions([charter]))
 
     if issues:
         try:
-            repaired_output = repair_artifact(
+            repaired_output, repair_evidence = repair_artifact(
                 output=output,
                 errors=issues,
                 allowlists={
@@ -684,6 +691,7 @@ def generate_library_charter(
                 model_override=get_repair_model(),
                 manager=manager,
             )
+            format_evidence.extend(repair_evidence)
             repaired_charters, _ = parse_library_synthesis(repaired_output)
             if repaired_charters:
                 repaired_charter = next(
@@ -709,21 +717,29 @@ def generate_library_charter(
         "lib_id": lib_id,
         "charter": charter,
         "issues": issues,
+        "format_evidence": format_evidence,
     }
 
 
 class CharterResults(list[LibraryCharter]):
     """List of generated charters with associated issues."""
 
-    def __init__(self, charters: list[LibraryCharter], issues: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        charters: list[LibraryCharter],
+        issues: list[dict[str, Any]],
+        format_evidence: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Initialize charters list and attach issues.
 
         Args:
             charters: List of library charters.
             issues: List of issues from charter generation.
+            format_evidence: Evidence records from format repair/extraction.
         """
         super().__init__(charters)
         self.issues = issues
+        self.format_evidence = format_evidence or []
 
 
 def generate_all_charters(
@@ -744,6 +760,7 @@ def generate_all_charters(
     )
 
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
     charters: list[LibraryCharter] = []
 
     if refined_labels:
@@ -763,6 +780,7 @@ def generate_all_charters(
                 lib_id = result.get("lib_id", "")
                 if result.get("issues"):
                     issues.extend(result["issues"])
+                format_evidence.extend(result.get("format_evidence", []))
                 charter = result.get("charter")
                 if isinstance(charter, LibraryCharter):
                     charters.append(charter)
@@ -773,7 +791,7 @@ def generate_all_charters(
     if refined_labels:
         tracker.finish()
 
-    return CharterResults(charters, issues)
+    return CharterResults(charters, issues, format_evidence)
 
 
 def detect_overlaps(charters: list[LibraryCharter]) -> list[tuple[str, str, float]]:

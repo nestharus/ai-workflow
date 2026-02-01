@@ -666,7 +666,7 @@ def run_repair_with_model(
 
     start = time.perf_counter()
     try:
-        repaired_output = repair_artifact(
+        repaired_output, _ = repair_artifact(
             output=fixture.invalid_output,
             errors=errors,
             allowlists=fixture.allowlists,

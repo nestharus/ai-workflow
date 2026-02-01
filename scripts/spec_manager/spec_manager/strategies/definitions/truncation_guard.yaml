@@ -1,0 +1,14 @@
+name: truncation_guard
+version: "1.0"
+purpose: "Enforce max content length to prevent truncation in downstream processing"
+risk_addressed: "Content truncation causing information loss in LLM processing"
+phases:
+  - cleaning
+when_conditions:
+  - "unit content exceeds max_unit_content_length"
+risk_category: "truncation"
+tools_used: []
+implementation_class: "spec_manager.strategies.implementations.truncation_guard.TruncationGuardStrategy"
+example:
+  input: "Very long content exceeding 10000 chars..."
+  output: "Truncated content at 10000 chars"

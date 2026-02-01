@@ -260,16 +260,23 @@ class WorkflowOrchestrator:
         self.strategy_registry.load_from_directory(
             Path(__file__).parent.parent / "strategies" / "definitions"
         )
+        workspace_definitions = self.workspace / "strategies" / "definitions"
+        workspace_definitions.mkdir(parents=True, exist_ok=True)
+        self.strategy_registry.load_from_directory(workspace_definitions)
         self._register_strategy_tools()
 
     def _register_strategy_tools(self) -> None:
         """Register tools that strategies can use."""
+        from scripts.spec_refinement.workflows.formats import _extract_json_payload
+        from scripts.spec_refinement.workflows.repair import repair_artifact
 
         def simple_splitter(text: str) -> list[str]:
             sentences = re.split(r"(?<=[.!?])\s+", text)
             return [s.strip() for s in sentences if s.strip()]
 
         self.strategy_registry.register_tool("spacy_splitter", simple_splitter)
+        self.strategy_registry.register_tool("json_extractor", _extract_json_payload)
+        self.strategy_registry.register_tool("repair_agent", repair_artifact)
 
         def analyze_context(text: str, patch_id: str) -> dict[str, Any]:
             return {
@@ -580,6 +587,8 @@ class WorkflowOrchestrator:
                         },
                         config={
                             "pass_num": pass_num,
+                            "max_unit_content_length": self.config.max_unit_content_length,
+                            "workspace_path": str(self.workspace),
                             "risk_thresholds": {
                                 "compound_loss": self.config.max_remainder_ratio,
                                 "content_loss": self.config.max_remainder_ratio,
@@ -633,13 +642,33 @@ class WorkflowOrchestrator:
                                 detector = "strategy:format_repair"
                             else:
                                 detector = f"strategy:{strategy.name}"
+                            # Parse severity prefix from issue string
+                            issue_severity = Severity.WARNING
+                            if issue.startswith("ERROR:"):
+                                issue_severity = Severity.ERROR
+                            elif issue.startswith("WARNING:"):
+                                issue_severity = Severity.WARNING
                             strategy_evidence.append(
                                 WorkflowEvidence(
-                                    severity=Severity.WARNING,
+                                    severity=issue_severity,
                                     message=issue,
                                     location=strategy.name,
                                     detector=detector,
                                     details={},
+                                )
+                            )
+
+                        for rec in strategy_result.evidence_records:
+                            strategy_evidence.append(
+                                WorkflowEvidence(
+                                    severity=rec.get("severity", Severity.INFO),
+                                    message=(
+                                        f"{rec.get('category', 'unknown')}:"
+                                        f"{rec.get('type', 'unknown')}"
+                                    ),
+                                    location=strategy.name,
+                                    detector=f"strategy:{strategy.name}",
+                                    details=rec.get("details", {}),
                                 )
                             )
 
@@ -649,9 +678,6 @@ class WorkflowOrchestrator:
 
                     # Merge strategy evidence into main evidence
                     evidence.extend(strategy_evidence)
-
-                    # Apply truncation guard after strategies
-                    self._apply_truncation_guard(evidence)
 
                     # Save selected strategies for this pass
                     if selected_strategy_names:
@@ -825,32 +851,6 @@ class WorkflowOrchestrator:
             json.dumps(context_index, indent=2),
             encoding="utf-8",
         )
-
-    def _apply_truncation_guard(self, evidence: list[WorkflowEvidence]) -> None:
-        """Check unit content lengths and emit evidence when truncation caps are applied."""
-        cap = self.config.max_unit_content_length
-        for unit in self.state.units:
-            original_length = len(unit.content)
-            if original_length > cap:
-                unit.content = unit.content[:cap]
-                severity = Severity.ERROR if original_length > cap * 2 else Severity.WARNING
-                evidence.append(
-                    WorkflowEvidence(
-                        severity=severity,
-                        message=(
-                            f"Content truncated from {original_length} to {cap} chars"
-                            f" for unit {unit.id}"
-                        ),
-                        location=unit.id,
-                        detector="strategy:truncation_guard",
-                        details={
-                            "unit_id": unit.id,
-                            "original_length": original_length,
-                            "truncated_length": cap,
-                            "chars_removed": original_length - cap,
-                        },
-                    )
-                )
 
     def _collect_evidence(self, projection_path: Path | None) -> list[WorkflowEvidence]:
         """Collect gap evidence from a path."""

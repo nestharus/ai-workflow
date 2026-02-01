@@ -13,6 +13,7 @@ from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 from .agent_utils import run_agent
 from .formats import (
     _extract_json_payload,
+    _record_json_extraction_evidence,
     parse_evidence_spotcheck_output,
 )
 from .progress import ProgressTracker
@@ -60,6 +61,7 @@ def _compute_pair_priority(
     charter_content: str,
     summary_content: str,
     manager: WorkspaceManager,
+    format_evidence: list[dict[str, Any]] | None = None,
 ) -> tuple[float, str]:
     """Compute priority score for a file-library pair.
 
@@ -142,7 +144,14 @@ def _compute_pair_priority(
         return 0.5, "classifier_uncertain"
 
     try:
-        json_payload = _extract_json_payload(str(output))
+        output_text = str(output)
+        json_payload = _extract_json_payload(output_text)
+        _record_json_extraction_evidence(
+            output_text,
+            json_payload,
+            format_evidence,
+            location="_compute_pair_priority",
+        )
         data = json.loads(json_payload)
     except Exception:
         return 0.5, "classifier_uncertain"
@@ -463,6 +472,7 @@ def _process_pair(
     rationale: str,
 ) -> dict[str, Any]:
     prompt = _build_evidence_prompt(lib_id, charter_content, file_id, summary_content, manager)
+    format_evidence: list[dict[str, Any]] = []
 
     try:
         output = run_agent(
@@ -476,7 +486,7 @@ def _process_pair(
     try:
         from .formats import parse_evidence_mapper_output
 
-        data = parse_evidence_mapper_output(output)
+        data = parse_evidence_mapper_output(output, format_evidence)
     except Exception as exc:  # pragma: no cover - defensive logging
         return {
             "lib_id": lib_id,
@@ -490,6 +500,7 @@ def _process_pair(
         "data": data,
         "priority": priority,
         "rationale": rationale,
+        "format_evidence": format_evidence,
     }
 
 
@@ -518,6 +529,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
     pairs: list[tuple[str, str, str, str, float, str]] = []
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
     per_lib_errors: dict[str, int] = {}
 
     # Load Phase 2A labeler output for priority ranking
@@ -557,6 +569,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                 charter_content=charter_content,
                 summary_content=raw_summary,
                 manager=manager,
+                format_evidence=format_evidence,
             )
 
             # Only skip if the classifier rejected the pair; spotcheck_evidence
@@ -602,6 +615,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             for future in as_completed(futures):
                 result = future.result()
                 lib_id = result.get("lib_id", "unknown")
+                format_evidence.extend(result.get("format_evidence", []))
                 if "error" in result:
                     errors.append(result)
                     per_lib_errors[lib_id] = per_lib_errors.get(lib_id, 0) + 1
@@ -654,7 +668,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                             if isinstance(section, dict)
                             and isinstance(section.get("section_id"), str)
                         ]
-                    repaired_json = repair_artifact(
+                    repaired_json, repair_evidence = repair_artifact(
                         output=entry_json,
                         errors=entry_issues,
                         allowlists={
@@ -665,6 +679,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                         model_override=get_repair_model(),
                         manager=manager,
                     )
+                    format_evidence.extend(repair_evidence)
                     repaired_entry = json.loads(repaired_json)
                     repaired_issues, repaired_normalized = _validate_evidence_entry(
                         repaired_entry,
@@ -719,6 +734,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
         "evidence_sources_added": evidence_sources_added,
         "errors": errors,
         "issues": issues,
+        "format_evidence": format_evidence,
         "outputs": outputs,
     }
 
@@ -740,6 +756,7 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
 
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
     missing_sections_added = 0
     libraries_checked = 0
 
@@ -834,7 +851,7 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
                 continue
 
             try:
-                data = parse_evidence_spotcheck_output(output)
+                data = parse_evidence_spotcheck_output(output, format_evidence)
             except Exception as exc:  # pragma: no cover - defensive logging
                 errors.append(
                     {
@@ -933,4 +950,5 @@ def spotcheck_evidence(run_id: str, lib_ids: list[str] | None = None) -> dict[st
         "missing_sections_added": missing_sections_added,
         "errors": errors,
         "issues": issues,
+        "format_evidence": format_evidence,
     }

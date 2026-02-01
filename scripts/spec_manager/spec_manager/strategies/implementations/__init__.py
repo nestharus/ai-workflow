@@ -6,6 +6,9 @@ from spec_manager.strategies.implementations.coverage_verification import (
 from spec_manager.strategies.implementations.entity_resolution import (
     EntityResolutionStrategy,
 )
+from spec_manager.strategies.implementations.format_repair import (
+    FormatRepairStrategy,
+)
 from spec_manager.strategies.implementations.line_membership import (
     LineMembershipStrategy,
 )
@@ -22,6 +25,9 @@ from spec_manager.strategies.implementations.low_confidence_remainder import (
 from spec_manager.strategies.implementations.sentence_decomposition import (
     SentenceDecompositionStrategy,
 )
+from spec_manager.strategies.implementations.truncation_guard import (
+    TruncationGuardStrategy,
+)
 from spec_manager.strategies.implementations.unitizers import (
     ClauseUnitizer,
     LineUnitizer,
@@ -33,24 +39,23 @@ from spec_manager.strategies.implementations.unitizers import (
 )
 
 __all__ = [
-    # Strategies
+    "ClauseUnitizer",
     "CoverageVerificationStrategy",
     "EntityResolutionStrategy",
-    "LineMembershipStrategy",
-    "LowConfidenceRemainderStrategy",
-    "SentenceDecompositionStrategy",
-    # LLM Inference
+    "FormatRepairStrategy",
     "InferenceResult",
+    "LineMembershipStrategy",
+    "LineUnitizer",
+    "LLMUnitizer",
+    "LowConfidenceRemainderStrategy",
     "ProseFragmentEvidence",
     "ProseFragmentInferenceDetector",
     "ProseFragmentReductionStrategy",
-    "VagueReferenceResolver",
-    # Unitizers
-    "ClauseUnitizer",
-    "LLMUnitizer",
-    "LineUnitizer",
     "SectionUnitizer",
+    "SentenceDecompositionStrategy",
     "SentenceUnitizer",
+    "TruncationGuardStrategy",
     "UnitizationSelector",
     "Unitizer",
+    "VagueReferenceResolver",
 ]

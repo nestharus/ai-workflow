@@ -98,7 +98,7 @@ def test_label_file_to_libraries_repairs_invalid_json(fs, monkeypatch) -> None:
         ),
         patch(
             "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
-            return_value=json.dumps(repaired_payload),
+            return_value=(json.dumps(repaired_payload), []),
         ) as mock_repair,
     ):
         result = label_file_to_libraries("F0001", summary_path, manager)
@@ -173,7 +173,7 @@ def test_generate_library_charter_uses_repair_gate(fs, monkeypatch) -> None:
         ),
         patch(
             "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
-            return_value=_library_output("INTRO"),
+            return_value=(_library_output("INTRO"), []),
         ) as mock_repair,
     ):
         result = generate_library_charter(lib_def, file_labels, summaries, manager)

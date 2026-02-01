@@ -226,6 +226,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         }
 
     issues = _validate_evidence_pointers(output, manager, file_id)
+    format_evidence: list[dict[str, Any]] = []
     if issues:
         from .repair import ArtifactType, get_repair_model, repair_artifact
 
@@ -244,7 +245,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
                 relpath = entry.get("relpath") if isinstance(entry, dict) else entry
                 if isinstance(relpath, str) and relpath:
                     file_refs.append(f"spec_snapshot/{relpath}")
-            repaired_output = repair_artifact(
+            repaired_output, repair_evidence = repair_artifact(
                 output=output,
                 errors=issues,
                 allowlists={
@@ -255,6 +256,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
                 model_override=get_repair_model(),
                 manager=manager,
             )
+            format_evidence.extend(repair_evidence)
             repaired_issues = _validate_evidence_pointers(repaired_output, manager, file_id)
             if not repaired_issues:
                 output = repaired_output
@@ -274,6 +276,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         "output_path": summary_path,
         "summary": parsed_summary,
         "issues": issues,
+        "format_evidence": format_evidence,
     }
 
 
@@ -303,6 +306,7 @@ def summarize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
     successes = 0
     errors: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    format_evidence: list[dict[str, Any]] = []
 
     if parallel and total_files > 0:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -312,6 +316,7 @@ def summarize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
             }
             for future in as_completed(futures):
                 result = future.result()
+                format_evidence.extend(result.get("format_evidence", []))
                 if "error" in result:
                     errors.append(result)
                 else:
@@ -321,6 +326,7 @@ def summarize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
     else:
         for file_id, file_path in files.items():
             result = _process_file(file_id, file_path, manager)
+            format_evidence.extend(result.get("format_evidence", []))
             if "error" in result:
                 errors.append(result)
             else:
@@ -346,5 +352,6 @@ def summarize_all(run_id: str, parallel: bool = True) -> dict[str, Any]:
         "files_processed": total_files,
         "errors": errors,
         "issues": issues,
+        "format_evidence": format_evidence,
         "outputs": outputs,
     }

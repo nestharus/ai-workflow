@@ -448,7 +448,9 @@ def parse_library_synthesis(content: str) -> tuple[list[LibraryCharter], str]:
     return charters, index_content
 
 
-def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
+def parse_evidence_mapper_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse glm-library-evidence-mapper JSON output."""
     from pydantic import ValidationError
 
@@ -462,7 +464,14 @@ def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_evidence_mapper_output",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = ["file_id", "relevant_sections", "confidence", "rationale"]
@@ -473,7 +482,9 @@ def parse_evidence_mapper_output(json_str: str) -> dict[str, Any]:
     return data
 
 
-def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
+def parse_gap_judge_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse chatgpt-library-spec-gap-judge JSON output."""
     from pydantic import ValidationError
 
@@ -487,7 +498,14 @@ def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_gap_judge_output",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = ["gaps", "total_gaps", "file_id"]
@@ -497,11 +515,20 @@ def parse_gap_judge_output(json_str: str) -> dict[str, Any]:
     return data
 
 
-def parse_evidence_spotcheck_output(json_str: str) -> dict[str, Any]:
+def parse_evidence_spotcheck_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse chatgpt-evidence-gap-judge JSON output."""
     import json
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_evidence_spotcheck_output",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = ["missing_sections", "scan_complete"]
@@ -509,6 +536,49 @@ def parse_evidence_spotcheck_output(json_str: str) -> dict[str, Any]:
         if field not in data:
             raise ValueError(f"Missing required field: {field}")
     return data
+
+
+def _infer_extraction_method(original: str) -> str:
+    stripped = original.lstrip()
+    if stripped.startswith("```"):
+        return "code_fence_removal"
+    if "[agent-exec]" in original:
+        return "preamble_stripping"
+    first_obj = stripped.find("{")
+    first_list = stripped.find("[")
+    starts = [idx for idx in (first_obj, first_list) if idx != -1]
+    if starts and min(starts) > 0:
+        return "preamble_stripping"
+    return "json_extraction"
+
+
+def _record_json_extraction_evidence(
+    original: str,
+    extracted: str,
+    evidence: list[dict[str, Any]] | None,
+    *,
+    location: str,
+) -> None:
+    if evidence is None or original == extracted:
+        return
+    extraction_method = _infer_extraction_method(original)
+    evidence_type = (
+        extraction_method
+        if extraction_method in {"code_fence_removal", "preamble_stripping"}
+        else "json_extraction"
+    )
+    evidence.append(
+        {
+            "category": "format",
+            "type": evidence_type,
+            "details": {
+                "original_length": len(original),
+                "cleaned_length": len(extracted),
+                "extraction_method": extraction_method,
+                "location": location,
+            },
+        }
+    )
 
 
 def _extract_json_payload(output: str) -> str:
@@ -593,7 +663,9 @@ def _validate_architecture_candidate(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
-def parse_architecture_proposal(json_str: str) -> list[ArchitectureCandidate]:
+def parse_architecture_proposal(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> list[ArchitectureCandidate]:
     """Parse opus-architecture-proposer JSON output."""
     from pydantic import ValidationError
 
@@ -610,7 +682,14 @@ def parse_architecture_proposal(json_str: str) -> list[ArchitectureCandidate]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_architecture_proposal",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, list):
         raise TypeError("Architecture proposal must be a JSON array.")
 
@@ -642,7 +721,9 @@ def parse_architecture_proposal(json_str: str) -> list[ArchitectureCandidate]:
     return candidates
 
 
-def parse_architecture_selection(json_str: str) -> dict[str, Any]:
+def parse_architecture_selection(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse chatgpt-architecture-tradeoff-judge JSON output."""
     from pydantic import ValidationError
 
@@ -656,7 +737,14 @@ def parse_architecture_selection(json_str: str) -> dict[str, Any]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_architecture_selection",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = [
@@ -672,7 +760,9 @@ def parse_architecture_selection(json_str: str) -> dict[str, Any]:
     return data
 
 
-def parse_library_labeler_output(json_str: str) -> dict[str, Any]:
+def parse_library_labeler_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse glm-file-library-labeler JSON output."""
     from pydantic import ValidationError
 
@@ -686,7 +776,14 @@ def parse_library_labeler_output(json_str: str) -> dict[str, Any]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_library_labeler_output",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = ["file_id", "candidate_labels", "uncertain_labels"]
@@ -696,7 +793,9 @@ def parse_library_labeler_output(json_str: str) -> dict[str, Any]:
     return data
 
 
-def parse_spec_patch_output(json_str: str) -> dict[str, Any]:
+def parse_spec_patch_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse glm-library-spec-integrator JSON output."""
     from pydantic import ValidationError
 
@@ -710,7 +809,14 @@ def parse_spec_patch_output(json_str: str) -> dict[str, Any]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_spec_patch_output",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = ["file_id", "lib_id", "patches"]
@@ -720,7 +826,9 @@ def parse_spec_patch_output(json_str: str) -> dict[str, Any]:
     return data
 
 
-def parse_architecture_brief_output(json_str: str) -> dict[str, Any]:
+def parse_architecture_brief_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Parse glm-architecture-brief-extractor JSON output."""
     from pydantic import ValidationError
 
@@ -734,7 +842,14 @@ def parse_architecture_brief_output(json_str: str) -> dict[str, Any]:
             exc,
         )
 
-    data = json.loads(_extract_json_payload(json_str))
+    extracted = _extract_json_payload(json_str)
+    _record_json_extraction_evidence(
+        json_str,
+        extracted,
+        evidence,
+        location="parse_architecture_brief_output",
+    )
+    data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object.")
     required_fields = [
