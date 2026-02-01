@@ -42,6 +42,7 @@ def ingest(
     verbose: bool = False,
     compliance_threshold: float = 0.90,
     compliance_gate_mode: str = "block",
+    emit_composite: bool = False,
 ) -> dict:
     """Run the full ingest workflow on a spec folder.
 
@@ -53,6 +54,7 @@ def ingest(
         verbose: Enable verbose logging
         compliance_threshold: Format compliance score threshold (0-1)
         compliance_gate_mode: "block" or "warn" for compliance gate
+        emit_composite: Whether to emit composite.md projection
 
     Returns:
         Dict with workflow results
@@ -66,6 +68,7 @@ def ingest(
         verbose=verbose,
         compliance_threshold=compliance_threshold,
         compliance_gate_mode=compliance_gate_mode,
+        emit_composite=emit_composite,
     )
 
     orchestrator = WorkflowOrchestrator(spec_folder=Path(spec_folder), config=config)
@@ -85,25 +88,20 @@ def ingest(
 
 
 __all__ = [
-    # Entry point
+    "ContextIndex",
     "ingest",
-    # Orchestration
     "IntermediateManager",
     "PatchDependency",
     "PatchDependencyGraph",
     "ProvenanceTracker",
     "Severity",
-    "WorkflowEvidence",
-    "WorkflowOrchestrator",
-    # Units
     "TrackedUnit",
     "UnitLabels",
     "UnitStatus",
     "UnitType",
-    # Configuration
     "WorkflowConfig",
+    "WorkflowEvidence",
+    "WorkflowOrchestrator",
     "WorkflowPhase",
     "WorkflowState",
-    # Context
-    "ContextIndex",
 ]

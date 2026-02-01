@@ -453,12 +453,12 @@ class WorkflowOrchestrator:
                     self.context_index._index[term] = []
                 self.context_index._index[term].extend(locations)
 
-            # Save context index to workspace/indexes/
-            indexes_dir = self.workspace_mgr.indexes_dir
-            indexes_dir.mkdir(exist_ok=True)
-            context_index_path = indexes_dir / "context_index.json"
-            self.context_index.save(context_index_path)
-            logger.info(f"  Saved context index to {context_index_path}")
+        # Save context index (with strata from patches, originals, and manifests)
+        indexes_dir = self.workspace_mgr.indexes_dir
+        indexes_dir.mkdir(exist_ok=True)
+        context_index_path = indexes_dir / "context_index.json"
+        self.context_index.save(context_index_path)
+        logger.info(f"  Saved context index to {context_index_path}")
 
         logger.info(f"  Total units: {len(self.state.units)}")
 
@@ -758,9 +758,10 @@ class WorkflowOrchestrator:
                 pass_dir.mkdir(exist_ok=True)
 
                 # Save composite.md - THIS BECOMES THE NEXT PASS INPUT
-                composite_md = self._generate_composite_markdown(self.state.units)
-                composite_path = pass_dir / "composite.md"
-                composite_path.write_text(composite_md, encoding="utf-8")
+                if self.config.emit_composite:
+                    composite_md = self._generate_composite_markdown(self.state.units)
+                    composite_path = pass_dir / "composite.md"
+                    composite_path.write_text(composite_md, encoding="utf-8")
 
                 # Save plan.md projection for this pass
                 plan_md = self._generate_plan_projection(self.state.units)
@@ -870,15 +871,6 @@ class WorkflowOrchestrator:
         # Store projection path in state for finalize phase
         self.state.current_projection_path = current_projection_path
 
-        # Save global artifacts (context index)
-        context_index = self._build_context_index()
-        indexes_dir = self.workspace / "indexes"
-        indexes_dir.mkdir(parents=True, exist_ok=True)
-        (indexes_dir / "context_index.json").write_text(
-            json.dumps(context_index, indent=2),
-            encoding="utf-8",
-        )
-
     def _collect_evidence(self, projection_path: Path | None) -> list[WorkflowEvidence]:
         """Collect gap evidence from a path."""
         content, registry, libraries_dir = self._collect_gap_inputs(projection_path)
@@ -922,48 +914,6 @@ class WorkflowOrchestrator:
             content = target_path.read_text(encoding="utf-8")
 
         return content, registry, libraries_dir
-
-    def _build_context_index(self) -> dict[str, Any]:
-        """Build a lightweight context index from manifest artifacts."""
-        index: dict[str, Any] = {"terms": {}, "sections": {}}
-
-        terms_dir = self.spec_folder / "manifest" / "terms"
-        sections_dir = self.spec_folder / "manifest" / "sections"
-
-        if terms_dir.exists():
-            for terms_file in sorted(terms_dir.glob("*.terms.json")):
-                file_id = terms_file.stem.replace(".terms", "")
-                try:
-                    payload = json.loads(terms_file.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as exc:
-                    index["terms"][file_id] = {"error": str(exc)}
-                    continue
-                section_terms = payload.get("section_terms", [])
-                global_terms = payload.get("global_terms", [])
-                index["terms"][file_id] = {
-                    "section_terms_count": len(section_terms)
-                    if isinstance(section_terms, list)
-                    else 0,
-                    "global_terms_count": len(global_terms)
-                    if isinstance(global_terms, list)
-                    else 0,
-                }
-
-        if sections_dir.exists():
-            for sections_file in sorted(sections_dir.glob("*.sections.json")):
-                file_id = sections_file.stem.replace(".sections", "")
-                try:
-                    payload = json.loads(sections_file.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as exc:
-                    index["sections"][file_id] = {"error": str(exc)}
-                    continue
-                sections = payload.get("sections", [])
-                index["sections"][file_id] = {
-                    "section_count": len(sections) if isinstance(sections, list) else 0,
-                    "total_lines": payload.get("total_lines"),
-                }
-
-        return index
 
     def _save_selected_strategies(self, pass_num: int, strategy_names: list[str]) -> None:
         """Save selected strategies for this pass to workspace/strategies/."""
@@ -1036,7 +986,7 @@ class WorkflowOrchestrator:
         self.state.remainders = remainder_units
 
         # Persist composite artifacts as intermediate markdown
-        if self.config.save_intermediates:
+        if self.config.save_intermediates and self.config.emit_composite:
             composite_md = self._generate_composite_markdown(composited_units)
             composite_path = self.intermediate_mgr.intermediates_dir / "composite.md"
             composite_path.write_text(composite_md, encoding="utf-8")

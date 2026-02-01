@@ -117,6 +117,9 @@ class WorkflowConfig:
     max_unit_content_length: int = 50_000  # Max chars per unit before truncation guard
     require_no_critical_errors: bool = True  # Block on any critical error
 
+    # Composite projection gating
+    emit_composite: bool = False  # Only emit composite.md when explicitly requested
+
 
 @dataclass
 class WorkflowState:
