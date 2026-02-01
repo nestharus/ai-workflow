@@ -26,7 +26,11 @@ from typing import Literal
 from scripts.spec_refinement.core.gap import Gap, format_gap_table
 from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 from scripts.spec_refinement.workflows.agent_utils import run_agent
-from scripts.spec_refinement.workspace import WorkspaceManager
+from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
+
+def _phase_completed(manager: WorkspaceManager, phase: Phase) -> bool:
+    return manager.state.phases[phase.value].status == PhaseStatus.COMPLETED
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -87,10 +91,12 @@ def cmd_spec_sectionize(args: argparse.Namespace) -> int:
     if result.get("issues"):
         print(f"Validation issues: {len(result['issues'])}")
 
-    success = bool(result.get("success", False))
-    if not success or result.get("errors") or result.get("issues"):
-        if not success:
-            print("Sectionization failed.")
+    if not result.get("success", True):
+        print("Sectionization failed.")
+        return 1
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.SECTIONIZATION):
         return 1
 
     return 0
@@ -425,6 +431,11 @@ def cmd_spec_summarize(args: argparse.Namespace) -> int:
             file_id = issue.get("file_id", "unknown")
             message = issue.get("message", issue.get("type", "issue"))
             print(f"  - {file_id}: {message}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.SUMMARIZATION):
+        return 1
     return 0
 
 
@@ -475,6 +486,10 @@ def cmd_spec_synthesize(args: argparse.Namespace) -> int:
             lib_id = issue.get("lib_id", "unknown")
             message = issue.get("message", issue.get("type", "issue"))
             print(f"  - {lib_id}: {message}")
+    if not result.get("success", True):
+        return 1
+    if not _phase_completed(manager, Phase.LIBRARY_SYNTHESIS):
+        return 1
 
     return 0
 
@@ -505,6 +520,11 @@ def cmd_spec_expand_evidence(args: argparse.Namespace) -> int:
             lib_id = issue.get("lib_id", "unknown")
             message = issue.get("message", issue.get("type", "issue"))
             print(f"  - {lib_id}: {message}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.EVIDENCE_EXPANSION):
+        return 1
     return 0
 
 
@@ -573,6 +593,11 @@ def cmd_spec_build_specs(args: argparse.Namespace) -> int:
             lib_id = error.get("lib_id", "unknown")
             message = error.get("error", "error")
             print(f"  - {lib_id}: {message}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.SPEC_BUILDING):
+        return 1
     return 0
 
 
@@ -597,6 +622,11 @@ def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
             lib_id = error.get("lib_id", "unknown")
             message = error.get("error", "error")
             print(f"  - {lib_id}: {message}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.SUBLIBRARY_DETECTION):
+        return 1
     return 0
 
 
@@ -613,6 +643,11 @@ def cmd_arch_propose(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Architecture candidates created: {result['candidates_created']}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.ARCHITECTURE_PROPOSAL):
+        return 1
     return 0
 
 
@@ -630,6 +665,11 @@ def cmd_arch_select(args: argparse.Namespace) -> int:
 
     print(f"Selected architecture: {result['selected_arch_id']}")
     print(f"Rejected candidates: {result['rejected_count']}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.ARCHITECTURE_SELECTION):
+        return 1
     return 0
 
 
@@ -648,6 +688,11 @@ def cmd_arch_map(args: argparse.Namespace) -> int:
     print(f"Libraries mapped: {result['libraries_mapped']}")
     if result.get("unmapped_libraries"):
         print(f"Unmapped libraries: {result['unmapped_libraries']}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.ARCHITECTURE_MAPPING):
+        return 1
     return 0
 
 
