@@ -95,6 +95,9 @@ class WorkspaceManager:
     - discovery/: Discovery phase intermediate files
     - review/: Review phase intermediate files
     - finalization/: Finalization phase intermediate files
+    - intermediates/: Pass-based artifacts (pass_01, pass_02, ...)
+    - indexes/: Global indexes (context_index.json, etc.)
+    - strategies/: Strategy YAMLs and execution metadata
 
     Migration Log:
         When loading state.json, schema version is detected and migration events
@@ -142,7 +145,16 @@ class WorkspaceManager:
         self._workspace.mkdir(exist_ok=True)
 
         # Create subdirectories
-        for subdir in ["reports", "cleaning", "discovery", "review", "finalization"]:
+        for subdir in [
+            "reports",
+            "cleaning",
+            "discovery",
+            "review",
+            "finalization",
+            "intermediates",
+            "indexes",
+            "strategies",
+        ]:
             (self._workspace / subdir).mkdir(exist_ok=True)
 
         # Find input files (patches, plan.md, inputs/)
@@ -152,6 +164,38 @@ class WorkspaceManager:
         self._save_state()
 
         return []
+
+    def create_pass_directory(self, pass_num: int) -> Path:
+        """Create and return a pass-based intermediates directory."""
+        pass_dir = self._workspace / "intermediates" / f"pass_{pass_num:02d}"
+        pass_dir.mkdir(parents=True, exist_ok=True)
+        return pass_dir
+
+    def get_pass_directory(self, pass_num: int) -> Path:
+        """Get the path to a pass-based intermediates directory."""
+        return self._workspace / "intermediates" / f"pass_{pass_num:02d}"
+
+    def list_passes(self) -> list[int]:
+        """List existing pass numbers in intermediates."""
+        intermediates_dir = self._workspace / "intermediates"
+        if not intermediates_dir.exists():
+            return []
+
+        passes: list[int] = []
+        for path in intermediates_dir.iterdir():
+            if not path.is_dir():
+                continue
+            if not path.name.startswith("pass_"):
+                continue
+            suffix = path.name.removeprefix("pass_")
+            if suffix.isdigit():
+                passes.append(int(suffix))
+        return sorted(passes)
+
+    def get_latest_pass(self) -> int | None:
+        """Get the highest pass number in intermediates."""
+        passes = self.list_passes()
+        return max(passes) if passes else None
 
     def cleanup(self, keep_reports: bool = True) -> None:
         """Clean up the workspace.

@@ -19,6 +19,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from spec_manager.compliance.scorer import ComplianceScorer
+from spec_manager.core.data_structures import ComplianceMetrics
 from spec_manager.core.gaps import detect_gaps, format_gaps_md
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.core.sections import SectionExtractor
@@ -32,6 +34,7 @@ from spec_manager.workflow.config import (
     WorkflowState,
 )
 from spec_manager.workflow.context import ContextIndex, PatchDependencyGraph
+from spec_manager.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -59,18 +62,29 @@ class WorkflowEvidence:
     detector: str = ""
     details: dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize evidence to a dictionary."""
+        return {
+            "severity": self.severity,
+            "message": self.message,
+            "location": self.location,
+            "detector": self.detector,
+            "details": self.details,
+        }
+
 
 class IntermediateManager:
     """Manages intermediate state snapshots."""
 
     def __init__(self, workspace: Path) -> None:
+        """Initialize the intermediate manager with a workspace path."""
         self.workspace = workspace
         self.intermediates_dir = workspace / "intermediates"
         self.intermediates_dir.mkdir(parents=True, exist_ok=True)
         self._version = 0
 
     def create_snapshot(
-        self, phase: str, description: str, tracker: Any = None, **extra: Any
+        self, phase: str, description: str, tracker: ProvenanceTracker | None = None, **extra: Any
     ) -> dict[str, Any]:
         """Create a snapshot of the current state."""
         self._version += 1
@@ -126,6 +140,7 @@ class ProvenanceTracker:
     """Tracks provenance of content units."""
 
     def __init__(self) -> None:
+        """Initialize the provenance tracker."""
         self.units: list[TrackedUnit] = []
         self._id_counter = 0
 
@@ -210,11 +225,13 @@ class WorkflowOrchestrator:
     """
 
     def __init__(self, spec_folder: Path, config: WorkflowConfig | None = None) -> None:
+        """Initialize the workflow orchestrator with a spec folder and optional config."""
         self.spec_folder = Path(spec_folder)
         self.config = config or WorkflowConfig()
 
         # Initialize components
-        self.workspace = self.spec_folder / ".workspace"
+        self.workspace_mgr = WorkspaceManager(self.spec_folder)
+        self.workspace = self.workspace_mgr.structure.workspace_dir
         self.workspace.mkdir(exist_ok=True)
 
         self.tracker = ProvenanceTracker()
@@ -228,15 +245,15 @@ class WorkflowOrchestrator:
         self.state = WorkflowState()
 
     def run(self) -> WorkflowState:
-        """Run the full workflow:
+        """Run the full workflow.
 
-        1. INIT       - Load inputs, extract units
-        2. CLEANING   - Iterative clean with compliance gate
-        3. COMPOSITING - Merge + remainder partition
-        4. DISCOVERY  - Multi-label library identification (after compliance)
-        5. REVIEW     - Concrete resolution actions
-        6. SYNC       - plan.md <-> libraries synchronization
-        7. FINALIZE   - Stamps removed, gaps.md, relations written
+        1. INIT       - Load inputs, extract units.
+        2. CLEANING   - Iterative clean with compliance gate.
+        3. COMPOSITING - Merge + remainder partition.
+        4. DISCOVERY  - Multi-label library identification (after compliance).
+        5. REVIEW     - Concrete resolution actions.
+        6. SYNC       - plan.md <-> libraries synchronization.
+        7. FINALIZE   - Stamps removed, gaps.md, relations written.
         """
         try:
             self._phase_init()
@@ -251,7 +268,7 @@ class WorkflowOrchestrator:
             logger.info("Workflow completed successfully")
 
         except Exception as e:
-            logger.exception(f"Workflow failed: {e}")
+            logger.error(f"Workflow failed: {e}")
             self.state.errors.append(str(e))
             raise
 
@@ -357,14 +374,16 @@ class WorkflowOrchestrator:
         on the evolving state.
 
         COMPLIANCE GATE: Library discovery is BLOCKED until:
-        - Format compliance score > threshold (90%)
-        - No critical errors
-        - Remainder queue < threshold
+        - No compliance blockers (missing artifacts, schema errors, regressions)
         """
         logger.info("Phase: CLEANING (with compliance gate)")
         self.state.phase = WorkflowPhase.CLEANING
 
         current_projection_path: Path | None = None
+        scorer = ComplianceScorer(
+            blocker_threshold=0.0,
+            warning_threshold=self.config.max_remainder_ratio,
+        )
 
         for pass_num in range(1, self.config.max_cleaning_passes + 1):
             self.state.cleaning_pass = pass_num
@@ -374,20 +393,53 @@ class WorkflowOrchestrator:
             # First pass: read from spec_folder
             # Subsequent passes: read from previous intermediate projection
             evidence = self._collect_evidence(current_projection_path)
-            compliance_score = self._compute_compliance_score(evidence)
-            logger.info(f"    Compliance score: {compliance_score:.1%}")
+            result = scorer.score_compliance(evidence, self.state, self.spec_folder)
+            result.pass_num = pass_num
+            logger.info(f"    Compliance score: {result.score:.1%}")
 
-            # Step 2: Check compliance gate
-            if compliance_score >= self.config.compliance_threshold:
-                logger.info(
-                    f"  Compliance gate PASSED "
-                    f"({compliance_score:.1%} >= {self.config.compliance_threshold:.1%})"
-                )
-                break
+            pass_dir = self.workspace_mgr.create_pass_directory(pass_num)
+            result.save(pass_dir / "compliance.json")
+
+            # Update compliance state
+            self.state.compliance_score = result.score
+            self.state.compliance_details = {
+                **result.details,
+                "blockers": result.blockers,
+                "warnings": result.warnings,
+                "pass": pass_num,
+            }
+            self.state.compliance_passed = result.passed
+
+            metrics = ComplianceMetrics(
+                format_compliance=result.details.get("format_compliance", result.score),
+                annotation_coverage=result.details.get("annotation_coverage", result.score),
+                id_normalization=result.details.get("id_normalization", result.score),
+                gate_threshold=self.config.compliance_threshold,
+            )
+            self.workspace_mgr.state.metrics = metrics
+            self.workspace_mgr.state.cleaning_pass = pass_num
+            self.workspace_mgr.state.compliance_passed = self.state.compliance_passed
+            self.workspace_mgr.state.compliance_score = result.score
+            self.workspace_mgr.state.compliance_details = self.state.compliance_details
+            self.workspace_mgr.state.save(self.workspace / "state.json")
+
+            if not result.passed:
+                if self.config.compliance_gate_mode == "block":
+                    for blocker in result.blockers:
+                        logger.error(
+                            "  Compliance blocker: %s",
+                            blocker.get("message", "unknown blocker"),
+                        )
+                    self.state.compliance_passed = False
+                else:
+                    logger.warning("  Compliance warnings present (mode=warn)")
 
             # Step 3: Apply fix strategies (placeholder - strategies module not implemented)
             # In a full implementation, this would apply registered fix strategies
-            pass
+            if any(b.get("type") == "schema_invalid" for b in result.blockers):
+                # Placeholder for repair strategy integration (subsequent phases).
+                # repair_artifact will be wired to normalize invalid JSON outputs.
+                pass
 
             # Compute prose_ratio for this pass
             prose_ratio = self._compute_prose_ratio(self.state.units)
@@ -395,8 +447,6 @@ class WorkflowOrchestrator:
 
             # Step 4: Snapshot (versioned per pass) - BECOMES NEXT INPUT
             if self.config.save_intermediates:
-                # Create versioned directory for this pass
-                pass_dir = self.intermediate_mgr.intermediates_dir / f"cleaning_pass_{pass_num:02d}"
                 pass_dir.mkdir(exist_ok=True)
 
                 # Save composite.md - THIS BECOMES THE NEXT PASS INPUT
@@ -408,19 +458,23 @@ class WorkflowOrchestrator:
                 plan_md = self._generate_plan_projection(self.state.units)
                 (pass_dir / "plan.md").write_text(plan_md, encoding="utf-8")
 
-                # Save evidence.json
-                evidence_data = [
-                    {"severity": e.severity, "message": e.message, "location": e.location}
-                    for e in evidence
-                ]
-                (pass_dir / "evidence.json").write_text(
-                    json.dumps(evidence_data, indent=2), encoding="utf-8"
+                # Save evidence.jsonl (one JSON object per line)
+                with (pass_dir / "evidence.jsonl").open("w", encoding="utf-8") as handle:
+                    for e in evidence:
+                        handle.write(json.dumps(e.to_dict()) + "\n")
+
+                # Save gaps.json
+                content, registry, libraries_dir = self._collect_gap_inputs(current_projection_path)
+                gaps_data = detect_gaps(content, registry, libraries_dir)
+                (pass_dir / "gaps.json").write_text(
+                    json.dumps(gaps_data, indent=2),
+                    encoding="utf-8",
                 )
 
                 # Save metrics.json
                 metrics_data = {
                     "pass": pass_num,
-                    "compliance_score": compliance_score,
+                    "compliance_score": result.score,
                     "prose_ratio": prose_ratio,
                     "unit_count": len(self.state.units),
                     "prose_units": sum(
@@ -445,7 +499,7 @@ class WorkflowOrchestrator:
                     phase=f"cleaning_pass_{pass_num}",
                     description=(
                         f"After cleaning pass {pass_num} "
-                        f"(compliance: {compliance_score:.1%}, prose: {prose_ratio:.1%})"
+                        f"(compliance: {result.score:.1%}, prose: {prose_ratio:.1%})"
                     ),
                     tracker=self.tracker,
                 )
@@ -455,79 +509,47 @@ class WorkflowOrchestrator:
                 current_projection_path = pass_dir
                 logger.info(f"    Intermediate saved: {pass_dir} (will be input for next pass)")
 
-        # Final compliance check - THIS IS A TRUE GATE
-        final_evidence = self._collect_evidence(current_projection_path)
-        final_score = self._compute_compliance_score(final_evidence)
-        has_critical = any(e.severity == Severity.ERROR for e in final_evidence)
-        remainder_ratio = len(self.state.remainders) / max(len(self.state.units), 1)
+            # Stop conditions
+            if result.passed:
+                logger.info(f"  Compliance passed at pass {pass_num}")
+                self.state.compliance_passed = True
+                break
 
-        self.state.compliance_passed = False
-        self.state.compliance_score = final_score
-        self.state.compliance_details = {
-            "score": final_score,
-            "threshold": self.config.compliance_threshold,
-            "has_critical_errors": has_critical,
-            "remainder_ratio": remainder_ratio,
-        }
-
-        if final_score < self.config.compliance_threshold:
-            if self.config.compliance_gate_mode == "block":
-                logger.error(
-                    f"  Compliance gate BLOCKED: "
-                    f"{final_score:.1%} < {self.config.compliance_threshold:.1%}"
-                )
-                logger.error("     Discovery phase will be SKIPPED. Fix compliance issues first.")
-            else:
-                logger.warning(
-                    f"  Compliance gate WARNING: {final_score:.1%} (mode=warn, continuing)"
-                )
-                self.state.compliance_passed = True
-        elif has_critical and self.config.require_no_critical_errors:
-            if self.config.compliance_gate_mode == "block":
-                error_count = sum(1 for e in final_evidence if e.severity == Severity.ERROR)
-                logger.error(f"  Compliance gate BLOCKED: {error_count} critical errors")
-                logger.error("     Discovery phase will be SKIPPED. Fix critical errors first.")
-            else:
-                logger.warning("  Critical errors present but mode=warn, continuing")
-                self.state.compliance_passed = True
-        elif remainder_ratio > self.config.max_remainder_ratio:
-            if self.config.compliance_gate_mode == "block":
-                logger.error(
-                    f"  Compliance gate BLOCKED: "
-                    f"{remainder_ratio:.1%} atoms in remainder "
-                    f"(max {self.config.max_remainder_ratio:.1%})"
-                )
-            else:
-                logger.warning("  High remainder ratio but mode=warn, continuing")
-                self.state.compliance_passed = True
-        else:
-            logger.info(f"  Compliance gate PASSED: {final_score:.1%}")
-            self.state.compliance_passed = True
+            if pass_num == self.config.max_cleaning_passes:
+                if self.config.compliance_gate_mode == "block":
+                    logger.error(f"  Cap reached ({pass_num} passes) with blockers")
+                    self.state.compliance_passed = False
+                    blocker_payload = json.dumps(
+                        {
+                            "type": "compliance_blockers",
+                            "pass": pass_num,
+                            "blockers": result.blockers,
+                        }
+                    )
+                    self.state.errors.append(blocker_payload)
+                    self.workspace_mgr.state.errors.append(blocker_payload)
+                else:
+                    logger.warning("  Cap reached but mode=warn, continuing")
+                    self.state.compliance_passed = True
+                    self.workspace_mgr.state.compliance_passed = True
+                self.workspace_mgr.state.save(self.workspace / "state.json")
+                break
 
         # Store projection path in state for finalize phase
         self.state.current_projection_path = current_projection_path
 
+        # Save global artifacts (context index)
+        context_index = self._build_context_index()
+        indexes_dir = self.workspace / "indexes"
+        indexes_dir.mkdir(parents=True, exist_ok=True)
+        (indexes_dir / "context_index.json").write_text(
+            json.dumps(context_index, indent=2),
+            encoding="utf-8",
+        )
+
     def _collect_evidence(self, projection_path: Path | None) -> list[WorkflowEvidence]:
         """Collect gap evidence from a path."""
-        if projection_path and projection_path.exists():
-            target_path = projection_path
-        else:
-            target_path = self.spec_folder
-
-        # Build registry from libraries
-        libraries_dir = self.spec_folder / "libraries"
-        if libraries_dir.exists():
-            registry = LibsRegistry.from_libraries(libraries_dir)
-        else:
-            registry = LibsRegistry()
-
-        # Get content from the target path
-        content = ""
-        if target_path.is_dir():
-            for md_file in target_path.glob("*.md"):
-                content += md_file.read_text(encoding="utf-8") + "\n\n"
-        elif target_path.is_file():
-            content = target_path.read_text(encoding="utf-8")
+        content, registry, libraries_dir = self._collect_gap_inputs(projection_path)
 
         # Detect gaps
         gaps = detect_gaps(content, registry, libraries_dir)
@@ -547,18 +569,69 @@ class WorkflowOrchestrator:
 
         return evidence
 
-    def _compute_compliance_score(self, evidence: list[WorkflowEvidence]) -> float:
-        """Compute compliance score from evidence (0-1)."""
-        if not evidence:
-            return 1.0
+    def _collect_gap_inputs(self, projection_path: Path | None) -> tuple[str, LibsRegistry, Path]:
+        """Collect content and registry inputs for gap detection."""
+        if projection_path and projection_path.exists():
+            target_path = projection_path
+        else:
+            target_path = self.spec_folder
 
-        # Count by severity
-        errors = sum(1 for e in evidence if e.severity == Severity.ERROR)
-        warnings = sum(1 for e in evidence if e.severity == Severity.WARNING)
+        libraries_dir = self.spec_folder / "libraries"
+        if libraries_dir.exists():
+            registry = LibsRegistry.from_libraries(libraries_dir)
+        else:
+            registry = LibsRegistry()
 
-        # Simple scoring: each error = -10%, each warning = -2%
-        penalty = (errors * 0.10) + (warnings * 0.02)
-        return max(0.0, 1.0 - penalty)
+        content = ""
+        if target_path.is_dir():
+            for md_file in target_path.glob("*.md"):
+                content += md_file.read_text(encoding="utf-8") + "\n\n"
+        elif target_path.is_file():
+            content = target_path.read_text(encoding="utf-8")
+
+        return content, registry, libraries_dir
+
+    def _build_context_index(self) -> dict[str, Any]:
+        """Build a lightweight context index from manifest artifacts."""
+        index: dict[str, Any] = {"terms": {}, "sections": {}}
+
+        terms_dir = self.spec_folder / "manifest" / "terms"
+        sections_dir = self.spec_folder / "manifest" / "sections"
+
+        if terms_dir.exists():
+            for terms_file in sorted(terms_dir.glob("*.terms.json")):
+                file_id = terms_file.stem.replace(".terms", "")
+                try:
+                    payload = json.loads(terms_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    index["terms"][file_id] = {"error": str(exc)}
+                    continue
+                section_terms = payload.get("section_terms", [])
+                global_terms = payload.get("global_terms", [])
+                index["terms"][file_id] = {
+                    "section_terms_count": len(section_terms)
+                    if isinstance(section_terms, list)
+                    else 0,
+                    "global_terms_count": len(global_terms)
+                    if isinstance(global_terms, list)
+                    else 0,
+                }
+
+        if sections_dir.exists():
+            for sections_file in sorted(sections_dir.glob("*.sections.json")):
+                file_id = sections_file.stem.replace(".sections", "")
+                try:
+                    payload = json.loads(sections_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    index["sections"][file_id] = {"error": str(exc)}
+                    continue
+                sections = payload.get("sections", [])
+                index["sections"][file_id] = {
+                    "section_count": len(sections) if isinstance(sections, list) else 0,
+                    "total_lines": payload.get("total_lines"),
+                }
+
+        return index
 
     def _phase_compositing(self) -> None:
         """Composite units using MERGE + REMAINDER PARTITION.
@@ -1061,6 +1134,10 @@ class WorkflowOrchestrator:
         logger.info("Phase: REVIEW")
         self.state.phase = WorkflowPhase.REVIEW
 
+        if not getattr(self.state, "compliance_passed", False):
+            logger.warning("  SKIPPING review - compliance gate not passed")
+            return
+
         # Check proof chains for non-authoritative elements
         logger.info("  Checking proof chains for non-authoritative elements...")
         non_authoritative_units: set[str] = set()
@@ -1229,6 +1306,10 @@ class WorkflowOrchestrator:
         logger.info("Phase: SYNC (libraries -> plan.md projection)")
         self.state.phase = WorkflowPhase.SYNC
 
+        if not getattr(self.state, "compliance_passed", False):
+            logger.warning("  SKIPPING sync - compliance gate not passed")
+            return
+
         plan_path = self.spec_folder / "plan.md"
         libraries_dir = self.spec_folder / "libraries"
 
@@ -1258,26 +1339,30 @@ class WorkflowOrchestrator:
             # Find plan-only content -> this is DRIFT, not authority
             for atom in plan_atoms:
                 line_stripped = atom["content"].strip()
-                if line_stripped and not line_stripped.startswith("#") and line_stripped != "---":
-                    if line_stripped not in lib_content_set:
-                        # Also check for fuzzy matches
-                        best_match_ratio = 0.0
-                        for lib_line in lib_lines:
-                            ratio = SequenceMatcher(None, line_stripped, lib_line).ratio()
-                            if ratio > best_match_ratio:
-                                best_match_ratio = ratio
+                if (
+                    line_stripped
+                    and not line_stripped.startswith("#")
+                    and line_stripped != "---"
+                    and line_stripped not in lib_content_set
+                ):
+                    # Also check for fuzzy matches
+                    best_match_ratio = 0.0
+                    for lib_line in lib_lines:
+                        ratio = SequenceMatcher(None, line_stripped, lib_line).ratio()
+                        if ratio > best_match_ratio:
+                            best_match_ratio = ratio
 
-                        # Only mark as drift if no good fuzzy match
-                        if best_match_ratio < 0.85:
-                            plan_only_remainder.append(
-                                {
-                                    "line": atom["line_number"],
-                                    "content": line_stripped[:100],
-                                    "type": "plan_only_drift",
-                                    "best_fuzzy_match": best_match_ratio,
-                                    "atom_id": atom["id"],
-                                }
-                            )
+                    # Only mark as drift if no good fuzzy match
+                    if best_match_ratio < 0.85:
+                        plan_only_remainder.append(
+                            {
+                                "line": atom["line_number"],
+                                "content": line_stripped[:100],
+                                "type": "plan_only_drift",
+                                "best_fuzzy_match": best_match_ratio,
+                                "atom_id": atom["id"],
+                            }
+                        )
 
             if plan_only_remainder:
                 drift_evidence.append(
@@ -1316,6 +1401,10 @@ class WorkflowOrchestrator:
         logger.info("Phase: FINALIZE")
         self.state.phase = WorkflowPhase.FINALIZE
 
+        if not getattr(self.state, "compliance_passed", False):
+            logger.warning("  SKIPPING finalize - compliance gate not passed")
+            return
+
         # Run gap detection on PROJECTION OUTPUT, not original spec_folder
         projection_path = getattr(self.state, "current_projection_path", None)
 
@@ -1347,6 +1436,17 @@ class WorkflowOrchestrator:
                     "severity": "warning",
                     "description": f"Library drift: {drift.get('type', 'unknown')}",
                     "details": drift,
+                }
+            )
+
+        # Add unresolved compliance blockers as explicit gaps (mode=warn runs)
+        for blocker in self.state.compliance_details.get("blockers", []):
+            gaps.append(
+                {
+                    "type": "compliance_blocker",
+                    "severity": blocker.get("severity", "error"),
+                    "description": blocker.get("message", "Compliance blocker"),
+                    "details": blocker.get("details", {}),
                 }
             )
 

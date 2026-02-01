@@ -36,7 +36,7 @@ from spec_manager.workflow.orchestrator import (
 
 def ingest(
     spec_folder: str,
-    max_cleaning_passes: int = 10,
+    max_cleaning_passes: int = 5,
     max_discovery_iterations: int = 10,
     save_intermediates: bool = True,
     verbose: bool = False,
@@ -85,25 +85,25 @@ def ingest(
 
 
 __all__ = [
-    # Configuration
-    "WorkflowConfig",
-    "WorkflowPhase",
-    "WorkflowState",
+    # Entry point
+    "ingest",
+    # Orchestration
+    "IntermediateManager",
+    "PatchDependency",
+    "PatchDependencyGraph",
+    "ProvenanceTracker",
+    "Severity",
+    "WorkflowEvidence",
+    "WorkflowOrchestrator",
     # Units
     "TrackedUnit",
     "UnitLabels",
     "UnitStatus",
     "UnitType",
+    # Configuration
+    "WorkflowConfig",
+    "WorkflowPhase",
+    "WorkflowState",
     # Context
     "ContextIndex",
-    "PatchDependency",
-    "PatchDependencyGraph",
-    # Orchestration
-    "WorkflowEvidence",
-    "IntermediateManager",
-    "ProvenanceTracker",
-    "Severity",
-    "WorkflowOrchestrator",
-    # Entry point
-    "ingest",
 ]

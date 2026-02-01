@@ -29,6 +29,7 @@ class PatchDependencyGraph:
     """
 
     def __init__(self) -> None:
+        """Initialize the patch dependency graph."""
         self.dependencies: list[PatchDependency] = []
         self._graph: dict[str, list[str]] = {}  # patch_id -> [patched_by]
 
@@ -137,7 +138,7 @@ class ContextIndex:
 
     Strata (in priority order):
     1. Originals (patches/*.md)
-    2. Each intermediate projection (cleaning_pass_*/composite.md)
+    2. Each intermediate projection (pass_*/composite.md)
     3. Current composite
 
     Entity resolution queries this to find "the relaxation algorithm"
@@ -145,6 +146,7 @@ class ContextIndex:
     """
 
     def __init__(self, workspace: Path) -> None:
+        """Initialize the context index with a workspace path."""
         self.workspace = workspace
         self._index: dict[str, list[dict[str, Any]]] = {}  # term -> locations
         self._strata: list[dict[str, Any]] = []  # [{path, content, priority}, ...]

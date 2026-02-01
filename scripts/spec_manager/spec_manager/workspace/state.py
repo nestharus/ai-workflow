@@ -139,6 +139,10 @@ class WorkspaceState:
     schema_version: str = "2.0"
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     current_phase: Phase = Phase.CLEANING
+    cleaning_pass: int = 0
+    compliance_passed: bool = False
+    compliance_score: float = 0.0
+    compliance_details: dict[str, Any] = field(default_factory=dict)
     phases: dict[str, PhaseResult] = field(default_factory=dict)
     inputs: list[str] = field(default_factory=list)  # Input files to process
     processed: list[str] = field(default_factory=list)  # Files that have been processed
@@ -283,6 +287,10 @@ class WorkspaceState:
             "schema_version": self.schema_version,
             "created_at": self.created_at,
             "current_phase": self.current_phase.value,
+            "cleaning_pass": self.cleaning_pass,
+            "compliance_passed": self.compliance_passed,
+            "compliance_score": self.compliance_score,
+            "compliance_details": self.compliance_details,
             "phases": {
                 name: {
                     "phase": result.phase.value,
@@ -405,6 +413,10 @@ class WorkspaceState:
             schema_version=schema_version,
             created_at=data.get("created_at", datetime.now().isoformat()),
             current_phase=current_phase,
+            cleaning_pass=data.get("cleaning_pass", 0),
+            compliance_passed=data.get("compliance_passed", False),
+            compliance_score=data.get("compliance_score", 0.0),
+            compliance_details=data.get("compliance_details", {}),
             inputs=data.get("inputs", []),
             processed=data.get("processed", []),
             ambiguous_inputs=data.get("ambiguous_inputs", []),

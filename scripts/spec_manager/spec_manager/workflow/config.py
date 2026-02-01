@@ -81,7 +81,7 @@ class TrackedUnit:
 class WorkflowConfig:
     """Configuration for the workflow."""
 
-    max_cleaning_passes: int = 10
+    max_cleaning_passes: int = 5
     max_discovery_iterations: int = 10
     save_intermediates: bool = True
     apply_strategies: bool = True
