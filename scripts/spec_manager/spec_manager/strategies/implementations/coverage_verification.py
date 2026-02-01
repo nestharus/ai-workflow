@@ -21,6 +21,8 @@ from spec_manager.strategies.base import (
     Tool,
 )
 
+_DEFAULT_COVERAGE_THRESHOLD = 0.95
+
 
 class CoverageVerificationStrategy(Strategy):
     """Verifies coverage after transformations."""
@@ -69,7 +71,13 @@ class CoverageVerificationStrategy(Strategy):
         """
         issues: list[str] = []
         actions: list[str] = []
+        evidence_records: list[dict[str, Any]] = []
         membership_evidence: dict[str, dict[str, Any]] = {}  # atom_id -> match evidence
+        coverage_threshold = _DEFAULT_COVERAGE_THRESHOLD
+        if self.definition:
+            coverage_threshold = self.definition.metadata.get(
+                "coverage_threshold", _DEFAULT_COVERAGE_THRESHOLD
+            )
 
         # Get source units from previous results
         source_units = context.previous_results.get("source_units", [])
@@ -162,6 +170,54 @@ class CoverageVerificationStrategy(Strategy):
         total_atoms = len(source_atoms)
         matched_count = len(matched_atoms) + len(fuzzy_matched_atoms)
         coverage = matched_count / total_atoms if total_atoms > 0 else 1.0
+        unmatched_severity = "error" if coverage < coverage_threshold else "warning"
+
+        for atom in unmatched_atoms:
+            atom_id = atom["id"]
+            evidence = membership_evidence.get(atom_id, {})
+            evidence_records.append(
+                {
+                    "category": "coverage",
+                    "type": "unmatched_atoms",
+                    "severity": unmatched_severity,
+                    "details": {
+                        "atom_id": atom_id,
+                        "status": evidence.get("status"),
+                        "confidence": evidence.get("confidence"),
+                        "method": evidence.get("method"),
+                    },
+                }
+            )
+
+        for atom in fuzzy_matched_atoms:
+            atom_id = atom["id"]
+            evidence = membership_evidence.get(atom_id, {})
+            evidence_records.append(
+                {
+                    "category": "coverage",
+                    "type": "fuzzy_match",
+                    "severity": "warning",
+                    "details": {
+                        "atom_id": atom_id,
+                        "confidence": evidence.get("confidence"),
+                        "match_method": evidence.get("method"),
+                    },
+                }
+            )
+
+        if coverage < coverage_threshold:
+            evidence_records.append(
+                {
+                    "category": "coverage",
+                    "type": "low_coverage",
+                    "severity": "error",
+                    "details": {
+                        "coverage_percent": coverage * 100,
+                        "threshold": coverage_threshold * 100,
+                        "unmatched_count": len(unmatched_atoms),
+                    },
+                }
+            )
 
         if unmatched_atoms:
             actions.append(f"Found {len(unmatched_atoms)} unmatched atoms (remainder)")
@@ -183,6 +239,7 @@ class CoverageVerificationStrategy(Strategy):
                 "coverage_percent": coverage * 100,
                 "membership_evidence": membership_evidence,
             },
+            evidence_records=evidence_records,
         )
 
     def _units_to_atoms(self, units: list[Any]) -> list[dict[str, Any]]:

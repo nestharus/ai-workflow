@@ -571,6 +571,7 @@ def _record_json_extraction_evidence(
         {
             "category": "format",
             "type": evidence_type,
+            "severity": "warning",
             "details": {
                 "original_length": len(original),
                 "cleaned_length": len(extracted),

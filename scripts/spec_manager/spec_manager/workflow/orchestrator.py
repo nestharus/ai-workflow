@@ -57,6 +57,12 @@ class WorkflowEvidence:
     Named WorkflowEvidence (not GapEvidence) to avoid collision with:
     - DetectorFinding in gaps.py (raw detector output)
     - GapEvidence in data_structures.py (v2.0 evidence with invariant families)
+
+    Evidence categories:
+    - format: JSON repairs, code fence removal, preamble stripping
+    - coverage: Verification failures, unmatched atoms, low coverage
+    - resolution: Entity resolution failures, unresolved references
+    - truncation: Output size guards, content truncation
     """
 
     severity: str
@@ -667,25 +673,34 @@ class WorkflowOrchestrator:
                         for issue in strategy_result.issues:
                             if issue.startswith("Format repair:"):
                                 detector = "strategy:format_repair"
+                                issue_category = "format"
                             else:
                                 detector = f"strategy:{strategy.name}"
+                                issue_category = None
                             # Parse severity prefix from issue string
                             issue_severity = Severity.WARNING
                             if issue.startswith("ERROR:"):
                                 issue_severity = Severity.ERROR
                             elif issue.startswith("WARNING:"):
                                 issue_severity = Severity.WARNING
+                            issue_details: dict[str, Any] = {}
+                            if issue_category:
+                                issue_details["category"] = issue_category
                             strategy_evidence.append(
                                 WorkflowEvidence(
                                     severity=issue_severity,
                                     message=issue,
                                     location=strategy.name,
                                     detector=detector,
-                                    details={},
+                                    details=issue_details,
                                 )
                             )
 
                         for rec in strategy_result.evidence_records:
+                            rec_details = dict(rec.get("details", {}))
+                            rec_category = rec.get("category")
+                            if rec_category and "category" not in rec_details:
+                                rec_details["category"] = rec_category
                             strategy_evidence.append(
                                 WorkflowEvidence(
                                     severity=rec.get("severity", Severity.INFO),
@@ -695,7 +710,7 @@ class WorkflowOrchestrator:
                                     ),
                                     location=strategy.name,
                                     detector=f"strategy:{strategy.name}",
-                                    details=rec.get("details", {}),
+                                    details=rec_details,
                                 )
                             )
 

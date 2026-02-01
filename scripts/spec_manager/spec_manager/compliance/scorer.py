@@ -108,7 +108,7 @@ class ComplianceScorer:
                 }
             )
 
-        metrics = self._compute_metrics_from_evidence(evidence)
+        metrics, evidence_by_category = self._compute_metrics_from_evidence(evidence)
         score = (
             metrics.format_compliance + metrics.annotation_coverage + metrics.id_normalization
         ) / 3.0
@@ -120,6 +120,7 @@ class ComplianceScorer:
             "remainder_ratio": remainder_ratio,
             "unresolved_references": unresolved_references,
             "low_confidence_mappings": low_confidence,
+            "evidence_by_category": evidence_by_category,
         }
 
         result = ComplianceResult(
@@ -311,18 +312,55 @@ class ComplianceScorer:
 
         return blockers
 
-    def _compute_metrics_from_evidence(self, evidence: list[WorkflowEvidence]) -> ComplianceMetrics:
-        errors = sum(1 for e in evidence if self._severity_value(e.severity) == "error")
-        warnings = sum(1 for e in evidence if self._severity_value(e.severity) == "warning")
+    def _compute_metrics_from_evidence(
+        self, evidence: list[WorkflowEvidence]
+    ) -> tuple[ComplianceMetrics, dict[str, int]]:
+        category_counts = {
+            "format": 0,
+            "coverage": 0,
+            "resolution": 0,
+            "truncation": 0,
+        }
+        errors = 0
+        warnings = 0
+        for item in evidence:
+            severity = self._severity_value(item.severity)
+            if severity == "error":
+                errors += 1
+            elif severity == "warning":
+                warnings += 1
+            if severity in {"error", "warning"}:
+                category = self._extract_evidence_category(item)
+                if category in category_counts:
+                    category_counts[category] += 1
         penalty = (errors * 0.10) + (warnings * 0.02)
         score = max(0.0, 1.0 - penalty)
 
-        return ComplianceMetrics(
-            format_compliance=score,
-            annotation_coverage=score,
-            id_normalization=score,
-            gate_threshold=max(0.0, 1.0 - self.blocker_threshold),
+        return (
+            ComplianceMetrics(
+                format_compliance=score,
+                annotation_coverage=score,
+                id_normalization=score,
+                gate_threshold=max(0.0, 1.0 - self.blocker_threshold),
+            ),
+            category_counts,
         )
+
+    @staticmethod
+    def _extract_evidence_category(evidence: WorkflowEvidence) -> str | None:
+        detector = getattr(evidence, "detector", "")
+        if not isinstance(detector, str) or not detector.startswith("strategy:"):
+            return None
+        details = getattr(evidence, "details", None)
+        if isinstance(details, dict):
+            category = details.get("category")
+            if isinstance(category, str):
+                return category
+        message = getattr(evidence, "message", "")
+        if isinstance(message, str) and ":" in message:
+            candidate = message.split(":", 1)[0]
+            return candidate
+        return None
 
     @staticmethod
     def _severity_value(severity: str | Severity) -> str:
@@ -390,7 +428,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from spec_refinement.schemas.sections import FileSections
+        from scripts.spec_refinement.schemas.sections import FileSections
 
         for path in files:
             try:
@@ -412,7 +450,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from spec_refinement.schemas.atoms import LineAtom
+        from scripts.spec_refinement.schemas.atoms import LineAtom
 
         for path in files:
             try:
@@ -453,7 +491,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from spec_refinement.schemas.terms import FileTerms
+        from scripts.spec_refinement.schemas.terms import FileTerms
 
         for path in files:
             try:

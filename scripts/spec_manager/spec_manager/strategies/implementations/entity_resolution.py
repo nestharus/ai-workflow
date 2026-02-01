@@ -79,6 +79,7 @@ class EntityResolutionStrategy(Strategy):
         actions: list[str] = []
         issues: list[str] = []
         output_units: list[TrackedUnit] = []
+        evidence_records: list[dict[str, Any]] = []
 
         resolver = VagueReferenceResolver(reference_store=None, llm_client=self._llm)
 
@@ -96,6 +97,15 @@ class EntityResolutionStrategy(Strategy):
 
             total_references += len(reference_texts)
             resolution_context = self._build_resolution_context(context, index)
+            context_summary = {
+                "patch_id": resolution_context.get("patch_id"),
+                "source_file": resolution_context.get("source_file"),
+                "nearby_elements": resolution_context.get("nearby_elements", []),
+                "nearby_declarations": resolution_context.get("nearby_declarations", []),
+                "reference_files": sorted(
+                    list(resolution_context.get("reference_files", {}).keys())
+                ),
+            }
 
             resolved_content = unit.content
             resolutions: list[tuple[str, float, str, str, str]] = []
@@ -108,9 +118,49 @@ class EntityResolutionStrategy(Strategy):
                     target_id, confidence, rationale = self._resolve_with_llm(
                         resolver, reference_text, resolution_context
                     )
-                    if not target_id or confidence < _CONFIDENCE_THRESHOLD:
+                    if not target_id:
                         issues.append(f"Unresolved reference '{reference_text}' in {unit.id}")
                         unresolved_count += 1
+                        evidence_records.append(
+                            {
+                                "category": "resolution",
+                                "type": "unresolved_reference",
+                                "severity": "warning",
+                                "details": {
+                                    "reference_text": reference_text,
+                                    "unit_id": unit.id,
+                                    "context": context_summary,
+                                },
+                            }
+                        )
+                        continue
+                    if confidence < _CONFIDENCE_THRESHOLD:
+                        issues.append(f"Unresolved reference '{reference_text}' in {unit.id}")
+                        unresolved_count += 1
+                        evidence_records.append(
+                            {
+                                "category": "resolution",
+                                "type": "low_confidence_resolution",
+                                "severity": "warning",
+                                "details": {
+                                    "reference_text": reference_text,
+                                    "confidence": confidence,
+                                    "threshold": _CONFIDENCE_THRESHOLD,
+                                },
+                            }
+                        )
+                        evidence_records.append(
+                            {
+                                "category": "resolution",
+                                "type": "unresolved_reference",
+                                "severity": "warning",
+                                "details": {
+                                    "reference_text": reference_text,
+                                    "unit_id": unit.id,
+                                    "context": context_summary,
+                                },
+                            }
+                        )
                         continue
                     method = "llm_inference"
                 else:
@@ -120,9 +170,34 @@ class EntityResolutionStrategy(Strategy):
                     if not target_id:
                         issues.append(f"Unresolved reference '{reference_text}' in {unit.id}")
                         unresolved_count += 1
+                        evidence_records.append(
+                            {
+                                "category": "resolution",
+                                "type": "unresolved_reference",
+                                "severity": "warning",
+                                "details": {
+                                    "reference_text": reference_text,
+                                    "unit_id": unit.id,
+                                    "context": context_summary,
+                                },
+                            }
+                        )
                         continue
                     method = "heuristic"
                     used_heuristic = True
+                    evidence_records.append(
+                        {
+                            "category": "resolution",
+                            "type": "heuristic_resolution",
+                            "severity": "info",
+                            "details": {
+                                "reference_text": reference_text,
+                                "target_id": target_id,
+                                "confidence": confidence,
+                                "method": method,
+                            },
+                        }
+                    )
 
                 resolved_count += 1
                 resolved_content = self._replace_reference(
@@ -181,6 +256,7 @@ class EntityResolutionStrategy(Strategy):
                 "unresolved": unresolved_count,
                 "resolution_rate": resolution_rate,
             },
+            evidence_records=evidence_records,
         )
 
     def _find_vague_references(self, text: str) -> list[str]:
