@@ -42,49 +42,42 @@ if str(_SPEC_MANAGER_ROOT) not in sys.path:
     sys.path.insert(0, str(_SPEC_MANAGER_ROOT))
 
 __all__ = [
-    # Core
     "AnnotationParser",
-    "IdValidator",
-    "LibsRegistry",
-    "SectionExtractor",
-    # Discovery
     "CandidateIdentifier",
     "CandidateLibrary",
+    "ContextIndex",
     "discover_libraries",
     "discover_libraries_sync",
     "ElementLabels",
+    "IdValidator",
+    "ingest",
+    "LibsRegistry",
     "LibraryRefiner",
     "LibraryShape",
     "MultiLabeler",
-    "ShapeAggregator",
-    # Provenance
-    "ProvenanceTracker",
-    "SourceLocation",
-    "TrackedUnit",
-    "UnitStatus",
-    "UnitType",
-    # Strategies
+    "PatchDependencyGraph",
     "ProcessingContext",
+    "ProvenanceTracker",
+    "run_analysis",
+    "run_merging",
+    "run_planning",
+    "run_staging",
+    "run_verification",
+    "SectionExtractor",
+    "ShapeAggregator",
+    "SourceLocation",
     "Strategy",
     "StrategyPhase",
     "StrategyRegistry",
     "StrategyResult",
-    # Workspace
-    "WorkspaceManager",
-    # Workflow
-    "ContextIndex",
-    "PatchDependencyGraph",
+    "TrackedUnit",
+    "UnitStatus",
+    "UnitType",
     "WorkflowConfig",
     "WorkflowOrchestrator",
     "WorkflowPhase",
     "WorkflowState",
-    "ingest",
-    # Phase runners (legacy names, mapped to new phases)
-    "run_analysis",
-    "run_merging",  # REVIEW phase
-    "run_planning",  # DISCOVERY phase
-    "run_staging",  # CLEANING phase
-    "run_verification",  # FINALIZATION phase
+    "WorkspaceManager",
 ]
 
 
@@ -92,9 +85,9 @@ def __getattr__(name: str) -> object:
     """Lazy imports to avoid circular dependencies."""
     if name in ("AnnotationParser", "SectionExtractor", "IdValidator", "LibsRegistry"):
         from .core import (
-            AnnotationParser,
-            IdValidator,
-            LibsRegistry,
+            AnnotationParser,  # noqa: F401
+            IdValidator,  # noqa: F401
+            LibsRegistry,  # noqa: F401
             SectionExtractor,  # noqa: F401
         )
 
