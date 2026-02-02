@@ -17,9 +17,7 @@ from spec_manager.refinement.formats import (
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
-    build_section_alias_map,
     build_section_id_lookup,
-    resolve_section_reference,
     strip_invalid_file_pointers,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -131,7 +129,6 @@ def _validate_evidence_pointers(
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     for match in pointer_matches:
         parsed = parse_evidence_pointer(match.group(0))
@@ -152,15 +149,7 @@ def _validate_evidence_pointers(
             continue
         sections_data = manager.read_file_sections(resolved_file_id) or {}
         section_lookup = build_section_id_lookup(resolved_file_id, sections_data)
-        if section_ref in section_lookup:
-            continue
-        canonical_section = resolve_section_reference(
-            section_ref,
-            resolved_file_id,
-            section_alias_map,
-            sections_data=sections_data,
-        )
-        if canonical_section is None:
+        if section_ref not in section_lookup:
             issues.append(
                 {
                     "type": "unknown_section_reference",
@@ -235,7 +224,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         try:
             sections_data = manager.read_file_sections(file_id)
             if sections_data is None:
-                section_ids = manager.get_section_labels(file_id)
+                section_ids = [f"SEC-{file_id}-0001"]
             else:
                 section_ids = [
                     str(section.get("section_id"))
