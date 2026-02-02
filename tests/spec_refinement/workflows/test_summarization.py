@@ -311,11 +311,7 @@ def test_repair_agent_receives_section_id_allowlist(
     spec_refinement_workspace, mock_all_agents, monkeypatch
 ) -> None:
     manager, manifest = spec_refinement_workspace(file_count=1)
-    mock_all_agents(
-        manifest,
-        violation_rate=0.0,
-        overrides={"glm-file-what-summarizer": 1.0},
-    )
+    mock_all_agents(manifest, violation_rate=0.0)
     file_id = sorted(manifest.keys())[0]
     file_path = manager.get_all_files()[file_id]
     file_entry = manager.state.file_manifest[file_id]
@@ -327,6 +323,37 @@ def test_repair_agent_receives_section_id_allowlist(
         for entry in sections_list
         if isinstance(entry, dict) and isinstance(entry.get("section_id"), str)
     )
+
+    # Deterministic summarizer stub that always returns a repairable-but-invalid
+    # summary (missing evidence pointers) so _process_file always invokes repair.
+    invalid_output = (
+        f"# File Summary: {file_id}\n"
+        f"File ID: {file_id}\n\n"
+        "## Algorithms\n"
+        "- Validate Intake | Ensure payload sanity\n\n"
+        "## Components\n"
+        "- Intake API | Accept requests\n\n"
+        "## Workflows\n"
+        "- Intake Flow | Validate then route\n\n"
+        "## Candidate Responsibilities\n"
+        "- Maintain ingestion contracts\n\n"
+        "## Dependencies\n"
+        "- None\n\n"
+        "## Evidence Map\n"
+        "- None\n"
+    )
+
+    def _mock_summarizer(*, agent_name: str, prompt: str, workspace: Path, **kwargs) -> str:
+        _ = agent_name
+        _ = prompt
+        _ = workspace
+        return invalid_output
+
+    monkeypatch.setattr(
+        "spec_manager.refinement.workflows.summarization.run_agent",
+        _mock_summarizer,
+    )
+
     captured_prompt: dict[str, str] = {}
 
     def _mock_repair_agent(*, agent_name: str, prompt: str, workspace: Path, **kwargs) -> str:
