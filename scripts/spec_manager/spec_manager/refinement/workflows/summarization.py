@@ -38,6 +38,8 @@ def _build_summary_prompt(
         and (s_id := section.get("section_id")) is not None
         and isinstance(s_id, str)
     ]
+    if not section_ids:
+        section_ids = [f"SEC-{file_id}-0001"]
     section_list = ", ".join(section_ids) if section_ids else "None"
     file_entry = manager.state.file_manifest.get(file_id, {})
     if isinstance(file_entry, dict):
@@ -67,12 +69,13 @@ def _build_summary_prompt(
         "- Evidence pointers MUST cite contributing sections, not entire files",
         "- Section IDs MUST match the Known Sections allowlist exactly",
         f"- Valid section IDs for {file_id}: {section_list}",
-        "- Do NOT invent section IDs",
+        "- Do NOT invent section IDs outside this allowlist",
         "- Keep summaries concise, focused on WHAT (not HOW)",
         "",
         "FORBIDDEN:",
         "- Citing entire files without section IDs",
-        "- Inventing section IDs not in the allowlist",
+        "- Wrapping output in markdown code fences (```markdown)",
+        "- Inventing section IDs outside the allowlist format",
         "- Including implementation details (HOW)",
         "",
         "## INPUT DATA",
