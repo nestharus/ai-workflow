@@ -112,6 +112,12 @@ when the concern is truly shared and cannot be cleanly assigned.
 ]
 ```
 
+### events.jsonl (per library)
+```json
+{"event_type":"LIBRARY_CREATED","timestamp":"2025-01-12T10:12:42","lib_id":"lib_001","metadata":{"created_from":["Request Intake","Inbound Routing"],"initial_intent":"Own request intake responsibilities.","initial_files":["F0001","F0004"]}}
+{"event_type":"BOUNDARY_CHANGED","timestamp":"2025-01-13T09:05:10","lib_id":"lib_001","metadata":{"added_files":["F0007"],"removed_files":["F0004"],"reason":"Overlap resolution moved routing concerns."}}
+```
+
 ## Phase 2 Sequence Diagram
 
 ```mermaid

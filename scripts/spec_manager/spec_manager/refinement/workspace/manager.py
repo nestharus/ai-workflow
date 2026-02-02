@@ -150,6 +150,21 @@ class WorkspaceManager:
         else:
             self.state = WorkspaceState(run_id=self.run_id, input_folder=str(self.input_folder))
 
+    @property
+    def allocated_library_ids(self) -> set[str]:
+        """Return allocated library IDs for this workspace."""
+        return self.state.allocated_library_ids
+
+    def allocate_library_id(self) -> str:
+        """Allocate a new library ID and persist the updated state."""
+        lib_id = self.state.allocate_library_id()
+        self._save_state()
+        return lib_id
+
+    def save_state(self) -> None:
+        """Persist current state to disk."""
+        self._save_state()
+
     # --- Workspace Lifecycle ---
 
     def initialize(self, force: bool = False) -> list[str]:

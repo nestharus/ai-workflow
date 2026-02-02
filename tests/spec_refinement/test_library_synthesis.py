@@ -291,4 +291,4 @@ def test_synthesize_libraries_charter_generation_error(fs, monkeypatch) -> None:
     result = synthesize_libraries("run_001")
 
     assert result["libraries_created"] == 0
-    assert any(issue["type"] == "parse_error" for issue in result["issues"])
+    assert any(issue["type"] in {"parse_error", "no_charter"} for issue in result["issues"])

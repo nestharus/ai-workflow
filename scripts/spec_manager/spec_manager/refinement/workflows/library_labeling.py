@@ -6,15 +6,19 @@ import json
 import re
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     LibraryCharter,
+    LibraryEvent,
+    LibraryEventType,
     normalize_compound_pointers,
     parse_library_labeler_output,
     parse_library_synthesis,
@@ -485,6 +489,7 @@ def refine_library_labels(
 
     from .library_synthesis import LIB_ID_RE
 
+    allocated_ids = set(manager.state.allocated_library_ids)
     for index, item in enumerate(data):
         if not isinstance(item, dict):
             raise TypeError(f"Refined label entry {index} is not an object.")
@@ -494,6 +499,10 @@ def refine_library_labels(
         lib_id = str(item.get("lib_id", "")).strip()
         if not LIB_ID_RE.match(lib_id):
             raise ValueError(f"Invalid library id format: {lib_id}")
+        if lib_id in allocated_ids:
+            raise ValueError(f"Library id already allocated: {lib_id}")
+        allocated_ids.add(lib_id)
+        manager.state.register_library_id(lib_id)
 
     manager.structure.libraries_dir.mkdir(parents=True, exist_ok=True)
     refined_path = manager.structure.libraries_dir / "refined_labels.json"
@@ -994,12 +1003,6 @@ def resolve_all_overlaps(
 
     charter_map = {charter.lib_id: charter for charter in charters}
     original_ids = [charter.lib_id for charter in charters]
-    max_lib_number = 0
-    for lib_id in charter_map:
-        match = LIB_ID_PATTERN.match(lib_id)
-        if match:
-            max_lib_number = max(max_lib_number, int(match.group(1)))
-    next_lib_number = max_lib_number + 1
     new_charters: list[LibraryCharter] = []
     decisions: list[dict[str, Any]] = []
 
@@ -1029,13 +1032,9 @@ def resolve_all_overlaps(
             updated_evidence_a = _remove_overlap_evidence_sources(charter_a, overlap_files)
         elif decision == "create_cross_cutting":
             overlap_sources = _build_overlap_evidence_sources(charter_a, charter_b, overlap_files)
-            while True:
-                if next_lib_number > 999:
-                    raise ValueError("Unable to allocate lib_### id for cross-cutting overlap.")
-                new_lib_id = f"lib_{next_lib_number:03d}"
-                next_lib_number += 1
-                if new_lib_id not in charter_map:
-                    break
+            new_lib_id = manager.state.allocate_library_id()
+            if new_lib_id in charter_map:
+                raise ValueError(f"Allocated library id already in use: {new_lib_id}")
             cross_cutting_description = f"Created from overlap between {lib_id_a} and {lib_id_b}"
             if rationale:
                 cross_cutting_description = f"{cross_cutting_description}: {rationale}"
@@ -1055,6 +1054,42 @@ def resolve_all_overlaps(
             charter_map[new_lib_id] = new_charter
             new_charters.append(new_charter)
             decision_entry["created_lib_id"] = new_lib_id
+
+            from .library_synthesis import _write_library_event
+
+            created_event = LibraryEvent(
+                event_type=LibraryEventType.LIBRARY_CREATED,
+                timestamp=datetime.now().isoformat(),
+                lib_id=new_lib_id,
+                metadata={
+                    "created_from": [lib_id_a, lib_id_b],
+                    "initial_intent": new_charter.intent,
+                    "initial_files": sorted(
+                        {
+                            str(source.get("file_id"))
+                            for source in overlap_sources
+                            if source.get("file_id")
+                        }
+                    ),
+                },
+                previous_state=None,
+            )
+            _write_library_event(manager.structure.libraries_dir / new_lib_id, created_event)
+
+            split_rationale = rationale or "Overlap resolution created cross-cutting library."
+            for source_lib_id in (lib_id_a, lib_id_b):
+                split_event = LibraryEvent(
+                    event_type=LibraryEventType.LIBRARY_SPLIT,
+                    timestamp=datetime.now().isoformat(),
+                    lib_id=source_lib_id,
+                    metadata={
+                        "source_lib_id": source_lib_id,
+                        "target_lib_ids": [new_lib_id],
+                        "rationale": split_rationale,
+                    },
+                    previous_state=None,
+                )
+                _write_library_event(manager.structure.libraries_dir / source_lib_id, split_event)
         elif decision == "mark_shared_boundary":
             pass
         else:

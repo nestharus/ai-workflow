@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -40,6 +41,80 @@ class Phase(Enum):
     AUDIT = "audit"
 
 
+LIBRARY_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
+
+
+def _extract_library_number(lib_id: str) -> int | None:
+    match = LIBRARY_ID_PATTERN.match(lib_id)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _calculate_next_library_number(allocated: set[str]) -> int:
+    numbers = [number for lib_id in allocated if (number := _extract_library_number(lib_id))]
+    return max(numbers, default=0) + 1
+
+
+def _extract_charter_metadata(charter_path: Path) -> tuple[str, list[str]]:
+    if not charter_path.exists():
+        return "", []
+    try:
+        content = charter_path.read_text(encoding="utf-8")
+    except OSError:
+        return "", []
+
+    section_re = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+    matches = list(section_re.finditer(content))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        title = match.group(1).strip()
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        sections[title] = content[start:end].strip()
+
+    intent = sections.get("Intent", "")
+    evidence_text = sections.get("Evidence", "")
+    file_ids = sorted(
+        {match.group(1) for match in re.finditer(r"\[([A-Za-z0-9_.-]+)::[^\]]+\]", evidence_text)}
+    )
+    return intent, file_ids
+
+
+def _ensure_synthetic_library_event(workspace_dir: Path, lib_id: str) -> None:
+    lib_dir = workspace_dir / "libraries" / lib_id
+    events_path = lib_dir / "events.jsonl"
+    if events_path.exists():
+        return
+
+    charter_path = lib_dir / "charter.md"
+    timestamp = datetime.now().isoformat()
+    if charter_path.exists():
+        try:
+            timestamp = datetime.fromtimestamp(charter_path.stat().st_mtime).isoformat()
+        except OSError:
+            timestamp = datetime.now().isoformat()
+
+    intent, initial_files = _extract_charter_metadata(charter_path)
+    event_payload = {
+        "event_type": "LIBRARY_CREATED",
+        "timestamp": timestamp,
+        "lib_id": lib_id,
+        "metadata": {
+            "created_from": [],
+            "initial_intent": intent,
+            "initial_files": initial_files,
+            "synthetic": True,
+        },
+    }
+
+    try:
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        events_path.write_text(json.dumps(event_payload) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"Warning: Failed to write synthetic library event: {exc}", file=sys.stderr)
+
+
 @dataclass
 class PhaseResult:
     """Result of a phase execution."""
@@ -72,6 +147,8 @@ class WorkspaceState:
     section_manifest: dict[str, list[str]] = field(default_factory=dict)
     spec_snapshot_baseline: dict[str, str] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
+    allocated_library_ids: set[str] = field(default_factory=set)
+    next_library_number: int = 1
 
     @staticmethod
     def detect_schema_version(state_path: Path) -> str | None:
@@ -213,6 +290,8 @@ class WorkspaceState:
             "section_manifest": self.section_manifest,
             "spec_snapshot_baseline": self.spec_snapshot_baseline,
             "history": self.history,
+            "allocated_library_ids": sorted(self.allocated_library_ids),
+            "next_library_number": self.next_library_number,
         }
 
     @classmethod
@@ -269,6 +348,40 @@ class WorkspaceState:
                 f"Invalid mode value '{mode}'. Valid values are: snapshot, patch_stream"
             )
 
+        raw_allocated = data.get("allocated_library_ids")
+        allocated_library_ids: set[str] = set()
+        migration_details: dict[str, Any] | None = None
+
+        if raw_allocated is None:
+            if workspace_dir is not None:
+                libraries_dir = workspace_dir / "libraries"
+                if libraries_dir.exists():
+                    for entry in libraries_dir.iterdir():
+                        if entry.is_dir() and LIBRARY_ID_PATTERN.match(entry.name):
+                            allocated_library_ids.add(entry.name)
+            migration_details = {
+                "event": "library_ids_migrated",
+                "allocated_library_ids": sorted(allocated_library_ids),
+                "next_library_number": _calculate_next_library_number(allocated_library_ids),
+            }
+            if workspace_dir is not None and allocated_library_ids:
+                for lib_id in sorted(allocated_library_ids):
+                    _ensure_synthetic_library_event(workspace_dir, lib_id)
+        elif isinstance(raw_allocated, list):
+            allocated_library_ids = {
+                str(lib_id).strip() for lib_id in raw_allocated if str(lib_id).strip()
+            }
+
+        raw_next_library_number = data.get("next_library_number")
+        if isinstance(raw_next_library_number, int) and raw_next_library_number > 0:
+            next_library_number = raw_next_library_number
+        else:
+            next_library_number = _calculate_next_library_number(allocated_library_ids)
+
+        max_allocated = _calculate_next_library_number(allocated_library_ids)
+        if next_library_number < max_allocated:
+            next_library_number = max_allocated
+
         state = cls(
             run_id=data["run_id"],
             input_folder=data["input_folder"],
@@ -280,6 +393,8 @@ class WorkspaceState:
             section_manifest=data.get("section_manifest", {}),
             spec_snapshot_baseline=baseline,
             history=data.get("history", []),
+            allocated_library_ids=allocated_library_ids,
+            next_library_number=next_library_number,
         )
 
         for name, phase_data in data.get("phases", {}).items():
@@ -315,7 +430,35 @@ class WorkspaceState:
                 coverage_metrics=phase_data.get("coverage_metrics", {}),
             )
 
+        if migration_details is not None:
+            state.history.append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event": "library_id_migration",
+                    **migration_details,
+                }
+            )
+
         return state
+
+    def allocate_library_id(self) -> str:
+        """Allocate the next available library ID and advance the counter."""
+        if self.next_library_number > 999:
+            raise ValueError("Unable to allocate new library ID beyond lib_999.")
+        lib_id = f"lib_{self.next_library_number:03d}"
+        self.allocated_library_ids.add(lib_id)
+        self.next_library_number += 1
+        return lib_id
+
+    def register_library_id(self, lib_id: str) -> None:
+        """Register an externally created library ID."""
+        normalized = lib_id.strip()
+        if not LIBRARY_ID_PATTERN.match(normalized):
+            raise ValueError(f"Invalid library id format: {normalized}")
+        self.allocated_library_ids.add(normalized)
+        next_number = _calculate_next_library_number(self.allocated_library_ids)
+        if self.next_library_number < next_number:
+            self.next_library_number = next_number
 
     def save(self, path: Path) -> None:
         """Save state to file."""

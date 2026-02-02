@@ -1,4 +1,22 @@
-"""Structured formats and parsers for spec refinement workflows."""
+"""Structured formats and parsers for spec refinement workflows.
+
+Library events are persisted per library as append-only JSON lines in
+`libraries/<lib_id>/events.jsonl`. Each line follows this schema:
+
+- event_type: LIBRARY_CREATED | LIBRARY_RENAMED | LIBRARY_SPLIT |
+  LIBRARY_MERGED | BOUNDARY_CHANGED
+- timestamp: ISO-8601 string
+- lib_id: library identifier (lib_###)
+- metadata: event-specific fields
+- previous_state: optional snapshot of the prior state
+
+Metadata schemas by event type:
+- LIBRARY_CREATED: {created_from: list[str], initial_intent: str, initial_files: list[str]}
+- LIBRARY_RENAMED: {old_name: str, new_name: str, reason: str}
+- LIBRARY_SPLIT: {source_lib_id: str, target_lib_ids: list[str], rationale: str}
+- LIBRARY_MERGED: {source_lib_ids: list[str], target_lib_id: str, rationale: str}
+- BOUNDARY_CHANGED: {added_files: list[str], removed_files: list[str], reason: str}
+"""
 
 from __future__ import annotations
 
@@ -6,6 +24,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -15,6 +34,55 @@ EVIDENCE_POINTER_RE = re.compile(r"\[([^\[\]]+?)::([^\[\]]+?)\]")
 EVIDENCE_POINTER_NEW_RE = re.compile(r"\[spec_snapshot/([^:]+)::([^\]]+)\]")
 
 logger = logging.getLogger(__name__)
+
+
+class LibraryEventType(str, Enum):
+    """Supported library event types."""
+
+    LIBRARY_CREATED = "LIBRARY_CREATED"
+    LIBRARY_RENAMED = "LIBRARY_RENAMED"
+    LIBRARY_SPLIT = "LIBRARY_SPLIT"
+    LIBRARY_MERGED = "LIBRARY_MERGED"
+    BOUNDARY_CHANGED = "BOUNDARY_CHANGED"
+
+
+@dataclass(frozen=True)
+class LibraryEvent:
+    """Append-only event describing a library lifecycle change."""
+
+    event_type: LibraryEventType
+    timestamp: str
+    lib_id: str
+    metadata: dict[str, Any]
+    previous_state: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the event to a JSON-compatible dictionary."""
+        payload: dict[str, Any] = {
+            "event_type": self.event_type.value,
+            "timestamp": self.timestamp,
+            "lib_id": self.lib_id,
+            "metadata": self.metadata,
+        }
+        if self.previous_state is not None:
+            payload["previous_state"] = self.previous_state
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LibraryEvent:
+        """Deserialize an event from a dictionary."""
+        event_type = data.get("event_type")
+        if isinstance(event_type, LibraryEventType):
+            parsed_type = event_type
+        else:
+            parsed_type = LibraryEventType(str(event_type))
+        return cls(
+            event_type=parsed_type,
+            timestamp=str(data.get("timestamp", "")).strip(),
+            lib_id=str(data.get("lib_id", "")).strip(),
+            metadata=data.get("metadata", {}) or {},
+            previous_state=data.get("previous_state"),
+        )
 
 
 def normalize_compound_pointers(text: str) -> str:

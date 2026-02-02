@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.formats import LibraryCharter
+from spec_manager.refinement.formats import LibraryCharter, LibraryEvent, LibraryEventType
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -21,6 +22,149 @@ from .library_labeling import (
 )
 
 LIB_ID_RE = re.compile(r"^lib_\d{3}$")
+
+
+def _write_library_event(lib_dir: Path, event: LibraryEvent) -> None:
+    """Append a library event to events.jsonl with an atomic rewrite."""
+    events = _read_library_events(lib_dir)
+    events.append(event)
+    _rewrite_library_events(lib_dir, events)
+
+
+def _rewrite_library_events(lib_dir: Path, events: list[LibraryEvent]) -> None:
+    """Rewrite events.jsonl atomically from a list of events."""
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    events_path = lib_dir / "events.jsonl"
+    payload_lines = [json.dumps(event.to_dict()) for event in events]
+    payload = "\n".join(payload_lines)
+    if payload:
+        payload += "\n"
+    temp_path = lib_dir / f".{events_path.name}.tmp"
+    temp_path.write_text(payload, encoding="utf-8")
+    temp_path.replace(events_path)
+
+
+def _read_library_events(lib_dir: Path) -> list[LibraryEvent]:
+    """Read library events from events.jsonl."""
+    events_path = lib_dir / "events.jsonl"
+    if not events_path.exists():
+        return []
+    events: list[LibraryEvent] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        events.append(LibraryEvent.from_dict(payload))
+    return events
+
+
+def _validate_event_monotonicity(events: list[LibraryEvent]) -> list[dict[str, Any]]:
+    """Validate library event ordering and timestamp monotonicity."""
+    issues: list[dict[str, Any]] = []
+    if not events:
+        issues.append(
+            {
+                "type": "library_events_missing",
+                "message": "No library events recorded.",
+            }
+        )
+        return issues
+
+    lib_id = events[0].lib_id
+    created_indices = [
+        index
+        for index, event in enumerate(events)
+        if event.event_type == LibraryEventType.LIBRARY_CREATED
+    ]
+    if not created_indices:
+        issues.append(
+            {
+                "type": "library_created_missing",
+                "lib_id": lib_id,
+                "message": "Library has no LIBRARY_CREATED event.",
+            }
+        )
+    elif created_indices[0] != 0:
+        issues.append(
+            {
+                "type": "library_created_not_first",
+                "lib_id": lib_id,
+                "message": "LIBRARY_CREATED must be the first event.",
+            }
+        )
+    if len(created_indices) > 1:
+        issues.append(
+            {
+                "type": "library_created_duplicate",
+                "lib_id": lib_id,
+                "message": "Multiple LIBRARY_CREATED events detected.",
+            }
+        )
+
+    last_timestamp: datetime | None = None
+    for index, event in enumerate(events):
+        try:
+            timestamp = datetime.fromisoformat(event.timestamp)
+        except ValueError:
+            issues.append(
+                {
+                    "type": "library_event_timestamp_invalid",
+                    "lib_id": lib_id,
+                    "index": index,
+                    "message": "Invalid timestamp format.",
+                }
+            )
+            continue
+        if last_timestamp and timestamp < last_timestamp:
+            issues.append(
+                {
+                    "type": "library_event_timestamp_not_monotonic",
+                    "lib_id": lib_id,
+                    "index": index,
+                    "message": "Library event timestamps must be monotonic.",
+                }
+            )
+        last_timestamp = timestamp
+
+    return issues
+
+
+def _record_library_rename(
+    manager: WorkspaceManager, lib_id: str, old_name: str, new_name: str, reason: str
+) -> None:
+    """Record a library rename event for future evolution workflows."""
+    lib_dir = manager.structure.libraries_dir / lib_id
+    event = LibraryEvent(
+        event_type=LibraryEventType.LIBRARY_RENAMED,
+        timestamp=datetime.now().isoformat(),
+        lib_id=lib_id,
+        metadata={"old_name": old_name, "new_name": new_name, "reason": reason},
+        previous_state=None,
+    )
+    _write_library_event(lib_dir, event)
+
+
+def _record_boundary_change(
+    manager: WorkspaceManager,
+    lib_id: str,
+    added_files: list[str],
+    removed_files: list[str],
+    reason: str,
+) -> None:
+    """Record a boundary change event for future evolution workflows."""
+    lib_dir = manager.structure.libraries_dir / lib_id
+    event = LibraryEvent(
+        event_type=LibraryEventType.BOUNDARY_CHANGED,
+        timestamp=datetime.now().isoformat(),
+        lib_id=lib_id,
+        metadata={
+            "added_files": added_files,
+            "removed_files": removed_files,
+            "reason": reason,
+        },
+        previous_state=None,
+    )
+    _write_library_event(lib_dir, event)
 
 
 def _validate_library_ids(charters: list[LibraryCharter]) -> list[dict[str, Any]]:
@@ -162,7 +306,9 @@ def _build_library_index(charters: list[LibraryCharter]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def _write_library_artifacts(manager: WorkspaceManager, charter: LibraryCharter) -> None:
+def _write_library_artifacts(
+    manager: WorkspaceManager, charter: LibraryCharter, created_from: list[str]
+) -> None:
     lib_dir = manager.structure.libraries_dir / charter.lib_id
     lib_dir.mkdir(parents=True, exist_ok=True)
 
@@ -175,6 +321,39 @@ def _write_library_artifacts(manager: WorkspaceManager, charter: LibraryCharter)
 
     (lib_dir / "gaps.md").write_text("", encoding="utf-8")
     (lib_dir / "decisions.md").write_text("", encoding="utf-8")
+
+    existing_events = _read_library_events(lib_dir)
+    created_event = next(
+        (
+            event
+            for event in existing_events
+            if event.event_type == LibraryEventType.LIBRARY_CREATED
+        ),
+        None,
+    )
+    if created_event is None:
+        initial_files = sorted(
+            {
+                str(source.get("file_id"))
+                for source in charter.evidence_sources
+                if source.get("file_id")
+            }
+        )
+        created_event = LibraryEvent(
+            event_type=LibraryEventType.LIBRARY_CREATED,
+            timestamp=datetime.now().isoformat(),
+            lib_id=charter.lib_id,
+            metadata={
+                "created_from": created_from,
+                "initial_intent": charter.intent,
+                "initial_files": initial_files,
+            },
+            previous_state=None,
+        )
+        _rewrite_library_events(lib_dir, [created_event, *existing_events])
+    elif existing_events and existing_events[0].event_type != LibraryEventType.LIBRARY_CREATED:
+        reordered = [created_event, *[event for event in existing_events if event != created_event]]
+        _rewrite_library_events(lib_dir, reordered)
 
 
 def synthesize_libraries(run_id: str) -> dict[str, Any]:
@@ -212,6 +391,17 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     if not refined_labels:
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No refined labels returned")
         return {"libraries_created": 0, "issues": issues}
+
+    created_from_map: dict[str, list[str]] = {}
+    for item in refined_labels:
+        lib_id = str(item.get("lib_id", "")).strip()
+        merged_from = item.get("merged_from", [])
+        if isinstance(merged_from, list):
+            created_from_map[lib_id] = [
+                str(label).strip() for label in merged_from if str(label).strip()
+            ]
+        else:
+            created_from_map[lib_id] = []
 
     charter_results = generate_all_charters(refined_labels, file_labels, manager)
     charters = list(charter_results)
@@ -253,10 +443,45 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     )
 
     for charter in charters:
-        _write_library_artifacts(manager, charter)
+        created_from = created_from_map.get(charter.lib_id, [])
+        _write_library_artifacts(manager, charter, created_from)
         tracker.update(status=charter.lib_id)
 
     tracker.finish()
+
+    for charter in charters:
+        lib_dir = manager.structure.libraries_dir / charter.lib_id
+        event_issues = _validate_event_monotonicity(_read_library_events(lib_dir))
+        for issue in event_issues:
+            if "lib_id" not in issue:
+                issue["lib_id"] = charter.lib_id
+            issues.append(issue)
+
+    libraries_dir = manager.structure.libraries_dir
+    library_dirs = {
+        path.name
+        for path in libraries_dir.iterdir()
+        if path.is_dir() and LIB_ID_RE.match(path.name)
+    }
+    allocated_ids = manager.state.allocated_library_ids
+    missing_dirs = sorted(allocated_ids - library_dirs)
+    extra_dirs = sorted(library_dirs - allocated_ids)
+    if missing_dirs:
+        issues.append(
+            {
+                "type": "missing_library_directory",
+                "lib_ids": missing_dirs,
+                "message": "Allocated library IDs missing directories.",
+            }
+        )
+    if extra_dirs:
+        issues.append(
+            {
+                "type": "untracked_library_directory",
+                "lib_ids": extra_dirs,
+                "message": "Library directories exist without allocated IDs.",
+            }
+        )
 
     phase_result = manager.state.phases[Phase.LIBRARY_SYNTHESIS.value]
     phase_result.issues = issues
@@ -280,6 +505,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         outputs["overlap_decisions"] = overlap_decisions
 
     manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs=outputs)
+    manager.save_state()
 
     return {
         "libraries_created": len(charters),
