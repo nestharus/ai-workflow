@@ -306,8 +306,12 @@ def build_library_shapes(file_labels: dict[str, Any]) -> dict[str, dict[str, Any
             if not label:
                 continue
 
+            confidence = label_entry.get("confidence", 0.0)
+            if not isinstance(confidence, (int, float)):
+                confidence = 0.0
+
             file_shape[label] = {
-                "confidence": float(label_entry.get("confidence", 0.0)),
+                "confidence": confidence,
                 "sections": label_entry.get("sections", []),
                 "rationale": label_entry.get("rationale", ""),
             }
