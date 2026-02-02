@@ -6,9 +6,8 @@ import threading
 from pathlib import Path
 
 import pytest
+from spec_manager.refinement.workflows.evidence_expansion import expand_evidence, spotcheck_evidence
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.evidence_expansion import expand_evidence, spotcheck_evidence
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:
@@ -149,7 +148,7 @@ def test_evidence_expansion_priority_flow(fs, monkeypatch) -> None:
         raise AssertionError(f"Unexpected agent: {agent_name}")
 
     monkeypatch.setattr(
-        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        "spec_manager.refinement.workflows.evidence_expansion.run_agent",
         _fake_run_agent,
     )
 

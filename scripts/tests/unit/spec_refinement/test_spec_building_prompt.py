@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.spec_refinement.workflows.spec_building import (
+from spec_manager.refinement.workflows.spec_building import (
     _build_full_spec_prompt_for_metrics,
     _build_patch_prompt,
 )

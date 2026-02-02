@@ -3,15 +3,14 @@
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_refinement.workflows.architecture import (
+from spec_manager.refinement.workflows.architecture import (
     _build_architecture_proposal_prompt,
     _build_brief_extraction_prompt,
 )
-from scripts.spec_refinement.workflows.evidence_expansion import _build_evidence_prompt
-from scripts.spec_refinement.workflows.library_labeling import _build_label_prompt
-from scripts.spec_refinement.workflows.spec_building import _build_gap_prompt, _build_patch_prompt
-from scripts.spec_refinement.workflows.summarization import _build_summary_prompt
+from spec_manager.refinement.workflows.evidence_expansion import _build_evidence_prompt
+from spec_manager.refinement.workflows.library_labeling import _build_label_prompt
+from spec_manager.refinement.workflows.spec_building import _build_gap_prompt, _build_patch_prompt
+from spec_manager.refinement.workflows.summarization import _build_summary_prompt
 
 
 def _assert_contract_first(prompt: str, agent_name: str) -> None:

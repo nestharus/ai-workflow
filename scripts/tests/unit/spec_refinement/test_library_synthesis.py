@@ -4,9 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spec_manager.refinement.formats import LibraryCharter
+from spec_manager.refinement.workflows.library_synthesis import synthesize_libraries
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
 
 
 def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManager:
@@ -43,25 +42,25 @@ def test_synthesize_libraries_success(fs, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
+            "spec_manager.refinement.workflows.library_synthesis.label_all_files",
             return_value={
                 "file_labels": {"F0001": {"candidate_labels": [], "uncertain_labels": []}}
             },
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.aggregate_labels",
+            "spec_manager.refinement.workflows.library_synthesis.aggregate_labels",
             return_value={"label_clusters": [], "singleton_labels": [], "metadata": {}},
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.refine_library_labels",
+            "spec_manager.refinement.workflows.library_synthesis.refine_library_labels",
             return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.generate_all_charters",
+            "spec_manager.refinement.workflows.library_synthesis.generate_all_charters",
             return_value=[_charter()],
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.resolve_all_overlaps",
+            "spec_manager.refinement.workflows.library_synthesis.resolve_all_overlaps",
             return_value=[],
         ),
     ):
@@ -84,25 +83,25 @@ def test_synthesize_libraries_overlap_resolution_outputs(fs, monkeypatch) -> Non
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
+            "spec_manager.refinement.workflows.library_synthesis.label_all_files",
             return_value={
                 "file_labels": {"F0001": {"candidate_labels": [], "uncertain_labels": []}}
             },
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.aggregate_labels",
+            "spec_manager.refinement.workflows.library_synthesis.aggregate_labels",
             return_value={"label_clusters": [], "singleton_labels": [], "metadata": {}},
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.refine_library_labels",
+            "spec_manager.refinement.workflows.library_synthesis.refine_library_labels",
             return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.generate_all_charters",
+            "spec_manager.refinement.workflows.library_synthesis.generate_all_charters",
             return_value=[_charter()],
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.resolve_all_overlaps",
+            "spec_manager.refinement.workflows.library_synthesis.resolve_all_overlaps",
             return_value=[
                 {
                     "lib_id_a": "lib_001",
@@ -127,25 +126,25 @@ def test_synthesize_libraries_evidence_validation(fs, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.label_all_files",
+            "spec_manager.refinement.workflows.library_synthesis.label_all_files",
             return_value={
                 "file_labels": {"F0001": {"candidate_labels": [], "uncertain_labels": []}}
             },
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.aggregate_labels",
+            "spec_manager.refinement.workflows.library_synthesis.aggregate_labels",
             return_value={"label_clusters": [], "singleton_labels": [], "metadata": {}},
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.refine_library_labels",
+            "spec_manager.refinement.workflows.library_synthesis.refine_library_labels",
             return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.generate_all_charters",
+            "spec_manager.refinement.workflows.library_synthesis.generate_all_charters",
             return_value=[_charter("UNKNOWN")],
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_synthesis.resolve_all_overlaps",
+            "spec_manager.refinement.workflows.library_synthesis.resolve_all_overlaps",
             return_value=[],
         ),
     ):

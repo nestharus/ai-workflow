@@ -12,31 +12,31 @@ from spec_manager.refinement.formats import (
     _parse_overlap_resolutions,
 )
 from spec_manager.refinement.validation_utils import strip_invalid_file_pointers
-from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-from spec_manager.schemas.library_labels import LibraryLabelerOutput
-
-from scripts.spec_refinement.workflows.architecture import (
+from spec_manager.refinement.workflows.architecture import (
     _validate_architecture_citations,
     map_libraries_to_architecture,
     propose_architectures,
     select_architecture,
 )
-from scripts.spec_refinement.workflows.evidence_expansion import (
+from spec_manager.refinement.workflows.evidence_expansion import (
     _validate_evidence_entry,
     expand_evidence,
 )
-from scripts.spec_refinement.workflows.library_synthesis import (
+from spec_manager.refinement.workflows.library_synthesis import (
     _validate_evidence_sources,
     _validate_library_ids,
     _validate_overlap_resolutions,
     synthesize_libraries,
 )
-from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations, build_specs
-from scripts.spec_refinement.workflows.sublibrary_detection import detect_sublibraries
-from scripts.spec_refinement.workflows.summarization import (
+from spec_manager.refinement.workflows.spec_building import _validate_spec_citations, build_specs
+from spec_manager.refinement.workflows.sublibrary_detection import detect_sublibraries
+from spec_manager.refinement.workflows.summarization import (
     _validate_evidence_pointers,
     summarize_all,
 )
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+from spec_manager.schemas.library_labels import LibraryLabelerOutput
+
 from tests.spec_refinement.fixtures.expected_outputs import (
     EXPECTED_GAP_CONVERGENCE_RATIO,
     EXPECTED_PERFORMANCE_BOUNDS,

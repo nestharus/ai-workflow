@@ -6,8 +6,7 @@ from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
 )
-
-from scripts.spec_refinement.workflows.spec_patches import (
+from spec_manager.refinement.workflows.spec_patches import (
     VALID_SPEC_SECTIONS,
     PatchOperation,
     SpecDocument,

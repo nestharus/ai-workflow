@@ -100,7 +100,7 @@ def test_spec_expand_evidence_dispatches(fs, monkeypatch) -> None:
     manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs={"libraries_count": 1})
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.expand_evidence"
+        "spec_manager.refinement.workflows.evidence_expansion.expand_evidence"
     ) as mock_expand:
         mock_expand.return_value = {
             "libraries_expanded": 1,
@@ -120,7 +120,7 @@ def test_spec_build_specs_dispatches(fs, monkeypatch) -> None:
     manager.start_phase(Phase.EVIDENCE_EXPANSION)
     manager.complete_phase(Phase.EVIDENCE_EXPANSION, outputs={"libraries_expanded": 1})
 
-    with patch("scripts.spec_refinement.workflows.spec_building.build_specs") as mock_build:
+    with patch("spec_manager.refinement.workflows.spec_building.build_specs") as mock_build:
         mock_build.return_value = {
             "libraries_built": 1,
             "total_iterations": 2,

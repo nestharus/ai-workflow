@@ -108,6 +108,10 @@ def _compute_pair_priority(
 
     if confidence >= 0.7:
         return confidence, "high_confidence_from_labeler"
+    if confidence < 0.3:
+        return confidence, "low_confidence_drop"
+    if confidence < 0.4:
+        return confidence, "low_confidence_skip"
 
     prompt = (
         "\n".join(
@@ -571,9 +575,9 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                 format_evidence=format_evidence,
             )
 
-            # Only skip if the classifier rejected the pair; spotcheck_evidence
-            # remains the fallback audit path for skipped pairs.
-            if rationale == "classifier_rejected":
+            # Skip pairs that are explicitly rejected or below the low-confidence floor;
+            # spotcheck_evidence remains the fallback audit path for skipped pairs.
+            if rationale in {"classifier_rejected", "low_confidence_drop"}:
                 continue
 
             pairs.append(

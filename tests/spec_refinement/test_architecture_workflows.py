@@ -9,14 +9,13 @@ from spec_manager.refinement.formats import (
     parse_architecture_proposal,
     parse_architecture_selection,
 )
-from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.architecture import (
+from spec_manager.refinement.workflows.architecture import (
     _validate_architecture_citations,
     map_libraries_to_architecture,
     propose_architectures,
     select_architecture,
 )
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:
@@ -47,7 +46,7 @@ def _create_library(manager: WorkspaceManager, lib_id: str) -> None:
 
 
 def _patch_agent_runner(monkeypatch, output: str) -> None:
-    from scripts.spec_refinement.workflows import architecture as arch_module
+    from spec_manager.refinement.workflows import architecture as arch_module
 
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return output

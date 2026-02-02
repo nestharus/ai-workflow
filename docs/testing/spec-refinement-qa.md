@@ -4,7 +4,7 @@ QA processes for validating the spec refinement pipeline (Phases 1-6).
 
 ## Pipeline Overview
 
-```
+```text
 Phase 1: Summarization     (glm-file-what-summarizer)
 Phase 2: Library Synthesis  (opus-library-synthesizer)
 Phase 3: Evidence Expansion (glm-library-evidence-mapper, chatgpt-evidence-gap-judge)
@@ -25,14 +25,14 @@ uv run pytest scripts/tests/unit/spec_refinement/ scripts/tests/component/test_s
 
 These tests validate:
 
-- State transitions (phase lifecycle, gap audit tracking)
-- Prompt construction (correct format, required fields)
-- Output parsing (formats.py parsers for JSON and markdown)
-- Workspace file I/O (charter, evidence, spec, gaps artifacts)
-- Agent retry logic (subprocess mock with failures)
-- Validation (evidence pointers, section references, citations)
-- Gap closure convergence (iterative gap detection and merge)
-- Monotonic spec growth (no content removal during integration)
+* State transitions (phase lifecycle, gap audit tracking)
+* Prompt construction (correct format, required fields)
+* Output parsing (formats.py parsers for JSON and markdown)
+* Workspace file I/O (charter, evidence, spec, gaps artifacts)
+* Agent retry logic (subprocess mock with failures)
+* Validation (evidence pointers, section references, citations)
+* Gap closure convergence (iterative gap detection and merge)
+* Monotonic spec growth (no content removal during integration)
 
 ### Manual E2E Validation
 
@@ -79,10 +79,10 @@ uv run spec status <run_id>
 
 **Common failures:**
 
-- Agent returns empty output: Check `runs/<run_id>/agent_prompts/` for the prompt file
+* Agent returns empty output: Check `runs/<run_id>/agent_prompts/` for the prompt file
   and verify the agent name `glm-file-what-summarizer` exists in `.agents/agents/`
-- >50% file failures: Phase marks as FAILED; check state.json for error details
-- Missing evidence pointers: Agent output doesn't follow the template format
+* >50% file failures: Phase marks as FAILED; check state.json for error details
+* Missing evidence pointers: Agent output doesn't follow the template format
 
 ### Phase 2: Library Synthesis
 
@@ -116,8 +116,8 @@ done
 
 **Common failures:**
 
-- No `lib_\d{3}` IDs in output: Agent didn't follow the expected format
-- Overlap resolution missing: Check charter.md for "Overlap Resolutions" section
+* No `lib_\d{3}` IDs in output: Agent didn't follow the expected format
+* Overlap resolution missing: Check charter.md for "Overlap Resolutions" section
 
 ### Phase 3: Evidence Expansion
 
@@ -147,10 +147,10 @@ done
 
 **Common failures:**
 
-- 0 libraries expanded: Token-based pre-filter excluded all pairs (charter terms don't
+* 0 libraries expanded: Token-based pre-filter excluded all pairs (charter terms don't
   overlap with summary terms). Check charter keywords vs summary content.
-- All agent calls fail: Verify `glm-library-evidence-mapper` agent is configured
-- Summary heading confusion: GLM agent returns summary headings (Components,
+* All agent calls fail: Verify `glm-library-evidence-mapper` agent is configured
+* Summary heading confusion: GLM agent returns summary headings (Components,
   Workflows, Candidate Responsibilities) instead of source file section labels
   (INTRO, BOUNDARIES, REQS, CONSTRAINTS). The pipeline's section validator
   correctly filters these as `unknown_section_reference` issues. Only valid
@@ -189,18 +189,18 @@ done
 
 **Common failures:**
 
-- Non-monotonic integration: Agent removed existing content; spec reverted
-- No evidence sources: Library has empty evidence.json; skip with error
-- Gap judge parse failure: JSON output doesn't match expected schema
-- Monotonic deadlock: Charter introduces a boundary claim not in source files;
+* Non-monotonic integration: Agent removed existing content; spec reverted
+* No evidence sources: Library has empty evidence.json; skip with error
+* Gap judge parse failure: JSON output doesn't match expected schema
+* Monotonic deadlock: Charter introduces a boundary claim not in source files;
   integrator can't delete it (monotonic rule); gap judge keeps flagging it.
   Example: charter says "Does NOT own throughput management" but source only says
   "Does NOT own request routing or input validation". The claim stays in the spec
   and gaps never converge.
-- Self-referencing citations: Integrator cites the spec itself
+* Self-referencing citations: Integrator cites the spec itself
   (e.g., `[libraries/lib_002/spec.md::Boundaries]`) instead of source files.
   Citation validator rejects these as `unknown_file_reference`.
-- GPT-5.2 xhigh latency: Gap judge calls take 60-120s each; with 2 libraries
+* GPT-5.2 xhigh latency: Gap judge calls take 60-120s each; with 2 libraries
   and 2 files, a single iteration takes ~6-8 minutes. Plan max-iterations
   accordingly.
 
@@ -217,8 +217,8 @@ done
 
 **Common failures:**
 
-- Missing spec.md/charter.md: Library skipped
-- Evidence overlap >20%: Sublibrary creation blocked with validation issue
+* Missing spec.md/charter.md: Library skipped
+* Evidence overlap >20%: Sublibrary creation blocked with validation issue
 
 ### Phase 6: Architecture
 
@@ -259,16 +259,16 @@ If you see `Error: Agent not found: <agent-name>`:
 
 1. Check the raw output in agent_prompts directory
 2. Common issues:
-   - Agent includes markdown fences around JSON (parser handles this)
-   - Agent includes `[agent-exec]` metadata lines (parser strips these)
-   - Agent returns prose instead of structured JSON
-   - Agent uses wrong section headings (case-sensitive matching)
+   * Agent includes markdown fences around JSON (parser handles this)
+   * Agent includes `[agent-exec]` metadata lines (parser strips these)
+   * Agent returns prose instead of structured JSON
+   * Agent uses wrong section headings (case-sensitive matching)
 
 ### Subprocess Debugging
 
 The agent execution path is:
 
-```
+```text
 run_agent() -> subprocess.run(["uv", "run", "agents", <name>, "--file", <file>])
   -> scripts/agents/__main__.py -> load agent config -> subprocess.run([model.command, *model.args, prompt])
 ```
@@ -321,7 +321,7 @@ for phase, result in state.get('phases', {}).items():
 
 Tests are structured to validate pipeline behaviors without LLM calls:
 
-```
+```text
 scripts/tests/unit/spec_refinement/
   test_summarization.py         # Phase 1 with mocked agent
   test_library_synthesis.py     # Phase 2 with mocked agent
@@ -356,7 +356,7 @@ def _fake_run_agent(outputs: dict[str, str]):
         return outputs[file_id]
     return _run_agent
 
-with patch("scripts.spec_refinement.workflows.summarization.run_agent",
+with patch("spec_manager.refinement.workflows.summarization.run_agent",
            side_effect=_fake_run_agent(outputs)):
     result = summarize_all("run1", parallel=False)
 ```

@@ -5,9 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spec_manager.refinement.formats import LibraryCharter
-from spec_manager.refinement.workspace import WorkspaceManager
-
-from scripts.spec_refinement.workflows.library_labeling import (
+from spec_manager.refinement.workflows.library_labeling import (
     aggregate_labels,
     detect_overlaps,
     generate_library_charter,
@@ -15,6 +13,7 @@ from scripts.spec_refinement.workflows.library_labeling import (
     refine_library_labels,
     resolve_overlap,
 )
+from spec_manager.refinement.workspace import WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:
@@ -73,7 +72,7 @@ def test_label_file_to_libraries_parses_json(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         return_value=json.dumps(payload),
     ):
         result = label_file_to_libraries("F0001", summary_path, manager)
@@ -94,11 +93,11 @@ def test_label_file_to_libraries_repairs_invalid_json(fs, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.library_labeling.run_agent",
+            "spec_manager.refinement.workflows.library_labeling.run_agent",
             return_value="not-json",
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
+            "spec_manager.refinement.workflows.library_labeling.repair_artifact",
             return_value=(json.dumps(repaired_payload), []),
         ) as mock_repair,
     ):
@@ -135,7 +134,7 @@ def test_refine_library_labels_writes_output(fs, monkeypatch) -> None:
     label_clusters = {"label_clusters": [], "singleton_labels": [], "metadata": {}}
 
     with patch(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         return_value=json.dumps(
             [
                 {
@@ -169,11 +168,11 @@ def test_generate_library_charter_uses_repair_gate(fs, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.library_labeling.run_agent",
+            "spec_manager.refinement.workflows.library_labeling.run_agent",
             return_value=_library_output("UNKNOWN"),
         ),
         patch(
-            "scripts.spec_refinement.workflows.library_labeling.repair_artifact",
+            "spec_manager.refinement.workflows.library_labeling.repair_artifact",
             return_value=(_library_output("INTRO"), []),
         ) as mock_repair,
     ):
@@ -234,7 +233,7 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         return_value=json.dumps(
             {
                 "decision": "assign_to_lib_A",

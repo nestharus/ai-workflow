@@ -12,6 +12,13 @@ from typing import Any, cast
 from spec_manager.core.gaps import Severity
 from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 from spec_manager.refinement.validation_utils import build_file_id_lookup
+from spec_manager.refinement.workflows.architecture import (
+    _build_architecture_proposal_prompt,
+    _build_architecture_selection_prompt,
+    _build_library_mapping_prompt,
+)
+from spec_manager.refinement.workflows.evidence_expansion import _build_evidence_prompt
+from spec_manager.refinement.workflows.spec_building import _build_file_ref, _build_patch_prompt
 from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
 
 from scripts.spec_refinement.qa.validators import (
@@ -22,13 +29,6 @@ from scripts.spec_refinement.qa.validators import (
     validate_phase0_determinism,
     validate_spec_integrator_output,
 )
-from scripts.spec_refinement.workflows.architecture import (
-    _build_architecture_proposal_prompt,
-    _build_architecture_selection_prompt,
-    _build_library_mapping_prompt,
-)
-from scripts.spec_refinement.workflows.evidence_expansion import _build_evidence_prompt
-from scripts.spec_refinement.workflows.spec_building import _build_file_ref, _build_patch_prompt
 
 
 @dataclass(frozen=True)

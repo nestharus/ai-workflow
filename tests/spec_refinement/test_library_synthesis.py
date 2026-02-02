@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from spec_manager.refinement.workflows.library_synthesis import synthesize_libraries
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:
@@ -109,7 +108,7 @@ def test_synthesize_libraries_end_to_end_success(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     monkeypatch.setattr(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         _run_agent_success,
     )
 
@@ -174,7 +173,7 @@ def test_synthesize_libraries_invalid_labels(fs, monkeypatch) -> None:
         raise AssertionError(f"Unexpected agent: {agent_name}")
 
     monkeypatch.setattr(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         _run_agent_invalid_labels,
     )
 
@@ -231,7 +230,7 @@ def test_synthesize_libraries_overlap_resolution_failure(fs, monkeypatch) -> Non
         raise AssertionError(f"Unexpected agent: {agent_name}")
 
     monkeypatch.setattr(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         _run_agent_overlap_failure,
     )
 
@@ -285,7 +284,7 @@ def test_synthesize_libraries_charter_generation_error(fs, monkeypatch) -> None:
         raise AssertionError(f"Unexpected agent: {agent_name}")
 
     monkeypatch.setattr(
-        "scripts.spec_refinement.workflows.library_labeling.run_agent",
+        "spec_manager.refinement.workflows.library_labeling.run_agent",
         _run_agent_bad_charter,
     )
 

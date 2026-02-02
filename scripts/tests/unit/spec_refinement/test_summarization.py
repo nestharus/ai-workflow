@@ -4,9 +4,8 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from spec_manager.refinement.workflows.summarization import summarize_all
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from scripts.spec_refinement.workflows.summarization import summarize_all
 
 
 def _make_summary_output(file_id: str, section: str) -> str:
@@ -65,7 +64,7 @@ def test_summarize_all_success(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.run_agent",
+        "spec_manager.refinement.workflows.summarization.run_agent",
         side_effect=_fake_run_agent(outputs),
     ):
         result = summarize_all("run1", parallel=False)
@@ -89,7 +88,7 @@ def test_summarize_all_parallel(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.run_agent",
+        "spec_manager.refinement.workflows.summarization.run_agent",
         side_effect=_fake_run_agent(outputs),
     ):
         result = summarize_all("run1", parallel=True)
@@ -107,7 +106,7 @@ def test_summarize_all_partial_failure(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.run_agent",
+        "spec_manager.refinement.workflows.summarization.run_agent",
         side_effect=_fake_run_agent(outputs, failures={"F0002"}),
     ):
         result = summarize_all("run1", parallel=False)
@@ -129,7 +128,7 @@ def test_summarize_all_phase_tracking(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.summarization.run_agent",
+        "spec_manager.refinement.workflows.summarization.run_agent",
         side_effect=_fake_run_agent(outputs),
     ):
         summarize_all("run1", parallel=False)

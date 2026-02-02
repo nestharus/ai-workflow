@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.sublibrary_detection import (
+from spec_manager.refinement.workflows.sublibrary_detection import (
     _build_sublibrary_spec,
     _recursive_refinement,
     detect_sublibraries,
 )
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 
 def _fake_run_agent(output: str):
@@ -96,7 +95,7 @@ def test_detect_sublibraries_creates_subdir(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+        "spec_manager.refinement.workflows.sublibrary_detection.run_agent",
         side_effect=_fake_run_agent(_sublibrary_output()),
     ):
         result = detect_sublibraries("run1", max_depth=1)
@@ -124,7 +123,7 @@ def test_sublibrary_overlap_validation_skips_creation(fs, monkeypatch) -> None:
     _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+        "spec_manager.refinement.workflows.sublibrary_detection.run_agent",
         side_effect=_fake_run_agent(_sublibrary_output(overlap=True)),
     ):
         result = detect_sublibraries("run1", max_depth=1)
@@ -140,7 +139,7 @@ def test_recursive_refinement_respects_max_depth(fs, monkeypatch) -> None:
     manager, _ = _setup_workspace(fs, monkeypatch)
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection._find_sublibraries_at_depth",
+        "spec_manager.refinement.workflows.sublibrary_detection._find_sublibraries_at_depth",
         side_effect=AssertionError("Should not be called at max depth"),
     ):
         _recursive_refinement(manager, max_depth=1, current_depth=1)
@@ -189,7 +188,7 @@ def test_sublibrary_gap_isolated(fs, monkeypatch) -> None:
         raise AssertionError(f"Unexpected agent: {agent_name}")
 
     with patch(
-        "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+        "spec_manager.refinement.workflows.sublibrary_detection.run_agent",
         side_effect=_run_agent,
     ):
         _build_sublibrary_spec(manager, sub_lib_dir)

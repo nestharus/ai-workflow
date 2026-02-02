@@ -21,6 +21,7 @@ from spec_manager.refinement.core.gap import Gap, GapEvidence, GapSynthesizer, f
 from spec_manager.refinement.core.gap_queue import GapQueue
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
+    parse_evidence_pointer,
     parse_gap_judge_output,
     parse_spec_patch_output,
 )
@@ -29,6 +30,7 @@ from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     build_section_id_lookup,
+    resolve_section_reference,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -669,11 +671,14 @@ def _validate_spec_citations(
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    section_ids_cache: dict[str, set[str]] = {}
+    section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     for match in pointer_matches:
-        file_ref = match.group(1).strip()
-        section_ref = match.group(2).strip()
+        parsed = parse_evidence_pointer(match.group(0))
+        if not parsed:
+            continue
+        file_ref = parsed["file_ref"]
+        section_ref = parsed["section_ref"]
         resolved_file_id = file_id_lookup.get(file_ref)
         if resolved_file_id is None:
             issues.append(
@@ -685,11 +690,17 @@ def _validate_spec_citations(
                 }
             )
             continue
-        valid_section_ids = section_ids_cache.get(resolved_file_id)
-        if valid_section_ids is None:
-            valid_section_ids = set(manager.get_section_labels(resolved_file_id))
-            section_ids_cache[resolved_file_id] = valid_section_ids
-        if section_ref not in valid_section_ids:
+        sections_data = manager.read_file_sections(resolved_file_id) or {}
+        section_lookup = build_section_id_lookup(resolved_file_id, sections_data)
+        if section_ref in section_lookup:
+            continue
+        canonical_section = resolve_section_reference(
+            section_ref,
+            resolved_file_id,
+            section_alias_map,
+            sections_data=sections_data,
+        )
+        if canonical_section is None:
             issues.append(
                 {
                     "type": "unknown_section_reference",

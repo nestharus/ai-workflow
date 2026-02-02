@@ -25,9 +25,8 @@ from typing import Literal
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, format_gap_table
+from spec_manager.refinement.workflows import summarize_all, synthesize_libraries
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 
 
 def _phase_completed(manager: WorkspaceManager, phase: Phase) -> bool:
@@ -499,7 +498,7 @@ def cmd_spec_expand_evidence(args: argparse.Namespace) -> int:
     """Expand evidence sources for Phase 3."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import expand_evidence
+    from spec_manager.refinement.workflows import expand_evidence
 
     try:
         result = expand_evidence(run_id)
@@ -534,7 +533,7 @@ def cmd_spec_spotcheck_evidence(args: argparse.Namespace) -> int:
     run_id = args.run_id
     lib_ids = args.lib_ids
 
-    from scripts.spec_refinement.workflows import spotcheck_evidence
+    from spec_manager.refinement.workflows import spotcheck_evidence
 
     try:
         result = spotcheck_evidence(run_id, lib_ids)
@@ -563,7 +562,7 @@ def cmd_spec_build_specs(args: argparse.Namespace) -> int:
     """Build library specs for Phase 4."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import build_specs
+    from spec_manager.refinement.workflows import build_specs
 
     try:
         result = build_specs(run_id, max_iterations=args.max_iterations)
@@ -606,7 +605,7 @@ def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
     """Detect sub-libraries for Phase 5."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import detect_sublibraries
+    from spec_manager.refinement.workflows import detect_sublibraries
 
     try:
         result = detect_sublibraries(run_id, max_depth=args.max_depth)
@@ -635,7 +634,7 @@ def cmd_arch_propose(args: argparse.Namespace) -> int:
     """Propose architecture candidates for Phase 6."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import propose_architectures
+    from spec_manager.refinement.workflows import propose_architectures
 
     try:
         result = propose_architectures(run_id)
@@ -656,7 +655,7 @@ def cmd_arch_select(args: argparse.Namespace) -> int:
     """Select best architecture for Phase 6."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import select_architecture
+    from spec_manager.refinement.workflows import select_architecture
 
     try:
         result = select_architecture(run_id)
@@ -678,7 +677,7 @@ def cmd_arch_map(args: argparse.Namespace) -> int:
     """Map libraries to architecture components for Phase 6."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import map_libraries_to_architecture
+    from spec_manager.refinement.workflows import map_libraries_to_architecture
 
     try:
         result = map_libraries_to_architecture(run_id)

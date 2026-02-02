@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from spec_manager.refinement.workflows.spec_building import build_specs
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.spec_building import build_specs
 
 
 def _setup_workspace(fs, monkeypatch) -> Path:
@@ -119,7 +118,7 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
         return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        "spec_manager.refinement.workflows.spec_building.run_agent",
         side_effect=_run_agent,
     ):
         build_specs("run1", max_iterations=1)
@@ -175,7 +174,7 @@ def test_gap_closure_converges(fs, monkeypatch) -> None:
         return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        "spec_manager.refinement.workflows.spec_building.run_agent",
         side_effect=_run_agent,
     ):
         result = build_specs("run1", max_iterations=2)
@@ -242,7 +241,7 @@ def test_max_iteration_limit(fs, monkeypatch) -> None:
         return gap_judge.run(prompt)
 
     with patch(
-        "scripts.spec_refinement.workflows.spec_building.run_agent",
+        "spec_manager.refinement.workflows.spec_building.run_agent",
         side_effect=_run_agent,
     ):
         result = build_specs("run1", max_iterations=2)
@@ -280,7 +279,7 @@ def test_citation_validation(fs, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.spec_building.run_agent",
+            "spec_manager.refinement.workflows.spec_building.run_agent",
             side_effect=_run_agent,
         ),
         patch(
@@ -335,7 +334,7 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.spec_building.run_agent",
+            "spec_manager.refinement.workflows.spec_building.run_agent",
             side_effect=_run_agent,
         ),
         patch(

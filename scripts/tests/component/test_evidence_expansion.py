@@ -9,12 +9,11 @@ from spec_manager.refinement.formats import (
     parse_evidence_mapper_output,
     parse_evidence_spotcheck_output,
 )
-from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
-from scripts.spec_refinement.workflows.evidence_expansion import (
+from spec_manager.refinement.workflows.evidence_expansion import (
     expand_evidence,
     spotcheck_evidence,
 )
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 
 def _make_summary_output(file_id: str, section: str, keyword: str) -> str:
@@ -108,7 +107,7 @@ def test_expand_evidence_validates_sections(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        "spec_manager.refinement.workflows.evidence_expansion.run_agent",
         side_effect=_fake_run_agent(outputs),
     ):
         result = expand_evidence("run1")
@@ -168,7 +167,7 @@ def test_expand_evidence_parallel_processing(fs, monkeypatch) -> None:
     }
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        "spec_manager.refinement.workflows.evidence_expansion.run_agent",
         side_effect=_fake_run_agent(outputs),
     ):
         result = expand_evidence("run1")
@@ -206,7 +205,7 @@ def test_spotcheck_evidence_adds_missing_sections(fs, monkeypatch) -> None:
         return spotcheck_output
 
     with patch(
-        "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+        "spec_manager.refinement.workflows.evidence_expansion.run_agent",
         side_effect=_run_spotcheck,
     ):
         result = spotcheck_evidence("run1")

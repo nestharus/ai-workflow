@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from spec_manager.refinement.workflows.summarization import _validate_evidence_pointers
 from spec_manager.refinement.workspace import WorkspaceManager
-
-from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:
@@ -32,7 +31,22 @@ def _stub_manager(
 ) -> SimpleNamespace:
     state = SimpleNamespace(file_manifest=file_manifest, section_manifest=section_manifest)
     structure = SimpleNamespace(spec_snapshot_dir=spec_snapshot_dir)
-    return SimpleNamespace(state=state, structure=structure)
+
+    def _read_file_sections(file_id: str) -> dict[str, list[dict[str, str]]]:
+        sections = section_manifest.get(file_id, [])
+        return {
+            "sections": [
+                {"section_id": label, "label": label}
+                for label in sections
+                if isinstance(label, str)
+            ]
+        }
+
+    return SimpleNamespace(
+        state=state,
+        structure=structure,
+        read_file_sections=_read_file_sections,
+    )
 
 
 def test_validate_evidence_pointers_basename_reference(fs, monkeypatch) -> None:

@@ -15,10 +15,8 @@ from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
 )
-from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
-
-from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
-from scripts.spec_refinement.workflows.spec_patches import (
+from spec_manager.refinement.workflows.architecture import _validate_architecture_citations
+from spec_manager.refinement.workflows.spec_patches import (
     SpecDocument,
     apply_patch,
     parse_patch_json,
@@ -26,6 +24,7 @@ from scripts.spec_refinement.workflows.spec_patches import (
     validate_patch_citations,
     validate_patch_operation,
 )
+from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
 
 FORBIDDEN_DERIVED_POINTER_RE = re.compile(
     r"\[(?:charter|charter\\.md|(?:libraries|runs)[\\/][^\\]]+?)::[^\\]]+?\\]",

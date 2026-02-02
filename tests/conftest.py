@@ -384,27 +384,27 @@ def mock_all_agents(monkeypatch):
             controller.violation_overrides.update(overrides)
 
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.summarization.run_agent",
+            "spec_manager.refinement.workflows.summarization.run_agent",
             controller.dispatch,
         )
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.library_labeling.run_agent",
+            "spec_manager.refinement.workflows.library_labeling.run_agent",
             controller.dispatch,
         )
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.evidence_expansion.run_agent",
+            "spec_manager.refinement.workflows.evidence_expansion.run_agent",
             controller.dispatch,
         )
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.spec_building.run_agent",
+            "spec_manager.refinement.workflows.spec_building.run_agent",
             controller.dispatch,
         )
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.sublibrary_detection.run_agent",
+            "spec_manager.refinement.workflows.sublibrary_detection.run_agent",
             controller.dispatch,
         )
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.architecture.run_agent",
+            "spec_manager.refinement.workflows.architecture.run_agent",
             controller.dispatch,
         )
         monkeypatch.setattr(

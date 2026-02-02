@@ -15,15 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
-from scripts.spec_refinement.workflows.evidence_expansion import _validate_evidence_entry
-from scripts.spec_refinement.workflows.library_synthesis import (
-    _validate_evidence_sources,
-    _validate_library_ids,
-    _validate_overlap_resolutions,
-)
-from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations
-from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
 from spec_manager.refinement.evaluation.fixtures import FixtureCategory, RepairFixture
 from spec_manager.refinement.formats import parse_library_synthesis
 from spec_manager.refinement.repair import (
@@ -31,6 +22,15 @@ from spec_manager.refinement.repair import (
     _build_repair_prompt,
     repair_artifact,
 )
+from spec_manager.refinement.workflows.architecture import _validate_architecture_citations
+from spec_manager.refinement.workflows.evidence_expansion import _validate_evidence_entry
+from spec_manager.refinement.workflows.library_synthesis import (
+    _validate_evidence_sources,
+    _validate_library_ids,
+    _validate_overlap_resolutions,
+)
+from spec_manager.refinement.workflows.spec_building import _validate_spec_citations
+from spec_manager.refinement.workflows.summarization import _validate_evidence_pointers
 from spec_manager.refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
 
 _PRELUDE_PREFIXES = (
