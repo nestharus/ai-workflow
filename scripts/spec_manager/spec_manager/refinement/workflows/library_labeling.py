@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,7 @@ from spec_manager.refinement.formats import (
     LibraryCharter,
     LibraryEvent,
     LibraryEventType,
+    build_evidence_pointer,
     migrate_pointers_to_new_format,
     normalize_compound_pointers,
     parse_concern_assignment_judge,
@@ -29,10 +31,12 @@ from spec_manager.refinement.formats import (
 )
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
+from spec_manager.refinement.validation_utils import build_file_id_lookup, build_section_id_lookup
 from spec_manager.refinement.workspace import WorkspaceManager
 
 MAX_WORKERS = 4
 LIB_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
+logger = logging.getLogger(__name__)
 
 
 def _build_label_prompt(file_id: str, summary: str) -> str:
@@ -667,6 +671,7 @@ def _build_charter_prompt(
     file_ids: list[str],
     file_sections: list[tuple[str, str]],
     summaries: dict[str, str],
+    manager: WorkspaceManager,
 ) -> str:
     lib_id = lib_def.get("lib_id", "")
     final_label = lib_def.get("final_label", "")
@@ -680,15 +685,33 @@ def _build_charter_prompt(
         f"Merged From: {merged_text}",
         "Use the exact markdown structure below with headings and bullet lists.",
         "Library IDs must match the target library ID.",
-        "Evidence pointers must use [FILE_ID::SECTION].",
+        "Evidence pointers must use [spec_snapshot/<relpath>::SEC-...] format.",
         "",
     ]
 
     if file_sections:
         lines.append("Evidence pointers to consider:")
+        section_lookup_cache: dict[str, dict[str, str]] = {}
         for file_id, section in file_sections:
-            if section:
-                lines.append(f"- [{file_id}::{section}]")
+            if not section:
+                continue
+            if file_id not in section_lookup_cache:
+                sections_data = manager.read_file_sections(file_id) or {}
+                section_lookup_cache[file_id] = build_section_id_lookup(file_id, sections_data)
+            resolved_section = section_lookup_cache[file_id].get(section, section)
+            try:
+                pointer = build_evidence_pointer(
+                    file_id, resolved_section, manager.state.file_manifest
+                )
+            except KeyError as exc:
+                logger.warning(
+                    "Skipping evidence pointer for %s::%s (missing relpath): %s",
+                    file_id,
+                    resolved_section,
+                    exc,
+                )
+                continue
+            lines.append(f"- {pointer}")
         lines.append("")
 
     lines.extend(
@@ -708,7 +731,7 @@ def _build_charter_prompt(
             "- <responsibility>",
             "",
             "#### Evidence",
-            "- [FILE_ID::SECTION]",
+            "- [spec_snapshot/<relpath>::SEC-...]",
             "",
             "#### Overlap Resolutions",
             "- <overlap description> -> <decision>",
@@ -740,7 +763,7 @@ def generate_library_charter(
     lib_id = str(lib_def.get("lib_id", "")).strip()
     file_ids, file_sections = _resolve_library_files(lib_def, file_labels)
 
-    prompt = _build_charter_prompt(lib_def, file_ids, file_sections, summaries)
+    prompt = _build_charter_prompt(lib_def, file_ids, file_sections, summaries, manager)
     try:
         output = run_agent(
             agent_name="opus-library-synthesizer",
@@ -791,6 +814,35 @@ def generate_library_charter(
         }
 
     charter = next((item for item in charters if item.lib_id == lib_id), charters[0])
+    file_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
+    normalized_sources: list[dict[str, Any]] = []
+    for source in charter.evidence_sources:
+        if not isinstance(source, dict):
+            continue
+        file_ref = source.get("file_id")
+        resolved_file_id = (
+            file_lookup.get(file_ref) if isinstance(file_ref, str) and file_ref else file_ref
+        )
+        sections = source.get("sections", [])
+        if not isinstance(sections, list):
+            sections = []
+        normalized_sources.append(
+            {
+                "file_id": resolved_file_id,
+                "sections": [str(section).strip() for section in sections if str(section).strip()],
+            }
+        )
+    if normalized_sources:
+        charter = LibraryCharter(
+            lib_id=charter.lib_id,
+            intent=charter.intent,
+            boundaries=charter.boundaries,
+            responsibilities=charter.responsibilities,
+            evidence_sources=normalized_sources,
+            overlap_resolutions=charter.overlap_resolutions,
+        )
 
     from .library_synthesis import (
         _validate_evidence_sources,

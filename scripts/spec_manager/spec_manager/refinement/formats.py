@@ -25,6 +25,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -210,6 +211,85 @@ def migrate_pointers_to_new_format(content: str, manager: WorkspaceManager) -> s
         return f"[spec_snapshot/{relpath}::{section_id}]"
 
     return EVIDENCE_POINTER_RE.sub(_replace, content)
+
+
+def migrate_evidence_json(evidence_path: Path, manager: WorkspaceManager) -> dict[str, Any]:
+    """Migrate evidence.json file to use new-format pointers in charter.md.
+
+    Note: evidence.json stores structured data (file_id + sections), not raw pointers.
+    This function validates the structure and returns migration metadata.
+    """
+    issues: list[dict[str, Any]] = []
+    if not evidence_path.exists():
+        return {"migrated": False, "sources_count": 0, "issues": issues}
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        issues.append(
+            {
+                "type": "invalid_evidence_json",
+                "message": f"Failed to read evidence.json: {exc}",
+            }
+        )
+        return {"migrated": False, "sources_count": 0, "issues": issues}
+
+    sources = payload.get("sources")
+    if not isinstance(sources, list):
+        issues.append(
+            {
+                "type": "invalid_evidence_json",
+                "message": "Evidence JSON must include a sources list.",
+            }
+        )
+        return {"migrated": False, "sources_count": 0, "issues": issues}
+
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict):
+            issues.append(
+                {
+                    "type": "invalid_evidence_source",
+                    "index": index,
+                    "message": "Evidence source must be an object with file_id and sections.",
+                }
+            )
+            continue
+        file_id = source.get("file_id")
+        sections = source.get("sections")
+        if not isinstance(file_id, str) or not file_id:
+            issues.append(
+                {
+                    "type": "invalid_evidence_source",
+                    "index": index,
+                    "message": "Evidence source missing file_id.",
+                }
+            )
+            continue
+        if not isinstance(sections, list) or not all(isinstance(item, str) for item in sections):
+            issues.append(
+                {
+                    "type": "invalid_evidence_source",
+                    "index": index,
+                    "file_id": file_id,
+                    "message": "Evidence source sections must be a list of strings.",
+                }
+            )
+        file_entry = manager.state.file_manifest.get(file_id)
+        if not file_entry or "relpath" not in file_entry:
+            issues.append(
+                {
+                    "type": "missing_relpath",
+                    "index": index,
+                    "file_id": file_id,
+                    "message": "Evidence source file_id missing relpath in manifest.",
+                }
+            )
+            logger.warning("Missing relpath for evidence source file_id '%s'", file_id)
+
+    return {
+        "migrated": len(issues) == 0,
+        "sources_count": len(sources),
+        "issues": issues,
+    }
 
 
 @dataclass(frozen=True)

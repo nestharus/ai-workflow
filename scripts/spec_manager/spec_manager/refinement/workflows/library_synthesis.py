@@ -9,8 +9,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.formats import LibraryCharter, LibraryEvent, LibraryEventType
+from spec_manager.refinement.formats import (
+    EVIDENCE_POINTER_RE,
+    LibraryCharter,
+    LibraryEvent,
+    LibraryEventType,
+    build_evidence_pointer,
+    migrate_evidence_json,
+    migrate_pointers_to_new_format,
+    parse_evidence_pointer,
+)
 from spec_manager.refinement.progress import ProgressTracker
+from spec_manager.refinement.validation_utils import build_file_id_lookup, build_section_id_lookup
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .library_labeling import (
@@ -217,28 +227,53 @@ def _validate_evidence_sources(
     charters: list[LibraryCharter], manager: WorkspaceManager
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
+    file_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     for charter in charters:
         for source in charter.evidence_sources:
-            file_id = source.get("file_id")
-            sections = source.get("sections", [])
-            if file_id not in manager.state.file_manifest:
+            if not isinstance(source, dict):
+                issues.append(
+                    {
+                        "type": "invalid_evidence_source",
+                        "lib_id": charter.lib_id,
+                        "message": "Evidence source must be a mapping with file_id and sections.",
+                    }
+                )
+                continue
+            file_ref = source.get("file_id")
+            if not isinstance(file_ref, str) or not file_ref:
                 issues.append(
                     {
                         "type": "unknown_file_reference",
                         "lib_id": charter.lib_id,
-                        "file_id": file_id,
+                        "file_id": file_ref,
                         "message": "Evidence references unknown file ID.",
                     }
                 )
                 continue
-            valid_sections = manager.state.section_manifest.get(file_id, [])
+            resolved_file_id = file_lookup.get(file_ref)
+            if resolved_file_id is None:
+                issues.append(
+                    {
+                        "type": "unknown_file_reference",
+                        "lib_id": charter.lib_id,
+                        "file_id": file_ref,
+                        "message": "Evidence references unknown file ID.",
+                    }
+                )
+                continue
+            sections = source.get("sections", [])
+            if not isinstance(sections, list):
+                sections = []
+            valid_sections = manager.state.section_manifest.get(resolved_file_id, [])
             for section in sections:
                 if section not in valid_sections:
                     issues.append(
                         {
                             "type": "unknown_section_reference",
                             "lib_id": charter.lib_id,
-                            "file_id": file_id,
+                            "file_id": resolved_file_id,
                             "section": section,
                             "message": "Evidence references unknown section.",
                         }
@@ -281,7 +316,7 @@ def _validate_overlap_resolutions(charters: list[LibraryCharter]) -> list[dict[s
     return issues
 
 
-def _format_charter(charter: LibraryCharter) -> str:
+def _format_charter(charter: LibraryCharter, manager: WorkspaceManager) -> str:
     lines = [f"# Library Charter: {charter.lib_id}", ""]
     lines.extend(["## Intent", charter.intent or "", ""])
     lines.extend(["## Boundaries", charter.boundaries or "", ""])
@@ -294,12 +329,52 @@ def _format_charter(charter: LibraryCharter) -> str:
     lines.append("")
 
     lines.append("## Evidence")
+    file_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
+    section_lookup_cache: dict[str, dict[str, str]] = {}
     if charter.evidence_sources:
         for source in charter.evidence_sources:
-            file_id = source.get("file_id")
+            if not isinstance(source, dict):
+                continue
+            file_ref = source.get("file_id")
+            if not isinstance(file_ref, str) or not file_ref:
+                continue
+            resolved_file_id = file_lookup.get(file_ref)
+            if resolved_file_id is None:
+                logger.warning(
+                    "Skipping evidence source for %s with unknown file reference '%s'",
+                    charter.lib_id,
+                    file_ref,
+                )
+                continue
+            if resolved_file_id not in section_lookup_cache:
+                sections_data = manager.read_file_sections(resolved_file_id) or {}
+                section_lookup_cache[resolved_file_id] = build_section_id_lookup(
+                    resolved_file_id, sections_data
+                )
+            section_lookup = section_lookup_cache[resolved_file_id]
             sections = source.get("sections", [])
+            if not isinstance(sections, list):
+                sections = []
             for section in sections:
-                lines.append(f"- [{file_id}::{section}]")
+                if not isinstance(section, str) or not section:
+                    continue
+                resolved_section = section_lookup.get(section, section)
+                try:
+                    pointer = build_evidence_pointer(
+                        resolved_file_id, resolved_section, manager.state.file_manifest
+                    )
+                except KeyError as exc:
+                    logger.warning(
+                        "Skipping evidence pointer for %s (%s::%s): %s",
+                        charter.lib_id,
+                        resolved_file_id,
+                        resolved_section,
+                        exc,
+                    )
+                    continue
+                lines.append(f"- {pointer}")
     else:
         lines.append("- None")
     lines.append("")
@@ -335,7 +410,7 @@ def _write_library_artifacts(
     lib_dir.mkdir(parents=True, exist_ok=True)
 
     charter_path = lib_dir / "charter.md"
-    charter_path.write_text(_format_charter(charter), encoding="utf-8")
+    charter_path.write_text(_format_charter(charter, manager), encoding="utf-8")
 
     evidence_path = lib_dir / "evidence.json"
     evidence_payload = {"sources": charter.evidence_sources}
@@ -523,6 +598,58 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
 
     tracker.finish()
 
+    pointers_migrated = 0
+    migration_warnings: list[dict[str, Any]] = []
+
+    def _count_legacy_pointers(text: str) -> int:
+        count = 0
+        for match in EVIDENCE_POINTER_RE.finditer(text):
+            parsed = parse_evidence_pointer(match.group(0))
+            if parsed and parsed["format"] == "legacy":
+                count += 1
+        return count
+
+    for charter in charters:
+        lib_dir = manager.structure.libraries_dir / charter.lib_id
+        charter_path = lib_dir / "charter.md"
+        if charter_path.exists():
+            content = charter_path.read_text(encoding="utf-8")
+            before_legacy = _count_legacy_pointers(content)
+            migrated_content = migrate_pointers_to_new_format(content, manager)
+            after_legacy = _count_legacy_pointers(migrated_content)
+            migrated_count = max(0, before_legacy - after_legacy)
+            if migrated_count:
+                pointers_migrated += migrated_count
+                logger.info(
+                    "Migrated %s legacy pointers in %s",
+                    migrated_count,
+                    charter_path,
+                )
+            if migrated_content != content:
+                charter_path.write_text(migrated_content, encoding="utf-8")
+            if after_legacy > 0:
+                warning = {
+                    "type": "pointer_migration_incomplete",
+                    "lib_id": charter.lib_id,
+                    "remaining": after_legacy,
+                    "message": "Legacy evidence pointers remain after migration.",
+                }
+                migration_warnings.append(warning)
+                issues.append(warning)
+
+        evidence_path = lib_dir / "evidence.json"
+        if evidence_path.exists():
+            report = migrate_evidence_json(evidence_path, manager)
+            report_issues = report.get("issues", [])
+            if isinstance(report_issues, list) and report_issues:
+                for issue in report_issues:
+                    if isinstance(issue, dict) and "lib_id" not in issue:
+                        issue["lib_id"] = charter.lib_id
+                    issues.append(issue)
+                migration_warnings.extend(
+                    [issue for issue in report_issues if isinstance(issue, dict)]
+                )
+
     for charter in charters:
         lib_dir = manager.structure.libraries_dir / charter.lib_id
         event_issues = _validate_event_monotonicity(_read_library_events(lib_dir))
@@ -575,6 +702,8 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         "libraries_count": len(charters),
         "overlap_resolutions": overlap_resolutions,
         "concern_assignments": concern_assignment_metrics,
+        "pointers_migrated": pointers_migrated,
+        "migration_warnings": migration_warnings,
     }
     if overlap_decisions:
         outputs["overlap_decisions"] = overlap_decisions
