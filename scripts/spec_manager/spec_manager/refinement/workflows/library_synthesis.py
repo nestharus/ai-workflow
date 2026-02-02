@@ -101,6 +101,21 @@ def _validate_event_monotonicity(events: list[LibraryEvent]) -> list[dict[str, A
             }
         )
 
+    for index, event in enumerate(events):
+        if event.lib_id != lib_id:
+            issues.append(
+                {
+                    "type": "conflicting_event",
+                    "lib_id": lib_id,
+                    "index": index,
+                    "conflicting_lib_id": event.lib_id,
+                    "message": (
+                        f"Event at index {index} has lib_id '{event.lib_id}' "
+                        f"which conflicts with expected '{lib_id}'."
+                    ),
+                }
+            )
+
     last_timestamp: datetime | None = None
     for index, event in enumerate(events):
         try:
@@ -382,6 +397,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     try:
         refined_labels = refine_library_labels(label_clusters, manager)
     except Exception as exc:
+        manager.save_state()
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error=f"Label refinement failed: {exc}")
         return {
             "libraries_created": 0,
@@ -389,6 +405,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         }
 
     if not refined_labels:
+        manager.save_state()
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No refined labels returned")
         return {"libraries_created": 0, "issues": issues}
 

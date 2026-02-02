@@ -504,6 +504,8 @@ def refine_library_labels(
         allocated_ids.add(lib_id)
         manager.state.register_library_id(lib_id)
 
+    manager.save_state()
+
     manager.structure.libraries_dir.mkdir(parents=True, exist_ok=True)
     refined_path = manager.structure.libraries_dir / "refined_labels.json"
     refined_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
