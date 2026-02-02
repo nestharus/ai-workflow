@@ -702,6 +702,21 @@ def cmd_gaps(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_phase_02(args: argparse.Namespace) -> int:
+    """Run Phase 2 clean/compose/compliance workflow."""
+    run_id = args.run_id
+
+    from spec_manager.refinement.workflows.phase_02_clean import run_phase_02_clean
+
+    result = run_phase_02_clean(run_id)
+    if result.get("success"):
+        print(f"Phase 2 completed successfully for run {run_id}")
+        return 0
+
+    print(f"Phase 2 failed: {result.get('error')}", file=sys.stderr)
+    return 1
+
+
 def main() -> int:
     """Main entry point for the spec manager CLI.
 
@@ -784,6 +799,13 @@ def main() -> int:
     p_gaps.add_argument("spec_folder", help="Path to spec folder")
     p_gaps.add_argument("--update", action="store_true", help="Update gaps.md")
 
+    # phase-02
+    p_phase_02 = subparsers.add_parser(
+        "phase-02",
+        help="Run Phase 2 clean/compose/compliance workflow",
+    )
+    p_phase_02.add_argument("run_id", help="Run identifier")
+
     # discover
     p_discover = subparsers.add_parser("discover", help="Run library discovery")
     p_discover.add_argument("spec_folder", help="Path to spec folder")
@@ -803,6 +825,7 @@ def main() -> int:
         "cleanup": cmd_cleanup,
         "set-order": cmd_set_order,
         "gaps": cmd_gaps,
+        "phase-02": cmd_phase_02,
         "discover": cmd_discover,
     }
 

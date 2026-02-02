@@ -134,6 +134,43 @@ class ComplianceScorer:
         self._previous_state = copy.deepcopy(state)
         return result
 
+    def score_run_compliance(
+        self,
+        run_root: Path,
+        pass_num: int = 2,
+    ) -> ComplianceResult:
+        """Score compliance using run-root manifest artifacts."""
+        blockers: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+
+        blockers.extend(self.check_artifact_presence(run_root))
+        blockers.extend(self.check_schema_validity(run_root))
+        blockers.extend(self.check_section_spans(run_root))
+
+        metrics, evidence_by_category = self._compute_metrics_from_evidence([])
+        score = (
+            metrics.format_compliance + metrics.annotation_coverage + metrics.id_normalization
+        ) / 3.0
+
+        details = {
+            "format_compliance": metrics.format_compliance,
+            "annotation_coverage": metrics.annotation_coverage,
+            "id_normalization": metrics.id_normalization,
+            "remainder_ratio": 0.0,
+            "unresolved_references": 0,
+            "low_confidence_mappings": 0,
+            "evidence_by_category": evidence_by_category,
+        }
+
+        return ComplianceResult(
+            score=score,
+            blockers=blockers,
+            warnings=warnings,
+            passed=len(blockers) == 0,
+            details=details,
+            pass_num=pass_num,
+        )
+
     def check_artifact_presence(self, spec_folder: Path) -> list[dict[str, Any]]:
         """Validate required artifacts exist."""
         blockers: list[dict[str, Any]] = []

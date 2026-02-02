@@ -765,6 +765,11 @@ class WorkspaceManager:
         return self.structure.root
 
     @property
+    def run_root(self) -> Path:
+        """Get the run root directory path."""
+        return self.structure.root
+
+    @property
     def is_initialized(self) -> bool:
         """Check if workspace is initialized."""
         return self.structure.root.exists() and (self.structure.root / "state.json").exists()

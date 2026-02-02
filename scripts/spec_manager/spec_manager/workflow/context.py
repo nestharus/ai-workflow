@@ -430,9 +430,23 @@ class ContextIndexBuilder:
         self._load_sections_manifests(index)
         return index
 
+    def build_from_run_manifests(self, run_root: Path) -> ContextIndex:
+        """Build a ContextIndex using run-root manifest files."""
+        index = ContextIndex(self.workspace)
+        self._load_terms_dir(index, run_root / "manifest" / "terms")
+        self._load_sections_dir(index, run_root / "manifest" / "sections")
+        return index
+
     def _load_terms_manifests(self, index: ContextIndex) -> None:
         """Load term manifests and add terms to the index."""
-        terms_dir = self.spec_folder / "manifest" / "terms"
+        self._load_terms_dir(index, self.spec_folder / "manifest" / "terms")
+
+    def _load_sections_manifests(self, index: ContextIndex) -> None:
+        """Load section manifests and add sections to the index."""
+        self._load_sections_dir(index, self.spec_folder / "manifest" / "sections")
+
+    def _load_terms_dir(self, index: ContextIndex, terms_dir: Path) -> None:
+        """Load term manifests and add terms to the index."""
         if not terms_dir.exists():
             return
 
@@ -466,9 +480,8 @@ class ContextIndexBuilder:
                     "term",
                 )
 
-    def _load_sections_manifests(self, index: ContextIndex) -> None:
+    def _load_sections_dir(self, index: ContextIndex, sections_dir: Path) -> None:
         """Load section manifests and add sections to the index."""
-        sections_dir = self.spec_folder / "manifest" / "sections"
         if not sections_dir.exists():
             return
 
