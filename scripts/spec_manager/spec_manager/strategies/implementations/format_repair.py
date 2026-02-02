@@ -11,14 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.workflows.repair import (
-    ArtifactType,
-    get_repair_model,
-    repair_artifact,
-)
 from spec_manager.refinement.formats import (
     _extract_json_payload,
     _record_json_extraction_evidence,
+)
+from spec_manager.refinement.repair import (
+    ArtifactType,
+    get_repair_model,
+    repair_artifact,
 )
 from spec_manager.strategies.base import (
     ProcessingContext,

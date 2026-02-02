@@ -284,7 +284,7 @@ def test_citation_validation(fs, monkeypatch) -> None:
             side_effect=_run_agent,
         ),
         patch(
-            "scripts.spec_refinement.workflows.repair.run_agent",
+            "spec_manager.refinement.repair.run_agent",
             return_value=integrator.run(""),
         ),
     ):
@@ -339,7 +339,7 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
             side_effect=_run_agent,
         ),
         patch(
-            "scripts.spec_refinement.workflows.repair.run_agent",
+            "spec_manager.refinement.repair.run_agent",
             return_value=repaired_patch,
         ),
     ):

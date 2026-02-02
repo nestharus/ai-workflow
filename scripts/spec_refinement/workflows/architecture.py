@@ -9,17 +9,16 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     normalize_compound_pointers,
     parse_architecture_brief_output,
     parse_architecture_proposal,
     parse_architecture_selection,
 )
+from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import strip_invalid_file_pointers
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .progress import ProgressTracker
 
 # Only treat bracketed text containing a `::` segment separator as a citation.
 ARCH_CITATION_RE = re.compile(r"\[([^\[\]]*?::[^\[\]]*?)\]")
@@ -196,7 +195,7 @@ def select_architecture(run_id: str) -> dict[str, Any]:
     selection["rationale"] = rationale
     issues = _validate_architecture_citations(rationale, manager)
     if issues:
-        from .repair import ArtifactType, get_repair_model, repair_artifact
+        from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 
         libraries = manager.get_all_libraries_recursive()
         try:
@@ -340,7 +339,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     citation_issues = _validate_architecture_citations(formatted_output, manager)
     issues.extend(citation_issues)
     if citation_issues:
-        from .repair import ArtifactType, get_repair_model, repair_artifact
+        from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 
         libraries = manager.get_all_libraries_recursive()
         try:

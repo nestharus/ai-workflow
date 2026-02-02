@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.spec_refinement.evaluation import repair_bakeoff as bakeoff
-from scripts.spec_refinement.evaluation.fixtures import FixtureCategory, RepairFixture
-from scripts.spec_refinement.workflows.repair import ArtifactType
+from spec_manager.refinement.evaluation import repair_bakeoff as bakeoff
+from spec_manager.refinement.evaluation.fixtures import FixtureCategory, RepairFixture
+from spec_manager.refinement.repair import ArtifactType
 
 
 def test_fixture_loading() -> None:

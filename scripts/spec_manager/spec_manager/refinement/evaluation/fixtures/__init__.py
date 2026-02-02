@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from scripts.spec_refinement.workflows.repair import ArtifactType
+from spec_manager.refinement.repair import ArtifactType
 
 
 class FixtureCategory(str, Enum):
+    """Categories of fixture for repair model evaluation."""
+
     INVALID_FILE_ID = "invalid_file_id"
     INVENTED_SECTION = "invented_section"
     MISSING_CITATION = "missing_citation"
@@ -20,6 +22,8 @@ class FixtureCategory(str, Enum):
 
 @dataclass(frozen=True)
 class RepairFixture:
+    """Fixture data for repair model evaluation."""
+
     artifact_type: ArtifactType
     invalid_output: str
     expected_errors: list[dict[str, Any]]

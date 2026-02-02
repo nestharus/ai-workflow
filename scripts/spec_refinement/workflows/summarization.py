@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     FileSummary,
@@ -13,6 +14,7 @@ from spec_manager.refinement.formats import (
     parse_evidence_pointer,
     parse_file_summary,
 )
+from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
@@ -21,9 +23,6 @@ from spec_manager.refinement.validation_utils import (
     strip_invalid_file_pointers,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .progress import ProgressTracker
 
 MAX_WORKERS = 4
 
@@ -228,7 +227,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
     issues = _validate_evidence_pointers(output, manager, file_id)
     format_evidence: list[dict[str, Any]] = []
     if issues:
-        from .repair import ArtifactType, get_repair_model, repair_artifact
+        from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 
         try:
             sections_data = manager.read_file_sections(file_id)

@@ -408,7 +408,7 @@ def mock_all_agents(monkeypatch):
             controller.dispatch,
         )
         monkeypatch.setattr(
-            "scripts.spec_refinement.workflows.repair.run_agent",
+            "spec_manager.refinement.repair.run_agent",
             controller.dispatch,
         )
 

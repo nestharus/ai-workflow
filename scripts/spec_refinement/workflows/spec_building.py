@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
 from spec_manager.refinement.core.gap_queue import GapQueue
 from spec_manager.refinement.formats import (
@@ -23,6 +24,7 @@ from spec_manager.refinement.formats import (
     parse_gap_judge_output,
     parse_spec_patch_output,
 )
+from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
@@ -30,8 +32,6 @@ from spec_manager.refinement.validation_utils import (
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
-from .agent_utils import run_agent
-from .progress import ProgressTracker
 from .spec_patches import (
     VALID_SPEC_SECTIONS,
     SpecDocument,
@@ -1037,7 +1037,11 @@ def _build_library_spec(
                         "errors": citation_issues,
                     },
                 )
-                from .repair import ArtifactType, get_repair_model, repair_artifact
+                from spec_manager.refinement.repair import (
+                    ArtifactType,
+                    get_repair_model,
+                    repair_artifact,
+                )
 
                 try:
                     repaired_output, repair_evidence = repair_artifact(

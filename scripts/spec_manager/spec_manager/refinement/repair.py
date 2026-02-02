@@ -18,8 +18,7 @@ from .agent_utils import run_agent
 
 _FALLBACK_REPAIR_MODEL = "gpt-5.2-low"
 _REPAIR_MODEL_SELECTION_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "scripts/spec_refinement/evaluation/results/REPAIR_MODEL_SELECTION.md"
+    Path(__file__).resolve().parent / "evaluation/results/REPAIR_MODEL_SELECTION.md"
 )
 _REPAIR_MODEL_RECOMMENDATION_PATTERN = re.compile(
     r"recommend\s+\*\*(?P<model>[^*]+)\*\*",

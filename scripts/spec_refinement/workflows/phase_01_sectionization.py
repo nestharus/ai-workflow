@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
+from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
 from spec_manager.schemas.sections import FileSections
 
-from .agent_utils import run_agent
 from .atom_emitter import emit_atoms
-from .progress import ProgressTracker
 from .schema_validator import (
     validate_atoms_schema,
     validate_sections_schema,

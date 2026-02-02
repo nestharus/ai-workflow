@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from scripts.spec_refinement.evaluation.fixtures import RepairFixture
-from scripts.spec_refinement.workflows.repair import ArtifactType
+from spec_manager.refinement.evaluation.fixtures import RepairFixture
+from spec_manager.refinement.repair import ArtifactType
 
 
 def _allowlists() -> dict[str, object]:

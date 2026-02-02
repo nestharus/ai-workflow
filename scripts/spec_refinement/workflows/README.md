@@ -37,7 +37,7 @@ re-run the phase once corrected.
 
 Workflows use a validate -> repair -> revalidate gate to resolve compliance-only
 issues automatically. The repair layer lives in
-`scripts/spec_refinement/workflows/repair.py` and uses repair agents in
+`scripts/spec_manager/spec_manager/refinement/repair.py` and uses repair agents in
 `.agents/agents/repair-*.md`. If repair succeeds, the corrected artifact is
 written; if it fails, the original issues remain and a `repair_failed` issue is
 added.
@@ -49,7 +49,7 @@ added.
 
 ### Adding a new artifact type
 
-- Add the enum entry in `scripts/spec_refinement/workflows/repair.py`
+- Add the enum entry in `scripts/spec_manager/spec_manager/refinement/repair.py`
 - Map it to a new agent name in `_select_repair_agent`
 - Create the agent definition in `.agents/agents/`
 - Wire a validate -> repair -> revalidate gate in the workflow phase

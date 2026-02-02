@@ -15,10 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.formats import parse_library_synthesis
-from spec_manager.refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
-
-from scripts.spec_refinement.evaluation.fixtures import FixtureCategory, RepairFixture
 from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
 from scripts.spec_refinement.workflows.evidence_expansion import _validate_evidence_entry
 from scripts.spec_refinement.workflows.library_synthesis import (
@@ -26,13 +22,16 @@ from scripts.spec_refinement.workflows.library_synthesis import (
     _validate_library_ids,
     _validate_overlap_resolutions,
 )
-from scripts.spec_refinement.workflows.repair import (
+from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations
+from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
+from spec_manager.refinement.evaluation.fixtures import FixtureCategory, RepairFixture
+from spec_manager.refinement.formats import parse_library_synthesis
+from spec_manager.refinement.repair import (
     ArtifactType,
     _build_repair_prompt,
     repair_artifact,
 )
-from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations
-from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
+from spec_manager.refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
 
 _PRELUDE_PREFIXES = (
     "here is",
@@ -134,7 +133,7 @@ CANDIDATE_MODELS: list[ModelConfig] = [
 
 
 def _load_fixtures() -> list[RepairFixture]:
-    from scripts.spec_refinement.evaluation.fixtures import (
+    from spec_manager.refinement.evaluation.fixtures import (
         architecture_fixtures,
         charter_fixtures,
         evidence_json_fixtures,
@@ -957,7 +956,9 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("scripts/spec_refinement/evaluation/results/REPAIR_MODEL_SELECTION.md"),
+        default=Path(
+            "scripts/spec_manager/spec_manager/refinement/evaluation/results/REPAIR_MODEL_SELECTION.md"
+        ),
         help="Path for the markdown report",
     )
 

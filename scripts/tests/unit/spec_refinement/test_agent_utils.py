@@ -1,4 +1,4 @@
-"""Unit tests for scripts.spec_refinement.workflows.agent_utils.run_agent.
+"""Unit tests for spec_manager.refinement.agent_utils.run_agent.
 
 All tests mock subprocess.run so no real agents or LLMs are invoked.
 Filesystem operations use pyfakefs (the ``fs`` fixture).
@@ -8,11 +8,11 @@ time.sleep is patched to avoid real delays.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-
-from scripts.spec_refinement.workflows.agent_utils import PROJECT_ROOT, run_agent
+from spec_manager.refinement.agent_utils import PROJECT_ROOT, run_agent
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -22,7 +22,7 @@ from scripts.spec_refinement.workflows.agent_utils import PROJECT_ROOT, run_agen
 def _make_completed_process(
     *,
     returncode: int = 0,
-    stdout: str = "",
+    stdout: str | None = "",
     stderr: str = "",
 ) -> MagicMock:
     """Build a fake ``subprocess.CompletedProcess``."""
@@ -46,12 +46,9 @@ def test_successful_run_returns_stdout(fs: object) -> None:
     fake_result = _make_completed_process(stdout="  agent output\n")
 
     with (
-        patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
-            return_value=fake_result,
-        ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=1000.0),
+        patch("spec_manager.refinement.agent_utils.subprocess.run", return_value=fake_result),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=1000.0),
     ):
         output = run_agent(
             agent_name="test-agent",
@@ -71,11 +68,11 @@ def test_successful_run_creates_prompt_file(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=fake_result,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=1234.567),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=1234.567),
     ):
         run_agent(
             agent_name="my-agent",
@@ -106,13 +103,13 @@ def test_nonzero_exit_raises_after_retries(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=fail,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="Agent failed.*exit=1"):
+        with pytest.raises(RuntimeError, match=rf"Agent failed.*exit=1"):
             run_agent(
                 agent_name="fail-agent",
                 prompt="go",
@@ -129,13 +126,13 @@ def test_nonzero_exit_error_includes_stderr(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=fail,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="stderr=detailed error"):
+        with pytest.raises(RuntimeError, match=rf"stderr=detailed error"):
             run_agent(
                 agent_name="err-agent",
                 prompt="go",
@@ -157,13 +154,13 @@ def test_empty_stdout_raises_after_retries(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=empty,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="empty output"):
+        with pytest.raises(RuntimeError, match=rf"empty output"):
             run_agent(
                 agent_name="empty-agent",
                 prompt="go",
@@ -180,13 +177,13 @@ def test_whitespace_only_stdout_counts_as_empty(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ws,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="empty output"):
+        with pytest.raises(RuntimeError, match=rf"empty output"):
             run_agent(
                 agent_name="ws-agent",
                 prompt="go",
@@ -200,18 +197,17 @@ def test_none_stdout_counts_as_empty(fs: object) -> None:
     workspace.mkdir(parents=True)
 
     none_out = _make_completed_process(returncode=0, stdout=None)
-    # stdout can be None when capture_output is used; the source handles via ``or ""``.
     none_out.stdout = None
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=none_out,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="empty output"):
+        with pytest.raises(RuntimeError, match=rf"empty output"):
             run_agent(
                 agent_name="none-agent",
                 prompt="go",
@@ -233,11 +229,11 @@ def test_retries_up_to_max_retries_on_failure(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=fail,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         with pytest.raises(RuntimeError):
             run_agent(
@@ -261,11 +257,11 @@ def test_retries_with_empty_output(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=empty,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         with pytest.raises(RuntimeError):
             run_agent(
@@ -289,11 +285,11 @@ def test_no_sleep_on_immediate_success(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ok,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         run_agent(
             agent_name="fast-agent",
@@ -318,11 +314,11 @@ def test_prompt_dir_created_with_parents(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ok,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=5000.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=5000.0),
     ):
         run_agent(
             agent_name="nested-agent",
@@ -342,11 +338,11 @@ def test_prompt_file_encoding_utf8(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ok,
         ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=2000.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=2000.0),
     ):
         run_agent(
             agent_name="utf8-agent",
@@ -373,11 +369,11 @@ def test_command_includes_agent_name_and_project_root(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ok,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=99.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=99.0),
     ):
         run_agent(
             agent_name="cmd-agent",
@@ -408,11 +404,11 @@ def test_command_passes_correct_kwargs(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ok,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         run_agent(
             agent_name="kw-agent",
@@ -442,11 +438,11 @@ def test_succeeds_on_second_attempt_after_failure(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             side_effect=[fail, ok],
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         output = run_agent(
             agent_name="flaky-agent",
@@ -471,11 +467,11 @@ def test_succeeds_on_second_attempt_after_empty_output(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             side_effect=[empty, ok],
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         output = run_agent(
             agent_name="delayed-agent",
@@ -503,13 +499,13 @@ def test_max_retries_one_no_retry_on_failure(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=fail,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="Agent failed"):
+        with pytest.raises(RuntimeError, match=rf"Agent failed"):
             run_agent(
                 agent_name="once-agent",
                 prompt="try once",
@@ -531,11 +527,11 @@ def test_max_retries_one_success(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=ok,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         output = run_agent(
             agent_name="one-agent",
@@ -558,13 +554,13 @@ def test_max_retries_one_empty_output_raises(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=empty,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="empty output"):
+        with pytest.raises(RuntimeError, match=rf"empty output"):
             run_agent(
                 agent_name="empty-once",
                 prompt="try",
@@ -589,11 +585,11 @@ def test_default_max_retries_is_two(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             return_value=fail,
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         with pytest.raises(RuntimeError):
             run_agent(
@@ -622,11 +618,11 @@ def test_nonzero_exit_then_empty_then_success(fs: object) -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
+            "spec_manager.refinement.agent_utils.subprocess.run",
             side_effect=[fail, empty, ok],
         ) as mock_run,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep") as mock_sleep,
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
         output = run_agent(
             agent_name="mixed-agent",
@@ -647,13 +643,11 @@ def test_fallback_error_when_last_error_is_none(fs: object) -> None:
     workspace.mkdir(parents=True)
 
     with (
-        patch(
-            "scripts.spec_refinement.workflows.agent_utils.subprocess.run",
-        ),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.sleep"),
-        patch("scripts.spec_refinement.workflows.agent_utils.time.time", return_value=0.0),
+        patch("spec_manager.refinement.agent_utils.subprocess.run"),
+        patch("spec_manager.refinement.agent_utils.time.sleep"),
+        patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
     ):
-        with pytest.raises(RuntimeError, match="Agent failed"):
+        with pytest.raises(RuntimeError, match=rf"Agent failed"):
             run_agent(
                 agent_name="zero-agent",
                 prompt="no tries",

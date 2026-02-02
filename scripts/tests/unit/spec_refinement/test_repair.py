@@ -4,8 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from scripts.spec_refinement.workflows.repair import (
+from spec_manager.refinement.repair import (
     ArtifactType,
     _build_repair_prompt,
     _format_allowlists,
@@ -62,7 +61,7 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
     ]
 
     with patch(
-        "scripts.spec_refinement.workflows.repair.run_agent",
+        "spec_manager.refinement.repair.run_agent",
         return_value="fixed",
     ) as mock_run:
         repaired, evidence = repair_artifact(
@@ -88,7 +87,7 @@ def test_repair_artifact_calls_agent_with_prompt() -> None:
 def test_repair_artifact_skips_when_no_errors() -> None:
     manager = _DummyManager(Path("/workspace"))
 
-    with patch("scripts.spec_refinement.workflows.repair.run_agent") as mock_run:
+    with patch("spec_manager.refinement.repair.run_agent") as mock_run:
         repaired, evidence = repair_artifact(
             output="ok",
             errors=[],
@@ -108,7 +107,7 @@ def test_repair_artifact_propagates_exception() -> None:
 
     with (
         patch(
-            "scripts.spec_refinement.workflows.repair.run_agent",
+            "spec_manager.refinement.repair.run_agent",
             side_effect=RuntimeError("boom"),
         ),
         pytest.raises(RuntimeError, match="boom"),

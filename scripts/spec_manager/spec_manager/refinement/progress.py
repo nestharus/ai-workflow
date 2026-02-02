@@ -7,8 +7,9 @@ import threading
 from datetime import datetime
 from typing import Any
 
-from spec_manager.refinement.workspace import WorkspaceManager
 from tqdm import tqdm
+
+from spec_manager.refinement.workspace import WorkspaceManager
 
 
 class ProgressTracker:

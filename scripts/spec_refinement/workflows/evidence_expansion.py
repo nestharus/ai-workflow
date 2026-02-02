@@ -8,15 +8,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     _extract_json_payload,
     _record_json_extraction_evidence,
     parse_evidence_spotcheck_output,
 )
+from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .progress import ProgressTracker
 
 MAX_WORKERS = 4
 
@@ -653,7 +652,11 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
             entry_issues, normalized = _validate_evidence_entry(candidate_entry, manager, lib_id)
             issues.extend(entry_issues)
             if entry_issues and normalized is None:
-                from .repair import ArtifactType, get_repair_model, repair_artifact
+                from spec_manager.refinement.repair import (
+                    ArtifactType,
+                    get_repair_model,
+                    repair_artifact,
+                )
 
                 try:
                     entry_json = json.dumps(candidate_entry, indent=2)
