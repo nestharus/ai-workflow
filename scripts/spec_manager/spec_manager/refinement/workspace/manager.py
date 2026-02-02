@@ -16,7 +16,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-from scripts.spec_manager.spec_manager.core.gaps import Severity
 from scripts.spec_refinement.core.gap import (
     Gap,
     GapEvidence,
@@ -26,6 +25,7 @@ from scripts.spec_refinement.core.gap import (
     parse_gaps_markdown,
 )
 from scripts.spec_refinement.core.gap_queue import GapQueue
+from spec_manager.core.gaps import Severity
 
 from .state import Phase, WorkspaceState
 
@@ -816,7 +816,7 @@ class WorkspaceManager:
 
     def write_file_sections(self, file_id: str, sections: dict[str, Any]) -> Path:
         """Write Phase 1 sections manifest for a file."""
-        from scripts.spec_manager.spec_manager.schemas.sections import FileSections
+        from spec_manager.schemas.sections import FileSections
 
         validated = FileSections.model_validate(sections)
         payload = validated.model_dump()
@@ -831,7 +831,7 @@ class WorkspaceManager:
 
     def write_file_atoms(self, file_id: str, atoms: list[dict[str, Any]]) -> Path:
         """Write Phase 1 atoms JSONL for a file."""
-        from scripts.spec_manager.spec_manager.schemas.atoms import LineAtom
+        from spec_manager.schemas.atoms import LineAtom
 
         validated_atoms = [LineAtom.model_validate(atom).model_dump() for atom in atoms]
 
@@ -846,7 +846,7 @@ class WorkspaceManager:
 
     def write_file_terms(self, file_id: str, terms: dict[str, Any]) -> Path:
         """Write Phase 1 terms manifest for a file."""
-        from scripts.spec_manager.spec_manager.schemas.terms import FileTerms
+        from spec_manager.schemas.terms import FileTerms
 
         validated = FileTerms.model_validate(terms)
         payload = validated.model_dump()

@@ -4,8 +4,7 @@ import json
 from pathlib import Path
 
 from pyfakefs.fake_filesystem import FakeFilesystem
-
-from scripts.spec_manager.spec_manager.workflow.context import (
+from spec_manager.workflow.context import (
     ContextIndex,
     ContextIndexBuilder,
 )
@@ -37,9 +36,7 @@ def test_build_from_terms_manifest(fs: FakeFilesystem) -> None:
 
     payload = {
         "file_id": "p1",
-        "section_terms": [
-            {"section_id": "s1", "terms": ["Alpha", "Beta"], "confidence": 0.9}
-        ],
+        "section_terms": [{"section_id": "s1", "terms": ["Alpha", "Beta"], "confidence": 0.9}],
         "global_terms": ["Gamma"],
     }
     terms_file.write_text(json.dumps(payload), encoding="utf-8")
@@ -63,9 +60,7 @@ def test_build_from_sections_manifest(fs: FakeFilesystem) -> None:
 
     payload = {
         "file_id": "p1",
-        "sections": [
-            {"section_id": "s1", "start_line": 1, "end_line": 5, "label": "Overview"}
-        ],
+        "sections": [{"section_id": "s1", "start_line": 1, "end_line": 5, "label": "Overview"}],
         "total_lines": 10,
     }
     sections_file.write_text(json.dumps(payload), encoding="utf-8")
@@ -119,9 +114,7 @@ def test_merge_manifest_index_with_patch_index(fs: FakeFilesystem) -> None:
 
     payload = {
         "file_id": "p1",
-        "section_terms": [
-            {"section_id": "s1", "terms": ["Alpha"], "confidence": 0.9}
-        ],
+        "section_terms": [{"section_id": "s1", "terms": ["Alpha"], "confidence": 0.9}],
         "global_terms": ["Beta"],
     }
     terms_file.write_text(json.dumps(payload), encoding="utf-8")

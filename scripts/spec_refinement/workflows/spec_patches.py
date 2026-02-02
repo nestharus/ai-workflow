@@ -11,8 +11,7 @@ from spec_manager.refinement.formats import (
     _extract_json_payload,
     _record_json_extraction_evidence,
 )
-
-from .validation_utils import (
+from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     resolve_section_reference,

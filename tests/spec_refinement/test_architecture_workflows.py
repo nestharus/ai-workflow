@@ -9,6 +9,7 @@ from spec_manager.refinement.formats import (
     parse_architecture_proposal,
     parse_architecture_selection,
 )
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 from scripts.spec_refinement.workflows.architecture import (
     _validate_architecture_citations,
@@ -16,7 +17,6 @@ from scripts.spec_refinement.workflows.architecture import (
     propose_architectures,
     select_architecture,
 )
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:

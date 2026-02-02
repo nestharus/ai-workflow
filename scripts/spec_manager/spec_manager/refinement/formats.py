@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from scripts.spec_refinement.workspace import WorkspaceManager
+    from spec_manager.refinement.workspace import WorkspaceManager
 
 EVIDENCE_POINTER_RE = re.compile(r"\[([^\[\]]+?)::([^\[\]]+?)\]")
 EVIDENCE_POINTER_NEW_RE = re.compile(r"\[spec_snapshot/([^:]+)::([^\]]+)\]")

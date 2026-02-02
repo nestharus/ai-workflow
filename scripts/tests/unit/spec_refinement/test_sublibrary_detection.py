@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
+
 from scripts.spec_refinement.workflows.sublibrary_detection import (
     _build_sublibrary_spec,
     _recursive_refinement,
     detect_sublibraries,
 )
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _fake_run_agent(output: str):

@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from scripts.spec_manager.spec_manager.core.gaps import Severity
+from spec_manager.core.gaps import Severity
 
 
 class GapType(Enum):
@@ -344,7 +344,7 @@ class GapSynthesizer:
                         if candidate == Severity.WARNING and severity == Severity.INFO:
                             severity = Severity.WARNING
                     description = _synthesize_description(evidence_list)
-                    sources = sorted(
+                    gap_sources = sorted(
                         {src for item in evidence_list for src in _extract_sources(item)}
                     )
                     gap_type = _infer_gap_type(evidence_list)
@@ -353,7 +353,7 @@ class GapSynthesizer:
                             id=gap_id,
                             gap_type=gap_type,
                             severity=severity,
-                            source=sources,
+                            source=gap_sources,
                             derived_artifact_target=target,
                             description=description,
                             evidence=evidence_list,
@@ -478,7 +478,7 @@ def format_gap_markdown(gap: Gap) -> str:
 def parse_gaps_markdown(content: str) -> list[Gap]:
     """Parse gaps.md markdown content into Gap objects."""
     gaps: list[Gap] = []
-    current_section_status: str | None = None
+    current_section_status: Literal["open", "integrated", "deferred", "rejected"] | None = None
     current_gap_id: str | None = None
     current_gap_description: str | None = None
     current_gap_lines: list[str] = []
@@ -533,15 +533,18 @@ def parse_gaps_markdown(content: str) -> list[Gap]:
     return gaps
 
 
+_VALID_STATUSES: set[str] = {"open", "integrated", "deferred", "rejected"}
+
+
 def _parse_gap_block(
     gap_id: str,
     description: str,
     lines: list[str],
-    section_status: str,
+    section_status: Literal["open", "integrated", "deferred", "rejected"],
 ) -> Gap:
     gap_type = GapType.missing_detail
     severity = Severity.WARNING
-    status = section_status
+    status: Literal["open", "integrated", "deferred", "rejected"] = section_status
     derived_artifact_target = ""
     source: list[str] = []
     evidence: list[GapEvidence] = []
@@ -568,8 +571,8 @@ def _parse_gap_block(
                     severity = Severity(value)
                 except ValueError:
                     severity = Severity.WARNING
-            elif label == "Status" and value:
-                status = value
+            elif label == "Status" and value and value in _VALID_STATUSES:
+                status = cast("Literal['open', 'integrated', 'deferred', 'rejected']", value)
             elif label == "Artifact" and value:
                 derived_artifact_target = value
             elif label == "Created" and value:

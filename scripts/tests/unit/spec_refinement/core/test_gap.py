@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from scripts.spec_manager.spec_manager.core.gaps import Severity
+from spec_manager.core.gaps import Severity
+
 from scripts.spec_refinement.core.gap import (
     Gap,
     GapEvidence,

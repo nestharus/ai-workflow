@@ -6,9 +6,9 @@ import threading
 from pathlib import Path
 
 import pytest
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 from scripts.spec_refinement.workflows.evidence_expansion import expand_evidence, spotcheck_evidence
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:

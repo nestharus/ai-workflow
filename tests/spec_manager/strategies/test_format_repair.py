@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from scripts.spec_manager.spec_manager.strategies.base import ProcessingContext, StrategyPhase
-from scripts.spec_manager.spec_manager.strategies.implementations.format_repair import (
+from spec_manager.strategies.base import ProcessingContext, StrategyPhase
+from spec_manager.strategies.implementations.format_repair import (
     FormatRepairStrategy,
 )
-from scripts.spec_manager.spec_manager.workflow.config import TrackedUnit, UnitType
+from spec_manager.workflow.config import TrackedUnit, UnitType
 
 
 def _make_unit(unit_id: str, content: str) -> TrackedUnit:
@@ -22,7 +22,7 @@ def _make_unit(unit_id: str, content: str) -> TrackedUnit:
 def test_applies_to_detects_format_noise() -> None:
     strategy = FormatRepairStrategy()
 
-    fenced_unit = _make_unit("u1", "```json\n{\"key\": \"value\"}\n```")
+    fenced_unit = _make_unit("u1", '```json\n{"key": "value"}\n```')
     context = ProcessingContext(
         units=[fenced_unit],
         phase=StrategyPhase.CLEANING,
@@ -30,7 +30,7 @@ def test_applies_to_detects_format_noise() -> None:
     )
     assert strategy.applies_to(context)
 
-    clean_unit = _make_unit("u2", "{\"key\": \"value\"}")
+    clean_unit = _make_unit("u2", '{"key": "value"}')
     context = ProcessingContext(
         units=[clean_unit],
         phase=StrategyPhase.CLEANING,
@@ -41,7 +41,7 @@ def test_applies_to_detects_format_noise() -> None:
 
 def test_execute_removes_code_fence() -> None:
     strategy = FormatRepairStrategy()
-    unit = _make_unit("u1", "```json\n{\"key\": \"value\"}\n```")
+    unit = _make_unit("u1", '```json\n{"key": "value"}\n```')
     context = ProcessingContext(
         units=[unit],
         phase=StrategyPhase.CLEANING,
@@ -65,7 +65,7 @@ def test_execute_removes_code_fence() -> None:
 
 def test_execute_strips_preamble() -> None:
     strategy = FormatRepairStrategy()
-    unit = _make_unit("u1", "Preamble\n{\"key\": \"value\"}")
+    unit = _make_unit("u1", 'Preamble\n{"key": "value"}')
     context = ProcessingContext(
         units=[unit],
         phase=StrategyPhase.CLEANING,

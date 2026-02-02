@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from spec_manager.refinement.workspace import WorkspaceManager
+
 from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
-from scripts.spec_refinement.workspace import WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:

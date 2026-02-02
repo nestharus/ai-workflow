@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from spec_manager.refinement.formats import parse_file_summary, parse_gap_judge_output
+from spec_manager.refinement.validation_utils import build_file_id_lookup, build_section_alias_map
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from . import evidence_expansion as evidence_utils
 from .agent_utils import run_agent
@@ -37,7 +38,6 @@ from .spec_patches import (
     validate_patch_citations,
     validate_patch_operation,
 )
-from .validation_utils import build_file_id_lookup, build_section_alias_map
 
 
 def detect_sublibraries(
@@ -537,20 +537,21 @@ def _expand_sublibrary_evidence(manager: WorkspaceManager, sub_lib_dir: Path) ->
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=evidence_utils.MAX_WORKERS) as executor:
-        futures = [
-            executor.submit(
-                evidence_utils._process_pair,
-                lib_id,
-                charter,
-                file_id,
-                summary,
-                valid_sections,
-                manager.workspace_path,
-                priority,
-                rationale,
+        futures = []
+        for lib_id, charter, file_id, summary, _valid_sections, priority, rationale in pairs:
+            futures.append(
+                executor.submit(
+                    evidence_utils._process_pair,
+                    lib_id,
+                    charter,
+                    file_id,
+                    summary,
+                    manager.workspace_path,
+                    manager,
+                    priority,
+                    rationale,
+                )
             )
-            for lib_id, charter, file_id, summary, valid_sections, priority, rationale in pairs
-        ]
         for future in as_completed(futures):
             result = future.result()
             if "data" in result:
@@ -613,7 +614,6 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
-    valid_file_ids = list(manager.state.file_manifest.keys())
 
     existing_gaps = _read_sublibrary_gaps(sub_lib_dir)
     gap_history: list[tuple[str, ...]] = []
@@ -637,15 +637,19 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
 
             file_content = file_path.read_text(encoding="utf-8")
             current_spec = spec_path.read_text(encoding="utf-8")
+            file_ref = file_id_lookup.get(file_id, file_id)
+            valid_file_refs: list[str] = [str(v) for v in file_id_lookup.values() if v is not None]
             prompt = _build_patch_prompt(
                 lib_id,
                 charter_content,
                 current_spec,
                 file_id,
+                file_ref,
                 file_content,
                 sections,
                 manager.get_section_labels(file_id),
-                valid_file_ids,
+                valid_file_refs,
+                file_id_lookup,
                 gaps=gap_focus,
             )
             try:
@@ -790,9 +794,11 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
             if file_path is None or not file_path.exists():
                 continue
             file_content = file_path.read_text(encoding="utf-8")
+            file_ref = file_id_lookup.get(file_id, file_id)
             prompt = _build_gap_prompt(
                 spec_content,
                 file_id,
+                file_ref,
                 file_content,
                 evidence_sections,
                 manager.get_section_labels(file_id),

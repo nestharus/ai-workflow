@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from spec_manager.refinement.validation_utils import (
+    build_file_id_lookup,
+    build_section_alias_map,
+)
+
 from scripts.spec_refinement.workflows.spec_patches import (
     VALID_SPEC_SECTIONS,
     PatchOperation,
@@ -11,10 +16,6 @@ from scripts.spec_refinement.workflows.spec_patches import (
     render_spec,
     validate_patch_citations,
     validate_patch_operation,
-)
-from scripts.spec_refinement.workflows.validation_utils import (
-    build_file_id_lookup,
-    build_section_alias_map,
 )
 
 

@@ -19,16 +19,20 @@ import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
+_SPEC_MANAGER_ROOT = (Path(__file__).resolve().parents[1] / "scripts" / "spec_manager").resolve()
+if _SPEC_MANAGER_ROOT.exists() and str(_SPEC_MANAGER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SPEC_MANAGER_ROOT))
+
 import httpx
 import pytest
 import pytest_asyncio
 import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 from app.core.factory import create_app
 from app.core.settings import Settings
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 from tests.spec_refinement.fixtures.agent_mocks import MockAgentController
 from tests.spec_refinement.fixtures.test_corpus import create_test_corpus
 from tests.spec_refinement.test_performance import PerformanceBenchmark
@@ -52,11 +56,6 @@ except ImportError:
     pass  # thinc not installed, no patch needed
 
 logger = logging.getLogger(__name__)
-
-_SPEC_MANAGER_ROOT = (Path(__file__).resolve().parents[1] / "scripts" / "spec_manager").resolve()
-if _SPEC_MANAGER_ROOT.exists() and str(_SPEC_MANAGER_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SPEC_MANAGER_ROOT))
-
 
 # --- Test Fixtures ---
 

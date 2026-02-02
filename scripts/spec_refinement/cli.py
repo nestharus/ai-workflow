@@ -23,10 +23,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
 from scripts.spec_refinement.core.gap import Gap, format_gap_table
 from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 from scripts.spec_refinement.workflows.agent_utils import run_agent
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 
 def _phase_completed(manager: WorkspaceManager, phase: Phase) -> bool:
@@ -117,7 +118,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print()
     print("Phases:")
 
-    from scripts.spec_refinement.workspace.state import Phase, PhaseStatus
+    from spec_manager.refinement.workspace.state import Phase, PhaseStatus
 
     for phase in Phase:
         result = manager.state.phases[phase.value]

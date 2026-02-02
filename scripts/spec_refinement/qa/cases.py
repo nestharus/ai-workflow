@@ -7,9 +7,12 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from scripts.spec_manager.spec_manager.core.gaps import Severity
+from spec_manager.core.gaps import Severity
+from spec_manager.refinement.validation_utils import build_file_id_lookup
+from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
+
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapType
 from scripts.spec_refinement.qa.validators import (
     validate_architecture_library_mapping_output,
@@ -25,8 +28,7 @@ from scripts.spec_refinement.workflows.architecture import (
     _build_library_mapping_prompt,
 )
 from scripts.spec_refinement.workflows.evidence_expansion import _build_evidence_prompt
-from scripts.spec_refinement.workflows.spec_building import _build_patch_prompt
-from scripts.spec_refinement.workspace import WorkspaceManager, WorkspaceState
+from scripts.spec_refinement.workflows.spec_building import _build_file_ref, _build_patch_prompt
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,7 @@ def _phase0_run_id(base_run_id: str, suffix: str) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
 
 
 def _read_manifest(path: Path) -> tuple[str, dict[str, Any]]:
@@ -534,7 +536,7 @@ class EvidenceMapperAllowlistCase(QaCase):
             charter_content=charter,
             file_id=file_id,
             summary_content=summary,
-            valid_sections=valid_sections,
+            manager=manager,
         )
 
         acceptance = [
@@ -638,15 +640,23 @@ Provide durable persistence APIs. [F0002::INTRO]
             ],
         )
 
+        file_ref = _build_file_ref(file_id, manager)
+        file_id_lookup = build_file_id_lookup(
+            manager.state.file_manifest, manager.structure.spec_snapshot_dir
+        )
+        file_refs = [file_id_lookup.get(f) for f in manager.state.file_manifest]
+
         prompt = _build_patch_prompt(
             lib_id=lib_id,
             charter_content=charter,
             spec_content=current_spec,
             file_id=file_id,
+            file_ref=file_ref,
             file_content=file_content,
             evidence_sections=evidence_sections,
-            valid_sections=valid_sections,
-            valid_file_ids=valid_file_ids,
+            valid_section_ids=valid_sections,
+            valid_file_refs=[str(f) for f in file_refs if f is not None],
+            file_id_lookup=file_id_lookup,
             gaps=[gap],
         )
 

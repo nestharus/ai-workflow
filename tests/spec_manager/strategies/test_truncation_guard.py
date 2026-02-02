@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from scripts.spec_manager.spec_manager.strategies.base import ProcessingContext, StrategyPhase
-from scripts.spec_manager.spec_manager.strategies.implementations.truncation_guard import (
+from spec_manager.strategies.base import ProcessingContext, StrategyPhase
+from spec_manager.strategies.implementations.truncation_guard import (
     TruncationGuardStrategy,
 )
-from scripts.spec_manager.spec_manager.workflow.config import TrackedUnit, UnitType
+from spec_manager.workflow.config import TrackedUnit, UnitType
 
 
 def _make_unit(unit_id: str, content: str) -> TrackedUnit:

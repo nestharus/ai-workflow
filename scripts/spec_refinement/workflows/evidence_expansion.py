@@ -13,8 +13,7 @@ from spec_manager.refinement.formats import (
     _record_json_extraction_evidence,
     parse_evidence_spotcheck_output,
 )
-
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
 from .progress import ProgressTracker
@@ -664,7 +663,7 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                         section_ids = manager.get_section_labels(repair_file_id)
                     else:
                         section_ids = [
-                            section.get("section_id")
+                            section["section_id"]
                             for section in sections_data.get("sections", [])
                             if isinstance(section, dict)
                             and isinstance(section.get("section_id"), str)

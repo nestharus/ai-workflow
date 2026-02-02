@@ -12,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.workspace import WorkspaceManager
+from spec_manager.refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
 

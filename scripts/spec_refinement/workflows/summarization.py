@@ -13,18 +13,17 @@ from spec_manager.refinement.formats import (
     parse_evidence_pointer,
     parse_file_summary,
 )
-
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .progress import ProgressTracker
-from .validation_utils import (
+from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     build_section_id_lookup,
     resolve_section_reference,
     strip_invalid_file_pointers,
 )
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
+from .agent_utils import run_agent
+from .progress import ProgressTracker
 
 MAX_WORKERS = 4
 

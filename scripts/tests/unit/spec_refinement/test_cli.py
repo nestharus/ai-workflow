@@ -4,9 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 from scripts.spec_refinement.cli import main
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_initialized_workspace(fs, monkeypatch, run_id: str = "run1") -> WorkspaceManager:
@@ -172,7 +172,7 @@ def test_init_force_flag(fs, monkeypatch) -> None:
 
 
 def test_gap_resolve_invalid_type(fs, monkeypatch) -> None:
-    manager = _setup_initialized_workspace(fs, monkeypatch)
+    _setup_initialized_workspace(fs, monkeypatch)
     exit_code = main(["gap", "resolve", "run1", "GAP-nonexistent", "integrate", "--notes", "test"])
     assert exit_code == 1
 

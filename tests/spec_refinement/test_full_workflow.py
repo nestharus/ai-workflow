@@ -11,8 +11,10 @@ from spec_manager.refinement.formats import (
     _extract_sections,
     _parse_overlap_resolutions,
 )
+from spec_manager.refinement.validation_utils import strip_invalid_file_pointers
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+from spec_manager.schemas.library_labels import LibraryLabelerOutput
 
-from scripts.spec_manager.spec_manager.schemas.library_labels import LibraryLabelerOutput
 from scripts.spec_refinement.workflows.architecture import (
     _validate_architecture_citations,
     map_libraries_to_architecture,
@@ -35,8 +37,6 @@ from scripts.spec_refinement.workflows.summarization import (
     _validate_evidence_pointers,
     summarize_all,
 )
-from scripts.spec_refinement.workflows.validation_utils import strip_invalid_file_pointers
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from tests.spec_refinement.fixtures.expected_outputs import (
     EXPECTED_GAP_CONVERGENCE_RATIO,
     EXPECTED_PERFORMANCE_BOUNDS,

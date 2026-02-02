@@ -62,6 +62,7 @@ dev = [
     "types-pyyaml>=6.0.12.20250915,<6.0.13",
     "types-jsonschema>=4.23.0,<4.24.0",
     "types-regex>=2024.11.6,<2024.12.0",
+    "types-tqdm>=4.67.0.20250809,<4.68.0",
     "yamllint>=1.37.1,<1.38.0",
     "detect-secrets>=1.5.0,<1.6.0",
     "language-tool-python>=3.2.0,<3.3.0",
@@ -249,6 +250,24 @@ convention = "google"
     "TCH003", "TC001", "TC002",  # Allow runtime type imports
     "TRY003",    # Allow inline exception messages
     "ANN401",    # Allow Any type annotations
+    "E501",      # Line length in test data strings (CSV, fixtures)
+    "W293",      # Blank line whitespace in test data strings
+    "ANN",       # Type annotations not needed in test helpers
+    "F401",      # Conditionally unused imports (e.g., torch with try/except)
+]
+"tests/conftest.py" = [
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces (0.0.0.0)
+    "S105",      # Allow hardcoded passwords in test fixtures
+    "S106",      # Allow hardcoded passwords in function args
+    "S108",      # Allow insecure temp file usage
+    "S603",      # Allow subprocess without shell=True
+    "S608",      # Allow SQL with string formatting (test queries)
+    "D",         # Skip docstring requirements
+    "TCH003", "TC001", "TC002",  # Allow runtime type imports
+    "TRY003",    # Allow inline exception messages
+    "ANN401",    # Allow Any type annotations
+    "E402",      # Allow late imports (after sys.path manipulation)
     "E501",      # Line length in test data strings (CSV, fixtures)
     "W293",      # Blank line whitespace in test data strings
     "ANN",       # Type annotations not needed in test helpers

@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
+
 from scripts.spec_refinement.workflows.spec_building import build_specs
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch) -> Path:

@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
+
 from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:

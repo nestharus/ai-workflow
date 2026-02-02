@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.formats import parse_library_synthesis
+from spec_manager.refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
 
 from scripts.spec_refinement.evaluation.fixtures import FixtureCategory, RepairFixture
 from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
@@ -32,7 +33,6 @@ from scripts.spec_refinement.workflows.repair import (
 )
 from scripts.spec_refinement.workflows.spec_building import _validate_spec_citations
 from scripts.spec_refinement.workflows.summarization import _validate_evidence_pointers
-from scripts.spec_refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
 
 _PRELUDE_PREFIXES = (
     "here is",

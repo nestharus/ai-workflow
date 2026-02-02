@@ -3,8 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_refinement.workspace import WorkspaceManager
+from spec_manager.refinement.workspace import WorkspaceManager
 
 
 @pytest.fixture

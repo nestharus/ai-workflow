@@ -12,9 +12,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.workspace import WorkspaceManager
+
 from scripts.spec_refinement.qa.bad_signatures import scan_known_bad_signatures
 from scripts.spec_refinement.qa.cases import QA_CASES, PreparedQaCase, qa_fixture_dir
-from scripts.spec_refinement.workspace import WorkspaceManager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -486,12 +487,13 @@ def _run_prepared_case(
         (case_dir / "judge_stdout.txt").write_text(judge_exec.stdout + "\n", encoding="utf-8")
         (case_dir / "judge_stderr.txt").write_text(judge_exec.stderr + "\n", encoding="utf-8")
 
-        judge_data: dict[str, Any] | None = None
         if judge_exec.exit_code == 0 and judge_exec.stdout.strip():
             try:
                 judge_data = json.loads(judge_exec.stdout)
             except json.JSONDecodeError:
                 judge_data = None
+        else:
+            judge_data = None
 
         _write_json(case_dir / "judge.json", judge_data or {"error": "judge_parse_failed"})
 

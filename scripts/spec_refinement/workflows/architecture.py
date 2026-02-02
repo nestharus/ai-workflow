@@ -15,12 +15,11 @@ from spec_manager.refinement.formats import (
     parse_architecture_proposal,
     parse_architecture_selection,
 )
-
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+from spec_manager.refinement.validation_utils import strip_invalid_file_pointers
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
 from .progress import ProgressTracker
-from .validation_utils import strip_invalid_file_pointers
 
 # Only treat bracketed text containing a `::` segment separator as a citation.
 ARCH_CITATION_RE = re.compile(r"\[([^\[\]]*?::[^\[\]]*?)\]")
@@ -535,10 +534,12 @@ def _validate_architecture_brief(brief: dict[str, Any], lib_id: str) -> None:
         raise TypeError("Architecture brief dependencies must be a list of strings.")
 
     constraints = brief.get("constraints")
-    _validate_brief_entries(constraints, label="constraints")
+    if constraints is not None:
+        _validate_brief_entries(constraints, label="constraints")
 
     interfaces = brief.get("interfaces")
-    _validate_brief_entries(interfaces, label="interfaces")
+    if interfaces is not None:
+        _validate_brief_entries(interfaces, label="interfaces")
 
 
 def _validate_brief_entries(entries: list[dict[str, Any]], *, label: str) -> None:
@@ -591,7 +592,8 @@ def _parse_architecture_selection(
     output: str, format_evidence: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
     payload = _extract_json_payload(output)
-    return parse_architecture_selection(payload, format_evidence)
+    result = parse_architecture_selection(payload, format_evidence)
+    return result
 
 
 def _validate_architecture_citations(

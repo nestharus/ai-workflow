@@ -18,8 +18,7 @@ from spec_manager.refinement.formats import (
     parse_library_labeler_output,
     parse_library_synthesis,
 )
-
-from scripts.spec_refinement.workspace import WorkspaceManager
+from spec_manager.refinement.workspace import WorkspaceManager
 
 from .agent_utils import run_agent
 from .progress import ProgressTracker

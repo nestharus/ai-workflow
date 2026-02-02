@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.spec_refinement.workflows.validation_utils import (
+from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     resolve_section_reference,

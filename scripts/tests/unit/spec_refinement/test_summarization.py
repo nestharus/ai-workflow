@@ -4,8 +4,9 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
 from scripts.spec_refinement.workflows.summarization import summarize_all
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 
 def _make_summary_output(file_id: str, section: str) -> str:

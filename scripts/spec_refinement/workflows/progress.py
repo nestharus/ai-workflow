@@ -7,9 +7,8 @@ import threading
 from datetime import datetime
 from typing import Any
 
+from spec_manager.refinement.workspace import WorkspaceManager
 from tqdm import tqdm
-
-from scripts.spec_refinement.workspace import WorkspaceManager
 
 
 class ProgressTracker:
@@ -35,7 +34,7 @@ class ProgressTracker:
         if status:
             self._bar.set_postfix_str(status)
         self._bar.update(increment)
-        payload = {"current": self._count}
+        payload: dict[str, Any] = {"current": self._count}
         if status:
             payload["status"] = status
         self._log("progress_update", payload)

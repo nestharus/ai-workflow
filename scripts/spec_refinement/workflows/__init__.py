@@ -4,7 +4,7 @@ Workflows coordinate agent execution, structured output parsing, and workspace
 state transitions while keeping each phase resumable and auditable.
 """
 
-from scripts.spec_refinement.workspace import Phase
+from spec_manager.refinement.workspace import Phase
 
 from .architecture import (
     map_libraries_to_architecture,

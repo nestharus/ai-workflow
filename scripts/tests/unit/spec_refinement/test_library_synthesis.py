@@ -4,9 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spec_manager.refinement.formats import LibraryCharter
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
-from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManager:

@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.formats import LibraryCharter
-
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .library_labeling import (
     CharterResults,

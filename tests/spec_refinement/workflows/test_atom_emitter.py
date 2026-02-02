@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+from spec_manager.schemas.atoms import LineAtom
+from spec_manager.schemas.sections import FileSections, SectionSpan
 
-from scripts.spec_manager.spec_manager.schemas.atoms import LineAtom
-from scripts.spec_manager.spec_manager.schemas.sections import FileSections, SectionSpan
 from scripts.spec_refinement.workflows import atom_emitter
 
 

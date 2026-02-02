@@ -21,10 +21,15 @@ from spec_manager.refinement.formats import (
     parse_gap_judge_output,
     parse_spec_patch_output,
 )
+from spec_manager.refinement.validation_utils import (
+    build_file_id_lookup,
+    build_section_alias_map,
+    build_section_id_lookup,
+)
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
 from scripts.spec_refinement.core.gap_queue import GapQueue
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
 from .progress import ProgressTracker
@@ -36,11 +41,6 @@ from .spec_patches import (
     render_spec,
     validate_patch_citations,
     validate_patch_operation,
-)
-from .validation_utils import (
-    build_file_id_lookup,
-    build_section_alias_map,
-    build_section_id_lookup,
 )
 
 MAX_ITERATIONS_DEFAULT = 5

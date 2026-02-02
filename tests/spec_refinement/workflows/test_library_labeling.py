@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spec_manager.refinement.formats import LibraryCharter
+from spec_manager.refinement.workspace import WorkspaceManager
 
 from scripts.spec_refinement.workflows.library_labeling import (
     aggregate_labels,
@@ -14,7 +15,6 @@ from scripts.spec_refinement.workflows.library_labeling import (
     refine_library_labels,
     resolve_overlap,
 )
-from scripts.spec_refinement.workspace import WorkspaceManager
 
 
 def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManager:
