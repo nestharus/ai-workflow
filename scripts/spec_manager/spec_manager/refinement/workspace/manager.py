@@ -113,6 +113,11 @@ class RunFolderStructure:
         return self.intermediates_dir / "pass_01"
 
     @property
+    def pass_04_dir(self) -> Path:
+        """Path to the Phase 4 (library synthesis) pass directory."""
+        return self.intermediates_dir / "pass_04"
+
+    @property
     def indexes_dir(self) -> Path:
         """Path to the indexes directory for cross-cutting data."""
         return self.workspace_dir / "indexes"
@@ -197,6 +202,7 @@ class WorkspaceManager:
             self.structure.workspace_dir,
             self.structure.intermediates_dir,
             self.structure.pass_01_dir,
+            self.structure.pass_04_dir,
             self.structure.indexes_dir,
             self.structure.summaries_dir,
             self.structure.libraries_dir,

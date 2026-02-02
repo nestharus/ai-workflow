@@ -16,10 +16,14 @@ from pydantic import BaseModel
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
+    FileSummary,
     LibraryCharter,
     LibraryEvent,
     LibraryEventType,
+    migrate_pointers_to_new_format,
     normalize_compound_pointers,
+    parse_concern_assignment_judge,
+    parse_file_summary,
     parse_library_labeler_output,
     parse_library_synthesis,
 )
@@ -1234,3 +1238,345 @@ def resolve_all_overlaps(
 
     charters[:] = [charter_map[lib_id] for lib_id in original_ids] + new_charters
     return decisions
+
+
+def _extract_concerns_from_summary(summary: FileSummary, file_id: str) -> list[dict[str, Any]]:
+    concerns: list[dict[str, Any]] = []
+
+    def _build_text(item: dict[str, Any]) -> str:
+        name = str(item.get("name", "")).strip()
+        intent = str(item.get("intent", "")).strip()
+        if name and intent:
+            return f"{name} | {intent}"
+        if name:
+            return name
+        if intent:
+            return intent
+        return ""
+
+    def _append(items: list[dict[str, Any]], concern_type: str) -> None:
+        for index, item in enumerate(items, start=1):
+            text = (
+                _build_text(item)
+                if concern_type != "responsibility"
+                else str(item.get("description", "")).strip()
+            )
+            if not text:
+                text = "Unspecified concern"
+            concern_id = f"{file_id}:{concern_type}:{index:03d}"
+            evidence = item.get("evidence", [])
+            if not isinstance(evidence, list):
+                evidence = []
+            evidence = [str(pointer).strip() for pointer in evidence if str(pointer).strip()]
+            concerns.append(
+                {
+                    "concern_id": concern_id,
+                    "file_id": file_id,
+                    "concern_type": concern_type,
+                    "concern_text": text,
+                    "evidence": evidence,
+                }
+            )
+
+    _append(summary.algorithms, "algorithm")
+    _append(summary.components, "component")
+    _append(summary.workflows, "workflow")
+    _append(summary.candidate_responsibilities, "responsibility")
+
+    return concerns
+
+
+def _load_summary_concerns(manager: WorkspaceManager) -> list[dict[str, Any]]:
+    concerns: list[dict[str, Any]] = []
+    summary_files = sorted(manager.structure.summaries_dir.glob("*.what.md"))
+    for summary_path in summary_files:
+        file_id = summary_path.stem.replace(".what", "")
+        content = summary_path.read_text(encoding="utf-8")
+        normalized = migrate_pointers_to_new_format(content, manager)
+        parsed = parse_file_summary(normalized)
+        if parsed.file_id and parsed.file_id != "unknown":
+            file_id = parsed.file_id
+        concerns.extend(_extract_concerns_from_summary(parsed, file_id))
+    return concerns
+
+
+def _build_library_index_fallback(charters: list[LibraryCharter]) -> str:
+    lines = ["# Library Index", ""]
+    for charter in charters:
+        intent = charter.intent or "Intent not provided"
+        lines.append(f"- {charter.lib_id}: {intent}")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _format_charter_fallback(charter: LibraryCharter) -> str:
+    lines = [f"### {charter.lib_id}", "#### Intent", charter.intent or "", ""]
+    lines.extend(["#### Boundaries", charter.boundaries or "", ""])
+    lines.append("#### Responsibilities")
+    if charter.responsibilities:
+        for item in charter.responsibilities:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- None")
+    lines.append("")
+    lines.append("#### Evidence")
+    if charter.evidence_sources:
+        for source in charter.evidence_sources:
+            file_id = source.get("file_id", "")
+            sections = source.get("sections", [])
+            if isinstance(sections, list) and sections:
+                for section in sections:
+                    lines.append(f"- [{file_id}::{section}]")
+            elif file_id:
+                lines.append(f"- [{file_id}::]")
+    else:
+        lines.append("- None")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def judge_concern_assignments(
+    charters: list[LibraryCharter], manager: WorkspaceManager
+) -> dict[str, Any]:
+    """Run concern assignment judge across all .what.md summaries."""
+    issues: list[dict[str, Any]] = []
+
+    concerns = _load_summary_concerns(manager)
+
+    index_path = manager.structure.libraries_dir / "library_index.md"
+    if index_path.exists():
+        library_index = index_path.read_text(encoding="utf-8")
+    else:
+        library_index = _build_library_index_fallback(charters)
+
+    charter_texts: list[str] = []
+    library_ids = set(re.findall(r"\blib_\d{3}\b", library_index))
+    for charter in charters:
+        charter_path = manager.structure.libraries_dir / charter.lib_id / "charter.md"
+        if charter_path.exists():
+            charter_text = charter_path.read_text(encoding="utf-8")
+        else:
+            charter_text = _format_charter_fallback(charter)
+        charter_texts.append(migrate_pointers_to_new_format(charter_text, manager))
+
+    if not library_ids:
+        library_ids = {charter.lib_id for charter in charters}
+
+    library_shapes = manager.read_library_shapes()
+
+    lines = [
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "SCHEMA:",
+        "{",
+        '  "assignments": [',
+        "    {",
+        '      "concern_id": "string",',
+        '      "file_id": "string",',
+        '      "concern_type": "algorithm|component|workflow|responsibility",',
+        '      "concern_text": "string",',
+        '      "assigned_to": ["lib_001", "lib_002"],',
+        '      "confidence": 0.85,',
+        '      "rationale": "string"',
+        "    }",
+        "  ],",
+        '  "gaps": [',
+        "    {",
+        '      "concern_id": "string",',
+        '      "file_id": "string",',
+        '      "concern_type": "string",',
+        '      "concern_text": "string",',
+        '      "gap_type": "out_of_scope|ambiguous",',
+        '      "rationale": "string"',
+        "    }",
+        "  ],",
+        '  "decisions": [',
+        "    {",
+        '      "concern_id": "string",',
+        '      "file_id": "string",',
+        '      "concern_type": "string",',
+        '      "concern_text": "string",',
+        '      "decision": "deferred|needs_clarification",',
+        '      "rationale": "string"',
+        "    }",
+        "  ]",
+        "}",
+        "",
+        "RULES:",
+        "- Every concern must appear in exactly one of: assignments, gaps, decisions.",
+        "- assigned_to must reference valid lib_id values from the library index.",
+        "- Confidence must be between 0.0 and 1.0.",
+        "- Rationale must include evidence pointers using [spec_snapshot/<relpath>::SEC-...]",
+        "- No concerns can be silently dropped.",
+        "",
+        "## LIBRARY INDEX",
+        library_index.strip(),
+        "",
+        "## LIBRARY CHARTERS",
+    ]
+    lines.extend(charter_texts or ["(No charters provided)"])
+    lines.extend(
+        [
+            "",
+            "## MULTI-LABEL SHAPES",
+            json.dumps(library_shapes, indent=2),
+            "",
+            "## CONCERNS TO JUDGE",
+        ]
+    )
+
+    for concern in concerns:
+        evidence = concern.get("evidence", [])
+        if isinstance(evidence, list) and evidence:
+            evidence_text = " ".join(evidence)
+        else:
+            evidence_text = "[no_evidence]"
+        lines.append(
+            f"- {concern['file_id']}::{concern['concern_type']}::{concern['concern_id']} - "
+            f"{concern['concern_text']} {evidence_text}"
+        )
+
+    prompt = "\n".join(lines)
+
+    try:
+        output = run_agent(
+            agent_name="chatgpt-concern-assignment-judge",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+    except RuntimeError as exc:
+        return {
+            "assignments": [],
+            "gaps": [],
+            "decisions": [],
+            "issues": [
+                {
+                    "type": "agent_error",
+                    "message": f"Concern assignment judge failed: {exc}",
+                },
+                *issues,
+            ],
+        }
+
+    if isinstance(output, BaseModel):
+        output = output.model_dump_json()
+
+    try:
+        parsed = parse_concern_assignment_judge(output)
+    except Exception as exc:
+        return {
+            "assignments": [],
+            "gaps": [],
+            "decisions": [],
+            "issues": [
+                {
+                    "type": "parse_error",
+                    "message": f"Failed to parse concern assignment output: {exc}",
+                },
+                *issues,
+            ],
+        }
+
+    issues.extend(parsed.get("issues", []))
+
+    for index, item in enumerate(parsed.get("assignments", [])):
+        if not isinstance(item, dict):
+            continue
+        assigned_to = item.get("assigned_to", [])
+        invalid_targets = [lib_id for lib_id in assigned_to if lib_id and lib_id not in library_ids]
+        if invalid_targets:
+            issues.append(
+                {
+                    "type": "invalid_assignment_target",
+                    "index": index,
+                    "lib_ids": invalid_targets,
+                    "message": "Assignment references unknown library ids.",
+                }
+            )
+
+    return {
+        "assignments": parsed.get("assignments", []),
+        "gaps": parsed.get("gaps", []),
+        "decisions": parsed.get("decisions", []),
+        "issues": issues,
+    }
+
+
+def _write_concern_evidence(judge_result: dict[str, Any], manager: WorkspaceManager) -> Path:
+    pass_04_dir = manager.structure.intermediates_dir / "pass_04"
+    pass_04_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = pass_04_dir / "evidence.jsonl"
+
+    records: list[dict[str, Any]] = []
+    timestamp = datetime.now().isoformat()
+
+    for gap in judge_result.get("gaps", []):
+        records.append(
+            {
+                "type": "GAP",
+                "gap_type": gap.get("gap_type"),
+                "concern_id": gap.get("concern_id"),
+                "file_id": gap.get("file_id"),
+                "concern_type": gap.get("concern_type"),
+                "concern_text": gap.get("concern_text"),
+                "rationale": gap.get("rationale"),
+                "timestamp": timestamp,
+            }
+        )
+
+    for decision in judge_result.get("decisions", []):
+        records.append(
+            {
+                "type": "DEC",
+                "decision": decision.get("decision"),
+                "concern_id": decision.get("concern_id"),
+                "file_id": decision.get("file_id"),
+                "concern_type": decision.get("concern_type"),
+                "concern_text": decision.get("concern_text"),
+                "rationale": decision.get("rationale"),
+                "timestamp": timestamp,
+            }
+        )
+
+    if records:
+        with evidence_path.open("a", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record))
+                handle.write("\n")
+
+    return evidence_path
+
+
+def _validate_concern_coverage(
+    judge_result: dict[str, Any], manager: WorkspaceManager
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+
+    file_concerns = {item["concern_id"] for item in _load_summary_concerns(manager)}
+    judged_concerns: set[str] = set()
+    for bucket in ("assignments", "gaps", "decisions"):
+        for item in judge_result.get(bucket, []):
+            if isinstance(item, dict) and item.get("concern_id"):
+                judged_concerns.add(str(item.get("concern_id")))
+
+    missing = sorted(file_concerns - judged_concerns)
+    extra = sorted(judged_concerns - file_concerns)
+
+    if missing:
+        issues.append(
+            {
+                "type": "concern_assignment_missing",
+                "missing": missing,
+                "message": "Concerns from summaries missing in judge output.",
+            }
+        )
+    if extra:
+        issues.append(
+            {
+                "type": "concern_assignment_extra",
+                "extra": extra,
+                "message": "Judge output contains unknown concerns.",
+            }
+        )
+
+    return issues

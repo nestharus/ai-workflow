@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -14,9 +15,12 @@ from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 
 from .library_labeling import (
     CharterResults,
+    _validate_concern_coverage,
+    _write_concern_evidence,
     aggregate_labels,
     build_library_shapes,
     generate_all_charters,
+    judge_concern_assignments,
     label_all_files,
     refine_library_labels,
     resolve_all_overlaps,
@@ -24,6 +28,7 @@ from .library_labeling import (
 )
 
 LIB_ID_RE = re.compile(r"^lib_\d{3}$")
+logger = logging.getLogger(__name__)
 
 
 def _write_library_event(lib_dir: Path, event: LibraryEvent) -> None:
@@ -460,6 +465,47 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         )
         overlap_decisions = []
 
+    concern_assignment_metrics = {
+        "total_assigned": 0,
+        "total_gaps": 0,
+        "total_decisions": 0,
+    }
+
+    try:
+        judge_result = judge_concern_assignments(charters, manager)
+        issues.extend(judge_result.get("issues", []))
+        issues.extend(_validate_concern_coverage(judge_result, manager))
+
+        if judge_result.get("gaps") or judge_result.get("decisions"):
+            evidence_path = _write_concern_evidence(judge_result, manager)
+            logger.info("Wrote concern evidence to %s", evidence_path)
+
+        total_concerns = (
+            len(judge_result.get("assignments", []))
+            + len(judge_result.get("gaps", []))
+            + len(judge_result.get("decisions", []))
+        )
+        if total_concerns == 0:
+            issues.append(
+                {
+                    "type": "concern_assignment_incomplete",
+                    "message": "Judge returned no assignments, gaps, or decisions",
+                }
+            )
+
+        concern_assignment_metrics = {
+            "total_assigned": len(judge_result.get("assignments", [])),
+            "total_gaps": len(judge_result.get("gaps", [])),
+            "total_decisions": len(judge_result.get("decisions", [])),
+        }
+    except Exception as exc:
+        issues.append(
+            {
+                "type": "concern_assignment_failed",
+                "message": f"Concern assignment judge failed: {exc}",
+            }
+        )
+
     index_content = _build_library_index(charters)
     index_path = manager.structure.libraries_dir / "library_index.md"
     index_path.write_text(index_content, encoding="utf-8")
@@ -528,6 +574,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     outputs = {
         "libraries_count": len(charters),
         "overlap_resolutions": overlap_resolutions,
+        "concern_assignments": concern_assignment_metrics,
     }
     if overlap_decisions:
         outputs["overlap_decisions"] = overlap_decisions

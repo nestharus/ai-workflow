@@ -12,10 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.workspace import WorkspaceManager
-
 from spec_manager.refinement.qa.bad_signatures import scan_known_bad_signatures
 from spec_manager.refinement.qa.cases import QA_CASES, PreparedQaCase, qa_fixture_dir
+from spec_manager.refinement.workspace import WorkspaceManager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -123,9 +122,8 @@ def _qa_session_dir(manager: WorkspaceManager, session_id: str) -> Path:
     return manager.structure.audits_dir / "qa" / session_id
 
 
-def _write_json(path: Path, payload: Any) -> None:
+def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # QA artifacts are logs; stringify non-JSON types (e.g. Path) rather than failing the run.
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
         encoding="utf-8",

@@ -81,17 +81,19 @@ class TruncationGuardStrategy(Strategy):
                 f"{original_length} to {cap} chars (removed {removed})"
             )
             actions.append(f"Truncated {unit.id} by {removed} chars")
-            evidence_records.append({
-                "category": "truncation",
-                "type": "content_truncated",
-                "severity": severity,
-                "details": {
-                    "unit_id": unit.id,
-                    "original_length": original_length,
-                    "truncated_length": cap,
-                    "chars_removed": removed,
-                },
-            })
+            evidence_records.append(
+                {
+                    "category": "truncation",
+                    "type": "content_truncated",
+                    "severity": severity,
+                    "details": {
+                        "unit_id": unit.id,
+                        "original_length": original_length,
+                        "truncated_length": cap,
+                        "chars_removed": removed,
+                    },
+                }
+            )
 
         return StrategyResult(
             units=context.units,

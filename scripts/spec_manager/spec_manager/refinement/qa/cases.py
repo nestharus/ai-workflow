@@ -11,6 +11,14 @@ from typing import Any, cast
 
 from spec_manager.core.gaps import Severity
 from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
+from spec_manager.refinement.qa.validators import (
+    validate_architecture_library_mapping_output,
+    validate_architecture_proposal_output,
+    validate_architecture_selection_output,
+    validate_evidence_mapper_output,
+    validate_phase0_determinism,
+    validate_spec_integrator_output,
+)
 from spec_manager.refinement.validation_utils import build_file_id_lookup
 from spec_manager.refinement.workflows.architecture import (
     _build_architecture_proposal_prompt,
@@ -20,15 +28,6 @@ from spec_manager.refinement.workflows.architecture import (
 from spec_manager.refinement.workflows.evidence_expansion import _build_evidence_prompt
 from spec_manager.refinement.workflows.spec_building import _build_file_ref, _build_patch_prompt
 from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
-
-from spec_manager.refinement.qa.validators import (
-    validate_architecture_library_mapping_output,
-    validate_architecture_proposal_output,
-    validate_architecture_selection_output,
-    validate_evidence_mapper_output,
-    validate_phase0_determinism,
-    validate_spec_integrator_output,
-)
 
 
 @dataclass(frozen=True)
@@ -67,8 +66,8 @@ def _identity(text: str) -> str:
     return text
 
 
-def _qa_issue(issue_type: str, message: str, **extra: Any) -> dict[str, Any]:
-    issue: dict[str, Any] = {"type": issue_type, "message": message}
+def _qa_issue(issue_type: str, message: str, **extra: object) -> dict[str, object]:
+    issue: dict[str, object] = {"type": issue_type, "message": message}
     issue.update(extra)
     return issue
 

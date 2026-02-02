@@ -560,6 +560,161 @@ def parse_evidence_mapper_output(
     return data
 
 
+def parse_concern_assignment_judge(output: str) -> dict[str, Any]:
+    """Parse chatgpt-concern-assignment-judge JSON output."""
+    issues: list[dict[str, Any]] = []
+    normalized_output = normalize_compound_pointers(output)
+
+    try:
+        data = json.loads(normalized_output)
+    except json.JSONDecodeError:
+        extracted = _extract_json_payload(normalized_output)
+        data = json.loads(extracted)
+
+    if not isinstance(data, dict):
+        raise TypeError("Concern assignment output must be a JSON object.")
+
+    required_fields = ("assignments", "gaps", "decisions")
+    for field in required_fields:
+        if field not in data:
+            issues.append(
+                {
+                    "type": "missing_field",
+                    "field": field,
+                    "message": f"Missing required field: {field}",
+                }
+            )
+            data[field] = []
+        elif not isinstance(data[field], list):
+            issues.append(
+                {
+                    "type": "invalid_field_type",
+                    "field": field,
+                    "message": f"Field {field} must be a list.",
+                }
+            )
+            data[field] = []
+
+    lib_id_re = re.compile(r"^lib_\d{3}$")
+    valid_gap_types = {"out_of_scope", "ambiguous"}
+    valid_decisions = {"deferred", "needs_clarification"}
+
+    for index, item in enumerate(data.get("assignments", [])):
+        if not isinstance(item, dict):
+            issues.append(
+                {
+                    "type": "invalid_assignment",
+                    "index": index,
+                    "message": "Assignment entry must be an object.",
+                }
+            )
+            continue
+
+        assigned_to = item.get("assigned_to", [])
+        if not isinstance(assigned_to, list):
+            issues.append(
+                {
+                    "type": "invalid_assignment_targets",
+                    "index": index,
+                    "message": "assigned_to must be a list of lib_id values.",
+                }
+            )
+            assigned_to = []
+        cleaned_targets: list[str] = []
+        for lib_id in assigned_to:
+            lib_id_str = str(lib_id).strip()
+            if not lib_id_str:
+                continue
+            if not lib_id_re.match(lib_id_str):
+                issues.append(
+                    {
+                        "type": "invalid_library_id",
+                        "index": index,
+                        "lib_id": lib_id_str,
+                        "message": "Assigned library id does not match lib_### format.",
+                    }
+                )
+            cleaned_targets.append(lib_id_str)
+        item["assigned_to"] = cleaned_targets
+
+        confidence = item.get("confidence")
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            issues.append(
+                {
+                    "type": "invalid_confidence",
+                    "index": index,
+                    "message": "Confidence must be a numeric value.",
+                }
+            )
+        else:
+            if not 0.0 <= confidence_value <= 1.0:
+                issues.append(
+                    {
+                        "type": "confidence_out_of_range",
+                        "index": index,
+                        "message": "Confidence must be between 0.0 and 1.0.",
+                    }
+                )
+            item["confidence"] = confidence_value
+
+        rationale = item.get("rationale")
+        if isinstance(rationale, str):
+            item["rationale"] = normalize_compound_pointers(rationale)
+
+    for index, item in enumerate(data.get("gaps", [])):
+        if not isinstance(item, dict):
+            issues.append(
+                {
+                    "type": "invalid_gap",
+                    "index": index,
+                    "message": "Gap entry must be an object.",
+                }
+            )
+            continue
+        gap_type = str(item.get("gap_type", "")).strip()
+        if gap_type not in valid_gap_types:
+            issues.append(
+                {
+                    "type": "invalid_gap_type",
+                    "index": index,
+                    "gap_type": gap_type,
+                    "message": "gap_type must be out_of_scope or ambiguous.",
+                }
+            )
+        rationale = item.get("rationale")
+        if isinstance(rationale, str):
+            item["rationale"] = normalize_compound_pointers(rationale)
+
+    for index, item in enumerate(data.get("decisions", [])):
+        if not isinstance(item, dict):
+            issues.append(
+                {
+                    "type": "invalid_decision",
+                    "index": index,
+                    "message": "Decision entry must be an object.",
+                }
+            )
+            continue
+        decision = str(item.get("decision", "")).strip()
+        if decision not in valid_decisions:
+            issues.append(
+                {
+                    "type": "invalid_decision_type",
+                    "index": index,
+                    "decision": decision,
+                    "message": "decision must be deferred or needs_clarification.",
+                }
+            )
+        rationale = item.get("rationale")
+        if isinstance(rationale, str):
+            item["rationale"] = normalize_compound_pointers(rationale)
+
+    data["issues"] = issues
+    return data
+
+
 def parse_gap_judge_output(
     json_str: str, evidence: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:

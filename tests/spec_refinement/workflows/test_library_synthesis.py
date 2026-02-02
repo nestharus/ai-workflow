@@ -151,9 +151,7 @@ def test_cross_cutting_overlap_records_events(fs, monkeypatch) -> None:
         overlap_resolutions=[],
     )
 
-    def _run_agent(
-        *, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2
-    ) -> str:
+    def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         if agent_name == "glm-library-overlap-resolver":
             return json.dumps(
                 {
@@ -174,9 +172,7 @@ def test_cross_cutting_overlap_records_events(fs, monkeypatch) -> None:
 
     created_events = _read_library_events(manager.structure.libraries_dir / "lib_003")
     created_event = next(
-        event
-        for event in created_events
-        if event.event_type == LibraryEventType.LIBRARY_CREATED
+        event for event in created_events if event.event_type == LibraryEventType.LIBRARY_CREATED
     )
     assert set(created_event.metadata["created_from"]) == {"lib_001", "lib_002"}
 

@@ -2,16 +2,16 @@
 
 from scripts.spec_manager.spec_manager.utils.graph import (
     build_dependency_graph,
-    save_dependency_graph,
+    find_cycles,
     generate_mermaid_diagram,
     get_topological_order,
-    find_cycles,
+    save_dependency_graph,
 )
 
 __all__ = [
     "build_dependency_graph",
-    "save_dependency_graph",
+    "find_cycles",
     "generate_mermaid_diagram",
     "get_topological_order",
-    "find_cycles",
+    "save_dependency_graph",
 ]

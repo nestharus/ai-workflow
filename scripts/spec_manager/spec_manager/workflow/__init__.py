@@ -89,7 +89,6 @@ def ingest(
 
 __all__ = [
     "ContextIndex",
-    "ingest",
     "IntermediateManager",
     "PatchDependency",
     "PatchDependencyGraph",
@@ -104,4 +103,5 @@ __all__ = [
     "WorkflowOrchestrator",
     "WorkflowPhase",
     "WorkflowState",
+    "ingest",
 ]

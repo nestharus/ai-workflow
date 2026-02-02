@@ -4,9 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from spec_manager.refinement.workspace import Phase, WorkspaceManager
-
 from spec_manager.refinement.cli import main
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
 
 def _setup_initialized_workspace(fs, monkeypatch, run_id: str = "run1") -> WorkspaceManager:
@@ -75,7 +74,9 @@ def test_spec_summarize_dispatches(fs, monkeypatch) -> None:
             "issues": [],
         }
 
-    with patch("spec_manager.refinement.cli.summarize_all", side_effect=_mock_summarize) as mock_summarize:
+    with patch(
+        "spec_manager.refinement.cli.summarize_all", side_effect=_mock_summarize
+    ) as mock_summarize:
         exit_code = main(["spec", "summarize", "run1", "--sequential"])
 
     assert exit_code == 0
@@ -95,7 +96,9 @@ def test_spec_synthesize_dispatches(fs, monkeypatch) -> None:
             "issues": [],
         }
 
-    with patch("spec_manager.refinement.cli.synthesize_libraries", side_effect=_mock_synth) as mock_synth:
+    with patch(
+        "spec_manager.refinement.cli.synthesize_libraries", side_effect=_mock_synth
+    ) as mock_synth:
         exit_code = main(["spec", "synthesize", "run1"])
 
     assert exit_code == 0

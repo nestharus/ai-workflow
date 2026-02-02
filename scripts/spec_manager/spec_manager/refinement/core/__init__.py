@@ -15,9 +15,9 @@ from spec_manager.refinement.core.gap_queue import GapQueue
 __all__ = [
     "Gap",
     "GapEvidence",
+    "GapQueue",
     "GapSynthesizer",
     "GapType",
-    "GapQueue",
     "compute_evidence_signature",
     "format_gap_markdown",
     "format_gap_table",
