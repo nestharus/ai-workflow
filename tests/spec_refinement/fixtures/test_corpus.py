@@ -202,13 +202,15 @@ def create_test_corpus(
     for index, path in enumerate(sorted(base_path.glob("*.md")), start=1):
         file_id = f"F{index:04d}"
         content = path.read_text(encoding="utf-8")
-        sections = _extract_section_labels(content)
+        labels = _extract_section_labels(content)
+        section_ids = [f"SEC-{file_id}-{i:04d}" for i in range(1, len(labels) + 1)]
         expected_libraries = library_map.get(path.name, ["lib_001"])
         manifest[file_id] = {
             "path": str(path),
-            "sections": sections,
+            "sections": section_ids,
+            "section_labels": labels,
             "expected_libraries": expected_libraries,
-            "expected_evidence_count": len(sections),
+            "expected_evidence_count": len(labels),
         }
 
     return manifest

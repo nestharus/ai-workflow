@@ -13,6 +13,7 @@ Integration Tests (Fast):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -355,6 +356,31 @@ def spec_refinement_workspace(fs, monkeypatch):
         manager = WorkspaceManager(run_id=run_id, input_folder=input_dir)
         issues = manager.initialize(force=True)
         assert issues == []
+
+        # Write per-file sections manifests with canonical SEC-* IDs
+        for file_id, entry in manifest.items():
+            if file_id not in manager.state.file_manifest:
+                continue
+            section_ids = entry["sections"]
+            labels = entry.get("section_labels", section_ids)
+            sections_data = {
+                "file_id": file_id,
+                "sections": [
+                    {
+                        "section_id": sid,
+                        "start_line": i,
+                        "end_line": i,
+                        "label": label,
+                    }
+                    for i, (sid, label) in enumerate(zip(section_ids, labels, strict=True), 1)
+                ],
+                "total_lines": len(labels),
+            }
+            sections_file = manager.structure.manifest_sections_dir / f"{file_id}.sections.json"
+            sections_file.write_text(json.dumps(sections_data), encoding="utf-8")
+            manager.state.section_manifest[file_id] = list(section_ids)
+        manager._save_state()
+
         manager.start_phase(Phase.SECTIONIZATION)
         manager.complete_phase(Phase.SECTIONIZATION, outputs={"files_processed": 0})
         return manager, manifest

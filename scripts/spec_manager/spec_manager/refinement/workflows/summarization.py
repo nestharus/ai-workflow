@@ -10,6 +10,7 @@ from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     FileSummary,
+    _extract_sections,
     normalize_compound_pointers,
     parse_evidence_pointer,
     parse_file_summary,
@@ -17,7 +18,6 @@ from spec_manager.refinement.formats import (
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
-    build_section_id_lookup,
     strip_invalid_file_pointers,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -148,13 +148,22 @@ def _validate_evidence_pointers(
             )
             continue
         sections_data = manager.read_file_sections(resolved_file_id) or {}
-        section_lookup = build_section_id_lookup(resolved_file_id, sections_data)
-        if section_ref not in section_lookup:
+        sections_list = sections_data.get("sections") if isinstance(sections_data, dict) else None
+        valid_section_ids: set[str] = set()
+        if isinstance(sections_list, list):
+            for entry in sections_list:
+                if not isinstance(entry, dict):
+                    continue
+                sid = entry.get("section_id")
+                if isinstance(sid, str) and sid:
+                    valid_section_ids.add(sid)
+        if section_ref not in valid_section_ids:
             issues.append(
                 {
                     "type": "unknown_section_reference",
                     "file_id": file_id,
                     "pointer": match.group(0),
+                    "blocker": True,
                     "message": (
                         f"Unknown section reference: {section_ref} (file: {resolved_file_id})"
                     ),
@@ -181,6 +190,39 @@ def _validate_evidence_pointers(
                 }
             )
 
+    return issues
+
+
+def _validate_bullets_have_pointers(content: str, file_id: str) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    sections = _extract_sections(content, level=2)
+    target_sections = [
+        "Algorithms",
+        "Components",
+        "Workflows",
+        "Candidate Responsibilities",
+    ]
+    for section_name in target_sections:
+        section_body = sections.get(section_name)
+        if not section_body:
+            continue
+        for line in section_body.splitlines():
+            stripped = line.lstrip()
+            if not stripped:
+                continue
+            if not stripped.startswith(("-", "*")):
+                continue
+            if EVIDENCE_POINTER_RE.search(stripped):
+                continue
+            issues.append(
+                {
+                    "type": "bullet_missing_evidence",
+                    "file_id": file_id,
+                    "section": section_name,
+                    "line": stripped,
+                    "message": f"Bullet missing evidence pointer in {section_name}.",
+                }
+            )
     return issues
 
 
@@ -217,8 +259,24 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         }
 
     issues = _validate_evidence_pointers(output, manager, file_id)
+    issues.extend(_validate_bullets_have_pointers(output, file_id))
     format_evidence: list[dict[str, Any]] = []
     if issues:
+        if any(issue.get("blocker") for issue in issues):
+            issues.append(
+                {
+                    "type": "repair_blocked",
+                    "file_id": file_id,
+                    "message": "Repair skipped due to blocker issues.",
+                }
+            )
+            return {
+                "file_id": file_id,
+                "output_path": summary_path,
+                "summary": parsed_summary,
+                "issues": issues,
+                "format_evidence": format_evidence,
+            }
         from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 
         try:
@@ -249,6 +307,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
             )
             format_evidence.extend(repair_evidence)
             repaired_issues = _validate_evidence_pointers(repaired_output, manager, file_id)
+            repaired_issues.extend(_validate_bullets_have_pointers(repaired_output, file_id))
             if not repaired_issues:
                 output = repaired_output
                 issues = []

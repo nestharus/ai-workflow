@@ -550,24 +550,28 @@ class TestFullWorkflowIntegration:
 
 
 def test_basename_stem_resolution(spec_refinement_workspace) -> None:
-    manager, _ = spec_refinement_workspace(run_id="run_basename")
-    content = "Evidence: [alpha.md::INTRO]\nEvidence: [alpha::INTRO]"
+    manager, manifest = spec_refinement_workspace(run_id="run_basename")
+    sec_id = manifest["F0001"]["sections"][0]
+    content = f"Evidence: [alpha.md::{sec_id}]\nEvidence: [alpha::{sec_id}]"
     issues = _validate_evidence_pointers(content, manager, "F0001")
     assert issues == []
 
 
-def test_case_insensitive_section_matching(spec_refinement_workspace) -> None:
+def test_legacy_label_rejected(spec_refinement_workspace) -> None:
+    """Legacy labels like 'intro' or 'INTRO' are flagged as unknown section references."""
     manager, _ = spec_refinement_workspace(run_id="run_case")
     content = "Evidence: [F0001::intro] Evidence: [F0001::INTRO] Evidence: [F0001::Intro]"
     issues = _validate_evidence_pointers(content, manager, "F0001")
-    assert issues == []
+    section_issues = [i for i in issues if i["type"] == "unknown_section_reference"]
+    assert len(section_issues) == 3
 
 
-def test_separator_normalization(spec_refinement_workspace) -> None:
+def test_normalized_label_rejected(spec_refinement_workspace) -> None:
+    """Normalized labels like 'user-requirements' are flagged as unknown section references."""
     manager, _ = spec_refinement_workspace(run_id="run_separator")
     content = "Evidence: [F0001::user-requirements]"
     issues = _validate_evidence_pointers(content, manager, "F0001")
-    assert issues == []
+    assert any(i["type"] == "unknown_section_reference" for i in issues)
 
 
 def test_derived_pointer_scrubbing(spec_refinement_workspace) -> None:
