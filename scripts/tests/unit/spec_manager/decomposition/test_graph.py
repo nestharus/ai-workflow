@@ -1,4 +1,4 @@
-"""Tests for spec_manager.spec_manager.utils.graph module."""
+"""Tests for spec_manager.decomposition.graph module."""
 
 from __future__ import annotations
 

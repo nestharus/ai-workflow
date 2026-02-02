@@ -41,7 +41,7 @@ This is a list-based approach (not a stack) since things may rely on each other 
 ### Initialize / Run
 
 ```bash
-uv run python -m scripts.spec_decomposition execute-spec \
+uv run python -m scripts.spec_manager.spec_manager.decomposition execute-spec \
   --workspace .tmp/spec_decomposition \
   --repo .
 ```
@@ -113,7 +113,7 @@ Format:
 Then re-run execute-spec to ingest results and continue:
 
 ```bash
-uv run python -m scripts.spec_decomposition execute-spec \
+uv run python -m scripts.spec_manager.spec_manager.decomposition execute-spec \
   --workspace .tmp/spec_decomposition \
   --ingest workspace/execution/evidence/run_001/implementation_map.json
 ```

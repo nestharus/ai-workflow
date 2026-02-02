@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.id_generator module."""
+"""Tests for spec_manager.decomposition.id_generator module."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.id_generator import (
+from scripts.spec_manager.spec_manager.decomposition.id_generator import (
     IDType,
     generate_id,
     get_ids_by_type,

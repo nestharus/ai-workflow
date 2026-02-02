@@ -19,8 +19,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_decomposition.entity_index import load_entity_index
-from scripts.spec_decomposition.id_generator import IDType, get_ids_by_type, load_id_map
+from scripts.spec_manager.spec_manager.decomposition.entity_index import load_entity_index
+from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+    IDType,
+    get_ids_by_type,
+    load_id_map,
+)
 
 
 def _id_sort_key(id_str: str) -> tuple[str, int]:

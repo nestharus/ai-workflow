@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.entity_index module."""
+"""Tests for spec_manager.decomposition.entity_index module."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.entity_index import (
+from scripts.spec_manager.spec_manager.decomposition.entity_index import (
     add_entity_to_index,
     add_keywords_to_entity,
     add_source_to_entity,

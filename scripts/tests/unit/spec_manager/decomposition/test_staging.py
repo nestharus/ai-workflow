@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.staging module."""
+"""Tests for spec_manager.decomposition.staging module."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.staging import (
+from scripts.spec_manager.spec_manager.decomposition.staging import (
     collect_and_remove_snippets,
     create_staging_file,
     embed_id_at_line,

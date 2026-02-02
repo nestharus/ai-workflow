@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.spec_decomposition.id_generator import IDType, get_ids_by_type, load_id_map
-from scripts.spec_decomposition.staging import get_staged_from_path
+from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+    IDType,
+    get_ids_by_type,
+    load_id_map,
+)
+from scripts.spec_manager.spec_manager.decomposition.staging import get_staged_from_path
 
 
 def _skip_header_lines(content_lines: list[str]) -> int:

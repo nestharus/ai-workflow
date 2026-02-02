@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-from scripts.spec_decomposition.entity_index import load_entity_index
-from scripts.spec_decomposition.id_generator import IDType, get_ids_by_type, load_id_map
+from scripts.spec_manager.spec_manager.decomposition.entity_index import load_entity_index
+from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+    IDType,
+    get_ids_by_type,
+    load_id_map,
+)
 
 
-def build_dependency_graph(workspace: Path) -> dict:
+def build_dependency_graph(workspace: Path) -> dict[str, Any]:
     """Build a dependency graph from relations.
 
     Returns a graph structure with:
@@ -21,7 +26,7 @@ def build_dependency_graph(workspace: Path) -> dict:
     entity_index = load_entity_index(workspace)
 
     # Build nodes from entity index
-    nodes = {}
+    nodes: dict[str, dict[str, Any]] = {}
     for entity_id, entity_data in entity_index.items():
         nodes[entity_id] = {
             "id": entity_id,
@@ -30,9 +35,9 @@ def build_dependency_graph(workspace: Path) -> dict:
             "sources": entity_data["sources"],
         }
 
-    def _relation_edges(sources: list[dict]) -> list[dict]:
+    def _relation_edges(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize relation sources into edge records."""
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         for src in sources:
             rel_type = src.get("relation_type") or src.get("relationship") or "relates_to"
             if src.get("from") and src.get("to"):
@@ -65,8 +70,10 @@ def build_dependency_graph(workspace: Path) -> dict:
         return deduped
 
     # Build edges from relations
-    edges: list[dict] = []
-    adjacency = {entity_id: {"outgoing": [], "incoming": []} for entity_id in nodes}
+    edges: list[dict[str, Any]] = []
+    adjacency: dict[str, dict[str, list[dict[str, Any]]]] = {
+        entity_id: {"outgoing": [], "incoming": []} for entity_id in nodes
+    }
 
     relation_ids = get_ids_by_type(id_map, IDType.RELATION)
     for rel_id in relation_ids:
@@ -130,7 +137,7 @@ def build_dependency_graph(workspace: Path) -> dict:
     return graph
 
 
-def save_dependency_graph(workspace: Path, graph: dict) -> None:
+def save_dependency_graph(workspace: Path, graph: dict[str, Any]) -> None:
     """Save dependency graph to workspace output."""
     output_dir = workspace / "output"
     output_dir.mkdir(exist_ok=True)
@@ -145,7 +152,7 @@ def save_dependency_graph(workspace: Path, graph: dict) -> None:
     mermaid_file.write_text(mermaid)
 
 
-def generate_mermaid_diagram(graph: dict) -> str:
+def generate_mermaid_diagram(graph: dict[str, Any]) -> str:
     """Generate a Mermaid diagram from the dependency graph."""
     lines = ["graph TD"]
 
@@ -176,7 +183,7 @@ def generate_mermaid_diagram(graph: dict) -> str:
     return "\n".join(lines)
 
 
-def get_topological_order(graph: dict) -> list[str]:
+def get_topological_order(graph: dict[str, Any]) -> list[str]:
     """Get entities in topological order (dependencies first).
 
     Useful for implementation ordering.
@@ -208,7 +215,7 @@ def get_topological_order(graph: dict) -> list[str]:
     return result
 
 
-def find_cycles(graph: dict) -> list[list[str]]:
+def find_cycles(graph: dict[str, Any]) -> list[list[str]]:
     """Find cycles in the dependency graph.
 
     Returns list of cycles, where each cycle is a list of entity IDs.

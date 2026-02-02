@@ -13,8 +13,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_decomposition.id_generator import IDType, load_id_map, save_id_map
-from scripts.spec_decomposition.workspace import resolve_original_copy
+from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+    IDType,
+    load_id_map,
+    save_id_map,
+)
+from scripts.spec_manager.spec_manager.decomposition.workspace import resolve_original_copy
 
 
 def _skip_header_lines(lines: list[str]) -> int:

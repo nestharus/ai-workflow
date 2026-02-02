@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.workspace module."""
+"""Tests for spec_manager.decomposition.workspace module."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.workspace import (
+from scripts.spec_manager.spec_manager.decomposition.workspace import (
     init_workspace,
     load_state,
     save_state,

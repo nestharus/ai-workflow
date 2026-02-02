@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from scripts.spec_decomposition.entity_index import (
+from scripts.spec_manager.spec_manager.decomposition.entity_index import (
     add_entity_to_index,
     add_keywords_to_entity,
     add_source_to_entity,
@@ -15,8 +15,8 @@ from scripts.spec_decomposition.entity_index import (
     load_entity_index,
     save_entity_index,
 )
-from scripts.spec_decomposition.execution import execute_spec
-from scripts.spec_decomposition.extract import (
+from scripts.spec_manager.spec_manager.decomposition.execution import execute_spec
+from scripts.spec_manager.spec_manager.decomposition.extract import (
     append_evidence_to_entity,
     create_discovered_entity_document,
     create_rich_relation_document,
@@ -24,10 +24,15 @@ from scripts.spec_decomposition.extract import (
     extract_entity_to_document,
     extract_relation_to_document,
 )
-from scripts.spec_decomposition.finalize import finalize_output
-from scripts.spec_decomposition.id_generator import IDType, generate_id, load_id_map, save_id_map
-from scripts.spec_decomposition.recompose import recompose
-from scripts.spec_decomposition.staging import (
+from scripts.spec_manager.spec_manager.decomposition.finalize import finalize_output
+from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+    IDType,
+    generate_id,
+    load_id_map,
+    save_id_map,
+)
+from scripts.spec_manager.spec_manager.decomposition.recompose import recompose
+from scripts.spec_manager.spec_manager.decomposition.staging import (
     collect_and_remove_snippets,
     get_remaining_lines,
     get_staged_from_path,
@@ -36,8 +41,8 @@ from scripts.spec_decomposition.staging import (
     remove_lines,
     write_snippet_staging_file,
 )
-from scripts.spec_decomposition.tagging import tag_facts
-from scripts.spec_decomposition.workspace import (
+from scripts.spec_manager.spec_manager.decomposition.tagging import tag_facts
+from scripts.spec_manager.spec_manager.decomposition.workspace import (
     init_workspace,
     list_discovery_staging_files,
     load_state,
@@ -803,7 +808,7 @@ def cmd_format_discovery(args: argparse.Namespace) -> int:
 
 def cmd_create_investigation_staging(args: argparse.Namespace) -> int:
     """Create fresh investigation staging from original for an entity."""
-    from scripts.spec_decomposition.workspace import (
+    from scripts.spec_manager.spec_manager.decomposition.workspace import (
         create_investigation_staging,
         load_file_index,
     )

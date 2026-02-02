@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.execution module."""
+"""Tests for spec_manager.decomposition.execution module."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.execution import (
+from scripts.spec_manager.spec_manager.decomposition.execution import (
     Gap,
     Ledger,
     SpecEntry,
