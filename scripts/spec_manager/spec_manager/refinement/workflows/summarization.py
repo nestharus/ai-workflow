@@ -306,12 +306,15 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
                 manager=manager,
             )
             format_evidence.extend(repair_evidence)
-            repaired_issues = _validate_evidence_pointers(repaired_output, manager, file_id)
-            repaired_issues.extend(_validate_bullets_have_pointers(repaired_output, file_id))
+            repaired_pointer_issues = _validate_evidence_pointers(repaired_output, manager, file_id)
+            repaired_bullet_issues = _validate_bullets_have_pointers(repaired_output, file_id)
+            repaired_issues = repaired_pointer_issues + repaired_bullet_issues
             if not repaired_issues:
                 output = repaired_output
                 issues = []
                 summary_path.write_text(output, encoding="utf-8")
+            else:
+                issues = repaired_issues
         except Exception as exc:
             issues.append(
                 {
