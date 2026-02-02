@@ -19,12 +19,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from scripts.spec_refinement.core.gap import GapEvidence
-from scripts.spec_refinement.schemas.sections import FileSections, SectionSpan
-from scripts.spec_refinement.schemas.validation_utils import (
+from scripts.spec_manager.spec_manager.schemas.sections import FileSections, SectionSpan
+from scripts.spec_manager.spec_manager.schemas.validation_utils import (
     validate_section_coverage,
     validate_section_id_format,
 )
+from scripts.spec_refinement.core.gap import GapEvidence
 
 
 def validate_sections(

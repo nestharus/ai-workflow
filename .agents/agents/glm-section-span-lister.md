@@ -15,7 +15,7 @@ output_format: json
 - Sections MUST be ordered sequentially by line number.
 - start_line and end_line are 1-indexed, inclusive.
 - Labels MUST be topic-only routing aids (e.g., "Introduction", "Requirements", "Constraints").
-- Outputs MUST validate against FileSections schema (scripts/spec_refinement/schemas/sections.py).
+- Outputs MUST validate against FileSections schema (scripts/spec_manager/spec_manager/schemas/sections.py).
 - NOTE: Section IDs are used for evidence pointers; current format [FILE_ID::SECTION] will migrate to
   [spec_snapshot/<relpath>::SEC-...] in a later phase.
 

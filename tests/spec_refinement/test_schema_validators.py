@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from scripts.spec_refinement.schemas.sections import FileSections
-from scripts.spec_refinement.schemas.validation_utils import validate_atom_sequence
+from scripts.spec_manager.spec_manager.schemas.sections import FileSections
+from scripts.spec_manager.spec_manager.schemas.validation_utils import validate_atom_sequence
 
 
 def test_file_sections_allows_empty_when_total_lines_zero() -> None:

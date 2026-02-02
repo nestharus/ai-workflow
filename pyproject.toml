@@ -314,6 +314,9 @@ convention = "google"
 # Scripts: F401 for modules with import side effects
 "scripts/dev/huggingface_agent_runner.py" = ["F401"]
 
+# Scripts: D for Pydantic schema files (docstrings in field annotations)
+"scripts/spec_manager/spec_manager/schemas/**/*.py" = ["D"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "scripts/tests"]
 python_files = ["test_*.py"]

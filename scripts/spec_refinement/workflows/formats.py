@@ -454,7 +454,7 @@ def parse_evidence_mapper_output(
     """Parse glm-library-evidence-mapper JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import EvidenceMapperOutput
+    from scripts.spec_manager.spec_manager.schemas import EvidenceMapperOutput
 
     try:
         return EvidenceMapperOutput.model_validate_json(json_str).model_dump()
@@ -488,7 +488,7 @@ def parse_gap_judge_output(
     """Parse chatgpt-library-spec-gap-judge JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import GapJudgeOutput
+    from scripts.spec_manager.spec_manager.schemas import GapJudgeOutput
 
     try:
         return GapJudgeOutput.model_validate_json(json_str).model_dump()
@@ -670,7 +670,9 @@ def parse_architecture_proposal(
     """Parse opus-architecture-proposer JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import ArchitectureProposal as ArchitectureProposalSchema
+    from scripts.spec_manager.spec_manager.schemas import (
+        ArchitectureProposal as ArchitectureProposalSchema,
+    )
 
     try:
         proposal = ArchitectureProposalSchema.model_validate_json(json_str)
@@ -728,7 +730,7 @@ def parse_architecture_selection(
     """Parse chatgpt-architecture-tradeoff-judge JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import ArchitectureSelection
+    from scripts.spec_manager.spec_manager.schemas import ArchitectureSelection
 
     try:
         return ArchitectureSelection.model_validate_json(json_str).model_dump()
@@ -767,7 +769,7 @@ def parse_library_labeler_output(
     """Parse glm-file-library-labeler JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import LibraryLabelerOutput
+    from scripts.spec_manager.spec_manager.schemas import LibraryLabelerOutput
 
     try:
         return LibraryLabelerOutput.model_validate_json(json_str).model_dump()
@@ -800,7 +802,7 @@ def parse_spec_patch_output(
     """Parse glm-library-spec-integrator JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import SpecPatchOutput
+    from scripts.spec_manager.spec_manager.schemas import SpecPatchOutput
 
     try:
         return SpecPatchOutput.model_validate_json(json_str).model_dump()
@@ -833,7 +835,7 @@ def parse_architecture_brief_output(
     """Parse glm-architecture-brief-extractor JSON output."""
     from pydantic import ValidationError
 
-    from scripts.spec_refinement.schemas import ArchitectureBrief
+    from scripts.spec_manager.spec_manager.schemas import ArchitectureBrief
 
     try:
         return ArchitectureBrief.model_validate_json(json_str).model_dump()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from scripts.spec_refinement.schemas.atoms import LineAtom
-from scripts.spec_refinement.schemas.sections import SectionSpan
+from .atoms import LineAtom
+from .sections import SectionSpan
 
 SECTION_ID_PATTERN = re.compile(r"^SEC-(?P<file_id>[^-]+)-(?P<ordinal>\d{4})$")
 ATOM_ID_PATTERN = re.compile(r"^ATOM-(?P<file_id>[^-]+)-L(?P<line_no>\d{4})$")

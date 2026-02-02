@@ -428,7 +428,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from scripts.spec_refinement.schemas.sections import FileSections
+        from spec_manager.schemas.sections import FileSections
 
         for path in files:
             try:
@@ -450,7 +450,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from scripts.spec_refinement.schemas.atoms import LineAtom
+        from spec_manager.schemas.atoms import LineAtom
 
         for path in files:
             try:
@@ -491,7 +491,7 @@ class ComplianceScorer:
         if not files:
             return blockers
 
-        from scripts.spec_refinement.schemas.terms import FileTerms
+        from spec_manager.schemas.terms import FileTerms
 
         for path in files:
             try:

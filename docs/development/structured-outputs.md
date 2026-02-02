@@ -21,18 +21,18 @@ schemas and returned as JSON.
 
 The following agents are configured for structured JSON output:
 
-- `glm-library-evidence-mapper`
-- `chatgpt-library-spec-gap-judge`
-- `opus-architecture-proposer`
-- `chatgpt-architecture-tradeoff-judge`
-- `glm-file-library-labeler`
-- `glm-library-spec-integrator`
-- `glm-architecture-brief-extractor`
+* `glm-library-evidence-mapper`
+* `chatgpt-library-spec-gap-judge`
+* `opus-architecture-proposer`
+* `chatgpt-architecture-tradeoff-judge`
+* `glm-file-library-labeler`
+* `glm-library-spec-integrator`
+* `glm-architecture-brief-extractor`
 
 ## Adding a New Structured Agent
 
-1. **Create a schema** in `scripts/spec_refinement/schemas/` using Pydantic.
-2. **Export the schema** in `scripts/spec_refinement/schemas/__init__.py`.
+1. **Create a schema** in `scripts/spec_manager/spec_manager/schemas/` using Pydantic.
+2. **Export the schema** in `scripts/spec_manager/spec_manager/schemas/__init__.py`.
 3. **Register the schema** in `scripts/agents/__main__.py` under `AGENT_SCHEMAS`.
 4. **Set agent frontmatter** in `.agents/agents/<agent>.md`:
 
@@ -44,14 +44,14 @@ output_format: json
 ---
 ```
 
-5. **Update workflows** to call `run_agent(..., structured_schema=YourSchema)`.
+1. **Update workflows** to call `run_agent(..., structured_schema=YourSchema)`.
 
 ## Schema Guidelines
 
-- Use `pydantic.BaseModel` with explicit field types.
-- Prefer simple JSON primitives (string, number, boolean, list, object).
-- Use `Field(ge=..., le=...)` for numeric bounds.
-- Keep schemas minimal and focused on workflow needs.
+* Use `pydantic.BaseModel` with explicit field types.
+* Prefer simple JSON primitives (string, number, boolean, list, object).
+* Use `Field(ge=..., le=...)` for numeric bounds.
+* Keep schemas minimal and focused on workflow needs.
 
 ## Fallback Behavior
 
@@ -63,6 +63,6 @@ legacy validation logic. A warning is logged when fallback parsing is used.
 
 Structured output execution requires provider API keys:
 
-- `OPENAI_API_KEY` (OpenAI models, including OpenAI-compatible endpoints)
-- `ANTHROPIC_API_KEY` (Anthropic models)
-- `CEREBRAS_API_KEY` (Cerebras OpenAI-compatible endpoint for GLM mappings)
+* `OPENAI_API_KEY` (OpenAI models, including OpenAI-compatible endpoints)
+* `ANTHROPIC_API_KEY` (Anthropic models)
+* `CEREBRAS_API_KEY` (Cerebras OpenAI-compatible endpoint for GLM mappings)

@@ -15,7 +15,7 @@ output_format: json
 - Terms MUST be actionable for entity resolution (Phase 2).
 - Confidence MUST be between 0.0 and 1.0 (inclusive).
 - global_terms MUST be file-wide concepts not tied to a specific section.
-- Outputs MUST validate against FileTerms schema (scripts/spec_refinement/schemas/terms.py).
+- Outputs MUST validate against FileTerms schema (scripts/spec_manager/spec_manager/schemas/terms.py).
 - NOTE: Section IDs are used for evidence pointers; current format [FILE_ID::SECTION] will migrate to
   [spec_snapshot/<relpath>::SEC-...] in a later phase.
 

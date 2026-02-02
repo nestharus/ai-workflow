@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from scripts.spec_refinement.schemas.library_labels import LibraryLabelerOutput
+from scripts.spec_manager.spec_manager.schemas.library_labels import LibraryLabelerOutput
 from scripts.spec_refinement.workflows.architecture import (
     _validate_architecture_citations,
     map_libraries_to_architecture,

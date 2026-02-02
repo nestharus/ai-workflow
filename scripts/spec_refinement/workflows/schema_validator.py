@@ -20,11 +20,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from scripts.spec_manager.spec_manager.schemas.atoms import LineAtom
+from scripts.spec_manager.spec_manager.schemas.files import FilesManifest
+from scripts.spec_manager.spec_manager.schemas.sections import FileSections
+from scripts.spec_manager.spec_manager.schemas.terms import FileTerms
 from scripts.spec_refinement.core.gap import GapEvidence
-from scripts.spec_refinement.schemas.atoms import LineAtom
-from scripts.spec_refinement.schemas.files import FilesManifest
-from scripts.spec_refinement.schemas.sections import FileSections
-from scripts.spec_refinement.schemas.terms import FileTerms
 
 
 def validate_files_manifest(

@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
-from spec_refinement.schemas.sections import FileSections  # type: ignore[import-not-found]
-from spec_refinement.schemas.terms import FileTerms  # type: ignore[import-not-found]
+
+from spec_manager.schemas.sections import FileSections
+from spec_manager.schemas.terms import FileTerms
 
 logger = logging.getLogger(__name__)
 
