@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from builtins import enumerate
 from pathlib import Path
 from typing import Any
 

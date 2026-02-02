@@ -71,7 +71,7 @@ def cmd_spec_sectionize(args: argparse.Namespace) -> int:
     """Run Phase 1 sectionization for all files."""
     run_id = args.run_id
 
-    from scripts.spec_refinement.workflows import sectionize_all
+    from spec_manager.refinement.workflows import sectionize_all
 
     try:
         result = sectionize_all(run_id, parallel=not args.sequential)

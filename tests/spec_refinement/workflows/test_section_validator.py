@@ -4,8 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_refinement.workflows.section_validator import validate_sections
+from spec_manager.refinement.workflows.section_validator import validate_sections
 
 
 def _write_sections(path: Path, payload: dict[str, object]) -> None:

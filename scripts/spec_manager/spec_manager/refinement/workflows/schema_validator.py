@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+
 from spec_manager.refinement.core.gap import GapEvidence
 from spec_manager.schemas.atoms import LineAtom
 from spec_manager.schemas.files import FilesManifest

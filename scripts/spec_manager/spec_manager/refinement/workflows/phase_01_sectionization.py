@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
 from spec_manager.refinement.progress import ProgressTracker

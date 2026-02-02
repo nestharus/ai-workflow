@@ -13,7 +13,6 @@ from .architecture import (
 )
 from .evidence_expansion import expand_evidence, spotcheck_evidence
 from .library_synthesis import synthesize_libraries
-from .phase_01_sectionization import sectionize_all
 from .spec_building import build_specs
 from .sublibrary_detection import detect_sublibraries
 from .summarization import summarize_all
@@ -25,7 +24,6 @@ __all__ = [
     "expand_evidence",
     "map_libraries_to_architecture",
     "propose_architectures",
-    "sectionize_all",
     "select_architecture",
     "spotcheck_evidence",
     "summarize_all",

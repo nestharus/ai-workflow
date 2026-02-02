@@ -7,9 +7,8 @@ from pathlib import Path
 import pytest
 from spec_manager.core.gaps import Severity
 from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
+from spec_manager.refinement.workflows import phase_01_sectionization as phase_one
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from scripts.spec_refinement.workflows import phase_01_sectionization as phase_one
 
 
 def _extract(pattern: str, text: str) -> str | None:

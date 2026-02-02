@@ -6,10 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+from spec_manager.refinement.workflows import atom_emitter
 from spec_manager.schemas.atoms import LineAtom
 from spec_manager.schemas.sections import FileSections, SectionSpan
-
-from scripts.spec_refinement.workflows import atom_emitter
 
 
 def _write_file(fs, path: Path, content: str) -> None:

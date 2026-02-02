@@ -17,7 +17,7 @@ fixing inputs or agent configuration.
 ## Parallel tuning
 
 Summarization uses a thread pool capped by `MAX_WORKERS` in
-`scripts/spec_refinement/workflows/summarization.py`. Adjust this value when
+`scripts/spec_manager/spec_manager/refinement/workflows/summarization.py`. Adjust this value when
 processing large numbers of files.
 
 ## Output inspection
@@ -57,8 +57,10 @@ added.
 ## Python API
 
 ```python
+from spec_manager.refinement.workflows import sectionize_all
 from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 
+sectionize_all("my_run_001")
 summarize_all("my_run_001")
 synthesize_libraries("my_run_001")
 ```
@@ -113,7 +115,7 @@ Phase 1 introduces a new evidence pointer format to support stable section IDs.
 
 **Migration touchpoints**:
 - `scripts/spec_manager/spec_manager/refinement/formats.py` - Updated `EVIDENCE_POINTER_RE` regex
-- `scripts/spec_refinement/workflows/summarization.py` - Passes section IDs to agents
+- `scripts/spec_manager/spec_manager/refinement/workflows/summarization.py` - Passes section IDs to agents
 - `scripts/spec_refinement/workflows/evidence_expansion.py` - Reads section IDs from sections.json
 - `scripts/spec_refinement/qa/bad_signatures.py` - Updated validation patterns
 
