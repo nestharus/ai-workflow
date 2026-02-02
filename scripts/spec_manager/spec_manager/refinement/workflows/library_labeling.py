@@ -214,7 +214,15 @@ def label_file_to_libraries(
 
     return {
         "file_id": file_id,
-        "candidate_labels": candidate_labels,
+        "candidate_labels": [
+            {
+                "label": label.get("label"),
+                "sections": label.get("sections", []),
+                "confidence": label.get("confidence", 0.0),
+                "rationale": label.get("rationale", ""),
+            }
+            for label in candidate_labels
+        ],
         "uncertain_labels": uncertain_labels,
         "raw_output": output_text,
         "issues": issues,
@@ -280,6 +288,107 @@ def label_all_files(manager: WorkspaceManager) -> dict[str, Any]:
         "issues": issues,
         "format_evidence": format_evidence,
     }
+
+
+def build_library_shapes(file_labels: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build multi-label shape distributions from file labels.
+
+    Returns:
+        {file_id: {lib_id: {confidence, sections, rationale}}}
+    """
+    shapes: dict[str, dict[str, Any]] = {}
+
+    for file_id, data in file_labels.items():
+        file_shape: dict[str, Any] = {}
+
+        for label_entry in data.get("candidate_labels", []):
+            label = str(label_entry.get("label", "")).strip()
+            if not label:
+                continue
+
+            file_shape[label] = {
+                "confidence": float(label_entry.get("confidence", 0.0)),
+                "sections": label_entry.get("sections", []),
+                "rationale": label_entry.get("rationale", ""),
+            }
+
+        if file_shape:
+            shapes[file_id] = file_shape
+
+    return shapes
+
+
+def validate_library_shapes(shapes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate library shape distributions.
+
+    Ensures:
+    - Confidence values are between 0.0 and 1.0
+    - Sum of confidences per file <= 1.0
+    - All required fields are present
+    """
+    issues: list[dict[str, Any]] = []
+
+    for file_id, file_shape in shapes.items():
+        total_confidence = 0.0
+
+        for lib_label, shape_data in file_shape.items():
+            confidence = shape_data.get("confidence", 0.0)
+
+            if not isinstance(confidence, (int, float)):
+                issues.append(
+                    {
+                        "type": "invalid_confidence_type",
+                        "file_id": file_id,
+                        "lib_label": lib_label,
+                        "message": f"Confidence must be numeric, got {type(confidence).__name__}",
+                    }
+                )
+                continue
+
+            if confidence < 0.0 or confidence > 1.0:
+                issues.append(
+                    {
+                        "type": "confidence_out_of_range",
+                        "file_id": file_id,
+                        "lib_label": lib_label,
+                        "confidence": confidence,
+                        "message": "Confidence must be between 0.0 and 1.0",
+                    }
+                )
+
+            if "sections" not in shape_data:
+                issues.append(
+                    {
+                        "type": "missing_sections",
+                        "file_id": file_id,
+                        "lib_label": lib_label,
+                        "message": "Shape entry missing sections field",
+                    }
+                )
+
+            if "rationale" not in shape_data:
+                issues.append(
+                    {
+                        "type": "missing_rationale",
+                        "file_id": file_id,
+                        "lib_label": lib_label,
+                        "message": "Shape entry missing rationale field",
+                    }
+                )
+
+            total_confidence += confidence
+
+        if total_confidence > 1.0:
+            issues.append(
+                {
+                    "type": "confidence_sum_exceeds_one",
+                    "file_id": file_id,
+                    "total_confidence": round(total_confidence, 3),
+                    "message": f"Sum of confidences ({total_confidence:.3f}) exceeds 1.0",
+                }
+            )
+
+    return issues
 
 
 def _parse_section_pointer(value: str, default_file_id: str | None = None) -> list[tuple[str, str]]:

@@ -112,6 +112,11 @@ class RunFolderStructure:
         """Path to the Phase 1 pass directory."""
         return self.intermediates_dir / "pass_01"
 
+    @property
+    def indexes_dir(self) -> Path:
+        """Path to the indexes directory for cross-cutting data."""
+        return self.workspace_dir / "indexes"
+
     def validate(self) -> list[str]:
         """Validate run folder structure."""
         issues = []
@@ -192,6 +197,7 @@ class WorkspaceManager:
             self.structure.workspace_dir,
             self.structure.intermediates_dir,
             self.structure.pass_01_dir,
+            self.structure.indexes_dir,
             self.structure.summaries_dir,
             self.structure.libraries_dir,
             self.structure.architecture_dir,
@@ -1106,6 +1112,20 @@ class WorkspaceManager:
         """Get gap coverage metrics for a library."""
         queue = self.get_library_gap_queue(lib_id)
         return queue.get_coverage_metrics()
+
+    def write_library_shapes(self, shapes: dict[str, dict[str, Any]]) -> Path:
+        """Write library shapes to workspace/indexes/library_shapes.json."""
+        self.structure.indexes_dir.mkdir(parents=True, exist_ok=True)
+        shapes_path = self.structure.indexes_dir / "library_shapes.json"
+        shapes_path.write_text(json.dumps(shapes, indent=2), encoding="utf-8")
+        return shapes_path
+
+    def read_library_shapes(self) -> dict[str, dict[str, Any]]:
+        """Read library shapes from workspace/indexes/library_shapes.json."""
+        shapes_path = self.structure.indexes_dir / "library_shapes.json"
+        if not shapes_path.exists():
+            return {}
+        return json.loads(shapes_path.read_text(encoding="utf-8"))
 
     def _save_state(self) -> None:
         """Save current state to disk."""

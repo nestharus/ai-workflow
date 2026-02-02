@@ -15,10 +15,12 @@ from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 from .library_labeling import (
     CharterResults,
     aggregate_labels,
+    build_library_shapes,
     generate_all_charters,
     label_all_files,
     refine_library_labels,
     resolve_all_overlaps,
+    validate_library_shapes,
 )
 
 LIB_ID_RE = re.compile(r"^lib_\d{3}$")
@@ -388,6 +390,15 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     label_results = label_all_files(manager)
     file_labels = label_results.get("file_labels", {})
     issues.extend(label_results.get("issues", []))
+
+    # Build and validate library shapes
+
+    library_shapes = build_library_shapes(file_labels)
+    shape_issues = validate_library_shapes(library_shapes)
+    issues.extend(shape_issues)
+
+    # Persist library shapes for Phase 8 overlap reasoning
+    manager.write_library_shapes(library_shapes)
 
     label_clusters = aggregate_labels(file_labels)
     manager.structure.libraries_dir.mkdir(parents=True, exist_ok=True)
