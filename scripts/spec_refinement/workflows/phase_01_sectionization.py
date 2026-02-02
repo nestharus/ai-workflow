@@ -8,10 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
 from spec_manager.schemas.sections import FileSections
-
-from scripts.spec_refinement.core.gap import GapEvidence, GapSynthesizer
 
 from .agent_utils import run_agent
 from .atom_emitter import emit_atoms

@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
+from spec_manager.refinement.core.gap_queue import GapQueue
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     parse_gap_judge_output,
@@ -27,9 +29,6 @@ from spec_manager.refinement.validation_utils import (
     build_section_id_lookup,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
-from scripts.spec_refinement.core.gap_queue import GapQueue
 
 from .agent_utils import run_agent
 from .progress import ProgressTracker

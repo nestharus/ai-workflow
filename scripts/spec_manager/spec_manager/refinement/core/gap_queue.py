@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from scripts.spec_refinement.core.gap import Gap
+from spec_manager.refinement.core.gap import Gap
 
 
 @dataclass

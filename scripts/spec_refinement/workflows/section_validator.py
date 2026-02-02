@@ -18,13 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from spec_manager.refinement.core.gap import GapEvidence
 from spec_manager.schemas.sections import FileSections, SectionSpan
 from spec_manager.schemas.validation_utils import (
     validate_section_coverage,
     validate_section_id_format,
 )
-
-from scripts.spec_refinement.core.gap import GapEvidence
 
 
 def validate_sections(

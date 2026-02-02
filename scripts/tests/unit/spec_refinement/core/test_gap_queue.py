@@ -1,11 +1,10 @@
-"""Tests for spec_refinement.core.gap_queue module."""
+"""Tests for spec_manager.refinement.core.gap_queue module."""
 
 from __future__ import annotations
 
 from spec_manager.core.gaps import Severity
-
-from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapType
-from scripts.spec_refinement.core.gap_queue import GapQueue
+from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
+from spec_manager.refinement.core.gap_queue import GapQueue
 
 
 def _make_gap(gap_id: str, status: str = "open") -> Gap:

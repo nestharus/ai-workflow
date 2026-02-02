@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from spec_manager.core.gaps import Severity
+from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 from spec_manager.refinement.validation_utils import build_file_id_lookup
 from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
 
-from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapType
 from scripts.spec_refinement.qa.validators import (
     validate_architecture_library_mapping_output,
     validate_architecture_proposal_output,

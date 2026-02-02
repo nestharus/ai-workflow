@@ -23,9 +23,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from spec_manager.refinement.core.gap import Gap, format_gap_table
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
-from scripts.spec_refinement.core.gap import Gap, format_gap_table
 from scripts.spec_refinement.workflows import summarize_all, synthesize_libraries
 from scripts.spec_refinement.workflows.agent_utils import run_agent
 

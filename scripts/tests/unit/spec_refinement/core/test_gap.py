@@ -1,4 +1,4 @@
-"""Tests for spec_refinement.core.gap module."""
+"""Tests for spec_manager.refinement.core.gap module."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from spec_manager.core.gaps import Severity
-
-from scripts.spec_refinement.core.gap import (
+from spec_manager.refinement.core.gap import (
     Gap,
     GapEvidence,
     GapSynthesizer,

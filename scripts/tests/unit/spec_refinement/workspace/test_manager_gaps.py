@@ -6,10 +6,9 @@ from pathlib import Path
 
 import pytest
 from spec_manager.core.gaps import Severity
+from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.refinement.workspace.state import Phase
-
-from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapType
 
 
 def _make_gap(gap_id: str, artifact: str) -> Gap:

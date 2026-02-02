@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-from scripts.spec_refinement.core.gap import (
+from spec_manager.core.gaps import Severity
+from spec_manager.refinement.core.gap import (
     Gap,
     GapEvidence,
     GapType,
@@ -24,8 +25,7 @@ from scripts.spec_refinement.core.gap import (
     format_gap_markdown,
     parse_gaps_markdown,
 )
-from scripts.spec_refinement.core.gap_queue import GapQueue
-from spec_manager.core.gaps import Severity
+from spec_manager.refinement.core.gap_queue import GapQueue
 
 from .state import Phase, WorkspaceState
 

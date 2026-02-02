@@ -18,10 +18,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.core.gap import GapEvidence
 from spec_manager.schemas.atoms import LineAtom
 from spec_manager.schemas.sections import FileSections, SectionSpan
-
-from scripts.spec_refinement.core.gap import GapEvidence
 
 
 def emit_atoms(
