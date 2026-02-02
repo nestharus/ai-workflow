@@ -6,16 +6,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .formats import (
+from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     FileSummary,
     normalize_compound_pointers,
     parse_evidence_pointer,
     parse_file_summary,
 )
+
+from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
+from .agent_utils import run_agent
 from .progress import ProgressTracker
 from .validation_utils import (
     build_file_id_lookup,

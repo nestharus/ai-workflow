@@ -7,9 +7,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.formats import LibraryCharter
+
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
-from .formats import LibraryCharter
 from .library_labeling import (
     CharterResults,
     aggregate_labels,

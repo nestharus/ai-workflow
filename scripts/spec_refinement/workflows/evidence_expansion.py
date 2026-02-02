@@ -8,14 +8,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .formats import (
+from spec_manager.refinement.formats import (
     _extract_json_payload,
     _record_json_extraction_evidence,
     parse_evidence_spotcheck_output,
 )
+
+from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
+from .agent_utils import run_agent
 from .progress import ProgressTracker
 
 MAX_WORKERS = 4
@@ -436,7 +437,7 @@ def _validate_evidence_entry(
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
             section_blocks[label] = content[start:end]
 
-        if primary_lib_id is None or primary_lib_id != lib_id:
+        if primary_lib_id is not None and primary_lib_id != lib_id:
             mention_filtered: list[str] = []
             for section in filtered_sections:
                 label = section_id_to_label.get(section) or section
@@ -484,7 +485,7 @@ def _process_pair(
         return {"lib_id": lib_id, "file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
     try:
-        from .formats import parse_evidence_mapper_output
+        from spec_manager.refinement.formats import parse_evidence_mapper_output
 
         data = parse_evidence_mapper_output(output, format_evidence)
     except Exception as exc:  # pragma: no cover - defensive logging

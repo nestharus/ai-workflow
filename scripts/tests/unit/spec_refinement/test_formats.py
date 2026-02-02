@@ -1,4 +1,4 @@
-"""Unit tests for scripts.spec_refinement.workflows.formats parsing utilities.
+"""Unit tests for spec_manager.refinement.formats parsing utilities.
 
 All functions under test are pure parsing/formatting logic -- no LLM calls, no
 filesystem access, no network I/O.  Each test constructs its own input string
@@ -11,8 +11,7 @@ import json
 import textwrap
 
 import pytest
-
-from scripts.spec_refinement.workflows.formats import (
+from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     ArchitectureCandidate,
     FileSummary,

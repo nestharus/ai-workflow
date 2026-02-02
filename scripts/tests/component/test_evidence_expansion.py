@@ -5,13 +5,14 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from spec_manager.refinement.formats import (
+    parse_evidence_mapper_output,
+    parse_evidence_spotcheck_output,
+)
+
 from scripts.spec_refinement.workflows.evidence_expansion import (
     expand_evidence,
     spotcheck_evidence,
-)
-from scripts.spec_refinement.workflows.formats import (
-    parse_evidence_mapper_output,
-    parse_evidence_spotcheck_output,
 )
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 

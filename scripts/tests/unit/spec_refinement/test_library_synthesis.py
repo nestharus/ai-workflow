@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.spec_refinement.workflows.formats import LibraryCharter
+from spec_manager.refinement.formats import LibraryCharter
+
 from scripts.spec_refinement.workflows.library_synthesis import synthesize_libraries
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 

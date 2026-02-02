@@ -275,8 +275,8 @@ class WorkflowOrchestrator:
 
     def _register_strategy_tools(self) -> None:
         """Register tools that strategies can use."""
-        from scripts.spec_refinement.workflows.formats import _extract_json_payload
         from scripts.spec_refinement.workflows.repair import repair_artifact
+        from spec_manager.refinement.formats import _extract_json_payload
 
         def simple_splitter(text: str) -> list[str]:
             sentences = re.split(r"(?<=[.!?])\s+", text)

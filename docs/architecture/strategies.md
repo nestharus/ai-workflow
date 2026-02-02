@@ -23,7 +23,7 @@ and emit evidence for downstream auditing.
 
 **Integration**:
 - Uses the existing repair pipeline in `scripts/spec_refinement/workflows/repair.py`
-- Uses tolerant JSON extraction from `scripts/spec_refinement/workflows/formats.py`
+- Uses tolerant JSON extraction from `scripts/spec_manager/spec_manager/refinement/formats.py`
 
 **Example evidence records**:
 

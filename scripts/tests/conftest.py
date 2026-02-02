@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +14,10 @@ import pytest
 
 if TYPE_CHECKING:
     from pyfakefs.fake_filesystem import FakeFilesystem
+
+_SPEC_MANAGER_ROOT = (Path(__file__).resolve().parents[1] / "spec_manager").resolve()
+if _SPEC_MANAGER_ROOT.exists() and str(_SPEC_MANAGER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SPEC_MANAGER_ROOT))
 
 
 def wait_for_server_ready(

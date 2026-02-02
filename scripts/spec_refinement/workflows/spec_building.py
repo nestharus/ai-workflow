@@ -16,12 +16,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.formats import (
+    EVIDENCE_POINTER_RE,
+    parse_gap_judge_output,
+    parse_spec_patch_output,
+)
+
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
 from scripts.spec_refinement.core.gap_queue import GapQueue
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .agent_utils import run_agent
-from .formats import EVIDENCE_POINTER_RE, parse_gap_judge_output, parse_spec_patch_output
 from .progress import ProgressTracker
 from .spec_patches import (
     VALID_SPEC_SECTIONS,

@@ -112,7 +112,7 @@ Phase 1 introduces a new evidence pointer format to support stable section IDs.
 - Section IDs are deterministic: `SEC-{file_id}-{ordinal:04d}`
 
 **Migration touchpoints**:
-- `scripts/spec_refinement/workflows/formats.py` - Updated `EVIDENCE_POINTER_RE` regex
+- `scripts/spec_manager/spec_manager/refinement/formats.py` - Updated `EVIDENCE_POINTER_RE` regex
 - `scripts/spec_refinement/workflows/summarization.py` - Passes section IDs to agents
 - `scripts/spec_refinement/workflows/evidence_expansion.py` - Reads section IDs from sections.json
 - `scripts/spec_refinement/qa/bad_signatures.py` - Updated validation patterns

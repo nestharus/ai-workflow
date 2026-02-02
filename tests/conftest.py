@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -51,6 +52,10 @@ except ImportError:
     pass  # thinc not installed, no patch needed
 
 logger = logging.getLogger(__name__)
+
+_SPEC_MANAGER_ROOT = (Path(__file__).resolve().parents[1] / "scripts" / "spec_manager").resolve()
+if _SPEC_MANAGER_ROOT.exists() and str(_SPEC_MANAGER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SPEC_MANAGER_ROOT))
 
 
 # --- Test Fixtures ---

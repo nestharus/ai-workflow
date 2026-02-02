@@ -55,7 +55,7 @@ output_format: json
 
 ## Fallback Behavior
 
-Parsers in `scripts/spec_refinement/workflows/formats.py` attempt structured validation first.
+Parsers in `scripts/spec_manager/spec_manager/refinement/formats.py` attempt structured validation first.
 If validation fails, they fall back to tolerant JSON extraction (`_extract_json_payload`) and
 legacy validation logic. A warning is logged when fallback parsing is used.
 

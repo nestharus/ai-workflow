@@ -6,12 +6,13 @@ import json
 import re
 from typing import Any
 
-from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
-from scripts.spec_refinement.workflows.formats import (
+from spec_manager.refinement.formats import (
     parse_architecture_proposal,
     parse_architecture_selection,
     parse_spec_patch_output,
 )
+
+from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
 from scripts.spec_refinement.workflows.spec_patches import (
     SpecDocument,
     apply_patch,

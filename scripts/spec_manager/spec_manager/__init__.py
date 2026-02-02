@@ -32,6 +32,15 @@ Usage:
     from spec_manager.analysis import run_analysis
 """
 
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_SPEC_MANAGER_ROOT = Path(__file__).resolve().parent.parent
+if str(_SPEC_MANAGER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SPEC_MANAGER_ROOT))
+
 __all__ = [
     # Core
     "AnnotationParser",
@@ -64,18 +73,18 @@ __all__ = [
     "WorkspaceManager",
     # Workflow
     "ContextIndex",
-    "ingest",
     "PatchDependencyGraph",
     "WorkflowConfig",
     "WorkflowOrchestrator",
     "WorkflowPhase",
     "WorkflowState",
+    "ingest",
     # Phase runners (legacy names, mapped to new phases)
-    "run_staging",  # CLEANING phase
-    "run_planning",  # DISCOVERY phase
-    "run_merging",  # REVIEW phase
-    "run_verification",  # FINALIZATION phase
     "run_analysis",
+    "run_merging",  # REVIEW phase
+    "run_planning",  # DISCOVERY phase
+    "run_staging",  # CLEANING phase
+    "run_verification",  # FINALIZATION phase
 ]
 
 

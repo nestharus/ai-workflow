@@ -5,6 +5,12 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from spec_manager.refinement.formats import (
+    EVIDENCE_POINTER_RE,
+    LibraryCharter,
+    _extract_sections,
+    _parse_overlap_resolutions,
+)
 
 from scripts.spec_manager.spec_manager.schemas.library_labels import LibraryLabelerOutput
 from scripts.spec_refinement.workflows.architecture import (
@@ -16,12 +22,6 @@ from scripts.spec_refinement.workflows.architecture import (
 from scripts.spec_refinement.workflows.evidence_expansion import (
     _validate_evidence_entry,
     expand_evidence,
-)
-from scripts.spec_refinement.workflows.formats import (
-    EVIDENCE_POINTER_RE,
-    LibraryCharter,
-    _extract_sections,
-    _parse_overlap_resolutions,
 )
 from scripts.spec_refinement.workflows.library_synthesis import (
     _validate_evidence_sources,

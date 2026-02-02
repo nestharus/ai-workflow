@@ -15,10 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.formats import parse_library_synthesis
+
 from scripts.spec_refinement.evaluation.fixtures import FixtureCategory, RepairFixture
 from scripts.spec_refinement.workflows.architecture import _validate_architecture_citations
 from scripts.spec_refinement.workflows.evidence_expansion import _validate_evidence_entry
-from scripts.spec_refinement.workflows.formats import parse_library_synthesis
 from scripts.spec_refinement.workflows.library_synthesis import (
     _validate_evidence_sources,
     _validate_library_ids,

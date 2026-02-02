@@ -4,17 +4,17 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from spec_manager.refinement.formats import (
+    parse_architecture_mapping,
+    parse_architecture_proposal,
+    parse_architecture_selection,
+)
 
 from scripts.spec_refinement.workflows.architecture import (
     _validate_architecture_citations,
     map_libraries_to_architecture,
     propose_architectures,
     select_architecture,
-)
-from scripts.spec_refinement.workflows.formats import (
-    parse_architecture_mapping,
-    parse_architecture_proposal,
-    parse_architecture_selection,
 )
 from scripts.spec_refinement.workspace import Phase, WorkspaceManager
 

@@ -11,17 +11,17 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
-
-from scripts.spec_refinement.workspace import WorkspaceManager
-
-from .agent_utils import run_agent
-from .formats import (
+from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     LibraryCharter,
     normalize_compound_pointers,
     parse_library_labeler_output,
     parse_library_synthesis,
 )
+
+from scripts.spec_refinement.workspace import WorkspaceManager
+
+from .agent_utils import run_agent
 from .progress import ProgressTracker
 from .repair import ArtifactType, get_repair_model, repair_artifact
 

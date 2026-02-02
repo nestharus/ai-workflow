@@ -9,15 +9,16 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
-from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
-
-from .agent_utils import run_agent
-from .formats import (
+from spec_manager.refinement.formats import (
     normalize_compound_pointers,
     parse_architecture_brief_output,
     parse_architecture_proposal,
     parse_architecture_selection,
 )
+
+from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
+from .agent_utils import run_agent
 from .progress import ProgressTracker
 from .validation_utils import strip_invalid_file_pointers
 

@@ -6,7 +6,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .formats import EVIDENCE_POINTER_RE, _extract_json_payload, _record_json_extraction_evidence
+from spec_manager.refinement.formats import (
+    EVIDENCE_POINTER_RE,
+    _extract_json_payload,
+    _record_json_extraction_evidence,
+)
+
 from .validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,

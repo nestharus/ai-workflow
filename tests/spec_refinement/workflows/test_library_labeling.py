@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.spec_refinement.workflows.formats import LibraryCharter
+from spec_manager.refinement.formats import LibraryCharter
+
 from scripts.spec_refinement.workflows.library_labeling import (
     aggregate_labels,
     detect_overlaps,

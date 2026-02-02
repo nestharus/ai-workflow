@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .formats import EVIDENCE_POINTER_RE
+from spec_manager.refinement.formats import EVIDENCE_POINTER_RE
 
 SECTION_ID_RE = re.compile(r"^SEC-[A-Za-z0-9]+-\d{4}$")
 

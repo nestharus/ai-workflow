@@ -8,12 +8,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
+from spec_manager.refinement.formats import parse_file_summary, parse_gap_judge_output
+
 from scripts.spec_refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
 from scripts.spec_refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from . import evidence_expansion as evidence_utils
 from .agent_utils import run_agent
-from .formats import parse_file_summary, parse_gap_judge_output
 from .progress import ProgressTracker
 from .spec_building import (
     MAX_ITERATIONS_DEFAULT,
