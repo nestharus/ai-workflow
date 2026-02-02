@@ -34,18 +34,18 @@ class EvidenceRecord(BaseModel):
 
 def _ensure_run_local_strategies(manager: WorkspaceManager) -> int:
     strategies_dir = manager.structure.workspace_dir / "strategies"
-    if strategies_dir.exists() and any(strategies_dir.glob("*.yaml")):
-        return 0
-
     strategies_dir.mkdir(parents=True, exist_ok=True)
     definitions_dir = Path(__file__).resolve().parents[2] / "strategies" / "definitions"
 
     copied = 0
     for strategy_file in sorted(definitions_dir.glob("*.yaml")):
-        shutil.copy2(strategy_file, strategies_dir / strategy_file.name)
-        copied += 1
+        dest = strategies_dir / strategy_file.name
+        if not dest.exists() or dest.stat().st_mtime < strategy_file.stat().st_mtime:
+            shutil.copy2(strategy_file, dest)
+            copied += 1
 
-    logger.info("Copied %s strategy definition(s) to %s", copied, strategies_dir)
+    if copied:
+        logger.info("Copied %s strategy definition(s) to %s", copied, strategies_dir)
     return copied
 
 
@@ -60,9 +60,10 @@ def _copy_pass_01_evidence(
     destination_path = pass_dir / "evidence.jsonl"
     evidence_records: list[GapEvidence] = []
 
-    with source_path.open("r", encoding="utf-8") as source, destination_path.open(
-        "w", encoding="utf-8"
-    ) as target:
+    with (
+        source_path.open("r", encoding="utf-8") as source,
+        destination_path.open("w", encoding="utf-8") as target,
+    ):
         for line in source:
             stripped = line.strip()
             if not stripped:
@@ -180,9 +181,7 @@ def run_phase_02_clean(run_id: str) -> dict[str, Any]:
 
     phase_status = manager.state.phases[Phase.SECTIONIZATION.value].status
     if phase_status != PhaseStatus.COMPLETED:
-        raise RuntimeError(
-            "Phase 1 (sectionization) must be completed before Phase 2 can run."
-        )
+        raise RuntimeError("Phase 1 (sectionization) must be completed before Phase 2 can run.")
 
     manager.start_phase(Phase.SUMMARIZATION)
 

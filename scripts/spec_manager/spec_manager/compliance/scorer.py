@@ -148,9 +148,11 @@ class ComplianceScorer:
         blockers.extend(self.check_section_spans(run_root))
 
         metrics, evidence_by_category = self._compute_metrics_from_evidence([])
-        score = (
+        base_score = (
             metrics.format_compliance + metrics.annotation_coverage + metrics.id_normalization
         ) / 3.0
+        penalty = (len(blockers) * 0.10) + (len(warnings) * 0.02)
+        score = max(0.0, base_score - penalty)
 
         details = {
             "format_compliance": metrics.format_compliance,
