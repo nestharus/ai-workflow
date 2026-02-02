@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 LABEL_BY_LIB = {
-    "lib_001": "Core Workflow",
-    "lib_002": "Integration Ops",
-    "lib_003": "Edge Handling",
+    "LIB-0001": "Core Workflow",
+    "LIB-0002": "Integration Ops",
+    "LIB-0003": "Edge Handling",
 }
 
 
@@ -43,16 +43,16 @@ def _extract_file_id(prompt: str) -> str | None:
 
 
 def _extract_lib_id(prompt: str) -> str | None:
-    labeled = _extract_first(r"Library ID:\s*(lib_\d{3})", prompt)
+    labeled = _extract_first(r"Library ID:\s*(LIB-\d{4})", prompt)
     if labeled:
         return labeled
-    labeled = _extract_first(r"Library (lib_\d{3}) Charter", prompt)
+    labeled = _extract_first(r"Library (LIB-\d{4}) Charter", prompt)
     if labeled:
         return labeled
-    labeled = _extract_first(r"Library (lib_\d{3}) Spec", prompt)
+    labeled = _extract_first(r"Library (LIB-\d{4}) Spec", prompt)
     if labeled:
         return labeled
-    return _extract_first(r"\blib_\d{3}\b", prompt)
+    return _extract_first(r"\bLIB-\d{4}\b", prompt)
 
 
 def _pick_first(items: list[str]) -> str:
@@ -389,7 +389,7 @@ def mock_architecture_brief_extractor_agent(
         ],
     }
     if _should_violate(key, violation_rate):
-        payload["constraints"][0]["citation"] = "[lib_999::spec.md::MISSING]"
+        payload["constraints"][0]["citation"] = "[LIB-0999::spec.md::MISSING]"
     return json.dumps(payload)
 
 
@@ -400,7 +400,7 @@ def mock_architecture_proposer_agent(
 ) -> str:
     candidates = []
     for idx in range(1, 4):
-        lib_id = library_ids[0] if library_ids else "lib_001"
+        lib_id = library_ids[0] if library_ids else "LIB-0001"
         candidates.append(
             {
                 "arch_id": f"arch_00{idx}",
@@ -440,7 +440,7 @@ def mock_architecture_selector_agent(
     selected = candidates[0] if candidates else "arch_001"
     payload = {
         "selected_arch_id": selected,
-        "rationale": "Best balance of modularity. [lib_001::charter.md]",
+        "rationale": "Best balance of modularity. [LIB-0001::charter.md]",
         "rejected_architectures": [],
         "implementation_risks": ["Boundary drift"],
         "evolution_notes": "Review after scale testing.",
@@ -486,7 +486,7 @@ def mock_repair_agent(
 ) -> str:
     target_file = file_id or "F0001"
     target_section = _pick_first(sections)
-    target_lib = lib_id or "lib_001"
+    target_lib = lib_id or "LIB-0001"
 
     if artifact_type == "summary":
         return _make_summary(target_file, sections)
@@ -601,12 +601,12 @@ class MockAgentController:
         for entry in self.manifest.values():
             for lib_id in entry.get("expected_libraries", []):
                 libs.add(lib_id)
-        return sorted(libs) if libs else ["lib_001"]
+        return sorted(libs) if libs else ["LIB-0001"]
 
     def _file_to_lib(self, file_id: str) -> str:
         entry = self.manifest.get(file_id, {})
         libs = entry.get("expected_libraries", []) if isinstance(entry, dict) else []
-        return libs[0] if libs else "lib_001"
+        return libs[0] if libs else "LIB-0001"
 
     def dispatch(
         self,

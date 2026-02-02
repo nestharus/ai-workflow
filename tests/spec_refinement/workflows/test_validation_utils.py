@@ -103,14 +103,14 @@ def test_strip_invalid_file_pointers_removes_unknown() -> None:
 
 
 def test_strip_invalid_file_pointers_removes_multi_hop_without_manifest() -> None:
-    content = "See [lib_001::spec.md::REQS] for details."
+    content = "See [LIB-0001::spec.md::REQS] for details."
     file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "See for details."
 
 
 def test_strip_invalid_file_pointers_removes_derived() -> None:
-    content = "A [charter::INTENT] B [libraries/lib_001/spec.md::REQS] C"
+    content = "A [charter::INTENT] B [libraries/LIB-0001/spec.md::REQS] C"
     file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
 
     assert strip_invalid_file_pointers(content, file_manifest) == "A B C"

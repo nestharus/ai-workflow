@@ -53,7 +53,7 @@ def test_validate_spec_citations_basename_reference(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
 
     content = "Evidence: [alpha.md::INTRO]"
-    issues = _validate_spec_citations(content, manager, "lib_001")
+    issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert issues == []
 
@@ -62,7 +62,7 @@ def test_validate_spec_citations_stem_reference(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
 
     content = "Evidence: [alpha::INTRO]"
-    issues = _validate_spec_citations(content, manager, "lib_001")
+    issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert issues == []
 
@@ -71,7 +71,7 @@ def test_validate_spec_citations_case_insensitive_section(fs, monkeypatch) -> No
     manager = _setup_workspace(fs, monkeypatch)
 
     content = "Evidence: [F0001::intro]"
-    issues = _validate_spec_citations(content, manager, "lib_001")
+    issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert issues == []
 
@@ -80,7 +80,7 @@ def test_validate_spec_citations_separator_normalization(fs, monkeypatch) -> Non
     manager = _setup_workspace(fs, monkeypatch)
 
     content = "Evidence: [F0001::user-requirements]"
-    issues = _validate_spec_citations(content, manager, "lib_001")
+    issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert issues == []
 
@@ -96,7 +96,7 @@ def test_validate_spec_citations_basename_and_normalized_section() -> None:
     )
 
     content = "Evidence: [alpha.md::intro]\nEvidence: [alpha::user-requirements]"
-    issues = _validate_spec_citations(content, manager, "lib_001")
+    issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert issues == []
 
@@ -112,6 +112,6 @@ def test_validate_spec_citations_invalid_section_reports_issue() -> None:
     )
 
     content = "Evidence: [alpha::missing-section]"
-    issues = _validate_spec_citations(content, manager, "lib_001")
+    issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert any(issue["type"] == "unknown_section_reference" for issue in issues)

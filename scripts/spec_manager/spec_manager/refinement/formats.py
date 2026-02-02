@@ -6,7 +6,7 @@ Library events are persisted per library as append-only JSON lines in
 - event_type: LIBRARY_CREATED | LIBRARY_RENAMED | LIBRARY_SPLIT |
   LIBRARY_MERGED | BOUNDARY_CHANGED
 - timestamp: ISO-8601 string
-- lib_id: library identifier (lib_###)
+- lib_id: library identifier (LIB-####)
 - metadata: event-specific fields
 - previous_state: optional snapshot of the prior state
 
@@ -481,7 +481,7 @@ def parse_file_summary(content: str) -> FileSummary:
 
 
 def _split_library_blocks(content: str) -> list[tuple[str, str]]:
-    header_re = re.compile(r"^###\s+(lib_\d{3})\b.*$", re.MULTILINE)
+    header_re = re.compile(r"^###\s+(LIB-\d{4})\b.*$", re.MULTILINE)
     matches = list(header_re.finditer(content))
     blocks: list[tuple[str, str]] = []
     for index, match in enumerate(matches):
@@ -675,7 +675,7 @@ def parse_concern_assignment_judge(output: str) -> dict[str, Any]:
             )
             data[field] = []
 
-    lib_id_re = re.compile(r"^lib_\d{3}$")
+    lib_id_re = re.compile(r"^LIB-\d{4}$")
     valid_gap_types = {"out_of_scope", "ambiguous"}
     valid_decisions = {"deferred", "needs_clarification"}
 
@@ -711,7 +711,7 @@ def parse_concern_assignment_judge(output: str) -> dict[str, Any]:
                         "type": "invalid_library_id",
                         "index": index,
                         "lib_id": lib_id_str,
-                        "message": "Assigned library id does not match lib_### format.",
+                        "message": "Assigned library id does not match LIB-#### format.",
                     }
                 )
             cleaned_targets.append(lib_id_str)
@@ -1221,7 +1221,7 @@ def _extract_component_mappings(content: str) -> dict[str, list[str]]:
         if in_libraries and line.strip().startswith(("-", "*")):
             raw = line.strip().lstrip("-* ").strip()
 
-            # Only accept `- lib_###: ...` lines; ignore freeform bullets like `- None (...)`.
+            # Only accept `- LIB-####: ...` lines; ignore freeform bullets like `- None (...)`.
             if ":" not in raw:
                 continue
             lib_id = raw.split(":", 1)[0].strip()
@@ -1230,7 +1230,7 @@ def _extract_component_mappings(content: str) -> dict[str, list[str]]:
             lowered = lib_id.lower()
             if lowered in {"none", "n/a"} or lowered.startswith("none"):
                 continue
-            if not lowered.startswith("lib_"):
+            if not re.match(r"^LIB-\d{4}$", lib_id):
                 continue
             component_map[current_component].append(lib_id)
 
@@ -1270,7 +1270,7 @@ def parse_architecture_mapping(content: str) -> dict[str, Any]:
             if ":" not in raw:
                 continue
             lib_id = raw.split(":", 1)[0].strip()
-            if not lib_id or not lib_id.lower().startswith("lib_"):
+            if not lib_id or not re.match(r"^LIB-\d{4}$", lib_id):
                 continue
             component_lines[current_component].append(line.strip())
 

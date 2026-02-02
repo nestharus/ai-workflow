@@ -465,7 +465,7 @@ class EvidenceMapperAllowlistCase(QaCase):
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
         """Prepare the evidence mapper allowlist test case."""
         # Map Storage charter -> Gateway file sections.
-        lib_id = "lib_002"
+        lib_id = "LIB-0002"
         charter = _library_charter(
             title=lib_id,
             intent="Provide durable persistence and retrieval APIs for other components.",
@@ -565,7 +565,7 @@ class SpecIntegratorUnsupportedAssertionCase(QaCase):
     def prepare(self, manager: WorkspaceManager) -> PreparedQaCase:
         """Prepare the spec integrator unsupported assertion test case."""
         # Storage library integration against the Storage source file.
-        lib_id = "lib_002"
+        lib_id = "LIB-0002"
         charter = _library_charter(
             title=lib_id,
             intent="Provide durable persistence and retrieval APIs for other components.",
@@ -582,7 +582,7 @@ class SpecIntegratorUnsupportedAssertionCase(QaCase):
             ],
         )
 
-        current_spec = """# Library Spec: lib_002
+        current_spec = """# Library Spec: LIB-0002
 
 ## Intent
 Provide durable persistence APIs. [F0002::INTRO]
@@ -692,7 +692,7 @@ class ArchitectureProposalCase(QaCase):
         """Prepare the architecture proposal test case."""
         # Create 4 libraries representing the fixture system.
         libs: dict[str, dict[str, Any]] = {
-            "lib_001": {
+            "LIB-0001": {
                 "name": "Gateway",
                 "intent": "Handle inbound HTTP requests; validate and route; emit audit events.",
                 "boundaries": [
@@ -701,9 +701,9 @@ class ArchitectureProposalCase(QaCase):
                 ],
                 "requirements": ["Route requests", "Validate inputs", "Propagate correlation_id"],
                 "constraints": ["<=5ms p95 overhead", "Do not log secrets"],
-                "dependencies": ["Calls lib_002", "Publishes to lib_003"],
+                "dependencies": ["Calls LIB-0002", "Publishes to LIB-0003"],
             },
-            "lib_002": {
+            "LIB-0002": {
                 "name": "Storage",
                 "intent": "Durable persistence + retrieval APIs.",
                 "boundaries": [
@@ -712,9 +712,9 @@ class ArchitectureProposalCase(QaCase):
                 ],
                 "requirements": ["Store records", "Lookup by ID", "Delete by ID (tombstone)"],
                 "constraints": ["Encrypt at rest", "Durability 99.99% monthly"],
-                "dependencies": ["Consumed by lib_001 and lib_004"],
+                "dependencies": ["Consumed by LIB-0001 and LIB-0004"],
             },
-            "lib_003": {
+            "LIB-0003": {
                 "name": "Event Bus",
                 "intent": "Publish/subscribe messaging for audit and domain events.",
                 "boundaries": [
@@ -723,9 +723,9 @@ class ArchitectureProposalCase(QaCase):
                 ],
                 "requirements": ["At-least-once delivery", "Consumer groups with offsets"],
                 "constraints": ["Order per key", ">=10k events/sec burst"],
-                "dependencies": ["Consumes/produces by lib_001 and lib_004"],
+                "dependencies": ["Consumes/produces by LIB-0001 and LIB-0004"],
             },
-            "lib_004": {
+            "LIB-0004": {
                 "name": "Domain Services",
                 "intent": "Core workflows orchestrating Gateway, Storage, Event Bus.",
                 "boundaries": [
@@ -738,7 +738,7 @@ class ArchitectureProposalCase(QaCase):
                     "Deterministic workflows",
                 ],
                 "constraints": ["Idempotent execution", "Testable (no hidden I/O)"],
-                "dependencies": ["Uses lib_002 and lib_003"],
+                "dependencies": ["Uses LIB-0002 and LIB-0003"],
             },
         }
 
@@ -797,7 +797,7 @@ class ArchitectureProposalCase(QaCase):
             "Output is a JSON array with 3-5 candidates.",
             "Each candidate has arch_id, pattern, description, components, communication, "
             "deployment, citations, tradeoffs.",
-            "Citations use ONLY [lib_###::charter.md] or [lib_###::spec.md::SECTION] "
+            "Citations use ONLY [LIB-####::charter.md] or [LIB-####::spec.md::SECTION] "
             "pointers (no [F####::...]).",
             "Tradeoffs are concrete and measurable (not vague).",
         ]
@@ -852,8 +852,8 @@ class ArchitectureSelectionCase(QaCase):
                 "### Disadvantages\n"
                 "- Harder independent scaling\n\n"
                 "## Citations\n"
-                "- [lib_001::charter.md]\n"
-                "- [lib_002::spec.md::CONSTRAINTS]\n"
+                "- [LIB-0001::charter.md]\n"
+                "- [LIB-0002::spec.md::CONSTRAINTS]\n"
             ),
             "arch_002": (
                 "# Architecture Candidate: arch_002\n\n"
@@ -876,8 +876,8 @@ class ArchitectureSelectionCase(QaCase):
                 "### Disadvantages\n"
                 "- Higher latency and ops burden\n\n"
                 "## Citations\n"
-                "- [lib_001::charter.md]\n"
-                "- [lib_003::spec.md::CONSTRAINTS]\n"
+                "- [LIB-0001::charter.md]\n"
+                "- [LIB-0003::spec.md::CONSTRAINTS]\n"
             ),
         }
 
@@ -896,7 +896,7 @@ class ArchitectureSelectionCase(QaCase):
             "Output is valid JSON with selected_arch_id and rationale.",
             "selected_arch_id is one of the provided candidates (arch_001 or arch_002) or null "
             "with explanation.",
-            "rationale includes library-pointer citations only ([lib_###::...]); no [F####::...].",
+            "rationale includes library-pointer citations only ([LIB-####::...]); no [F####::...].",
             "Rejected architectures include concrete reasons.",
         ]
 
@@ -932,7 +932,7 @@ class ArchitectureLibraryMappingCase(QaCase):
             "# Selected Architecture: arch_001\n\n"
             "## Rationale\n"
             "Layered monolith keeps ops cost low while meeting Gateway latency and Event Bus "
-            "throughput. [lib_001::spec.md::CONSTRAINTS] [lib_003::spec.md::CONSTRAINTS]\n\n"
+            "throughput. [LIB-0001::spec.md::CONSTRAINTS] [LIB-0003::spec.md::CONSTRAINTS]\n\n"
             "## Selected Candidate\n"
             "# Architecture Candidate: arch_001\n\n"
             "## Pattern\n"
@@ -963,16 +963,16 @@ class ArchitectureLibraryMappingCase(QaCase):
             if spec_path.exists():
                 lib_specs[lib_dir.name] = spec_path.read_text(encoding="utf-8")
 
-        target_lib_id = "lib_002"
+        target_lib_id = "LIB-0002"
         charter = lib_charters.get(target_lib_id, "")
         spec = lib_specs.get(target_lib_id, "")
         prompt = _build_library_mapping_prompt(target_lib_id, selected_architecture, charter, spec)
 
         acceptance = [
             "Output is valid JSON for a single-library mapping fragment.",
-            "lib_id matches the requested library (lib_002).",
+            "lib_id matches the requested library (LIB-0002).",
             "component matches one of the components listed in the selected architecture.",
-            "citations contains at least one library-pointer citation ([lib_###::...]).",
+            "citations contains at least one library-pointer citation ([LIB-####::...]).",
             "No source-file citations like [F####::...] appear in citations or dependencies.",
         ]
 

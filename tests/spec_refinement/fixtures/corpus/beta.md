@@ -2,7 +2,7 @@
 
 [OVERVIEW]
 ## Overview
-Beta handles batch ingestion and transformation with multiple stages. (lib_001)
+Beta handles batch ingestion and transformation with multiple stages. (LIB-0001)
 
 [PIPELINE]
 ## Pipeline

@@ -137,7 +137,7 @@ def strip_invalid_file_pointers(
     """Remove evidence pointers with invalid file references from content.
 
     When allow_multi_hop is True, keep multi-hop pointers (e.g. library
-    citations like [lib_001::spec.md::REQS]) even if the file_ref is not
+    citations like [LIB-0001::spec.md::REQS]) even if the file_ref is not
     in the file manifest. Also collapses redundant whitespace from removed
     pointers.
     """

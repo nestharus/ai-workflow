@@ -1,7 +1,7 @@
 # Gamma Integrations
 
 ## User Requirements / Constraints
-Gamma integrates with external partners and must honor contract limits. (lib_002)
+Gamma integrates with external partners and must honor contract limits. (LIB-0002)
 
 ## API & Integrations
 - Supports partner callbacks.

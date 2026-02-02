@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from spec_manager.refinement.workflows.evidence_expansion import (
     expand_evidence,
 )
 from spec_manager.refinement.workflows.library_synthesis import (
+    _read_library_events,
     _validate_evidence_sources,
     _validate_library_ids,
     _validate_overlap_resolutions,
@@ -367,7 +369,7 @@ class TestFullWorkflowIntegration:
         result = expand_evidence(run_id)
 
         assert not any(issue["type"] == "unknown_section_reference" for issue in result["issues"])
-        evidence_path = manager.structure.libraries_dir / "lib_001" / "evidence.json"
+        evidence_path = manager.structure.libraries_dir / "LIB-0001" / "evidence.json"
         payload = json.loads(evidence_path.read_text(encoding="utf-8"))
         assert payload.get("sources")
 
@@ -469,7 +471,7 @@ class TestFullWorkflowIntegration:
         result = build_specs(run_id, max_iterations=1)
 
         assert result["outputs"]["total_patches_applied"] > 0
-        spec_path = manager.structure.libraries_dir / "lib_001" / "spec.md"
+        spec_path = manager.structure.libraries_dir / "LIB-0001" / "spec.md"
         spec_text = spec_path.read_text(encoding="utf-8")
         assert "# Library Spec" in spec_text
         assert "[F" in spec_text
@@ -577,13 +579,52 @@ def test_normalized_label_rejected(spec_refinement_workspace) -> None:
 def test_derived_pointer_scrubbing(spec_refinement_workspace) -> None:
     manager, _ = spec_refinement_workspace(run_id="run_derived")
     content = (
-        "Evidence: [charter::INTENT] [libraries/lib_001/spec.md::OVERVIEW] "
+        "Evidence: [charter::INTENT] [libraries/LIB-0001/spec.md::OVERVIEW] "
         "[runs/run_001/summaries/F0001.what.md::SUMMARY]"
     )
     cleaned = strip_invalid_file_pointers(content, manager.state.file_manifest)
     assert "charter::INTENT" not in cleaned
-    assert "libraries/lib_001" not in cleaned
+    assert "libraries/LIB-0001" not in cleaned
     assert "runs/run_001" not in cleaned
+
+
+@pytest.mark.integration
+def test_library_id_format_consistency(spec_refinement_workspace, mock_all_agents) -> None:
+    """Verify library IDs are consistent across all artifacts."""
+    manager, manifest = spec_refinement_workspace(run_id="run_format")
+    mock_all_agents(manifest, violation_rate=0.0)
+
+    run_id = manager.run_id
+    summarize_all(run_id, parallel=False)
+    synthesize_libraries(run_id)
+
+    libraries_dir = manager.structure.libraries_dir
+    lib_id_re = re.compile(r"^LIB-\d{4}$")
+
+    index_path = libraries_dir / "library_index.md"
+    assert index_path.exists()
+    index_text = index_path.read_text(encoding="utf-8")
+    index_ids = re.findall(r"LIB-\d{4}", index_text)
+    assert index_ids, "Library index must contain LIB-#### identifiers."
+
+    lib_dirs = [path for path in libraries_dir.iterdir() if path.is_dir()]
+    assert lib_dirs, "Library directories must be created."
+    assert all(lib_id_re.match(path.name) for path in lib_dirs)
+
+    for lib_dir in lib_dirs:
+        lib_id = lib_dir.name
+        charter_path = lib_dir / "charter.md"
+        assert charter_path.exists()
+        assert charter_path.read_text(encoding="utf-8").startswith(f"# Library Charter: {lib_id}")
+
+        events = _read_library_events(lib_dir)
+        assert events
+        assert all(lib_id_re.match(event.lib_id) and event.lib_id == lib_id for event in events)
+
+        evidence_path = lib_dir / "evidence.json"
+        assert evidence_path.exists()
+        evidence_text = evidence_path.read_text(encoding="utf-8")
+        assert "lib_" not in evidence_text
 
 
 def test_compound_pointer_rejection(spec_refinement_workspace, mock_all_agents) -> None:

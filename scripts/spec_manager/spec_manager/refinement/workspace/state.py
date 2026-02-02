@@ -41,7 +41,7 @@ class Phase(Enum):
     AUDIT = "audit"
 
 
-LIBRARY_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
+LIBRARY_ID_PATTERN = re.compile(r"^LIB-(\d{4})$")
 
 
 def _extract_library_number(lib_id: str) -> int | None:
@@ -443,9 +443,9 @@ class WorkspaceState:
 
     def allocate_library_id(self) -> str:
         """Allocate the next available library ID and advance the counter."""
-        if self.next_library_number > 999:
-            raise ValueError("Unable to allocate new library ID beyond lib_999.")
-        lib_id = f"lib_{self.next_library_number:03d}"
+        if self.next_library_number > 9999:
+            raise ValueError("Unable to allocate new library ID beyond LIB-9999.")
+        lib_id = f"LIB-{self.next_library_number:04d}"
         self.allocated_library_ids.add(lib_id)
         self.next_library_number += 1
         return lib_id

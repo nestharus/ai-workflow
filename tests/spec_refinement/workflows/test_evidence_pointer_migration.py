@@ -4,14 +4,16 @@ import json
 from pathlib import Path
 
 import pytest
-
 from spec_manager.refinement.formats import (
     LibraryCharter,
     build_evidence_pointer,
     migrate_evidence_json,
     migrate_pointers_to_new_format,
 )
-from spec_manager.refinement.workflows.library_synthesis import _format_charter, _validate_evidence_sources
+from spec_manager.refinement.workflows.library_synthesis import (
+    _format_charter,
+    _validate_evidence_sources,
+)
 from spec_manager.refinement.workspace import WorkspaceManager
 
 
@@ -71,7 +73,7 @@ def test_validate_evidence_sources_accepts_both_formats(fs, monkeypatch) -> None
     relpath = manager.state.file_manifest["F0001"]["relpath"]
 
     charter = LibraryCharter(
-        lib_id="lib_001",
+        lib_id="LIB-0001",
         intent="A",
         boundaries="B",
         responsibilities=[],
@@ -88,7 +90,7 @@ def test_validate_evidence_sources_accepts_both_formats(fs, monkeypatch) -> None
 
 def test_migrate_evidence_json_validates_structure(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     lib_dir.mkdir(parents=True, exist_ok=True)
 
     evidence_path = lib_dir / "evidence.json"
@@ -109,7 +111,7 @@ def test_charter_formatting_uses_new_format(fs, monkeypatch) -> None:
     relpath = manager.state.file_manifest["F0001"]["relpath"]
 
     charter = LibraryCharter(
-        lib_id="lib_001",
+        lib_id="LIB-0001",
         intent="Core",
         boundaries="",
         responsibilities=["Handle workflow"],

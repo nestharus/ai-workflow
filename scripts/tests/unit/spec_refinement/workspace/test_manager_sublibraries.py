@@ -18,25 +18,25 @@ def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WorkspaceManager
 
 
 def test_get_sublibrary_path(manager: WorkspaceManager) -> None:
-    expected = manager.structure.libraries_dir / "lib_001" / "sublibraries" / "sub_001"
-    assert manager.get_sublibrary_path("lib_001", "sub_001") == expected
+    expected = manager.structure.libraries_dir / "LIB-0001" / "sublibraries" / "sub_001"
+    assert manager.get_sublibrary_path("LIB-0001", "sub_001") == expected
 
 
 def test_list_sublibraries(manager: WorkspaceManager) -> None:
-    sub_dir = manager.structure.libraries_dir / "lib_001" / "sublibraries"
+    sub_dir = manager.structure.libraries_dir / "LIB-0001" / "sublibraries"
     (sub_dir / "sub_001").mkdir(parents=True)
     (sub_dir / "sub_002").mkdir(parents=True)
 
-    assert manager.list_sublibraries("lib_001") == ["sub_001", "sub_002"]
+    assert manager.list_sublibraries("LIB-0001") == ["sub_001", "sub_002"]
 
 
 def test_get_all_libraries_recursive(manager: WorkspaceManager) -> None:
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     sub_dir = lib_dir / "sublibraries" / "sub_001"
     nested_dir = sub_dir / "sublibraries" / "sub_sub_001"
     nested_dir.mkdir(parents=True)
 
     libraries = manager.get_all_libraries_recursive()
-    assert libraries["lib_001"] == lib_dir
-    assert libraries["lib_001/sub_001"] == sub_dir
-    assert libraries["lib_001/sub_001/sub_sub_001"] == nested_dir
+    assert libraries["LIB-0001"] == lib_dir
+    assert libraries["LIB-0001/sub_001"] == sub_dir
+    assert libraries["LIB-0001/sub_001/sub_sub_001"] == nested_dir

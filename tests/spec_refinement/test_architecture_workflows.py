@@ -56,7 +56,7 @@ def _patch_agent_runner(monkeypatch, output: str) -> None:
 
 def test_propose_architectures_requires_completed_sublibrary_phase(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    _create_library(manager, "lib_001")
+    _create_library(manager, "LIB-0001")
 
     with pytest.raises(RuntimeError):
         propose_architectures("run_001")
@@ -64,7 +64,7 @@ def test_propose_architectures_requires_completed_sublibrary_phase(fs, monkeypat
 
 def test_propose_architectures_generates_candidates(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    _create_library(manager, "lib_001")
+    _create_library(manager, "LIB-0001")
     manager.complete_phase(Phase.SUBLIBRARY_DETECTION)
 
     output = textwrap.dedent(
@@ -77,7 +77,7 @@ def test_propose_architectures_generates_candidates(fs, monkeypatch) -> None:
             "components": [{"name": "API", "responsibilities": ["Serve requests"]}],
             "communication": "sync",
             "deployment": "single",
-            "citations": ["[lib_001::spec.md::CONSTRAINTS]"],
+            "citations": ["[LIB-0001::spec.md::CONSTRAINTS]"],
             "tradeoffs": {"advantages": ["simple"], "disadvantages": ["coupled"]}
           }
         ]
@@ -95,7 +95,7 @@ def test_propose_architectures_generates_candidates(fs, monkeypatch) -> None:
 
 def test_select_architecture_validates_citations(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    _create_library(manager, "lib_001")
+    _create_library(manager, "LIB-0001")
     manager.complete_phase(Phase.ARCHITECTURE_PROPOSAL)
 
     candidates_dir = manager.structure.architecture_dir / "candidates"
@@ -109,7 +109,7 @@ def test_select_architecture_validates_citations(fs, monkeypatch) -> None:
         """
         {
           "selected_arch_id": "arch_001",
-          "rationale": "Uses constraint [lib_001::spec.md::MISSING]",
+          "rationale": "Uses constraint [LIB-0001::spec.md::MISSING]",
           "rejected_architectures": [],
           "implementation_risks": ["risk"],
           "evolution_notes": ["note"]
@@ -128,8 +128,8 @@ def test_select_architecture_validates_citations(fs, monkeypatch) -> None:
 
 def test_map_libraries_validates_coverage(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    _create_library(manager, "lib_001")
-    _create_library(manager, "lib_002")
+    _create_library(manager, "LIB-0001")
+    _create_library(manager, "LIB-0002")
     manager.complete_phase(Phase.ARCHITECTURE_SELECTION)
 
     selected_path = manager.structure.architecture_dir / "selected.md"
@@ -150,28 +150,28 @@ def test_map_libraries_validates_coverage(fs, monkeypatch) -> None:
         **Responsibilities**: Serve requests
 
         **Libraries**:
-        - lib_001: API layer [lib_001::spec.md::CONSTRAINTS]
+        - LIB-0001: API layer [LIB-0001::spec.md::CONSTRAINTS]
 
         ## Cross-Component Dependencies
 
-        - API -> Data: storage [lib_001::spec.md::CONSTRAINTS]
+        - API -> Data: storage [LIB-0001::spec.md::CONSTRAINTS]
 
         ## Unmapped Libraries
 
-        - lib_002: not mapped
+        - LIB-0002: not mapped
         """
     )
     _patch_agent_runner(monkeypatch, output)
 
     result = map_libraries_to_architecture("run_001")
-    assert "lib_002" in result["unmapped_libraries"]
+    assert "LIB-0002" in result["unmapped_libraries"]
 
 
 def test_architecture_citation_validation(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
-    _create_library(manager, "lib_001")
+    _create_library(manager, "LIB-0001")
 
-    content = "Decision [lib_001::spec.md::CONSTRAINTS] and [lib_999::spec.md::X]"
+    content = "Decision [LIB-0001::spec.md::CONSTRAINTS] and [LIB-0999::spec.md::X]"
     issues = _validate_architecture_citations(content, manager)
     assert any(issue["type"] == "unknown_library" for issue in issues)
 
@@ -190,7 +190,7 @@ def test_architecture_parsers() -> None:
             "components": [{"name": "API", "responsibilities": ["Serve"]}],
             "communication": "sync",
             "deployment": "single",
-            "citations": ["[lib_001::spec.md::CONSTRAINTS]"],
+            "citations": ["[LIB-0001::spec.md::CONSTRAINTS]"],
             "tradeoffs": {"advantages": ["simple"], "disadvantages": ["coupled"]}
           }
         ]
@@ -203,7 +203,7 @@ def test_architecture_parsers() -> None:
         """
         {
           "selected_arch_id": "arch_001",
-          "rationale": "Reason [lib_001::spec.md::CONSTRAINTS]",
+          "rationale": "Reason [LIB-0001::spec.md::CONSTRAINTS]",
           "rejected_architectures": [],
           "implementation_risks": [],
           "evolution_notes": []
@@ -228,11 +228,11 @@ def test_architecture_parsers() -> None:
         **Responsibilities**: Serve
 
         **Libraries**:
-        - lib_001: API layer [lib_001::spec.md::CONSTRAINTS]
+        - LIB-0001: API layer [LIB-0001::spec.md::CONSTRAINTS]
 
         ## Cross-Component Dependencies
 
-        - API -> Data: storage [lib_001::spec.md::CONSTRAINTS]
+        - API -> Data: storage [LIB-0001::spec.md::CONSTRAINTS]
 
         ## Unmapped Libraries
 
@@ -240,6 +240,6 @@ def test_architecture_parsers() -> None:
         """
     )
     mapping = parse_architecture_mapping(mapping_md)
-    assert mapping["component_mappings"]["API"] == ["lib_001"]
+    assert mapping["component_mappings"]["API"] == ["LIB-0001"]
     assert mapping["dependencies"]
     assert mapping["unmapped_libraries"] == []

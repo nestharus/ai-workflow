@@ -28,7 +28,7 @@ def _setup_workspace(fs, monkeypatch, summarize: bool = True) -> WorkspaceManage
 
 def _charter(evidence_section: str = "INTRO") -> LibraryCharter:
     return LibraryCharter(
-        lib_id="lib_001",
+        lib_id="LIB-0001",
         intent="Core Workflow Library",
         boundaries="Includes orchestrator and runner coordination.",
         responsibilities=["Handle phase transitions", "Coordinate summaries"],
@@ -53,7 +53,7 @@ def test_synthesize_libraries_success(fs, monkeypatch) -> None:
         ),
         patch(
             "spec_manager.refinement.workflows.library_synthesis.refine_library_labels",
-            return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
+            return_value=[{"lib_id": "LIB-0001", "final_label": "Core", "merged_from": []}],
         ),
         patch(
             "spec_manager.refinement.workflows.library_synthesis.generate_all_charters",
@@ -69,7 +69,7 @@ def test_synthesize_libraries_success(fs, monkeypatch) -> None:
     libraries_dir = Path("/repo/runs/run1/libraries")
     assert (libraries_dir / "library_index.md").exists()
 
-    lib_dir = libraries_dir / "lib_001"
+    lib_dir = libraries_dir / "LIB-0001"
     assert (lib_dir / "charter.md").exists()
     assert (lib_dir / "evidence.json").exists()
     assert (lib_dir / "gaps.md").exists()
@@ -94,7 +94,7 @@ def test_synthesize_libraries_overlap_resolution_outputs(fs, monkeypatch) -> Non
         ),
         patch(
             "spec_manager.refinement.workflows.library_synthesis.refine_library_labels",
-            return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
+            return_value=[{"lib_id": "LIB-0001", "final_label": "Core", "merged_from": []}],
         ),
         patch(
             "spec_manager.refinement.workflows.library_synthesis.generate_all_charters",
@@ -104,10 +104,10 @@ def test_synthesize_libraries_overlap_resolution_outputs(fs, monkeypatch) -> Non
             "spec_manager.refinement.workflows.library_synthesis.resolve_all_overlaps",
             return_value=[
                 {
-                    "lib_id_a": "lib_001",
-                    "lib_id_b": "lib_002",
+                    "lib_id_a": "LIB-0001",
+                    "lib_id_b": "LIB-0002",
                     "decision": "assign_to_lib_A",
-                    "rationale": "Overlap belongs to lib_001",
+                    "rationale": "Overlap belongs to LIB-0001",
                     "affected_files": ["F0001"],
                     "overlap_score": 0.5,
                 }
@@ -137,7 +137,7 @@ def test_synthesize_libraries_evidence_validation(fs, monkeypatch) -> None:
         ),
         patch(
             "spec_manager.refinement.workflows.library_synthesis.refine_library_labels",
-            return_value=[{"lib_id": "lib_001", "final_label": "Core", "merged_from": []}],
+            return_value=[{"lib_id": "LIB-0001", "final_label": "Core", "merged_from": []}],
         ),
         patch(
             "spec_manager.refinement.workflows.library_synthesis.generate_all_charters",

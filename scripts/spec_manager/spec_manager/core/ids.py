@@ -5,6 +5,8 @@ Canonical ID formats:
 - Patch section: P#.# (e.g., P8.10)
 - Patch invariant: P#I# (e.g., P6I5)
 - Patch claim: P#C# (e.g., P4C3)
+- Library: LIB-#### (e.g., LIB-0001)
+- Requirement: REQ-#### or REQ-LIB-####-#### (e.g., REQ-0001, REQ-LIB-0001-0042)
 - Algorithm: Algorithm # (1-67+)
 - Invariant: I# (e.g., I1, I5) - replaces Goals
 - Goal (legacy): G# (e.g., G6, G8) - prefer I#
@@ -23,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar
 
 
 class IdCategory(Enum):
@@ -43,6 +46,8 @@ class IdCategory(Enum):
     LEAN = "lean"
     NON_FUNCTIONAL_GOAL = "non_functional_goal"
     GAP = "gap"
+    LIBRARY = "library"
+    REQUIREMENT = "requirement"
     UNKNOWN = "unknown"
 
 
@@ -59,7 +64,7 @@ class IdValidator:
     """Validator for spec IDs."""
 
     # Ordered from most specific to least specific
-    PATTERNS = [
+    PATTERNS: ClassVar[list[IdPattern]] = [
         IdPattern(
             re.compile(r"^Algorithm \d+$"),
             IdCategory.ALGORITHM,
@@ -141,6 +146,21 @@ class IdValidator:
             "Gap G#.# (e.g., Gap G1.2)",
         ),
         IdPattern(
+            re.compile(r"^LIB-\d{4}$"),
+            IdCategory.LIBRARY,
+            "LIB-#### (e.g., LIB-0001) - library identifier",
+        ),
+        IdPattern(
+            re.compile(r"^REQ-LIB-\d{4}-\d{4}$"),
+            IdCategory.REQUIREMENT,
+            "REQ-LIB-####-#### (e.g., REQ-LIB-0001-0042) - library-scoped requirement",
+        ),
+        IdPattern(
+            re.compile(r"^REQ-\d{4}$"),
+            IdCategory.REQUIREMENT,
+            "REQ-#### (e.g., REQ-0001) - global requirement",
+        ),
+        IdPattern(
             re.compile(r"^P\d+$"),
             IdCategory.PATCH,
             "P# (e.g., P1, P10) - patch identifier",
@@ -178,6 +198,16 @@ class IdValidator:
         # Algorithm #
         if match := re.match(r"^Algorithm (\d+)$", id_value):
             result["number"] = int(match.group(1))
+        # LIB-####
+        elif match := re.match(r"^LIB-(\d{4})$", id_value):
+            result["library"] = int(match.group(1))
+        # REQ-LIB-####-####
+        elif match := re.match(r"^REQ-LIB-(\d{4})-(\d{4})$", id_value):
+            result["library"] = int(match.group(1))
+            result["requirement"] = int(match.group(2))
+        # REQ-####
+        elif match := re.match(r"^REQ-(\d{4})$", id_value):
+            result["requirement"] = int(match.group(1))
         # P#I#
         elif match := re.match(r"^P(\d+)I(\d+)$", id_value):
             result["patch"] = int(match.group(1))
@@ -233,6 +263,8 @@ class IdValidator:
             IdCategory.PATCH_INVARIANT: 12,
             IdCategory.PATCH_CLAIM: 13,
             IdCategory.GAP: 14,
+            IdCategory.LIBRARY: 15,
+            IdCategory.REQUIREMENT: 16,
             IdCategory.UNKNOWN: 99,
         }
 
@@ -243,5 +275,15 @@ class IdValidator:
         secondary = numbers.get(
             "invariant", numbers.get("claim", numbers.get("section", numbers.get("subgoal", 0)))
         )
+        if category == IdCategory.LIBRARY:
+            primary = numbers.get("library", 0)
+            secondary = 0
+        elif category == IdCategory.REQUIREMENT:
+            if "library" in numbers:
+                primary = numbers.get("library", 0)
+                secondary = numbers.get("requirement", 0)
+            else:
+                primary = numbers.get("requirement", 0)
+                secondary = 0
 
         return (order, prefix, primary, secondary)

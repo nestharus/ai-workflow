@@ -397,7 +397,7 @@ def _infer_lib_id(output: str, allowlists: dict[str, Any]) -> str:
     match = re.search(r"Library Spec:\s*([\w\-\.]+)", output, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    return "lib_000"
+    return "LIB-0000"
 
 
 def _build_validation_manager(allowlists: dict[str, Any], root: Path) -> WorkspaceManager:
@@ -489,7 +489,7 @@ def validate_repaired_output(
     if artifact_type == ArtifactType.SUMMARY:
         anchors = ("# File Summary",)
     elif artifact_type == ArtifactType.CHARTER:
-        anchors = ("## Library Index", "### lib_")
+        anchors = ("## Library Index", "### LIB-")
     elif artifact_type == ArtifactType.SPEC:
         anchors = ("# Library Spec",)
     elif artifact_type == ArtifactType.EVIDENCE_JSON:
@@ -564,7 +564,7 @@ def _validate_evidence_json(
         List of validation error dictionaries.
     """
     issues: list[dict[str, Any]] = []
-    lib_id = str(allowlists.get("lib_id") or "lib_000")
+    lib_id = str(allowlists.get("lib_id") or "LIB-0000")
     try:
         payload = json.loads(output)
     except json.JSONDecodeError as exc:

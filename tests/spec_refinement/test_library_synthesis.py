@@ -48,7 +48,7 @@ def _library_output(lib_id: str, evidence_file: str) -> str:
         "#### Evidence\n"
         f"- [{evidence_file}::INTRO]\n\n"
         "#### Overlap Resolutions\n"
-        "- Workflow vs orchestration -> Assign to lib_001\n"
+        "- Workflow vs orchestration -> Assign to LIB-0001\n"
     )
 
 
@@ -74,23 +74,23 @@ def _run_agent_success(
         return json.dumps(
             [
                 {
-                    "lib_id": "lib_001",
+                    "lib_id": "LIB-0001",
                     "final_label": "Alpha",
                     "merged_from": ["Alpha"],
                     "split_notes": "",
-                    "stable_internal_id": "lib_001",
+                    "stable_internal_id": "LIB-0001",
                 },
                 {
-                    "lib_id": "lib_002",
+                    "lib_id": "LIB-0002",
                     "final_label": "Beta",
                     "merged_from": ["Beta"],
                     "split_notes": "",
-                    "stable_internal_id": "lib_002",
+                    "stable_internal_id": "LIB-0002",
                 },
             ]
         )
     if agent_name == "opus-library-synthesizer":
-        lib_id = "lib_002" if "lib_002" in prompt else "lib_001"
+        lib_id = "LIB-0002" if "LIB-0002" in prompt else "LIB-0001"
         evidence_file = "F0001"
         return _library_output(lib_id, evidence_file)
     if agent_name == "glm-library-overlap-resolver":
@@ -116,8 +116,8 @@ def test_synthesize_libraries_end_to_end_success(fs, monkeypatch) -> None:
 
     libraries_dir = Path("/work/runs/run_001/libraries")
     assert (libraries_dir / "library_index.md").exists()
-    assert (libraries_dir / "lib_001" / "charter.md").exists()
-    assert (libraries_dir / "lib_002" / "charter.md").exists()
+    assert (libraries_dir / "LIB-0001" / "charter.md").exists()
+    assert (libraries_dir / "LIB-0002" / "charter.md").exists()
 
     assert result["libraries_created"] == 2
     outputs = result.get("outputs", {})
@@ -161,7 +161,7 @@ def test_synthesize_libraries_invalid_labels(fs, monkeypatch) -> None:
                 ]
             )
         if agent_name == "opus-library-synthesizer":
-            return _library_output("lib_001", "F0001")
+            return _library_output("LIB-0001", "F0001")
         if agent_name == "glm-library-overlap-resolver":
             return json.dumps(
                 {
@@ -207,23 +207,23 @@ def test_synthesize_libraries_overlap_resolution_failure(fs, monkeypatch) -> Non
             return json.dumps(
                 [
                     {
-                        "lib_id": "lib_001",
+                        "lib_id": "LIB-0001",
                         "final_label": "Alpha",
                         "merged_from": ["Alpha"],
                         "split_notes": "",
-                        "stable_internal_id": "lib_001",
+                        "stable_internal_id": "LIB-0001",
                     },
                     {
-                        "lib_id": "lib_002",
+                        "lib_id": "LIB-0002",
                         "final_label": "Beta",
                         "merged_from": ["Beta"],
                         "split_notes": "",
-                        "stable_internal_id": "lib_002",
+                        "stable_internal_id": "LIB-0002",
                     },
                 ]
             )
         if agent_name == "opus-library-synthesizer":
-            lib_id = "lib_002" if "lib_002" in prompt else "lib_001"
+            lib_id = "LIB-0002" if "LIB-0002" in prompt else "LIB-0001"
             return _library_output(lib_id, "F0001")
         if agent_name == "glm-library-overlap-resolver":
             return "not-json"
@@ -263,11 +263,11 @@ def test_synthesize_libraries_charter_generation_error(fs, monkeypatch) -> None:
             return json.dumps(
                 [
                     {
-                        "lib_id": "lib_001",
+                        "lib_id": "LIB-0001",
                         "final_label": "Alpha",
                         "merged_from": ["Alpha"],
                         "split_notes": "",
-                        "stable_internal_id": "lib_001",
+                        "stable_internal_id": "LIB-0001",
                     }
                 ]
             )

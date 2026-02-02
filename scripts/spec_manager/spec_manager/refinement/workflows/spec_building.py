@@ -332,7 +332,7 @@ def _build_patch_prompt(
         "No preamble, no code fences.",
         "",
         "REQUIRED SCHEMA:",
-        '{ "file_id": "F####", "lib_id": "lib_###", "patches": [ {'
+        '{ "file_id": "F####", "lib_id": "LIB-####", "patches": [ {'
         '"op": "add|edit|move", "section": "Spec Section", '
         '"bullet_index": int|null, "source_section": "Spec Section|null", '
         '"content": "text", "citations": ["[spec_snapshot/<relpath>::SECTION_ID]"] } ] }',
@@ -393,7 +393,7 @@ def _build_patch_prompt(
             "## OUTPUT FORMAT",
             "",
             "Example:",
-            '{ "file_id": "F0001", "lib_id": "lib_001", "patches": ['
+            '{ "file_id": "F0001", "lib_id": "LIB-0001", "patches": ['
             '{"op": "add", "section": "Requirements", "bullet_index": null, '
             f'"source_section": null, "content": "...", "citations": ["{example_pointer}"]{{}}'
             "] }",

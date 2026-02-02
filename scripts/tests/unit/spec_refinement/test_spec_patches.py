@@ -36,7 +36,7 @@ def test_parse_patch_json_extracts_operations() -> None:
 
 def test_apply_patch_add_edit_move() -> None:
     content = (
-        "# Library Spec: lib_001\n\n"
+        "# Library Spec: LIB-0001\n\n"
         "## Intent\nOwn keyword behaviors.\n\n"
         "## Requirements\n"
         "- First requirement [F0001::INTRO]\n"
@@ -78,7 +78,7 @@ def test_apply_patch_add_edit_move() -> None:
         ),
     )
 
-    rendered = render_spec(spec_doc, "lib_001")
+    rendered = render_spec(spec_doc, "LIB-0001")
     assert "- Updated requirement [F0001::INTRO]" in rendered
     assert "- Third requirement [F0001::INTRO]" in rendered
     decisions_block = rendered.split("## Decisions Needed", 1)[1]
@@ -104,7 +104,7 @@ def test_validate_patch_citations() -> None:
         operations,
         file_id_lookup,
         section_alias_map,
-        lib_id="lib_001",
+        lib_id="LIB-0001",
     )
     assert issues == []
 
@@ -121,7 +121,7 @@ def test_validate_patch_citations() -> None:
         invalid_ops,
         file_id_lookup,
         section_alias_map,
-        lib_id="lib_001",
+        lib_id="LIB-0001",
     )
     issue_types = {issue["type"] for issue in issues}
     assert "unknown_file_reference" in issue_types

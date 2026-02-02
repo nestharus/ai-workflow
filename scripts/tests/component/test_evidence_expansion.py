@@ -57,10 +57,10 @@ def _setup_workspace(fs, monkeypatch) -> WorkspaceManager:
     manager.start_phase(Phase.LIBRARY_SYNTHESIS)
     manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs={"libraries_count": 1})
 
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     lib_dir.mkdir(parents=True, exist_ok=True)
     (lib_dir / "charter.md").write_text(
-        "# Library Charter: lib_001\n\n## Intent\nCore keyword service.\n\n"
+        "# Library Charter: LIB-0001\n\n## Intent\nCore keyword service.\n\n"
         "## Boundaries\nFocus on keyword behaviors.\n\n"
         "## Responsibilities\n- Own keyword workflows\n",
         encoding="utf-8",
@@ -127,10 +127,10 @@ def test_expand_evidence_parallel_processing(fs, monkeypatch) -> None:
     manager.start_phase(Phase.LIBRARY_SYNTHESIS)
     manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs={"libraries_count": 1})
 
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     lib_dir.mkdir(parents=True, exist_ok=True)
     (lib_dir / "charter.md").write_text(
-        "# Library Charter: lib_001\n\n## Intent\nCore keyword service.\n\n"
+        "# Library Charter: LIB-0001\n\n## Intent\nCore keyword service.\n\n"
         "## Boundaries\nFocus on keyword behaviors.\n\n"
         "## Responsibilities\n- Own keyword workflows\n",
         encoding="utf-8",
@@ -181,7 +181,7 @@ def test_spotcheck_evidence_adds_missing_sections(fs, monkeypatch) -> None:
     summary_path = manager.structure.summaries_dir / "F0001.what.md"
     summary_path.write_text(_make_summary_output("F0001", "INTRO", "keyword"), encoding="utf-8")
 
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     evidence_path = lib_dir / "evidence.json"
     evidence_path.write_text(
         json.dumps(

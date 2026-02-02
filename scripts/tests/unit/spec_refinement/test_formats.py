@@ -523,19 +523,19 @@ def _make_synthesis_content(
     *,
     lib_count: int = 1,
     include_index: bool = True,
-    overlap: str = "Workflow vs orchestration -> Assign to lib_001",
+    overlap: str = "Workflow vs orchestration -> Assign to LIB-0001",
 ) -> str:
     """Build a realistic library synthesis markdown."""
     parts: list[str] = []
     if include_index:
         parts.append("## Library Index\n")
         for i in range(1, lib_count + 1):
-            parts.append(f"- lib_{i:03d}: Library {i} intent\n")
+            parts.append(f"- LIB-{i:04d}: Library {i} intent\n")
         parts.append("\n")
 
     parts.append("## Library Charters\n\n")
     for i in range(1, lib_count + 1):
-        lib_id = f"lib_{i:03d}"
+        lib_id = f"LIB-{i:04d}"
         parts.append(f"### {lib_id}\n\n")
         parts.append(f"#### Intent\nOwn capability {i}.\n\n")
         parts.append(f"#### Boundaries\nScope for library {i}.\n\n")
@@ -559,7 +559,7 @@ class TestParseLibrarySynthesis:
         content = _make_synthesis_content(lib_count=1)
         charters, index_content = parse_library_synthesis(content)
         assert len(charters) == 1
-        assert charters[0].lib_id == "lib_001"
+        assert charters[0].lib_id == "LIB-0001"
         assert "Own capability 1" in charters[0].intent
         assert len(charters[0].responsibilities) == 2
         assert "Library Index" in index_content
@@ -570,15 +570,15 @@ class TestParseLibrarySynthesis:
         charters, _index_content = parse_library_synthesis(content)
         assert len(charters) == 3
         lib_ids = [c.lib_id for c in charters]
-        assert lib_ids == ["lib_001", "lib_002", "lib_003"]
+        assert lib_ids == ["LIB-0001", "LIB-0002", "LIB-0003"]
 
     def test_index_content_format(self) -> None:
         """The returned index content should be valid markdown with a heading."""
         content = _make_synthesis_content(lib_count=2)
         _, index_content = parse_library_synthesis(content)
         assert index_content.startswith("# Library Index")
-        assert "lib_001" in index_content
-        assert "lib_002" in index_content
+        assert "LIB-0001" in index_content
+        assert "LIB-0002" in index_content
 
     def test_evidence_sources_grouped(self) -> None:
         """Evidence sources should be grouped by file_id with sorted sections."""
@@ -610,8 +610,8 @@ class TestParseLibrarySynthesis:
         charters, index_content = parse_library_synthesis(content)
         assert len(charters) == 2
         assert "# Library Index" in index_content
-        assert "lib_001" in index_content
-        assert "lib_002" in index_content
+        assert "LIB-0001" in index_content
+        assert "LIB-0002" in index_content
 
     def test_empty_content(self) -> None:
         """Empty content should produce empty charters and a stub index."""
@@ -625,7 +625,7 @@ class TestParseLibrarySynthesis:
         charters, _ = parse_library_synthesis(content)
         charter = charters[0]
         assert isinstance(charter, LibraryCharter)
-        assert charter.lib_id == "lib_001"
+        assert charter.lib_id == "LIB-0001"
         assert charter.intent != ""
         assert charter.boundaries != ""
         assert len(charter.responsibilities) > 0
@@ -1011,13 +1011,13 @@ def _make_mapping_content(
     """Build a realistic architecture mapping markdown string."""
     if components is None:
         components = {
-            "CoreEngine": ["lib_001", "lib_002"],
-            "DataLayer": ["lib_003"],
+            "CoreEngine": ["LIB-0001", "LIB-0002"],
+            "DataLayer": ["LIB-0003"],
         }
     if dependencies is None:
         dependencies = ["CoreEngine -> DataLayer: data access"]
     if unmapped is None:
-        unmapped = ["lib_099"]
+        unmapped = ["LIB-0099"]
 
     parts: list[str] = ["## Component Mappings\n\n"]
     for comp_name, libs in components.items():
@@ -1049,8 +1049,8 @@ class TestParseArchitectureMapping:
         result = parse_architecture_mapping(content)
         assert "CoreEngine" in result["component_mappings"]
         assert "DataLayer" in result["component_mappings"]
-        assert result["component_mappings"]["CoreEngine"] == ["lib_001", "lib_002"]
-        assert result["component_mappings"]["DataLayer"] == ["lib_003"]
+        assert result["component_mappings"]["CoreEngine"] == ["LIB-0001", "LIB-0002"]
+        assert result["component_mappings"]["DataLayer"] == ["LIB-0003"]
 
     def test_dependencies_parsed(self) -> None:
         """Cross-component dependencies should be extracted."""
@@ -1060,9 +1060,9 @@ class TestParseArchitectureMapping:
 
     def test_unmapped_libraries_parsed(self) -> None:
         """Unmapped libraries should be listed."""
-        content = _make_mapping_content(unmapped=["lib_050", "lib_060"])
+        content = _make_mapping_content(unmapped=["LIB-0050", "LIB-0060"])
         result = parse_architecture_mapping(content)
-        assert result["unmapped_libraries"] == ["lib_050", "lib_060"]
+        assert result["unmapped_libraries"] == ["LIB-0050", "LIB-0060"]
 
     def test_none_unmapped(self) -> None:
         """'None' in unmapped section should produce empty list."""
@@ -1081,7 +1081,7 @@ class TestParseArchitectureMapping:
     def test_component_lines_populated(self) -> None:
         """component_lines should contain the raw library lines per component."""
         content = _make_mapping_content(
-            components={"Engine": ["lib_001"]},
+            components={"Engine": ["LIB-0001"]},
         )
         result = parse_architecture_mapping(content)
         assert "Engine" in result["component_lines"]
@@ -1096,8 +1096,8 @@ class TestParseArchitectureMapping:
             ### Component: API Contract (shared)
 
             **Libraries**:
-            - None (this component defines the interface between lib_001 and lib_002)
-            - lib_001: assigned
+            - None (this component defines the interface between LIB-0001 and LIB-0002)
+            - LIB-0001: assigned
 
             ## Cross-Component Dependencies
             - A -> B: reason
@@ -1107,8 +1107,8 @@ class TestParseArchitectureMapping:
             """
         )
         result = parse_architecture_mapping(content)
-        assert result["component_mappings"]["API Contract (shared)"] == ["lib_001"]
-        assert result["component_lines"]["API Contract (shared)"] == ["- lib_001: assigned"]
+        assert result["component_mappings"]["API Contract (shared)"] == ["LIB-0001"]
+        assert result["component_lines"]["API Contract (shared)"] == ["- LIB-0001: assigned"]
         assert result["unmapped_libraries"] == []
 
     def test_na_unmapped_filtered(self) -> None:
@@ -1126,7 +1126,7 @@ class TestParseArchitectureMapping:
 
     def test_multiple_libraries_per_component(self) -> None:
         """A component with many libraries should collect them all."""
-        libs = [f"lib_{i:03d}" for i in range(1, 6)]
+        libs = [f"LIB-{i:04d}" for i in range(1, 6)]
         content = _make_mapping_content(
             components={"BigComp": libs},
             dependencies=[],

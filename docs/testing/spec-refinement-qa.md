@@ -91,32 +91,32 @@ uv run spec status <run_id>
 **Check after run:**
 
 1. Library index exists: `runs/<run_id>/libraries/library_index.md`
-2. Library directories created: `ls runs/<run_id>/libraries/` shows `lib_001/`, `lib_002/`, etc.
+2. Library directories created: `ls runs/<run_id>/libraries/` shows `LIB-0001/`, `LIB-0002/`, etc.
 3. Each library has artifacts: `charter.md`, `evidence.json`, `gaps.md`, `decisions.md`
-4. Library IDs follow format: `lib_\d{3}` (e.g., lib_001, lib_002)
+4. Library IDs follow format: `LIB-\d{4}` (e.g., LIB-0001, LIB-0002)
 5. Evidence sources reference valid files from the manifest
 
 **Validation commands:**
 
 ```bash
 # Check library directories
-ls -d runs/<run_id>/libraries/lib_*/
+ls -d runs/<run_id>/libraries/LIB-*/
 
 # Verify each library has required artifacts
-for lib in runs/<run_id>/libraries/lib_*/; do
+for lib in runs/<run_id>/libraries/LIB-*/; do
   echo "=== $(basename $lib) ==="
   ls "$lib"
 done
 
 # Check evidence.json is valid JSON
-for f in runs/<run_id>/libraries/lib_*/evidence.json; do
-  python3 -c "import json; json.load(open('$f'))" && echo "$f OK" || echo "$f INVALID"
+for f in runs/<run_id>/libraries/LIB-*/evidence.json; do
+  uv run python -c "import json; json.load(open('$f'))" && echo "$f OK" || echo "$f INVALID"
 done
 ```
 
 **Common failures:**
 
-* No `lib_\d{3}` IDs in output: Agent didn't follow the expected format
+* No `LIB-\d{4}` IDs in output: Agent didn't follow the expected format
 * Overlap resolution missing: Check charter.md for "Overlap Resolutions" section
 
 ### Phase 3: Evidence Expansion
@@ -134,9 +134,9 @@ done
 
 ```bash
 # Check evidence.json has sources with sections
-for f in runs/<run_id>/libraries/lib_*/evidence.json; do
+for f in runs/<run_id>/libraries/LIB-*/evidence.json; do
   echo "=== $(basename $(dirname $f)) ==="
-  python3 -c "
+  uv run python -c "
 import json
 data = json.load(open('$f'))
 for s in data.get('sources', []):
@@ -162,26 +162,26 @@ done
 
 **Check after run:**
 
-1. Spec files exist: `runs/<run_id>/libraries/lib_*/spec.md`
+1. Spec files exist: `runs/<run_id>/libraries/LIB-*/spec.md`
 2. Specs contain citations: `[FILE_ID::SECTION]` pointers in Requirements/Constraints
-3. Gap files updated: `runs/<run_id>/libraries/lib_*/gaps.md`
-4. Decisions tracked: `runs/<run_id>/libraries/lib_*/decisions.md`
+3. Gap files updated: `runs/<run_id>/libraries/LIB-*/gaps.md`
+4. Decisions tracked: `runs/<run_id>/libraries/LIB-*/decisions.md`
 5. Convergence: Output shows converged_count vs libraries_built
 
 **Validation commands:**
 
 ```bash
 # Check spec files exist and have content
-for f in runs/<run_id>/libraries/lib_*/spec.md; do
+for f in runs/<run_id>/libraries/LIB-*/spec.md; do
   echo "=== $(basename $(dirname $f)) ==="
   wc -l "$f"
 done
 
 # Check for evidence pointers in specs
-grep -c '\[F' runs/<run_id>/libraries/lib_*/spec.md
+grep -c '\[F' runs/<run_id>/libraries/LIB-*/spec.md
 
 # Check gap status
-for f in runs/<run_id>/libraries/lib_*/gaps.md; do
+for f in runs/<run_id>/libraries/LIB-*/gaps.md; do
   echo "=== $(basename $(dirname $f)) ==="
   grep -c 'status:' "$f" 2>/dev/null || echo "No gaps"
 done
@@ -198,7 +198,7 @@ done
   "Does NOT own request routing or input validation". The claim stays in the spec
   and gaps never converge.
 * Self-referencing citations: Integrator cites the spec itself
-  (e.g., `[libraries/lib_002/spec.md::Boundaries]`) instead of source files.
+  (e.g., `[libraries/LIB-0002/spec.md::Boundaries]`) instead of source files.
   Citation validator rejects these as `unknown_file_reference`.
 * GPT-5.2 xhigh latency: Gap judge calls take 60-120s each; with 2 libraries
   and 2 files, a single iteration takes ~6-8 minutes. Plan max-iterations
@@ -210,7 +210,7 @@ done
 
 **Check after run:**
 
-1. Sublibraries created: `runs/<run_id>/libraries/lib_*/sublibraries/` directories
+1. Sublibraries created: `runs/<run_id>/libraries/LIB-*/sublibraries/` directories
 2. Each sublibrary has: `charter.md`, `evidence.json`, `gaps.md`, `decisions.md`
 3. Evidence partitions: Sublibraries don't share >20% evidence overlap
 4. Recursive refinement: Sublibraries get evidence expansion and spec building

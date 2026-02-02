@@ -8,7 +8,7 @@ from spec_manager.refinement.repair import ArtifactType
 
 def _allowlists() -> dict[str, object]:
     return {
-        "lib_id": "lib_001",
+        "lib_id": "LIB-0001",
         "file_ids": ["F0001", "F0002"],
         "sections": {
             "F0001": ["INTRO", "REQS"],

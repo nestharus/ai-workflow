@@ -7,11 +7,11 @@ from spec_manager.refinement.workflows.spec_building import (
 
 
 def test_patch_prompt_reduces_context() -> None:
-    lib_id = "lib_001"
+    lib_id = "LIB-0001"
     charter_content = (
-        "# Library Charter: lib_001\n\n## Intent\nTest intent.\n\n## Boundaries\nTest.\n"
+        "# Library Charter: LIB-0001\n\n## Intent\nTest intent.\n\n## Boundaries\nTest.\n"
     )
-    spec_content = "# Library Spec: lib_001\n\n## Requirements\n" + "".join(
+    spec_content = "# Library Spec: LIB-0001\n\n## Requirements\n" + "".join(
         f"- Requirement {i} [F0001::INTRO]\n" for i in range(30)
     )
     file_content = "## Intro\nDetails.\n"

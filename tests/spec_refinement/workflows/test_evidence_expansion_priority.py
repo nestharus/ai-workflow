@@ -18,7 +18,7 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
 
     for name in ["alpha.md", "beta.md", "gamma.md", "delta.md"]:
         (input_dir / name).write_text(
-            "# Spec\n\n[INTRO]\nDetails referencing (lib_001).\n",
+            "# Spec\n\n[INTRO]\nDetails referencing (LIB-0001).\n",
             encoding="utf-8",
         )
 
@@ -35,7 +35,7 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
             encoding="utf-8",
         )
 
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     lib_dir.mkdir(parents=True, exist_ok=True)
     (lib_dir / "charter.md").write_text(
         "# Library Charter\n\n## Intent\nPayments handling.\n\n"
@@ -160,7 +160,7 @@ def test_evidence_expansion_priority_flow(fs, monkeypatch) -> None:
     assert mapper_calls == {file_ids[0], file_ids[1], file_ids[3]}
     assert file_ids[2] not in mapper_calls
 
-    evidence_path = manager.structure.libraries_dir / "lib_001" / "evidence.json"
+    evidence_path = manager.structure.libraries_dir / "LIB-0001" / "evidence.json"
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
     sources = payload.get("sources", [])
     by_file = {source.get("file_id"): source for source in sources}
@@ -175,7 +175,7 @@ def test_evidence_expansion_priority_flow(fs, monkeypatch) -> None:
     assert by_file[file_ids[3]]["priority_rationale"] == "low_confidence_skip"
 
     calls["chatgpt-evidence-gap-judge"].clear()
-    spotcheck_evidence("run_001", lib_ids=["lib_001"])
+    spotcheck_evidence("run_001", lib_ids=["LIB-0001"])
 
     spotcheck_calls = calls["chatgpt-evidence-gap-judge"]
     assert spotcheck_calls[0] == file_ids[3]

@@ -2,7 +2,7 @@
 
 [INTRO]
 ## Intro
-Alpha defines the baseline workflow for intake, validation, and routing. (lib_001)
+Alpha defines the baseline workflow for intake, validation, and routing. (LIB-0001)
 
 [USER_REQUIREMENTS]
 ## User Requirements

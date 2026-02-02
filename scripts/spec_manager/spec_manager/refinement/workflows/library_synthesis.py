@@ -37,7 +37,7 @@ from .library_labeling import (
     validate_library_shapes,
 )
 
-LIB_ID_RE = re.compile(r"^lib_\d{3}$")
+LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
 logger = logging.getLogger(__name__)
 
 
@@ -75,8 +75,10 @@ def _read_library_events(lib_dir: Path) -> list[LibraryEvent]:
     return events
 
 
-def _validate_event_monotonicity(events: list[LibraryEvent]) -> list[dict[str, Any]]:
-    """Validate library event ordering and timestamp monotonicity."""
+def _validate_event_monotonicity(
+    events: list[LibraryEvent], *, expected_lib_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Validate library event ordering, ID consistency, and timestamp monotonicity."""
     issues: list[dict[str, Any]] = []
     if not events:
         issues.append(
@@ -88,6 +90,23 @@ def _validate_event_monotonicity(events: list[LibraryEvent]) -> list[dict[str, A
         return issues
 
     lib_id = events[0].lib_id
+    if expected_lib_id and lib_id != expected_lib_id:
+        issues.append(
+            {
+                "type": "library_id_format_mismatch",
+                "lib_id": lib_id,
+                "expected_lib_id": expected_lib_id,
+                "message": "Library event lib_id does not match directory name.",
+            }
+        )
+    if not LIB_ID_RE.match(lib_id):
+        issues.append(
+            {
+                "type": "library_event_invalid_id",
+                "lib_id": lib_id,
+                "message": "Library event lib_id does not match LIB-#### format.",
+            }
+        )
     created_indices = [
         index
         for index, event in enumerate(events)
@@ -130,6 +149,15 @@ def _validate_event_monotonicity(events: list[LibraryEvent]) -> list[dict[str, A
                         f"Event at index {index} has lib_id '{event.lib_id}' "
                         f"which conflicts with expected '{lib_id}'."
                     ),
+                }
+            )
+        if not LIB_ID_RE.match(event.lib_id):
+            issues.append(
+                {
+                    "type": "library_event_invalid_id",
+                    "lib_id": event.lib_id,
+                    "index": index,
+                    "message": "Library event lib_id does not match LIB-#### format.",
                 }
             )
 
@@ -217,7 +245,7 @@ def _validate_library_ids(charters: list[LibraryCharter]) -> list[dict[str, Any]
                 {
                     "type": "invalid_library_id",
                     "lib_id": charter.lib_id,
-                    "message": "Library ID does not match lib_### format.",
+                    "message": "Library ID does not match LIB-#### format.",
                 }
             )
     return issues
@@ -652,7 +680,9 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
 
     for charter in charters:
         lib_dir = manager.structure.libraries_dir / charter.lib_id
-        event_issues = _validate_event_monotonicity(_read_library_events(lib_dir))
+        event_issues = _validate_event_monotonicity(
+            _read_library_events(lib_dir), expected_lib_id=charter.lib_id
+        )
         for issue in event_issues:
             if "lib_id" not in issue:
                 issue["lib_id"] = charter.lib_id

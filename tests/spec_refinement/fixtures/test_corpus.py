@@ -9,7 +9,7 @@ CORPUS_CONTENT = {
 
 [INTRO]
 ## Intro
-Alpha defines the baseline workflow for intake, validation, and routing. (lib_001)
+Alpha defines the baseline workflow for intake, validation, and routing. (LIB-0001)
 
 [USER_REQUIREMENTS]
 ## User Requirements
@@ -34,7 +34,7 @@ Alpha defines the baseline workflow for intake, validation, and routing. (lib_00
 
 [OVERVIEW]
 ## Overview
-Beta handles batch ingestion and transformation with multiple stages. (lib_001)
+Beta handles batch ingestion and transformation with multiple stages. (LIB-0001)
 
 [PIPELINE]
 ## Pipeline
@@ -65,7 +65,7 @@ POST /beta/ingest
     "gamma.md": """# Gamma Integrations
 
 ## User Requirements / Constraints
-Gamma integrates with external partners and must honor contract limits. (lib_002)
+Gamma integrates with external partners and must honor contract limits. (LIB-0002)
 
 ## API & Integrations
 - Supports partner callbacks.
@@ -78,7 +78,7 @@ Ensure graceful degradation when partner endpoints timeout.
 
 [LONGFORM]
 ## Longform Notes
-Delta includes extensive operational guidance for scaling and reliability. (lib_002)
+Delta includes extensive operational guidance for scaling and reliability. (LIB-0002)
 This section repeats to simulate a long spec.
 Delta includes extensive operational guidance for scaling and reliability.
 This section repeats to simulate a long spec.
@@ -99,7 +99,7 @@ This section repeats to simulate a long spec.
 
 [OVERVIEW]
 ## Overview
-Single-section placeholder for minimal content. (lib_002)
+Single-section placeholder for minimal content. (LIB-0002)
 """,
 }
 
@@ -123,11 +123,11 @@ Evidence: [F0001::INTRO, F0001::REQS]
 }
 
 DEFAULT_LIBRARY_MAP = {
-    "alpha.md": ["lib_001"],
-    "beta.md": ["lib_001"],
-    "gamma.md": ["lib_002"],
-    "delta.md": ["lib_002"],
-    "epsilon.md": ["lib_002"],
+    "alpha.md": ["LIB-0001"],
+    "beta.md": ["LIB-0001"],
+    "gamma.md": ["LIB-0002"],
+    "delta.md": ["LIB-0002"],
+    "epsilon.md": ["LIB-0002"],
 }
 
 
@@ -194,7 +194,7 @@ def create_test_corpus(
                 "Alpha Workflow", f"Extra Workflow {idx:03d}"
             )
             files[name] = content
-            library_map[name] = ["lib_001"]
+            library_map[name] = ["LIB-0001"]
 
     _write_files(fs, base_path, files)
 
@@ -204,7 +204,7 @@ def create_test_corpus(
         content = path.read_text(encoding="utf-8")
         labels = _extract_section_labels(content)
         section_ids = [f"SEC-{file_id}-{i:04d}" for i in range(1, len(labels) + 1)]
-        expected_libraries = library_map.get(path.name, ["lib_001"])
+        expected_libraries = library_map.get(path.name, ["LIB-0001"])
         manifest[file_id] = {
             "path": str(path),
             "sections": section_ids,

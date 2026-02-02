@@ -2,4 +2,4 @@
 
 [OVERVIEW]
 ## Overview
-Single-section placeholder for minimal content. (lib_002)
+Single-section placeholder for minimal content. (LIB-0002)

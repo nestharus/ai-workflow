@@ -49,14 +49,14 @@ class TestSummarizationPromptStructure:
 
 class TestEvidenceExpansionPromptStructure:
     def test_evidence_prompt_contract_first(self):
-        prompt = _build_evidence_prompt("lib_001", "charter", "F0001", "summary", ["INTRO"])
+        prompt = _build_evidence_prompt("LIB-0001", "charter", "F0001", "summary", ["INTRO"])
         _assert_contract_first(prompt, "glm-library-evidence-mapper")
 
 
 class TestSpecBuildingPromptStructure:
     def test_patch_prompt_contract_first(self):
         prompt = _build_patch_prompt(
-            "lib_001",
+            "LIB-0001",
             "charter",
             "spec",
             "F0001",
@@ -75,12 +75,12 @@ class TestSpecBuildingPromptStructure:
 
 class TestArchitecturePromptStructure:
     def test_brief_extraction_prompt_contract_first(self):
-        prompt = _build_brief_extraction_prompt("lib_001", "charter", "spec")
+        prompt = _build_brief_extraction_prompt("LIB-0001", "charter", "spec")
         _assert_contract_first(prompt, "glm-architecture-brief-extractor")
 
     def test_architecture_proposal_prompt_contract_first(self):
         prompt = _build_architecture_proposal_prompt(
-            {"lib_001": "charter"}, {"lib_001": "spec"}, {}
+            {"LIB-0001": "charter"}, {"LIB-0001": "spec"}, {}
         )
         _assert_contract_first(prompt, "opus-architecture-proposer")
 

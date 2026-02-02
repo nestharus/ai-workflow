@@ -423,8 +423,8 @@ def _validate_evidence_entry(
 
         content = file_path.read_text(encoding="utf-8")
 
-        # Heuristic: infer the "primary" library a file describes from (lib_###) mentions.
-        mentions = re.findall(r"\((lib_[0-9]+)\)", content[:8000])
+        # Heuristic: infer the "primary" library a file describes from (LIB-####) mentions.
+        mentions = re.findall(r"\((LIB-\d{4})\)", content[:8000])
         primary_lib_id = None
         if mentions:
             counts = Counter(mentions)

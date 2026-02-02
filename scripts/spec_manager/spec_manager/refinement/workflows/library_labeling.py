@@ -35,7 +35,7 @@ from spec_manager.refinement.validation_utils import build_file_id_lookup, build
 from spec_manager.refinement.workspace import WorkspaceManager
 
 MAX_WORKERS = 4
-LIB_ID_PATTERN = re.compile(r"^lib_(\d{3})$")
+LIB_ID_PATTERN = re.compile(r"^LIB-(\d{4})$")
 logger = logging.getLogger(__name__)
 
 
@@ -563,7 +563,7 @@ def refine_library_labels(
         "Return ONLY valid JSON array. No preamble, no code fences.",
         "Each item must include: lib_id, final_label, merged_from, split_notes, "
         "stable_internal_id.",
-        "Use lib_001, lib_002, etc. for stable_internal_id and lib_id.",
+        "Use LIB-0001, LIB-0002, etc. for stable_internal_id and lib_id.",
         "",
         "Clusters:",
     ]
@@ -1401,7 +1401,7 @@ def judge_concern_assignments(
         library_index = _build_library_index_fallback(charters)
 
     charter_texts: list[str] = []
-    library_ids = set(re.findall(r"\blib_\d{3}\b", library_index))
+    library_ids = set(re.findall(r"\bLIB-\d{4}\b", library_index))
     for charter in charters:
         charter_path = manager.structure.libraries_dir / charter.lib_id / "charter.md"
         if charter_path.exists():
@@ -1427,7 +1427,7 @@ def judge_concern_assignments(
         '      "file_id": "string",',
         '      "concern_type": "algorithm|component|workflow|responsibility",',
         '      "concern_text": "string",',
-        '      "assigned_to": ["lib_001", "lib_002"],',
+        '      "assigned_to": ["LIB-0001", "LIB-0002"],',
         '      "confidence": 0.85,',
         '      "rationale": "string"',
         "    }",

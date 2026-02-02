@@ -13,7 +13,7 @@ def _make_gap(gap_id: str, status: str = "open") -> Gap:
         description="Missing section",
         details={
             "source": "F0001::INTRO",
-            "derived_artifact_target": "libraries/lib_001/spec.md",
+            "derived_artifact_target": "libraries/LIB-0001/spec.md",
             "severity": "warning",
             "gap_type": "coverage_failure",
         },
@@ -23,7 +23,7 @@ def _make_gap(gap_id: str, status: str = "open") -> Gap:
         gap_type=GapType.coverage_failure,
         severity=Severity.WARNING,
         source=["F0001::INTRO"],
-        derived_artifact_target="libraries/lib_001/spec.md",
+        derived_artifact_target="libraries/LIB-0001/spec.md",
         description="Missing section",
         evidence=[evidence],
         status=status,  # type: ignore[arg-type]

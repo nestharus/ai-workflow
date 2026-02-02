@@ -21,10 +21,10 @@ def _setup_workspace(fs, monkeypatch) -> Path:
     manager.start_phase(Phase.EVIDENCE_EXPANSION)
     manager.complete_phase(Phase.EVIDENCE_EXPANSION, outputs={"libraries_expanded": 1})
 
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     lib_dir.mkdir(parents=True, exist_ok=True)
     (lib_dir / "charter.md").write_text(
-        "# Library Charter: lib_001\n\n## Intent\nOwn keyword behaviors.\n\n"
+        "# Library Charter: LIB-0001\n\n## Intent\nOwn keyword behaviors.\n\n"
         "## Boundaries\nFocus on keyword scope.\n\n"
         "## Responsibilities\n- Own keyword workflows\n",
         encoding="utf-8",
@@ -123,7 +123,7 @@ def test_gap_detection_and_clustering(fs, monkeypatch) -> None:
     ):
         build_specs("run1", max_iterations=1)
 
-    gaps_path = Path("/repo/runs/run1/libraries/lib_001/gaps.md")
+    gaps_path = Path("/repo/runs/run1/libraries/LIB-0001/gaps.md")
     gaps_content = gaps_path.read_text(encoding="utf-8")
     assert "GAP-" in gaps_content
 
@@ -344,7 +344,7 @@ def test_repair_invalid_patch_citations(fs, monkeypatch) -> None:
     ):
         result = build_specs("run1", max_iterations=1)
 
-    spec_path = Path("/repo/runs/run1/libraries/lib_001/spec.md")
+    spec_path = Path("/repo/runs/run1/libraries/LIB-0001/spec.md")
     content = spec_path.read_text(encoding="utf-8")
     assert "[F0001::INTRO]" in content
     assert not any(issue["type"] == "unknown_section_reference" for issue in result["issues"])

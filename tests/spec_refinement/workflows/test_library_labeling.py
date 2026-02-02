@@ -38,9 +38,9 @@ def _setup_workspace(fs, monkeypatch, run_id: str = "run_001") -> WorkspaceManag
 def _library_output(evidence_section: str = "INTRO") -> str:
     return (
         "## Library Index\n"
-        "- lib_001: Core Workflow Library\n\n"
+        "- LIB-0001: Core Workflow Library\n\n"
         "## Library Charters\n"
-        "### lib_001\n"
+        "### LIB-0001\n"
         "#### Intent\n"
         "Own core workflow responsibilities.\n\n"
         "#### Boundaries\n"
@@ -50,7 +50,7 @@ def _library_output(evidence_section: str = "INTRO") -> str:
         "#### Evidence\n"
         f"- [F0001::{evidence_section}]\n\n"
         "#### Overlap Resolutions\n"
-        "- Workflow vs orchestration -> Assign to lib_001\n"
+        "- Workflow vs orchestration -> Assign to LIB-0001\n"
     )
 
 
@@ -138,11 +138,11 @@ def test_refine_library_labels_writes_output(fs, monkeypatch) -> None:
         return_value=json.dumps(
             [
                 {
-                    "lib_id": "lib_001",
+                    "lib_id": "LIB-0001",
                     "final_label": "Core",
                     "merged_from": ["Core"],
                     "split_notes": "",
-                    "stable_internal_id": "lib_001",
+                    "stable_internal_id": "LIB-0001",
                 }
             ]
         ),
@@ -151,13 +151,13 @@ def test_refine_library_labels_writes_output(fs, monkeypatch) -> None:
 
     refined_path = manager.structure.libraries_dir / "refined_labels.json"
     assert refined_path.exists()
-    assert result[0]["lib_id"] == "lib_001"
+    assert result[0]["lib_id"] == "LIB-0001"
 
 
 def test_generate_library_charter_uses_repair_gate(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
 
-    lib_def = {"lib_id": "lib_001", "final_label": "Core", "merged_from": ["Core"]}
+    lib_def = {"lib_id": "LIB-0001", "final_label": "Core", "merged_from": ["Core"]}
     file_labels = {
         "F0001": {
             "candidate_labels": [{"label": "Core", "sections": ["[F0001::INTRO]"]}],
@@ -187,7 +187,7 @@ def test_generate_library_charter_uses_repair_gate(fs, monkeypatch) -> None:
 def test_detect_overlaps_scores_pairs() -> None:
     charters = [
         LibraryCharter(
-            lib_id="lib_001",
+            lib_id="LIB-0001",
             intent="A",
             boundaries="",
             responsibilities=[],
@@ -195,7 +195,7 @@ def test_detect_overlaps_scores_pairs() -> None:
             overlap_resolutions=[],
         ),
         LibraryCharter(
-            lib_id="lib_002",
+            lib_id="LIB-0002",
             intent="B",
             boundaries="",
             responsibilities=[],
@@ -205,8 +205,8 @@ def test_detect_overlaps_scores_pairs() -> None:
     ]
 
     overlaps = detect_overlaps(charters)
-    assert overlaps[0][0] == "lib_001"
-    assert overlaps[0][1] == "lib_002"
+    assert overlaps[0][0] == "LIB-0001"
+    assert overlaps[0][1] == "LIB-0002"
     assert overlaps[0][2] > 0.3
 
 
@@ -214,16 +214,16 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
     manager = _setup_workspace(fs, monkeypatch)
 
     charters = {
-        "lib_001": LibraryCharter(
-            lib_id="lib_001",
+        "LIB-0001": LibraryCharter(
+            lib_id="LIB-0001",
             intent="A",
             boundaries="",
             responsibilities=[],
             evidence_sources=[{"file_id": "F0001", "sections": ["INTRO"]}],
             overlap_resolutions=[],
         ),
-        "lib_002": LibraryCharter(
-            lib_id="lib_002",
+        "LIB-0002": LibraryCharter(
+            lib_id="LIB-0002",
             intent="B",
             boundaries="",
             responsibilities=[],
@@ -242,6 +242,6 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
             }
         ),
     ):
-        result = resolve_overlap("lib_001", "lib_002", charters, manager, overlap_score=0.5)
+        result = resolve_overlap("LIB-0001", "LIB-0002", charters, manager, overlap_score=0.5)
 
     assert result["decision"] == "assign_to_lib_A"

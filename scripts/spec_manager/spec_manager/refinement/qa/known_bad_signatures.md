@@ -7,7 +7,7 @@ These are intended to be used by the manual QA harness (see `scripts/spec_refine
 ## Signatures
 
 1) Derived pointers leaking into source-citation spaces
-- Examples: `[charter::INTENT]`, `[libraries/lib_001/spec.md::...]`, `[runs/...::...]`
+- Examples: `[charter::INTENT]`, `[libraries/LIB-0001/spec.md::...]`, `[runs/...::...]`
 
 2) Architecture artifacts citing source files instead of libraries
 - Example: `[F0001::REQS]` appearing in architecture proposal/selection/mapping output.

@@ -37,8 +37,8 @@ _Metrics captured from a local run using the same `PerformanceBenchmark` tracker
 
 | Library | Total Gaps | Closed Gaps | Convergence Ratio |
 | --- | --- | --- | --- |
-| lib_001 | 0 | 0 | 1.00 |
-| lib_002 | 0 | 0 | 1.00 |
+| LIB-0001 | 0 | 0 | 1.00 |
+| LIB-0002 | 0 | 0 | 1.00 |
 
 ## Repair Gate Effectiveness
 - **Repair Success Rate**: 1.00 (8/8 repairs validated cleanly)

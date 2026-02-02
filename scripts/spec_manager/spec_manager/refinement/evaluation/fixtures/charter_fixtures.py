@@ -21,9 +21,9 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.CHARTER,
         invalid_output=(
             "## Library Index\n"
-            "- lib_001: Core services\n\n"
+            "- LIB-0001: Core services\n\n"
             "## Library Charters\n"
-            "### lib_001\n"
+            "### LIB-0001\n"
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Boundaries\n"
@@ -43,9 +43,9 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.CHARTER,
         invalid_output=(
             "## Library Index\n"
-            "- lib_001: Core services\n\n"
+            "- LIB-0001: Core services\n\n"
             "## Library Charters\n"
-            "### lib_001\n"
+            "### LIB-0001\n"
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Boundaries\n"
@@ -65,9 +65,9 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.CHARTER,
         invalid_output=(
             "## Library Index\n"
-            "- lib_001: Core services\n\n"
+            "- LIB-0001: Core services\n\n"
             "## Library Charters\n"
-            "### lib_001\n"
+            "### LIB-0001\n"
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Boundaries\n"
@@ -88,8 +88,8 @@ FIXTURES: list[RepairFixture] = [
         invalid_output=(
             "Here is the charter output:\n\n"
             "## Library Index\n"
-            "- lib_001: Core services\n\n"
-            "### lib_001\n"
+            "- LIB-0001: Core services\n\n"
+            "### LIB-0001\n"
             "#### Intent\n"
             "Provide core services.\n"
         ),
@@ -101,8 +101,8 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.CHARTER,
         invalid_output=(
             "## Library Index\n"
-            "- lib_001: Core services\n\n"
-            "### lib_001\n"
+            "- LIB-0001: Core services\n\n"
+            "### LIB-0001\n"
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Evidence\n"
@@ -117,8 +117,8 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.CHARTER,
         invalid_output=(
             "## Library Index\n"
-            "- lib_001: Core services\n\n"
-            "### lib_001\n"
+            "- LIB-0001: Core services\n\n"
+            "### LIB-0001\n"
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Evidence\n"

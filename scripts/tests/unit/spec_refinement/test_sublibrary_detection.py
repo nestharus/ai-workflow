@@ -32,14 +32,14 @@ def _setup_workspace(fs, monkeypatch, complete_spec: bool = True) -> tuple[Works
         manager.start_phase(Phase.SPEC_BUILDING)
         manager.complete_phase(Phase.SPEC_BUILDING, outputs={"libraries_built": 1})
 
-    lib_dir = manager.structure.libraries_dir / "lib_001"
+    lib_dir = manager.structure.libraries_dir / "LIB-0001"
     lib_dir.mkdir(parents=True, exist_ok=True)
     (lib_dir / "charter.md").write_text(
-        "# Library Charter: lib_001\n\n## Intent\nTest\n\n## Boundaries\nTest\n\n"
+        "# Library Charter: LIB-0001\n\n## Intent\nTest\n\n## Boundaries\nTest\n\n"
         "## Responsibilities\n- A\n",
         encoding="utf-8",
     )
-    (lib_dir / "spec.md").write_text("# Library Spec: lib_001\n", encoding="utf-8")
+    (lib_dir / "spec.md").write_text("# Library Spec: LIB-0001\n", encoding="utf-8")
     (lib_dir / "evidence.json").write_text(json.dumps({"sources": []}), encoding="utf-8")
     return manager, lib_dir
 
@@ -100,7 +100,7 @@ def test_detect_sublibraries_creates_subdir(fs, monkeypatch) -> None:
     ):
         result = detect_sublibraries("run1", max_depth=1)
 
-    sub_dir = Path("/repo/runs/run1/libraries/lib_001/sublibraries/sub_001")
+    sub_dir = Path("/repo/runs/run1/libraries/LIB-0001/sublibraries/sub_001")
     assert sub_dir.exists()
     assert (sub_dir / "charter.md").exists()
     assert (sub_dir / "evidence.json").exists()
@@ -131,7 +131,7 @@ def test_sublibrary_overlap_validation_skips_creation(fs, monkeypatch) -> None:
     assert result["sublibraries_created"] == 0
     assert any(issue["type"] == "evidence_overlap" for issue in result["issues"])
 
-    sublibraries_dir = Path("/repo/runs/run1/libraries/lib_001/sublibraries")
+    sublibraries_dir = Path("/repo/runs/run1/libraries/LIB-0001/sublibraries")
     assert not sublibraries_dir.exists()
 
 

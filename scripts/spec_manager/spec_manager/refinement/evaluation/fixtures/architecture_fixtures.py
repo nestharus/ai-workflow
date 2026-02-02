@@ -8,9 +8,9 @@ from spec_manager.refinement.repair import ArtifactType
 
 def _allowlists() -> dict[str, object]:
     return {
-        "library_ids": ["lib_001"],
+        "library_ids": ["LIB-0001"],
         "library_files": {
-            "lib_001": {
+            "LIB-0001": {
                 "spec.md": ["CONSTRAINTS", "RISKS"],
                 "charter.md": ["INTENT"],
             }
@@ -21,14 +21,14 @@ def _allowlists() -> dict[str, object]:
 FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
-        invalid_output="Decision uses [lib_999::spec.md::CONSTRAINTS] for latency.",
+        invalid_output="Decision uses [LIB-0999::spec.md::CONSTRAINTS] for latency.",
         expected_errors=[{"type": "unknown_library"}],
         allowlists=_allowlists(),
         description="Unknown library in architecture citation.",
     ),
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
-        invalid_output="Decision uses [lib_001::spec.md::MISSING] for latency.",
+        invalid_output="Decision uses [LIB-0001::spec.md::MISSING] for latency.",
         expected_errors=[{"type": "unknown_section_reference"}],
         allowlists=_allowlists(),
         description="Invented section in architecture citation.",
@@ -43,7 +43,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
         invalid_output=(
-            "Here is the rationale:\n\nDecision uses [lib_001::spec.md::CONSTRAINTS] for latency."
+            "Here is the rationale:\n\nDecision uses [LIB-0001::spec.md::CONSTRAINTS] for latency."
         ),
         expected_errors=[{"type": "stray_preamble"}],
         allowlists=_allowlists(),
@@ -51,7 +51,7 @@ FIXTURES: list[RepairFixture] = [
     ),
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
-        invalid_output=("Decision uses [lib_001::spec.md::CONSTRAINTS] for latency.\n```\n"),
+        invalid_output=("Decision uses [LIB-0001::spec.md::CONSTRAINTS] for latency.\n```\n"),
         expected_errors=[{"type": "trailing_fence"}],
         allowlists=_allowlists(),
         description="Trailing fence after architecture rationale.",
@@ -59,7 +59,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
         invalid_output=(
-            "Decision uses [lib_001::spec.md::CONSTRAINTS, lib_001::spec.md::RISKS] for latency."
+            "Decision uses [LIB-0001::spec.md::CONSTRAINTS, LIB-0001::spec.md::RISKS] for latency."
         ),
         expected_errors=[{"type": "compound_pointer"}],
         allowlists=_allowlists(),

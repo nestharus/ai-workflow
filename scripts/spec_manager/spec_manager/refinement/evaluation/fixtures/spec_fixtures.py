@@ -8,7 +8,7 @@ from spec_manager.refinement.repair import ArtifactType
 
 def _allowlists() -> dict[str, object]:
     return {
-        "lib_id": "lib_001",
+        "lib_id": "LIB-0001",
         "file_ids": ["F0001", "F0002"],
         "sections": {
             "F0001": ["INTRO", "REQS"],
@@ -21,7 +21,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SPEC,
         invalid_output=(
-            "# Library Spec: lib_001\n\n"
+            "# Library Spec: LIB-0001\n\n"
             "## Boundaries\n"
             "- Covers core [alpha::INTRO]\n\n"
             "## Requirements\n"
@@ -38,7 +38,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SPEC,
         invalid_output=(
-            "# Library Spec: lib_001\n\n"
+            "# Library Spec: LIB-0001\n\n"
             "## Boundaries\n"
             "- Covers core [F0001::MISSING]\n\n"
             "## Requirements\n"
@@ -55,7 +55,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SPEC,
         invalid_output=(
-            "# Library Spec: lib_001\n\n"
+            "# Library Spec: LIB-0001\n\n"
             "## Boundaries\n"
             "- Covers core [F0001::INTRO]\n\n"
             "## Requirements\n"
@@ -73,7 +73,7 @@ FIXTURES: list[RepairFixture] = [
         artifact_type=ArtifactType.SPEC,
         invalid_output=(
             "Here is the updated spec:\n\n"
-            "# Library Spec: lib_001\n\n"
+            "# Library Spec: LIB-0001\n\n"
             "## Boundaries\n"
             "- Covers core [F0001::INTRO]\n"
         ),
@@ -84,7 +84,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SPEC,
         invalid_output=(
-            "# Library Spec: lib_001\n\n"
+            "# Library Spec: LIB-0001\n\n"
             "## Boundaries\n"
             "- Covers core [F0001::INTRO]\n\n"
             "## Requirements\n"
@@ -98,7 +98,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.SPEC,
         invalid_output=(
-            "# Library Spec: lib_001\n\n"
+            "# Library Spec: LIB-0001\n\n"
             "## Boundaries\n"
             "- Covers core [F0001::INTRO, F0001::REQS]\n\n"
             "## Requirements\n"
