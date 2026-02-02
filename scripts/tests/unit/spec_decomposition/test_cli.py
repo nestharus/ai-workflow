@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.cli module."""
+"""Tests for spec_manager.spec_manager.decomposition.cli module."""
 
 from __future__ import annotations
 
@@ -126,8 +126,8 @@ class TestProcessInvestigationRequiresEntity:
         """Test that process-investigation fails for non-existent entity."""
         import argparse
 
-        from scripts.spec_decomposition.cli import cmd_process_investigation
         from scripts.spec_decomposition.workspace import create_investigation_staging
+        from scripts.spec_manager.spec_manager.decomposition.cli import cmd_process_investigation
 
         # Create investigation staging for a fake entity
         entity_name = "FakeEntity"

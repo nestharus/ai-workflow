@@ -117,7 +117,7 @@ agents = "scripts.agents.__main__:main"
 "codegen" = "scripts.codegen.client:main"
 "code-config" = "scripts.everycode.generate_code_config:main"
 # Spec decomposition commands
-spec-decompose = "scripts.spec_decomposition.cli:main"
+spec-decompose = "scripts.spec_manager.spec_manager.decomposition.cli:main"
 # Spec refinement commands
 spec = "scripts.spec_refinement.cli:main"
 "spec.repair-bakeoff" = "spec_manager.refinement.evaluation.repair_bakeoff:main"

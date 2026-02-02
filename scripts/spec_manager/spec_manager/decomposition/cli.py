@@ -25,7 +25,6 @@ from scripts.spec_decomposition.extract import (
     extract_relation_to_document,
 )
 from scripts.spec_decomposition.finalize import finalize_output
-from scripts.spec_decomposition.graph import build_dependency_graph, save_dependency_graph
 from scripts.spec_decomposition.id_generator import IDType, generate_id, load_id_map, save_id_map
 from scripts.spec_decomposition.recompose import recompose
 from scripts.spec_decomposition.staging import (
@@ -44,6 +43,10 @@ from scripts.spec_decomposition.workspace import (
     load_state,
     resolve_discovery_staging,
     save_state,
+)
+from scripts.spec_manager.spec_manager.utils.graph import (
+    build_dependency_graph,
+    save_dependency_graph,
 )
 
 
@@ -1270,7 +1273,7 @@ def cmd_process_context(args: argparse.Namespace) -> int:
     created_relations: list[str] = []
 
     for item in context_items:
-        combined_lines = [int(l) for l in item.get("lines", []) if str(l).isdigit()]
+        combined_lines = [int(ln) for ln in item.get("lines", []) if str(ln).isdigit()]
         combined_lines = sorted(set(combined_lines))
         if not combined_lines:
             continue
@@ -1457,7 +1460,7 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
                 "orphans_found": len(orphan_lines),
                 "orphans_file": str(orphans_file),
                 "context_file": str(context_file),
-                "message": "Run orphan-investigator (entity) or project-investigator (project) agent",
+                "message": "Run orphan-investigator or project-investigator agent",
             }
         )
     )
@@ -1657,7 +1660,7 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
             "",
             "## Evidence",
             "",
-            f"- **Lines**: {', '.join(str(l) for l in lines)}",
+            f"- **Lines**: {', '.join(str(ln) for ln in lines)}",
         ]
 
         orphan_file.write_text("\n".join(doc_lines))
@@ -1768,7 +1771,7 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
                 "",
                 "## Evidence",
                 "",
-                f"- **Lines**: {', '.join(str(l) for l in lines)}",
+                f"- **Lines**: {', '.join(str(ln) for ln in lines)}",
             ]
         )
 

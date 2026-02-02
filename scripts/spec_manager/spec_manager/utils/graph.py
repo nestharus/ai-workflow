@@ -227,12 +227,12 @@ def find_cycles(graph: dict) -> list[list[str]]:
         for edge in adjacency.get(node, {}).get("outgoing", []):
             target = edge["target"]
             if target not in visited:
-                dfs(target, path + [target])
+                dfs(target, [*path, target])
             elif target in rec_stack:
                 # Found a cycle
                 cycle_start = path.index(target) if target in path else -1
                 if cycle_start >= 0:
-                    cycle = path[cycle_start:] + [target]
+                    cycle = [*path[cycle_start:], target]
                     cycles.append(cycle)
 
         rec_stack.remove(node)

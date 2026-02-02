@@ -1,0 +1,1 @@
+"""Spec decomposition CLI package."""

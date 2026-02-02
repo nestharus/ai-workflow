@@ -1,4 +1,4 @@
-"""Tests for spec_decomposition.graph module."""
+"""Tests for spec_manager.spec_manager.utils.graph module."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spec_decomposition.graph import (
+from scripts.spec_manager.spec_manager.utils.graph import (
     build_dependency_graph,
     find_cycles,
     generate_mermaid_diagram,
