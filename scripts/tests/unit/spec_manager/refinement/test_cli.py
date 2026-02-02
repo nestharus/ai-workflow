@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
-from scripts.spec_refinement.cli import main
+from spec_manager.refinement.cli import main
 
 
 def _setup_initialized_workspace(fs, monkeypatch, run_id: str = "run1") -> WorkspaceManager:
@@ -63,15 +63,19 @@ def test_gaps_list_no_gaps(fs, monkeypatch) -> None:
 
 
 def test_spec_summarize_dispatches(fs, monkeypatch) -> None:
-    _setup_initialized_workspace(fs, monkeypatch)
+    manager = _setup_initialized_workspace(fs, monkeypatch)
 
-    with patch("scripts.spec_refinement.cli.summarize_all") as mock_summarize:
-        mock_summarize.return_value = {
+    def _mock_summarize(run_id: str, parallel: bool = True) -> dict[str, object]:
+        manager.start_phase(Phase.SUMMARIZATION)
+        manager.complete_phase(Phase.SUMMARIZATION, outputs={"summaries_count": 1})
+        return {
             "summaries_written": 1,
             "files_processed": 1,
             "errors": [],
             "issues": [],
         }
+
+    with patch("spec_manager.refinement.cli.summarize_all", side_effect=_mock_summarize) as mock_summarize:
         exit_code = main(["spec", "summarize", "run1", "--sequential"])
 
     assert exit_code == 0
@@ -83,11 +87,15 @@ def test_spec_synthesize_dispatches(fs, monkeypatch) -> None:
     manager.start_phase(Phase.SUMMARIZATION)
     manager.complete_phase(Phase.SUMMARIZATION, outputs={"summaries_count": 1})
 
-    with patch("scripts.spec_refinement.cli.synthesize_libraries") as mock_synth:
-        mock_synth.return_value = {
+    def _mock_synth(run_id: str) -> dict[str, object]:
+        manager.start_phase(Phase.LIBRARY_SYNTHESIS)
+        manager.complete_phase(Phase.LIBRARY_SYNTHESIS, outputs={"libraries_count": 1})
+        return {
             "libraries_created": 1,
             "issues": [],
         }
+
+    with patch("spec_manager.refinement.cli.synthesize_libraries", side_effect=_mock_synth) as mock_synth:
         exit_code = main(["spec", "synthesize", "run1"])
 
     assert exit_code == 0
@@ -136,7 +144,7 @@ def test_spec_build_specs_dispatches(fs, monkeypatch) -> None:
 def test_spec_summarize_runtime_error(fs, monkeypatch) -> None:
     _setup_initialized_workspace(fs, monkeypatch)
 
-    with patch("scripts.spec_refinement.cli.summarize_all") as mock_summarize:
+    with patch("spec_manager.refinement.cli.summarize_all") as mock_summarize:
         mock_summarize.side_effect = RuntimeError("Workspace not initialized")
         exit_code = main(["spec", "summarize", "run1"])
 
@@ -146,7 +154,7 @@ def test_spec_summarize_runtime_error(fs, monkeypatch) -> None:
 def test_spec_synthesize_with_error_result(fs, monkeypatch) -> None:
     _setup_initialized_workspace(fs, monkeypatch)
 
-    with patch("scripts.spec_refinement.cli.synthesize_libraries") as mock_synth:
+    with patch("spec_manager.refinement.cli.synthesize_libraries") as mock_synth:
         mock_synth.return_value = {
             "error": "Synthesis failed",
             "libraries_created": 0,

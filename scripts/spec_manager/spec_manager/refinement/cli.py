@@ -698,7 +698,7 @@ def cmd_arch_map(args: argparse.Namespace) -> int:
 
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
-    from scripts.spec_refinement.qa import QA_CASES
+    from spec_manager.refinement.qa import QA_CASES
 
     print("Available QA cases:")
     for case_id, case in sorted(QA_CASES.items()):
@@ -708,7 +708,7 @@ def cmd_qa_list(_: argparse.Namespace) -> int:
 
 def cmd_qa_run(args: argparse.Namespace) -> int:
     """Run a single manual QA case (one agent step + judge)."""
-    from scripts.spec_refinement.qa import run_qa_case
+    from spec_manager.refinement.qa import run_qa_case
 
     try:
         result = run_qa_case(
@@ -730,7 +730,7 @@ def cmd_qa_run(args: argparse.Namespace) -> int:
 
 def cmd_qa_run_all(args: argparse.Namespace) -> int:
     """Run all manual QA cases (one agent step each + judge)."""
-    from scripts.spec_refinement.qa import run_qa_suite
+    from spec_manager.refinement.qa import run_qa_suite
 
     case_ids = args.case_ids or None
     try:

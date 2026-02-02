@@ -119,8 +119,8 @@ agents = "scripts.agents.__main__:main"
 # Spec decomposition commands
 spec-decompose = "scripts.spec_manager.spec_manager.decomposition.cli:main"
 # Spec refinement commands
-spec = "scripts.spec_refinement.cli:main"
-"spec.repair-bakeoff" = "spec_manager.refinement.evaluation.repair_bakeoff:main"
+spec = "scripts.spec_manager.spec_manager.refinement.cli:main"
+"spec.repair-bakeoff" = "scripts.spec_manager.spec_manager.refinement.evaluation.repair_bakeoff:main"
 # Spec manager commands
 spec-manager = "scripts.spec_manager.spec_manager.cli:main"
 # PRD commands
@@ -129,6 +129,7 @@ prd-chunker = "scripts.prd.chunker:main"
 "review.coderabbit" = "scripts.dev.review.coderabbit_review:main"
 "review.sonar" = "scripts.dev.review.sonar_review:main"
 "review.latest" = "scripts.dev.review.latest_review:main"
+"dev.check-spec-imports" = "scripts.dev.check_spec_imports:main"
 # Test runner scripts
 test-coverage = "scripts.dev.test_runner.test_coverage:main"
 test-files = "scripts.dev.test_runner.test_files:main"

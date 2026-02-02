@@ -21,7 +21,7 @@ from spec_manager.refinement.workflows.evidence_expansion import _build_evidence
 from spec_manager.refinement.workflows.spec_building import _build_file_ref, _build_patch_prompt
 from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
 
-from scripts.spec_refinement.qa.validators import (
+from spec_manager.refinement.qa.validators import (
     validate_architecture_library_mapping_output,
     validate_architecture_proposal_output,
     validate_architecture_selection_output,
