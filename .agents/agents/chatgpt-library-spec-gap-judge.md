@@ -31,7 +31,7 @@ Each finding:
 
 ```json
 {
-  "source": "[FILEPATH::SECTION]",
+  "source": "[spec_snapshot/<relpath>::SEC-F####-####]",
   "missing_content": "description",
   "where_in_spec": "suggested section",
   "severity": "must|should|nice-to-have"
@@ -53,7 +53,15 @@ Return a JSON object with:
 
 ## Rules
 
-- `source` must use `[FILEPATH::SECTION]` format.
+ - `source` must use `[spec_snapshot/<relpath>::SEC-F####-####]` format (preferred) or `[F####::SECTION]` (legacy accepted).
 - `source` SECTION must be one of the valid section labels provided in the prompt (exact match).
 - Always output valid JSON.
 - This is per-file diff, not cross-corpus invariant extraction.
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

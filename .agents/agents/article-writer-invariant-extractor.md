@@ -145,3 +145,11 @@ When a platform is specified, automatically include known platform constraints:
 4. Mark semantic constraints as `auto_fixable: true` since the LLM can rewrite
 5. Mark count constraints as `auto_fixable: false` (requires condensation)
 6. Always include `fix_hint` for fixable violations
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

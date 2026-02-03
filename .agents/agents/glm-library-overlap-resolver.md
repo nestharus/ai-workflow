@@ -8,7 +8,7 @@ model: glm
 - Return ONLY valid JSON. No preamble, no code fences.
 - REQUIRED SCHEMA:
   {"decision": "assign_to_lib_A|assign_to_lib_B|create_cross_cutting|mark_shared_boundary",
-  "rationale": "string", "affected_files": ["file_###"]}
+  "rationale": "string", "affected_files": ["F####"]}
 - decision MUST be one of: assign_to_lib_A, assign_to_lib_B, create_cross_cutting,
   mark_shared_boundary.
 - Rationale MUST justify the decision using evidence pointers.
@@ -33,6 +33,14 @@ Resolve overlaps between two library charters.
 {
   "decision": "assign_to_lib_A",
   "rationale": "Shared files primarily support Library A's intent; Library B only references them indirectly.",
-  "affected_files": ["file_003", "file_007"]
+  "affected_files": ["F0003", "F0007"]
 }
 ```
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

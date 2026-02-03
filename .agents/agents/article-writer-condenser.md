@@ -135,3 +135,11 @@ If the piece is 320 characters over and about AI agent runners:
   "question": "We're 320 characters over the LinkedIn limit. I recommend condensing the VS Code history (saves 120 chars) - the audience already knows this story. Should I: (A) cut the Jira-to-Notion anecdote instead, (B) condense VS Code history [recommended], (C) remove the nuance section, or (D) combine B with light prose tightening?"
 }
 ```
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

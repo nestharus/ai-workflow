@@ -67,3 +67,11 @@ You MUST write the output to a file. Determine the output path from the input fi
 - Output: `.tasks/plans/workflow engine 2/checkpoint checks/diffs/01_invariants.md`
 
 Extract the `01` prefix from the input filename and create `01_invariants.md` in the same directory.
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

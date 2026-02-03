@@ -27,3 +27,11 @@
 
 - Evidence expansion: Run mapper for all (library, file) pairs, then spot-check uncertain files with the judge.
 - Spec building: Integrate all evidence files, run gap judge per file, rerun integrator for gaps, and repeat until clean.
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

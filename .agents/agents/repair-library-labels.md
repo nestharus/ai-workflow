@@ -11,6 +11,14 @@ You repair library label JSON to fix compliance issues.
 - Do NOT invent new labels or evidence.
 - Preserve all existing content whenever possible.
 
+## ID Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+
 ## Input Format
 You receive:
 1. Invalid JSON output

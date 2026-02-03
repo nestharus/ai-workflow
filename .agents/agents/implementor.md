@@ -41,3 +41,11 @@ Final output must be exactly one of these formats with no extra prose:
 - Use repo tools/scripts instead of ad-hoc commands when available
 - Prefer fixing code over modifying tests unless tests are incorrect
 - Use firecrawl tools to search for documentation when stuck on unfamiliar patterns
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

@@ -30,9 +30,20 @@ Return a JSON object with:
 
 ## Critical Rules
 - Citations MUST use library pointers only:
-  - `[lib_###::charter.md]`
-  - `[lib_###::spec.md::SECTION]` where SECTION is taken from the allow-list provided in the prompt (exact match).
-- Do NOT use source-file citations like `[file_001::REQS]` in the output (even if you see them inside specs).
+  - `[LIB-####::charter.md]`
+  - `[LIB-####::spec.md::SECTION]` where SECTION is taken from the allow-list provided in the prompt (exact match).
+- Do NOT use source-file citations like `[spec_snapshot/requirements.md::SEC-F0001-0001]` in the output (even if you see them inside specs).
 - Selection rationale must cite specific library requirements
 - Rejected architectures must have concrete reasons, not vague concerns
 - If no architecture is suitable, return `selected_arch_id: null` with explanation
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Library pointers are derived, multi-hop artifacts:
+  - [LIB-####::charter.md]
+  - [LIB-####::spec.md::SECTION]
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

@@ -62,3 +62,11 @@ Then you find that paragraph and condense/remove it, smoothing the transition fr
 ## Output
 
 Return ONLY the revised draft. No JSON. No markdown fences. No commentary.
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

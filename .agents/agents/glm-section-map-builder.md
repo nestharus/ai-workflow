@@ -13,8 +13,8 @@ model: glm
 - Descriptions MUST focus on WHAT, not HOW.
 - Sections MUST appear in sequential order.
 - Outputs MUST reflect the provided sections_json exactly (no invented sections).
-- NOTE: Section IDs are used for evidence pointers; current format [FILE_ID::SECTION] will migrate to
-  [spec_snapshot/<relpath>::SEC-...] in a later phase.
+- NOTE: Section IDs are used for evidence pointers; use [spec_snapshot/<relpath>::SEC-F####-####]
+  (preferred) or [F####::SECTION] (legacy accepted).
 
 FORBIDDEN:
 - Missing section IDs.
@@ -32,14 +32,22 @@ FORBIDDEN:
 ## OUTPUT FORMAT
 
 ```markdown
-# Section Map: file_001
+# Section Map: F0001
 
-## SEC-file_001-0001: Introduction (Lines 1-12)
+## SEC-F0001-0001: Introduction (Lines 1-12)
 Summarizes the document purpose and scope for the spec file.
 
-## SEC-file_001-0002: Requirements (Lines 13-44)
+## SEC-F0001-0002: Requirements (Lines 13-44)
 Lists core functional requirements and success criteria for the system.
 
-## SEC-file_001-0003: Constraints (Lines 45-78)
+## SEC-F0001-0003: Constraints (Lines 45-78)
 Details technical constraints, limits, and non-functional considerations.
 ```
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

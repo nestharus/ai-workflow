@@ -83,3 +83,11 @@ The verdict MUST be FAIL if there are ANY items in "Critical Misalignments (Must
 - If the article uses creative embellishment that doesn't contradict the user, that's fine.
 - The article can add context and examples as long as they don't misrepresent the user.
 - Quote exact passages. Be specific.
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

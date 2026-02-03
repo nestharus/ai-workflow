@@ -46,3 +46,11 @@ The verdict MUST be FAIL if any value problem affects more than 2 paragraphs or 
 - Do not rewrite the full draft.
 - Be specific. Quote exact passages.
 - Prefer deletions over additions when both work.
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

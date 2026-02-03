@@ -11,6 +11,17 @@ You repair architecture selection rationale text to fix compliance issues.
 - Do NOT invent new evidence pointers
 - Only fix: invalid library references, invalid citations, missing citations, formatting issues
 
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Library pointers are derived, multi-hop artifacts:
+  - [LIB-####::charter.md]
+  - [LIB-####::spec.md::SECTION]
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+
 ## Input Format
 You receive:
 1. Invalid rationale text

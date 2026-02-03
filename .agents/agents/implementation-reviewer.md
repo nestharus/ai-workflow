@@ -251,3 +251,11 @@ Return the review status:
 4. **Flag only plan issues**: Missing requirements, misaligned implementations, or bugs in plan-related code
 5. **Track status**: Conclusions file persists across cycles for efficient re-review
 6. **File-based output**: Always write to files, never return inline
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

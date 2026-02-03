@@ -74,3 +74,11 @@ For each investigated error, report:
 - **DO** explain WHY suppression might be appropriate when suggesting it
 - **DO NOT** make changes to files - only report findings
 - **DO NOT** suggest suppressions without strong justification
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
+

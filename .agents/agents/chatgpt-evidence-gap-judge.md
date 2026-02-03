@@ -28,7 +28,7 @@ Return a JSON object with:
 - Look for: implicit dependencies, constraints mentioned in passing, edge cases, integration points, and error handling requirements.
 - Only report sections with clear relevance to the library charter.
 - If no missing sections are found, return an empty list and set scan_complete to true.
-- Rationale must include evidence pointers using `[FILEPATH::SECTION]` format (use the file id from input).
+- Rationale must include evidence pointers using `[spec_snapshot/<relpath>::SEC-F####-####]` format (preferred) or `[F####::SECTION]` (legacy accepted).
 - Always output valid JSON.
 
 ## Output Format
@@ -38,10 +38,18 @@ Return a JSON object with:
   "missing_sections": [
     {
       "section_label": "error-handling",
-      "rationale": "The charter requires robust failure modes, and this section defines them. [file_001::error-handling]",
+      "rationale": "The charter requires robust failure modes, and this section defines them. [spec_snapshot/error-handling.md::SEC-F0001-0007]",
       "confidence": 0.8
     }
   ],
   "scan_complete": true
 }
 ```
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

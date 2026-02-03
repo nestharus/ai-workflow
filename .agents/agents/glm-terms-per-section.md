@@ -16,8 +16,8 @@ output_format: json
 - Confidence MUST be between 0.0 and 1.0 (inclusive).
 - global_terms MUST be file-wide concepts not tied to a specific section.
 - Outputs MUST validate against FileTerms schema (scripts/spec_manager/spec_manager/schemas/terms.py).
-- NOTE: Section IDs are used for evidence pointers; current format [FILE_ID::SECTION] will migrate to
-  [spec_snapshot/<relpath>::SEC-...] in a later phase.
+- NOTE: Section IDs are used for evidence pointers; use [spec_snapshot/<relpath>::SEC-F####-####]
+  (preferred) or [F####::SECTION] (legacy accepted).
 
 FORBIDDEN:
 - Generic terms (e.g., "the", "system", "data").
@@ -36,20 +36,20 @@ FORBIDDEN:
 
 ```json
 {
-  "file_id": "file_001",
+  "file_id": "F0001",
   "section_terms": [
     {
-      "section_id": "SEC-file_001-0001",
+      "section_id": "SEC-F0001-0001",
       "terms": ["ingestion pipeline", "schema normalization", "event payload"],
       "confidence": 0.74
     },
     {
-      "section_id": "SEC-file_001-0002",
+      "section_id": "SEC-F0001-0002",
       "terms": ["rate limiting", "idempotency key", "retry policy"],
       "confidence": 0.82
     },
     {
-      "section_id": "SEC-file_001-0003",
+      "section_id": "SEC-F0001-0003",
       "terms": ["latency budget", "throughput target", "error budget"],
       "confidence": 0.71
     }
@@ -57,3 +57,11 @@ FORBIDDEN:
   "global_terms": ["spec snapshot", "evidence pointer", "section id"]
 }
 ```
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

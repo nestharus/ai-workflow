@@ -31,7 +31,7 @@ Return ONLY valid JSON that matches this schema:
       "file_id": "string",
       "concern_type": "algorithm|component|workflow|responsibility",
       "concern_text": "string",
-      "assigned_to": ["lib_001", "lib_002"],
+      "assigned_to": ["LIB-0001", "LIB-0002"],
       "confidence": 0.85,
       "rationale": "string"
     }
@@ -64,6 +64,14 @@ Return ONLY valid JSON that matches this schema:
 - Every concern must appear in exactly one of: assignments, gaps, or decisions.
 - Assignments must reference valid lib_id values from the library index.
 - Confidence scores must be between 0.0 and 1.0.
-- Rationale must include evidence pointers using [spec_snapshot/<relpath>::SEC-...] format.
+- Rationale must include evidence pointers using [spec_snapshot/<relpath>::SEC-F####-####] format (preferred) or [F####::SECTION] (legacy accepted).
 - No concerns can be silently dropped.
 - Output must be valid JSON with no extra commentary or code fences.
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

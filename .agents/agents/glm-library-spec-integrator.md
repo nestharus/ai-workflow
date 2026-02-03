@@ -35,8 +35,8 @@ Return a single JSON object with:
 
 ```json
 {
-  "file_id": "file_001",
-  "lib_id": "lib_001",
+  "file_id": "F0001",
+  "lib_id": "LIB-0001",
   "patches": [
     {
       "op": "add|edit|move",
@@ -44,7 +44,7 @@ Return a single JSON object with:
       "bullet_index": 0,
       "source_section": "Intent|Boundaries|Requirements|Constraints|Dependencies|Decisions Needed",
       "content": "string",
-      "citations": ["[file_001::SECTION]"]
+      "citations": ["[spec_snapshot/requirements/core.md::SEC-F0001-0001]"]
     }
   ]
 }
@@ -56,13 +56,23 @@ Notes:
 - For `move`, `content` may be an empty string to move the existing bullet as-is.
 - Citations are appended to the bullet content by the patch applier; still provide them in `citations`.
 
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+
+### Citation Format Examples
+
+- Preferred: [spec_snapshot/requirements/core.md::SEC-F0001-0001]
+- Legacy (accepted): [F0001::INTRO]
+
 ## Rules
 
 - Allowed ops: `add`, `edit`, `move`. `delete` is FORBIDDEN.
-- Only cite SOURCE files using `[file_###::SECTION]`.
+- Only cite SOURCE files using `[spec_snapshot/<relpath>::SEC-F####-####]` (preferred) or `[F####::SECTION]` (legacy accepted).
 - Do NOT cite derived artifacts such as `charter`, `libraries/...`, `runs/...`.
 - Every bullet in `Boundaries`, `Requirements`, `Constraints`, and `Dependencies` MUST have at least one valid citation.
 - Section labels in citations MUST match the provided allow-list exactly.
 - When closing gaps, preserve key terms from the source/gap text verbatim.
 - If a gap indicates an unsupported assertion, do NOT assert it as fact: move it into `Decisions Needed` as an explicit question/assumption.
-
