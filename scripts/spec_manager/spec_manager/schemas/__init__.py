@@ -14,6 +14,17 @@ from .files import FileManifestEntry, FilesManifest
 from .gap_judge import GapFinding, GapJudgeOutput
 from .library_labels import LibraryLabel, LibraryLabelerOutput
 from .qa_judge import QaCriterionResult, QaJudgeOutput
+from .review_actions import (
+    ReviewAction,
+    ReviewActionsReport,
+    allocate_action_id,
+    generate_stable_action_ids,
+    read_review_actions_json,
+    validate_pointer_format,
+    validate_pointer_references,
+    write_review_actions_json,
+    write_review_actions_markdown,
+)
 from .sections import FileSections, SectionSpan
 from .spec_indexes import Decision, DecisionsIndex, SpecElement, SpecIndex
 from .spec_patches import SpecPatchOp, SpecPatchOutput
@@ -40,10 +51,19 @@ __all__ = [
     "LineAtom",
     "QaCriterionResult",
     "QaJudgeOutput",
+    "ReviewAction",
+    "ReviewActionsReport",
     "SectionSpan",
     "SectionTerms",
     "SpecElement",
     "SpecIndex",
     "SpecPatchOp",
     "SpecPatchOutput",
+    "allocate_action_id",
+    "generate_stable_action_ids",
+    "read_review_actions_json",
+    "validate_pointer_format",
+    "validate_pointer_references",
+    "write_review_actions_json",
+    "write_review_actions_markdown",
 ]
