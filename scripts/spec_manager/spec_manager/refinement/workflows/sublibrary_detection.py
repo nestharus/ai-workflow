@@ -333,7 +333,7 @@ def _validate_sublibrary_proposal(
             )
             continue
 
-        parsed = parse_evidence_pointer(pointer)
+        parsed = parse_evidence_pointer(pointer, allow_multi_hop=True)
         if parsed is None:
             issues.append(
                 {
@@ -351,22 +351,6 @@ def _validate_sublibrary_proposal(
 
         file_ref = parsed["file_ref"]
         section_ref = parsed["section_ref"]
-
-        if "::" in section_ref:
-            issues.append(
-                {
-                    "type": "multi_hop_pointer_in_evidence",
-                    "parent_lib_id": parent_lib_id,
-                    "sub_lib_id": sub_lib_id,
-                    "pointer": pointer,
-                    "message": (
-                        "Multi-hop pointers (e.g., [LIB-####::spec.md::REQ]) are not "
-                        "allowed in evidence partitions. Evidence must reference "
-                        "source files only."
-                    ),
-                }
-            )
-            continue
 
         file_id_lookup = build_file_id_lookup(
             manager.state.file_manifest,
@@ -481,15 +465,12 @@ def _create_sublibrary(
         if not isinstance(pointer, str):
             continue
 
-        parsed = parse_evidence_pointer(pointer)
+        parsed = parse_evidence_pointer(pointer, allow_multi_hop=True)
         if parsed is None:
             continue
 
         file_ref = parsed["file_ref"]
         section_ref = parsed["section_ref"]
-
-        if "::" in section_ref:
-            continue
 
         file_id = file_id_lookup.get(file_ref)
         if file_id is None:

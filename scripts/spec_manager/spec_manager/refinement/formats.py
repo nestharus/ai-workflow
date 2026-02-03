@@ -123,8 +123,14 @@ def normalize_compound_pointers(text: str) -> str:
     return re.sub(r"\[([^\[\]]*?::[^\[\]]*?)\]", _rewrite, text)
 
 
-def parse_evidence_pointer(pointer: str) -> dict[str, str] | None:
-    """Parse evidence pointer into file/section refs and format type."""
+def parse_evidence_pointer(pointer: str, *, allow_multi_hop: bool = False) -> dict[str, str] | None:
+    """Parse evidence pointer into file/section refs and format type.
+
+    When *allow_multi_hop* is ``True``, three-part pointers such as
+    ``[file_ref::intermediate::section_ref]`` are accepted and the result
+    includes an ``"intermediate"`` key.  When ``False`` (the default),
+    multi-hop pointers cause the function to return ``None``.
+    """
     cleaned = pointer.strip()
     if not cleaned:
         return None
@@ -132,16 +138,40 @@ def parse_evidence_pointer(pointer: str) -> dict[str, str] | None:
         cleaned = f"[{cleaned}]"
     match = EVIDENCE_POINTER_NEW_RE.fullmatch(cleaned)
     if match:
+        file_ref = match.group(1).strip()
+        section_ref = match.group(2).strip()
+        if "::" in section_ref:
+            if not allow_multi_hop:
+                return None
+            intermediate, _, final_section = section_ref.partition("::")
+            return {
+                "file_ref": file_ref,
+                "intermediate": intermediate.strip(),
+                "section_ref": final_section.strip(),
+                "format": "new",
+            }
         return {
-            "file_ref": match.group(1).strip(),
-            "section_ref": match.group(2).strip(),
+            "file_ref": file_ref,
+            "section_ref": section_ref,
             "format": "new",
         }
     match = EVIDENCE_POINTER_RE.fullmatch(cleaned)
     if match:
+        file_ref = match.group(1).strip()
+        section_ref = match.group(2).strip()
+        if "::" in section_ref:
+            if not allow_multi_hop:
+                return None
+            intermediate, _, final_section = section_ref.partition("::")
+            return {
+                "file_ref": file_ref,
+                "intermediate": intermediate.strip(),
+                "section_ref": final_section.strip(),
+                "format": "legacy",
+            }
         return {
-            "file_ref": match.group(1).strip(),
-            "section_ref": match.group(2).strip(),
+            "file_ref": file_ref,
+            "section_ref": section_ref,
             "format": "legacy",
         }
     return None
