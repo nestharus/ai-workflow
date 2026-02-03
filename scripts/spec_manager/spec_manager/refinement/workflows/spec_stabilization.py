@@ -212,7 +212,7 @@ def _process_bullet_line(
     rest_of_line = bullet_match.group(3)
     try:
         element_id = allocate_element_id(lib_id, element_type, counters)
-    except ValueError as exc:
+    except ValueError:
         logger.exception(
             "Failed to allocate %s ID for %s spec",
             element_type,
@@ -254,6 +254,25 @@ def _ensure_flows_section(content: str) -> str:
             return f"{content[:end]}{insert_text}{content[end:]}"
 
     return content + "\n## Flows\n\n"
+
+
+def _extract_decisions_from_spec(spec_content: str) -> str:
+    if not spec_content:
+        return ""
+    sections = _extract_sections_with_positions(spec_content, level=2)
+    for title, start, end in sections:
+        if title == "Decisions Needed":
+            return spec_content[start:end]
+    return ""
+
+
+def _ensure_decisions_header(decisions_content: str) -> str:
+    if not decisions_content:
+        return decisions_content
+    stripped = decisions_content.lstrip()
+    if stripped.startswith("# ") or stripped.startswith("## "):
+        return decisions_content
+    return f"# Decisions\n\n{decisions_content}"
 
 
 def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[dict[str, Any]]:
@@ -434,19 +453,55 @@ def insert_element_ids(
 
 
 def insert_decision_ids(
-    decisions_content: str, lib_id: str, id_counters: dict[str, int]
+    decisions_content: str,
+    spec_content: str,
+    lib_id: str,
+    id_counters: dict[str, int],
 ) -> tuple[str, int]:
-    """Insert decision IDs. Implementation in Phase 4.
+    """Insert stable decision IDs into decisions.md content.
+
+    If decisions_content is empty, extracts decision bullets from the
+    spec.md "## Decisions Needed" section. Assigns DEC-LIB-####-#### IDs
+    to decision bullets that don't already have stable IDs. Preserves
+    existing decision IDs across re-runs.
 
     Args:
-        decisions_content: Decisions content to modify.
-        lib_id: Library identifier.
-        id_counters: Mutable counters used for ID allocation.
+        decisions_content: Current decisions.md content (may be empty).
+        spec_content: Spec.md content for decision extraction.
+        lib_id: Library identifier (e.g., "LIB-0001").
+        id_counters: Mutable counters map for element types.
 
     Returns:
-        Tuple of updated decisions content and number of IDs assigned.
+        Tuple of (updated_decisions_content, number_of_ids_assigned).
     """
-    return decisions_content, 0
+    if not decisions_content.strip():
+        decisions_content = _extract_decisions_from_spec(spec_content)
+        if not decisions_content.strip():
+            logger.debug("No decisions found in spec.md for %s", lib_id)
+            return "", 0
+        decisions_content = _ensure_decisions_header(decisions_content)
+        logger.info("Extracted decisions from spec.md for %s", lib_id)
+
+    lines = decisions_content.splitlines(keepends=True)
+    updated_lines: list[str] = []
+    ids_assigned = 0
+    for line in lines:
+        line_text = line.rstrip("\r\n")
+        line_ending = line[len(line_text) :]
+        updated_line, assigned = _process_bullet_line(line_text, lib_id, "DEC", id_counters)
+        if assigned:
+            ids_assigned += 1
+        updated_lines.append(updated_line + line_ending)
+
+    # Future: Structured decision parsing
+    # After ID insertion, optionally invoke LLM-based normalization
+    # to extract: question, options, default, impact, status
+    # This would populate the decisions_index.json with structured fields
+    # Agent: glm-decision-normalizer (to be implemented in later phase)
+
+    final_content = "".join(updated_lines)
+    logger.info("Assigned %s decision IDs to %s", ids_assigned, lib_id)
+    return final_content, ids_assigned
 
 
 def build_spec_index(spec_content: str, lib_id: str) -> dict[str, Any]:
@@ -775,7 +830,7 @@ def stabilize_specs(
 
         normalized_spec, assigned_elements = insert_element_ids(normalized_spec, lib_id, counters)
         normalized_decisions, assigned_decisions = insert_decision_ids(
-            normalized_decisions, lib_id, counters
+            normalized_decisions, normalized_spec, lib_id, counters
         )
 
         elements_assigned += assigned_elements
