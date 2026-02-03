@@ -502,19 +502,30 @@ def build_interface_index(
     edges: list[EdgeSchema],
     run_id: str,
     contract_base_path: Path,
+    contracts_ready: set[str] | None = None,
 ) -> InterfaceIndexSchema:
     """Build an interface index for a set of edges.
+
+    Only edges whose ``edge_id`` appears in *contracts_ready* receive
+    ``contract_files`` entries.  When *contracts_ready* is ``None`` every
+    edge is assumed to have a written contract (backwards-compatible
+    default).
 
     Args:
         edges: List of EdgeSchema instances.
         run_id: Workflow run identifier.
         contract_base_path: Base path used for contract artifact locations.
+        contracts_ready: Edge IDs with successfully written contract
+            artifacts.  Edges not in this set are still tracked in the
+            consumer/provider lookups but omitted from ``contract_files``
+            so the index never references missing files.
 
     Returns:
         InterfaceIndexSchema containing mappings of edges to contract files.
 
     Example:
-        index = build_interface_index(edges, "run_001", Path("."))
+        index = build_interface_index(edges, "run_001", Path("."),
+                                      contracts_ready={"EDGE-LIB-0001-LIB-0002"})
     """
     edges_by_consumer: dict[str, list[str]] = {}
     edges_by_provider: dict[str, list[str]] = {}
@@ -523,6 +534,9 @@ def build_interface_index(
     for edge in edges:
         edges_by_consumer.setdefault(edge.consumer_lib, []).append(edge.edge_id)
         edges_by_provider.setdefault(edge.provider_lib, []).append(edge.edge_id)
+
+        if contracts_ready is not None and edge.edge_id not in contracts_ready:
+            continue
 
         contract_rel = Path("libraries") / edge.consumer_lib / "interfaces" / edge.edge_id
         contract_files[edge.edge_id] = {

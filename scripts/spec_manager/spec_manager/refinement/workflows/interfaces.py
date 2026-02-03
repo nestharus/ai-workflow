@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.refinement.formats import _extract_json_payload
 from spec_manager.refinement.progress import ProgressTracker
+from spec_manager.refinement.repair import ArtifactType, repair_artifact
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from spec_manager.schemas.edge_list import (
-    EdgeSchema,
     EdgeListSchema,
+    EdgeSchema,
     allocate_edge_id,
     validate_edge_references,
 )
@@ -76,7 +78,7 @@ def _read_spec_index(lib_dir: Path) -> SpecIndex | None:
 
     try:
         return SpecIndex.model_validate(payload)
-    except Exception as exc:  # noqa: BLE001 - capture schema validation failures
+    except Exception as exc:
         _record_issue(lib_id, "spec_index_validation_error", str(exc))
         return None
 
@@ -100,7 +102,7 @@ def _read_decisions_index(lib_dir: Path) -> DecisionsIndex | None:
 
     try:
         return DecisionsIndex.model_validate(payload)
-    except Exception as exc:  # noqa: BLE001 - capture schema validation failures
+    except Exception as exc:
         _record_issue(lib_id, "decisions_index_validation_error", str(exc))
         return None
 
@@ -151,6 +153,50 @@ def _scan_spec_indexes_for_lib_mentions(
                         edge["evidence"].append(evidence_pointer)
 
     return candidate_edges
+
+
+def _parse_contract_output(output: str) -> dict[str, Any] | None:
+    """Parse interface contract agent output with tolerant JSON extraction."""
+    if not output or not output.strip():
+        return None
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        pass
+    else:
+        if isinstance(payload, (dict, list)):
+            return payload
+        return None
+    try:
+        extracted = _extract_json_payload(output)
+        payload = json.loads(extracted)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(payload, (dict, list)):
+        return payload
+    return None
+
+
+def _repair_contract_if_needed(
+    output: str,
+    errors: list[dict[str, Any]],
+    manager: WorkspaceManager,
+    allocated_library_ids: set[str],
+) -> str | None:
+    """Attempt repair of malformed interface contract output via the repair agent."""
+    try:
+        repaired, _evidence = repair_artifact(
+            output=output,
+            errors=errors,
+            allowlists={"library_ids": sorted(allocated_library_ids)},
+            artifact_type=ArtifactType.INTERFACE_CONTRACT,
+            model_override="",
+            manager=manager,
+        )
+        return repaired
+    except Exception as exc:
+        logger.warning("Interface contract repair failed: %s", exc)
+        return None
 
 
 def _build_edge_extraction_prompt(
@@ -229,7 +275,9 @@ def _extract_edges_via_llm(
     if not libraries:
         return llm_edges
 
-    tracker = ProgressTracker(total=len(libraries), description="Extracting interface edges", manager=manager)
+    tracker = ProgressTracker(
+        total=len(libraries), description="Extracting interface edges", manager=manager
+    )
 
     def _extract_for_library(lib_id: str, lib_dir: Path) -> list[dict[str, Any]]:
         if not LIB_ID_RE.fullmatch(lib_id):
@@ -262,16 +310,21 @@ def _extract_edges_via_llm(
             _record_issue(lib_id, "agent_error", str(exc))
             return []
 
-        try:
-            payload = json.loads(output)
-        except json.JSONDecodeError as exc:
-            _record_issue(lib_id, "agent_json_error", str(exc))
-            return []
+        payload = _parse_contract_output(output)
+        if payload is None:
+            repaired = _repair_contract_if_needed(
+                output=output,
+                errors=[{"type": "json_decode_error", "message": "Failed to parse agent JSON"}],
+                manager=manager,
+                allocated_library_ids=allocated_library_ids,
+            )
+            if repaired is not None:
+                payload = _parse_contract_output(repaired)
+            if payload is None:
+                _record_issue(lib_id, "agent_json_error", "Failed to parse contract output")
+                return []
 
-        if isinstance(payload, dict):
-            edges_payload = payload.get("edges")
-        else:
-            edges_payload = payload
+        edges_payload = payload.get("edges") if isinstance(payload, dict) else payload
 
         if not isinstance(edges_payload, list):
             _record_issue(lib_id, "agent_schema_error", "Agent output missing edges list")
@@ -378,7 +431,7 @@ def _extract_edges_via_llm(
                     else:
                         llm_edges[edge_key] = edge
                 tracker.update(status=lib_id)
-            except Exception as exc:  # noqa: BLE001 - continue processing others
+            except Exception as exc:
                 _record_issue(lib_id, "edge_extraction_failed", str(exc))
                 tracker.update(status=f"{lib_id} (failed)")
 
@@ -440,7 +493,7 @@ def _merge_and_deduplicate_edges(
         }
         try:
             edges.append(EdgeSchema.model_validate(payload))
-        except Exception as exc:  # noqa: BLE001 - skip invalid edges
+        except Exception as exc:
             _record_issue(consumer_lib, "edge_schema_error", str(exc), edge_id=edge_id)
 
     return edges
@@ -469,9 +522,7 @@ def _build_element_lookup(manager: WorkspaceManager) -> dict[str, set[str]]:
 
         decisions_index = _read_decisions_index(lib_dir)
         if decisions_index is not None:
-            element_ids.update(
-                decision.decision_id for decision in decisions_index.decisions
-            )
+            element_ids.update(decision.decision_id for decision in decisions_index.decisions)
 
         if element_ids:
             lookup[lib_id] = element_ids
@@ -514,6 +565,7 @@ def build_edge_context_bundles(
     edges: list[EdgeSchema],
     manager: WorkspaceManager,
 ) -> dict[str, dict[str, Any]]:
+    """Build context bundles for each edge including charters, elements, and architecture data."""
     bundles: dict[str, dict[str, Any]] = {}
     architecture_components = _extract_architecture_components(manager)
 
@@ -546,7 +598,9 @@ def build_edge_context_bundles(
                     else:
                         component_descriptions[item.strip()] = ""
 
-    def _extract_elements(spec_index: SpecIndex | None, element_ids: list[str]) -> list[dict[str, Any]]:
+    def _extract_elements(
+        spec_index: SpecIndex | None, element_ids: list[str]
+    ) -> list[dict[str, Any]]:
         if spec_index is None or not element_ids:
             return []
         element_lookup = {element.element_id: element for element in spec_index.elements}
@@ -567,7 +621,8 @@ def build_edge_context_bundles(
         return extracted
 
     def _extract_decisions(
-        decisions_index: DecisionsIndex | None, element_ids: list[str],
+        decisions_index: DecisionsIndex | None,
+        element_ids: list[str],
     ) -> list[dict[str, Any]]:
         if decisions_index is None or not element_ids:
             return []
