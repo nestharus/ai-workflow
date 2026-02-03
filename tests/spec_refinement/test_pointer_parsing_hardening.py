@@ -70,9 +70,7 @@ def test_parse_evidence_pointer_returns_none_for_empty_string() -> None:
     assert result is None
 
 
-def test_sublibrary_validation_rejects_malformed_pointer(
-    spec_refinement_workspace, fs
-) -> None:
+def test_sublibrary_validation_rejects_malformed_pointer(spec_refinement_workspace, fs) -> None:
     manager, _ = spec_refinement_workspace()
     proposal = _build_sublibrary_proposal("not-a-pointer")
 
@@ -85,23 +83,24 @@ def test_sublibrary_validation_rejects_malformed_pointer(
     )
 
 
-def test_sublibrary_validation_accepts_new_format_pointer(
-    spec_refinement_workspace, fs
-) -> None:
+def test_sublibrary_validation_accepts_new_format_pointer(spec_refinement_workspace, fs) -> None:
     manager, _ = spec_refinement_workspace()
-    proposal = _build_sublibrary_proposal("[spec_snapshot/test.md::SEC-F0001-0001]")
+    first_file_id = sorted(manager.state.file_manifest)[0]
+    first_section_id = manager.state.section_manifest[first_file_id][0]
+    relpath = manager.state.file_manifest[first_file_id]["relpath"]
+    proposal = _build_sublibrary_proposal(f"[spec_snapshot/{relpath}::{first_section_id}]")
 
     issues = _validate_sublibrary_proposal(manager, "LIB-0001", proposal, 0.2)
 
-    assert not any(issue.get("type") == "malformed_evidence_pointer" for issue in issues)
+    assert issues == []
 
 
-def test_sublibrary_validation_accepts_legacy_format_pointer(
-    spec_refinement_workspace, fs
-) -> None:
+def test_sublibrary_validation_accepts_legacy_format_pointer(spec_refinement_workspace, fs) -> None:
     manager, _ = spec_refinement_workspace()
-    proposal = _build_sublibrary_proposal("[F0001::INTRO]")
+    first_file_id = sorted(manager.state.file_manifest)[0]
+    first_section_id = manager.state.section_manifest[first_file_id][0]
+    proposal = _build_sublibrary_proposal(f"[{first_file_id}::{first_section_id}]")
 
     issues = _validate_sublibrary_proposal(manager, "LIB-0001", proposal, 0.2)
 
-    assert not any(issue.get("type") == "malformed_evidence_pointer" for issue in issues)
+    assert issues == []
