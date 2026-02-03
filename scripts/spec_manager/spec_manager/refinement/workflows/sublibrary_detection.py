@@ -10,7 +10,11 @@ from typing import Any, cast
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
-from spec_manager.refinement.formats import parse_file_summary, parse_gap_judge_output
+from spec_manager.refinement.formats import (
+    parse_evidence_pointer,
+    parse_file_summary,
+    parse_gap_judge_output,
+)
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import build_file_id_lookup, build_section_alias_map
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -317,37 +321,79 @@ def _validate_sublibrary_proposal(
         )
 
     for pointer in evidence_partition:
-        if not isinstance(pointer, str) or "::" not in pointer:
+        if not isinstance(pointer, str):
             issues.append(
                 {
                     "type": "invalid_evidence_pointer",
                     "parent_lib_id": parent_lib_id,
                     "sub_lib_id": sub_lib_id,
                     "pointer": pointer,
-                    "message": "Evidence pointer missing section",
+                    "message": "Evidence pointer must be a string",
                 }
             )
             continue
 
-        file_id, section_id = pointer.split("::", 1)
-        if file_id not in manager.state.file_manifest:
+        parsed = parse_evidence_pointer(pointer)
+        if parsed is None:
+            issues.append(
+                {
+                    "type": "malformed_evidence_pointer",
+                    "parent_lib_id": parent_lib_id,
+                    "sub_lib_id": sub_lib_id,
+                    "pointer": pointer,
+                    "message": (
+                        "Evidence pointer format is invalid. Expected "
+                        "[file_ref::section_ref] or [spec_snapshot/path::section_ref]"
+                    ),
+                }
+            )
+            continue
+
+        file_ref = parsed["file_ref"]
+        section_ref = parsed["section_ref"]
+
+        if "::" in section_ref:
+            issues.append(
+                {
+                    "type": "multi_hop_pointer_in_evidence",
+                    "parent_lib_id": parent_lib_id,
+                    "sub_lib_id": sub_lib_id,
+                    "pointer": pointer,
+                    "message": (
+                        "Multi-hop pointers (e.g., [LIB-####::spec.md::REQ]) are not "
+                        "allowed in evidence partitions. Evidence must reference "
+                        "source files only."
+                    ),
+                }
+            )
+            continue
+
+        file_id_lookup = build_file_id_lookup(
+            manager.state.file_manifest,
+            manager.structure.spec_snapshot_dir,
+        )
+        file_id = file_id_lookup.get(file_ref)
+
+        if file_id is None:
             issues.append(
                 {
                     "type": "unknown_file_reference",
                     "parent_lib_id": parent_lib_id,
                     "sub_lib_id": sub_lib_id,
                     "pointer": pointer,
-                    "message": f"Unknown file: {file_id}",
+                    "message": f"Unknown file reference: {file_ref}",
                 }
             )
-        elif section_id not in manager.state.section_manifest.get(file_id, []):
+            continue
+
+        if section_ref not in manager.state.section_manifest.get(file_id, []):
             issues.append(
                 {
                     "type": "unknown_section_reference",
                     "parent_lib_id": parent_lib_id,
                     "sub_lib_id": sub_lib_id,
                     "pointer": pointer,
-                    "message": f"Unknown section: {section_id}",
+                    "message": f"Unknown section: {section_ref} in file {file_id}",
                 }
             )
 
@@ -371,11 +417,16 @@ def _validate_sublibrary_overlap(
         evidence_partition = sub_lib.get("evidence_partition", [])
         if not isinstance(evidence_partition, list):
             evidence_partition = []
-        partitions[sub_lib_id] = {
-            pointer
-            for pointer in evidence_partition
-            if isinstance(pointer, str) and "::" in pointer
-        }
+        valid_pointers = set()
+        for pointer in evidence_partition:
+            if not isinstance(pointer, str):
+                continue
+            parsed = parse_evidence_pointer(pointer)
+            if parsed is None:
+                continue
+            valid_pointers.add(pointer.strip())
+
+        partitions[sub_lib_id] = valid_pointers
 
     ids = sorted(partitions.keys())
     for i, left_id in enumerate(ids):
@@ -420,18 +471,40 @@ def _create_sublibrary(
     charter_content = _format_sublibrary_charter(sub_lib)
     (sub_lib_dir / "charter.md").write_text(charter_content, encoding="utf-8")
 
-    evidence_payload = {
-        "sources": [
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest,
+        manager.structure.spec_snapshot_dir,
+    )
+
+    sources = []
+    for pointer in sub_lib.get("evidence_partition", []):
+        if not isinstance(pointer, str):
+            continue
+
+        parsed = parse_evidence_pointer(pointer)
+        if parsed is None:
+            continue
+
+        file_ref = parsed["file_ref"]
+        section_ref = parsed["section_ref"]
+
+        if "::" in section_ref:
+            continue
+
+        file_id = file_id_lookup.get(file_ref)
+        if file_id is None:
+            continue
+
+        sources.append(
             {
-                "file_id": pointer.split("::")[0],
-                "sections": [pointer.split("::")[1]],
+                "file_id": file_id,
+                "sections": [section_ref],
                 "confidence": 1.0,
                 "rationale": f"Partitioned from parent library {parent_lib_dir.name}",
             }
-            for pointer in sub_lib.get("evidence_partition", [])
-            if isinstance(pointer, str) and "::" in pointer
-        ]
-    }
+        )
+
+    evidence_payload = {"sources": sources}
     (sub_lib_dir / "evidence.json").write_text(
         json.dumps(evidence_payload, indent=2), encoding="utf-8"
     )
