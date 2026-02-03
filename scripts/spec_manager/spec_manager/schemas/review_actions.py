@@ -19,6 +19,7 @@ ELEMENT_ID_RE = re.compile(
     r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
 )
 MULTI_HOP_POINTER_RE = re.compile(r"^\[LIB-\d{4}::[^:]+::[^\]]+\]$")
+LIBRARY_DOC_POINTER_RE = re.compile(r"^\[LIB-\d{4}::[^:\]]+\]$")
 SOURCE_POINTER_RE = re.compile(r"^\[spec_snapshot/[^:]+::SEC-[A-Za-z0-9]+-\d{4}\]$")
 KNOWN_LIBRARY_SPEC_FILES = frozenset(
     {
@@ -52,7 +53,9 @@ def _validate_iso8601(value: str) -> str:
 
 def validate_pointer_format(pointer: str) -> bool:
     return bool(
-        MULTI_HOP_POINTER_RE.fullmatch(pointer) or SOURCE_POINTER_RE.fullmatch(pointer)
+        MULTI_HOP_POINTER_RE.fullmatch(pointer)
+        or LIBRARY_DOC_POINTER_RE.fullmatch(pointer)
+        or SOURCE_POINTER_RE.fullmatch(pointer)
     )
 
 
@@ -183,9 +186,14 @@ def validate_pointer_references(
         if not MULTI_HOP_SECTION_RE.fullmatch(section_ref):
             return False, f"Invalid section reference '{section_ref}' in multi-hop pointer."
         return True, None
+    file_ref = parsed["file_ref"]
+    section_ref = parsed["section_ref"]
+    if LIB_ID_RE.fullmatch(file_ref) and section_ref in KNOWN_LIBRARY_SPEC_FILES:
+        if file_ref not in allocated_library_ids:
+            return False, f"Unknown library id '{file_ref}'."
+        return True, None
     if parsed.get("format") == "new":
         file_lookup = build_file_id_lookup(file_manifest)
-        file_ref = parsed["file_ref"]
         if file_ref not in file_lookup and f"spec_snapshot/{file_ref}" not in file_lookup:
             return False, f"Unknown file reference '{file_ref}'."
         return True, None
@@ -212,9 +220,7 @@ def write_review_actions_markdown(report: ReviewActionsReport, output_path: Path
     def _escape_table(value: str) -> str:
         return value.replace("|", "\\|")
 
-    thresholds = ", ".join(
-        f"{key}={value}" for key, value in sorted(report.thresholds.items())
-    )
+    thresholds = ", ".join(f"{key}={value}" for key, value in sorted(report.thresholds.items()))
 
     lines: list[str] = [
         "# Library Structure Review Actions",
