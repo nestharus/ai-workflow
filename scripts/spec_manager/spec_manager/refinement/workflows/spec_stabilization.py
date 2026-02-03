@@ -20,7 +20,11 @@ from spec_manager.refinement.formats import (
     migrate_pointers_to_new_format,
     parse_evidence_pointer,
 )
-from spec_manager.refinement.validation_utils import build_file_id_lookup
+from spec_manager.refinement.validation_utils import (
+    build_file_id_lookup,
+    build_section_alias_map,
+    resolve_section_reference,
+)
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 DEFAULT_COUNTERS: dict[str, int] = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
@@ -201,7 +205,13 @@ def _consume_pointer_migration_errors() -> list[dict[str, str]]:
     return errors
 
 
-def _normalize_pointers(content: str, manager: WorkspaceManager, *, context: str) -> str:
+def _normalize_pointers(
+    content: str,
+    manager: WorkspaceManager,
+    *,
+    context: str,
+    section_alias_map: dict[str, dict[str, str]] | None = None,
+) -> str:
     """Normalize legacy evidence pointers using the migration infrastructure.
 
     Converts legacy `[F####::SECTION]` pointers to canonical
@@ -214,6 +224,8 @@ def _normalize_pointers(content: str, manager: WorkspaceManager, *, context: str
         content: Raw markdown content to normalize.
         manager: Workspace manager providing manifest and snapshot context.
         context: Label used for logging (e.g., "spec.md").
+        section_alias_map: Optional section alias map for resolving legacy
+            section labels to canonical IDs.
 
     Returns:
         Content with legacy evidence pointers migrated to canonical format.
@@ -221,14 +233,18 @@ def _normalize_pointers(content: str, manager: WorkspaceManager, *, context: str
     if not content:
         return content
     try:
-        return migrate_pointers_to_new_format(content, manager)
+        return migrate_pointers_to_new_format(content, manager, section_alias_map=section_alias_map)
     except Exception as exc:
         logger.warning("Pointer normalization failed for %s: %s", context, exc)
         _record_pointer_migration_error(context, str(exc))
         return content
 
 
-def normalize_spec_pointers(spec_content: str, manager: WorkspaceManager) -> str:
+def normalize_spec_pointers(
+    spec_content: str,
+    manager: WorkspaceManager,
+    section_alias_map: dict[str, dict[str, str]] | None = None,
+) -> str:
     """Normalize evidence pointers in spec.md content.
 
     Legacy `[F####::SECTION]` pointers are converted to
@@ -239,14 +255,22 @@ def normalize_spec_pointers(spec_content: str, manager: WorkspaceManager) -> str
     Args:
         spec_content: Raw spec content.
         manager: Workspace manager providing manifest and snapshot context.
+        section_alias_map: Optional section alias map for resolving legacy
+            section labels to canonical IDs.
 
     Returns:
         Spec content with normalized evidence pointers.
     """
-    return _normalize_pointers(spec_content, manager, context="spec.md")
+    return _normalize_pointers(
+        spec_content, manager, context="spec.md", section_alias_map=section_alias_map
+    )
 
 
-def normalize_decisions_pointers(decisions_content: str, manager: WorkspaceManager) -> str:
+def normalize_decisions_pointers(
+    decisions_content: str,
+    manager: WorkspaceManager,
+    section_alias_map: dict[str, dict[str, str]] | None = None,
+) -> str:
     """Normalize evidence pointers in decisions.md content.
 
     Converts legacy `[F####::SECTION]` pointers to
@@ -257,11 +281,15 @@ def normalize_decisions_pointers(decisions_content: str, manager: WorkspaceManag
     Args:
         decisions_content: Raw decisions content.
         manager: Workspace manager providing manifest and snapshot context.
+        section_alias_map: Optional section alias map for resolving legacy
+            section labels to canonical IDs.
 
     Returns:
         Decisions content with normalized evidence pointers.
     """
-    return _normalize_pointers(decisions_content, manager, context="decisions.md")
+    return _normalize_pointers(
+        decisions_content, manager, context="decisions.md", section_alias_map=section_alias_map
+    )
 
 
 def insert_element_ids(
@@ -404,20 +432,28 @@ def _count_legacy_pointers(content: str) -> int:
 
 
 def _validate_pointers(
-    content: str, file_manifest: dict[str, dict[str, str]], lib_id: str
+    content: str,
+    file_manifest: dict[str, dict[str, str]],
+    lib_id: str,
+    section_alias_map: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Validate evidence pointers resolve to known files.
+    """Validate evidence pointers resolve to known files and sections.
 
-    Only unresolved file references are reported, and multi-hop pointers
-    (e.g. `[LIB-0001::spec.md::REQ-...]`) are excluded from validation.
+    Unresolved file references and unresolved section references are
+    reported.  Multi-hop pointers (e.g. ``[LIB-0001::spec.md::REQ-...]``)
+    are excluded from validation.  When *section_alias_map* is provided,
+    section references are resolved through the alias map so that legacy
+    labels present only as aliases are not falsely flagged.
 
     Args:
         content: Markdown content containing evidence pointers.
         file_manifest: Manifest mapping file IDs to relpaths.
         lib_id: Library identifier used for issue reporting.
+        section_alias_map: Optional section alias map for resolving legacy
+            section labels to canonical section IDs.
 
     Returns:
-        List of issues for pointers with unresolved file references.
+        List of issues for pointers with unresolved references.
     """
     if not content:
         return []
@@ -431,17 +467,32 @@ def _validate_pointers(
         if "intermediate" in parsed:
             continue
         file_ref = parsed["file_ref"]
-        if file_ref in file_id_lookup:
+        resolved_file_id = file_id_lookup.get(file_ref)
+        if not resolved_file_id:
+            issues.append(
+                {
+                    "type": "unresolved_pointer",
+                    "lib_id": lib_id,
+                    "pointer": pointer,
+                    "file_ref": file_ref,
+                    "message": f"Unresolved file reference for pointer: {pointer}",
+                }
+            )
             continue
-        issues.append(
-            {
-                "type": "unresolved_pointer",
-                "lib_id": lib_id,
-                "pointer": pointer,
-                "file_ref": file_ref,
-                "message": f"Unresolved file reference for pointer: {pointer}",
-            }
-        )
+        if section_alias_map:
+            section_ref = parsed["section_ref"]
+            resolved = resolve_section_reference(section_ref, resolved_file_id, section_alias_map)
+            if resolved is None:
+                issues.append(
+                    {
+                        "type": "unresolved_section",
+                        "lib_id": lib_id,
+                        "pointer": pointer,
+                        "file_ref": file_ref,
+                        "section_ref": section_ref,
+                        "message": (f"Unresolved section reference for pointer: {pointer}"),
+                    }
+                )
     return issues
 
 
@@ -502,6 +553,8 @@ def stabilize_specs(
     if not target_libs:
         issues.append({"type": "no_libraries", "message": "No libraries found to stabilize."})
 
+    section_alias_map = build_section_alias_map(manager.state.section_manifest)
+
     for lib_dir in target_libs:
         lib_id = lib_dir.name
         processed_libs.append(lib_id)
@@ -558,8 +611,10 @@ def stabilize_specs(
         legacy_before_spec = _count_legacy_pointers(spec_content)
         legacy_before_decisions = _count_legacy_pointers(decisions_content)
 
-        normalized_spec = normalize_spec_pointers(spec_content, manager)
-        normalized_decisions = normalize_decisions_pointers(decisions_content, manager)
+        normalized_spec = normalize_spec_pointers(spec_content, manager, section_alias_map)
+        normalized_decisions = normalize_decisions_pointers(
+            decisions_content, manager, section_alias_map
+        )
 
         for error in _consume_pointer_migration_errors():
             issues.append(
@@ -573,8 +628,16 @@ def stabilize_specs(
                 }
             )
 
-        issues.extend(_validate_pointers(normalized_spec, manager.state.file_manifest, lib_id))
-        issues.extend(_validate_pointers(normalized_decisions, manager.state.file_manifest, lib_id))
+        issues.extend(
+            _validate_pointers(
+                normalized_spec, manager.state.file_manifest, lib_id, section_alias_map
+            )
+        )
+        issues.extend(
+            _validate_pointers(
+                normalized_decisions, manager.state.file_manifest, lib_id, section_alias_map
+            )
+        )
 
         legacy_after_spec = _count_legacy_pointers(normalized_spec)
         legacy_after_decisions = _count_legacy_pointers(normalized_decisions)

@@ -198,12 +198,20 @@ def build_evidence_pointer(
     return f"[spec_snapshot/{relpath}::{section_id}]"
 
 
-def migrate_pointers_to_new_format(content: str, manager: WorkspaceManager) -> str:
+def migrate_pointers_to_new_format(
+    content: str,
+    manager: WorkspaceManager,
+    section_alias_map: dict[str, dict[str, str]] | None = None,
+) -> str:
     """Migrate legacy evidence pointers to the new spec_snapshot format."""
     if not content:
         return content
 
-    from .validation_utils import build_file_id_lookup, build_section_id_lookup
+    from .validation_utils import (
+        build_file_id_lookup,
+        build_section_id_lookup,
+        resolve_section_reference,
+    )
 
     file_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
@@ -230,6 +238,13 @@ def migrate_pointers_to_new_format(content: str, manager: WorkspaceManager) -> s
         if not section_id:
             normalized = section_ref.strip().lower().replace(" ", "_").replace("-", "_")
             section_id = section_lookup.get(normalized)
+        if not section_id and section_alias_map:
+            section_id = resolve_section_reference(
+                section_ref,
+                resolved_file_id,
+                section_alias_map,
+                sections_data=sections_data,
+            )
         if not section_id:
             return pointer
 
