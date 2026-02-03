@@ -22,7 +22,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.workspace import WorkspaceManager
-from spec_manager.schemas.review_actions import ReviewActionsReport
+from spec_manager.schemas.review_actions import (
+    ReviewAction,
+    ReviewActionsReport,
+    generate_stable_action_ids,
+    validate_pointer_references,
+    write_review_actions_json,
+    write_review_actions_markdown,
+)
 from spec_manager.schemas.spec_indexes import SpecIndex
 
 logger = logging.getLogger(__name__)
@@ -103,6 +110,83 @@ def _load_all_spec_indexes(manager: WorkspaceManager) -> dict[str, SpecIndex]:
         indexes[lib_id] = index
 
     return indexes
+
+
+def _load_architecture_context(manager: WorkspaceManager) -> str | None:
+    r"""Load optional architecture context for boundary review prompts.
+
+    Args:
+        manager: Workspace manager for the active refinement run.
+
+    Returns:
+        Combined architecture text with section headers, or None when no
+        architecture context is available.
+
+    Examples:
+        >>> _load_architecture_context(manager)
+        "## selected.md\n...\n\n## mapping.md\n..."
+
+    Error handling:
+        Missing files return None. Read failures are logged and return None.
+    """
+    selected_path = manager.structure.architecture_dir / "selected.md"
+    if not selected_path.exists():
+        return None
+
+    sections: list[str] = []
+    try:
+        selected_content = selected_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Failed to read architecture selected.md: %s", exc)
+        return None
+
+    if selected_content:
+        sections.append("## selected.md")
+        sections.append(selected_content)
+
+    mapping_path = manager.structure.architecture_dir / "mapping.md"
+    if mapping_path.exists():
+        try:
+            mapping_content = mapping_path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Failed to read architecture mapping.md: %s", exc)
+            mapping_content = ""
+        if mapping_content:
+            sections.append("")
+            sections.append("## mapping.md")
+            sections.append(mapping_content)
+
+    combined = "\n".join(sections).strip()
+    if not combined:
+        return None
+    return _truncate_text(combined, 2000)
+
+
+def _extract_evidence_pointers(text: str) -> list[str]:
+    """Extract evidence pointers from agent rationale text.
+
+    Args:
+        text: Rationale or justification text that may include evidence pointers.
+
+    Returns:
+        List of evidence pointers in multi-hop or spec snapshot formats.
+
+    Examples:
+        >>> _extract_evidence_pointers(
+        ...     "See [LIB-0001::spec.md::REQ-LIB-0001-0001] and "
+        ...     "[spec_snapshot/foo.md::SEC-ARCH-0001]."
+        ... )
+        ["[LIB-0001::spec.md::REQ-LIB-0001-0001]", "[spec_snapshot/foo.md::SEC-ARCH-0001]"]
+
+    Error handling:
+        Returns an empty list when text is empty or contains no matches.
+    """
+    if not text:
+        return []
+    return re.findall(
+        r"\[(?:LIB-\d{4}::[^\]]+|spec_snapshot/[^\]]+::SEC-[A-Za-z0-9]+-\d{4})\]",
+        text,
+    )
 
 
 def _build_tfidf_vectors(
@@ -458,15 +542,18 @@ def detect_split_candidates(
 def detect_structure_issues(
     manager: WorkspaceManager,
     thresholds: dict[str, float] | None = None,
+    consolidate: bool = False,
 ) -> dict[str, Any]:
     """Run overlap and split detection with configurable thresholds.
 
     Args:
         manager: Workspace manager for the active refinement run.
         thresholds: Optional overrides for detection thresholds.
+        consolidate: When True, run review agents and write review action reports.
 
     Returns:
         Dictionary containing overlap/split candidates, applied thresholds, and any errors.
+        When consolidation is enabled, report_paths is included with output locations.
     """
     start_time = datetime.now()
     effective_thresholds = dict(_DEFAULT_THRESHOLDS)
@@ -502,6 +589,16 @@ def detect_structure_issues(
 
     if errors:
         results["errors"] = errors
+
+    if consolidate:
+        report = consolidate_proposals(
+            manager,
+            results["overlap_candidates"],
+            results["split_candidates"],
+            effective_thresholds,
+        )
+        json_path, md_path = write_review_reports(manager, report)
+        results["report_paths"] = {"json": str(json_path), "markdown": str(md_path)}
 
     duration = (datetime.now() - start_time).total_seconds()
     logger.info(
@@ -883,3 +980,245 @@ def _validate_split_planner_output(output: dict[str, Any], lib_id: str) -> list[
         errors.append("confidence must be between 0.0 and 1.0")
 
     return errors
+
+
+def _convert_boundary_judge_to_action(
+    judge_output: dict[str, Any],
+    lib_a: str,
+    lib_b: str,
+    matched_elements: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Convert boundary judge output into a review action payload.
+
+    Args:
+        judge_output: Parsed JSON output from the boundary judge agent.
+        lib_a: First library ID in the overlap candidate.
+        lib_b: Second library ID in the overlap candidate.
+        matched_elements: Shared element evidence from overlap detection.
+
+    Returns:
+        Action dictionary ready for ReviewAction validation, or None when the
+        judge recommends keeping libraries separate.
+
+    Examples:
+        >>> _convert_boundary_judge_to_action(
+        ...     {"action": "merge", "rationale": "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001]"},
+        ...     "LIB-0001",
+        ...     "LIB-0002",
+        ...     [],
+        ... )
+        {'type': 'merge', 'status': 'proposed', 'source_libs': ['LIB-0001', 'LIB-0002'], ...}
+
+    Error handling:
+        Expects pre-validated agent output. Invalid action values return None.
+    """
+    _ = matched_elements
+    action = judge_output.get("action")
+    if action == "keep_separate":
+        return None
+    if action not in {"merge", "move_elements"}:
+        return None
+
+    rationale = str(judge_output.get("rationale", "")).strip()
+    evidence = _extract_evidence_pointers(rationale)
+    summary = _truncate_text(rationale, 100) or "Boundary review proposal"
+
+    if action == "merge":
+        return {
+            "type": "merge",
+            "status": "proposed",
+            "source_libs": [lib_a, lib_b],
+            "target_libs": [],
+            "elements": [],
+            "summary": summary,
+            "rationale": rationale,
+            "evidence": evidence,
+        }
+
+    elements_to_move = judge_output.get("elements_to_move", [])
+    target_lib = judge_output.get("target_lib")
+    return {
+        "type": "move_elements",
+        "status": "proposed",
+        "source_libs": [lib_a, lib_b],
+        "target_libs": [target_lib] if isinstance(target_lib, str) else [],
+        "elements": list(elements_to_move) if isinstance(elements_to_move, list) else [],
+        "summary": summary,
+        "rationale": rationale,
+        "evidence": evidence,
+    }
+
+
+def _convert_split_planner_to_actions(
+    split_output: dict[str, Any],
+    lib_id: str,
+) -> list[dict[str, Any]]:
+    """Convert split planner output into review action payloads.
+
+    Args:
+        split_output: Parsed JSON output from the split planner agent.
+        lib_id: Library ID targeted for splitting.
+
+    Returns:
+        List of action dictionaries ready for ReviewAction validation.
+
+    Examples:
+        >>> _convert_split_planner_to_actions(
+        ...     {"split_groups": [
+        ...         {"proposed_name": "Routing", "charter_summary": "Own intake.",
+        ...          "element_ids": ["REQ-LIB-0001-0001"],
+        ...          "justification": "Evidence [LIB-0001::spec.md::REQ-LIB-0001-0001]"}
+        ...     ]},
+        ...     "LIB-0001",
+        ... )
+        [{'type': 'split', 'source_libs': ['LIB-0001'], ...}]
+
+    Error handling:
+        Returns an empty list when split_groups is empty or missing.
+    """
+    split_groups = split_output.get("split_groups", [])
+    if not split_groups:
+        return []
+
+    actions: list[dict[str, Any]] = []
+    for group in split_groups:
+        if not isinstance(group, dict):
+            continue
+        proposed_name = str(group.get("proposed_name", "")).strip()
+        charter_summary = str(group.get("charter_summary", "")).strip()
+        justification = str(group.get("justification", "")).strip()
+        evidence = _extract_evidence_pointers(justification)
+        summary = f"{proposed_name} - {charter_summary}".strip(" -")
+        actions.append(
+            {
+                "type": "split",
+                "status": "proposed",
+                "source_libs": [lib_id],
+                "target_libs": [],
+                "elements": list(group.get("element_ids", [])),
+                "summary": summary,
+                "rationale": justification,
+                "evidence": evidence,
+            }
+        )
+
+    return actions
+
+
+def consolidate_proposals(
+    manager: WorkspaceManager,
+    overlap_candidates: list[dict[str, Any]],
+    split_candidates: list[dict[str, Any]],
+    thresholds: dict[str, float],
+) -> ReviewActionsReport:
+    """Run overlap and split review agents and build a consolidated report.
+
+    Args:
+        manager: Workspace manager for the active refinement run.
+        overlap_candidates: Overlap candidate payloads from detection.
+        split_candidates: Split candidate payloads from detection.
+        thresholds: Effective thresholds used for detection.
+
+    Returns:
+        ReviewActionsReport with stable action IDs and validated pointers.
+
+    Examples:
+        >>> report = consolidate_proposals(manager, [], [], {"overlap_similarity": 0.35})
+        >>> report.actions
+        []
+
+    Error handling:
+        Agent failures are logged and skipped. Pointer validation failures
+        mark actions as rejected with explanatory notes.
+    """
+    architecture_context = _load_architecture_context(manager)
+    actions: list[dict[str, Any]] = []
+
+    for candidate in overlap_candidates:
+        try:
+            judge_output = _judge_boundary_overlap(candidate, manager, architecture_context)
+        except Exception as exc:
+            logger.warning(
+                "Boundary judge failed for %s/%s: %s",
+                candidate.get("lib_a"),
+                candidate.get("lib_b"),
+                exc,
+            )
+            continue
+        action = _convert_boundary_judge_to_action(
+            judge_output,
+            candidate.get("lib_a", ""),
+            candidate.get("lib_b", ""),
+            candidate.get("matched_elements", []),
+        )
+        if action is not None:
+            actions.append(action)
+
+    for candidate in split_candidates:
+        try:
+            split_output = _plan_library_split(candidate, manager)
+        except Exception as exc:
+            logger.warning("Split planner failed for %s: %s", candidate.get("lib_id"), exc)
+            continue
+        actions.extend(
+            _convert_split_planner_to_actions(
+                split_output,
+                candidate.get("lib_id", ""),
+            )
+        )
+
+    actions = generate_stable_action_ids(actions)
+
+    for action in actions:
+        for pointer in action.get("evidence", []):
+            valid, error_msg = validate_pointer_references(
+                pointer,
+                manager.state.file_manifest,
+                manager.allocated_library_ids,
+            )
+            if not valid and action.get("status") != "rejected":
+                action["status"] = "rejected"
+                action["notes"] = f"Pointer validation failed: {error_msg}"
+                logger.warning(
+                    "Pointer validation failed for action %s: %s",
+                    action.get("summary", "unknown"),
+                    error_msg,
+                )
+
+    report = ReviewActionsReport(
+        run_id=manager.run_id,
+        generated_at=datetime.now().isoformat(),
+        thresholds=thresholds,
+        actions=[ReviewAction.model_validate(action) for action in actions],
+    )
+    return report
+
+
+def write_review_reports(
+    manager: WorkspaceManager,
+    report: ReviewActionsReport,
+) -> tuple[Path, Path]:
+    """Write review action reports as JSON and Markdown.
+
+    Args:
+        manager: Workspace manager for the active refinement run.
+        report: Consolidated review actions report.
+
+    Returns:
+        Tuple of (json_path, markdown_path).
+
+    Examples:
+        >>> json_path, md_path = write_review_reports(manager, report)
+        >>> json_path.name
+        'review_actions.json'
+
+    Error handling:
+        Raises if writing fails; callers should handle file IO errors if needed.
+    """
+    json_path = manager.structure.reports_dir / "review_actions.json"
+    md_path = manager.structure.reports_dir / "review_actions.md"
+    write_review_actions_json(report, json_path)
+    write_review_actions_markdown(report, md_path)
+    logger.info("Wrote review actions JSON report to %s", json_path)
+    logger.info("Wrote review actions Markdown report to %s", md_path)
+    return json_path, md_path
