@@ -32,6 +32,7 @@ from .spec_patches import (
     validate_patch_citations,
     validate_patch_operation,
 )
+from .spec_stabilization import stabilize_specs
 from .sublibrary_detection import detect_sublibraries
 from .summarization import summarize_all
 
@@ -61,6 +62,7 @@ __all__ = [
     "sectionize_all",
     "select_architecture",
     "spotcheck_evidence",
+    "stabilize_specs",
     "summarize_all",
     "synthesize_libraries",
     "validate_patch_citations",

@@ -602,6 +602,52 @@ def cmd_spec_build_specs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_stabilize_specs(args: argparse.Namespace) -> int:
+    """Stabilize element IDs and indexes for Phase 4 outputs."""
+    run_id = args.run_id
+    lib_ids = None
+    if args.libs:
+        lib_ids = [lib_id.strip() for lib_id in args.libs.split(",") if lib_id.strip()]
+        if not lib_ids:
+            lib_ids = None
+
+    from spec_manager.refinement.workflows import stabilize_specs
+
+    try:
+        result = stabilize_specs(
+            run_id,
+            lib_ids=lib_ids,
+            write_run_index=args.write_run_index,
+        )
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries processed: {result['libraries_processed']}")
+    print(f"Elements assigned: {result['elements_assigned']}")
+    print(f"Decisions assigned: {result['decisions_assigned']}")
+    if result.get("issues"):
+        print(f"Validation issues: {len(result['issues'])}")
+        for issue in result["issues"]:
+            lib_id = issue.get("lib_id", "unknown")
+            message = issue.get("message", issue.get("type", "issue"))
+            print(f"  - {lib_id}: {message}")
+    else:
+        print("Validation status: ok")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            lib_id = error.get("lib_id", "unknown")
+            message = error.get("error", "error")
+            print(f"  - {lib_id}: {message}")
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.SPEC_BUILDING):
+        return 1
+    return 0
+
+
 def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
     """Detect sub-libraries for Phase 5."""
     run_id = args.run_id
@@ -794,6 +840,7 @@ def main(argv: list[str] | None = None) -> int:
             "  spec expand-evidence (agent: glm-library-evidence-mapper)\n"
             "  spec spotcheck-evidence (agent: chatgpt-evidence-gap-judge)\n"
             "  spec build-specs (agent: glm-library-spec-integrator)\n"
+            "  spec stabilize-specs (stable element IDs and indexes)\n"
             "  spec propose-architectures (agent: opus-architecture-proposer)\n"
             "  spec select-architecture (agent: chatgpt-architecture-tradeoff-judge)\n"
             "  spec map-libraries (agent: glm-architecture-mapper)\n"
@@ -992,6 +1039,30 @@ def main(argv: list[str] | None = None) -> int:
         "--max-iterations", type=int, default=5, help="Max gap closure iterations"
     )
     p_spec_build.set_defaults(func=cmd_spec_build_specs)
+
+    p_spec_stabilize = spec_subparsers.add_parser(
+        "stabilize-specs",
+        help="Stabilize element IDs for Phase 4 outputs",
+        description=(
+            "Stabilize element IDs in library specs and decisions, persist per-library "
+            "ID counters, and build spec indexes.\n"
+            "Requires Phase 4 spec building to be completed.\n"
+            "Outputs: libraries/*/id_counters.json, spec_index.json, decisions_index.json, "
+            "workspace/indexes/library_spec_index.json (optional)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_stabilize.add_argument("run_id", help="Run identifier")
+    p_spec_stabilize.add_argument(
+        "--libs",
+        help="Comma-separated library IDs to stabilize (default: all)",
+    )
+    p_spec_stabilize.add_argument(
+        "--write-run-index",
+        action="store_true",
+        help="Write aggregate run-level spec index",
+    )
+    p_spec_stabilize.set_defaults(func=cmd_spec_stabilize_specs)
 
     p_spec_detect = spec_subparsers.add_parser(
         "detect-sublibraries",
