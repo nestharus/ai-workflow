@@ -48,6 +48,8 @@ def _validate_iso8601(value: str) -> str:
         datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError("value must be ISO-8601") from exc
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError("value must be ISO-8601") from None
     return value
 
 

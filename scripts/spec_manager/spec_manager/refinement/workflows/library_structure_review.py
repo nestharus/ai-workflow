@@ -52,7 +52,7 @@ from spec_manager.schemas.spec_indexes import SpecIndex
 logger = logging.getLogger(__name__)
 
 _REVIEW_ACTIONS_REPORT_TYPE = ReviewActionsReport
-_TEXT_KINDS = {"requirement", "invariant"}
+_TEXT_KINDS = {"requirement", "invariant", "flow", "decision"}
 _DEFAULT_THRESHOLDS = {
     "overlap_similarity": 0.35,
     "min_shared_elements": 5,
@@ -62,6 +62,10 @@ _DEFAULT_THRESHOLDS = {
 _ELEMENT_ID_RE = re.compile(
     r"^(?:REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})$"
 )
+_ELEMENT_ID_INLINE_RE = re.compile(
+    r"(?:REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})"
+)
+_POINTER_RE = re.compile(r"\[[^\[\]]+::[^\[\]]+\]")
 _CITATION_RE = re.compile(
     r"\[LIB-\d{4}::spec\.md::(REQ|INV|FLOW|DEC)-LIB-\d{4}-\d{2,4}\]"
     r"|\[LIB-\d{4}::charter\.md\]"
@@ -73,6 +77,14 @@ def _truncate_text(value: str, limit: int) -> str:
     if len(trimmed) <= limit:
         return trimmed
     return trimmed[:limit]
+
+
+def _clean_text_for_vectorization(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _ELEMENT_ID_INLINE_RE.sub(" ", text)
+    cleaned = _POINTER_RE.sub(" ", cleaned)
+    return " ".join(cleaned.split())
 
 
 def _is_library_id(value: str) -> bool:
@@ -231,7 +243,9 @@ def _build_tfidf_vectors(
             key=lambda element: element.element_id,
         )
         if elements:
-            documents.append(" ".join(element.text.strip() for element in elements))
+            cleaned_text = [_clean_text_for_vectorization(element.text) for element in elements]
+            cleaned_text = [text for text in cleaned_text if text.strip()]
+            documents.append(" ".join(cleaned_text))
         else:
             documents.append("")
             empty_libs.add(lib_id)
@@ -342,8 +356,12 @@ def _find_shared_elements(
         return []
 
     try:
-        matrix_a = vectorizer.transform([element.text for element in elements_a])
-        matrix_b = vectorizer.transform([element.text for element in elements_b])
+        matrix_a = vectorizer.transform(
+            [_clean_text_for_vectorization(element.text) for element in elements_a]
+        )
+        matrix_b = vectorizer.transform(
+            [_clean_text_for_vectorization(element.text) for element in elements_b]
+        )
     except ValueError as exc:
         logger.warning(
             "Failed to vectorize elements for %s/%s: %s",
@@ -386,6 +404,29 @@ def _find_shared_elements(
         claimed_b.add(b_id)
 
     return matches
+
+
+def _compute_shared_element_count(
+    spec_a: SpecIndex,
+    spec_b: SpecIndex,
+    vectorizer: TfidfVectorizer,
+    threshold: float = 0.70,
+) -> int:
+    """Count element-level matches at or above the similarity threshold."""
+    return len(_find_shared_elements(spec_a, spec_b, vectorizer, threshold=threshold))
+
+
+def _extract_matched_element_pairs(
+    spec_a: SpecIndex,
+    spec_b: SpecIndex,
+    vectorizer: TfidfVectorizer,
+    *,
+    top_n: int = 10,
+    threshold: float = 0.70,
+) -> list[dict[str, Any]]:
+    """Return top matched element pairs sorted by similarity."""
+    matches = _find_shared_elements(spec_a, spec_b, vectorizer, threshold=threshold)
+    return matches[:top_n]
 
 
 def detect_overlap_candidates(
@@ -469,7 +510,9 @@ def _cluster_library_elements(
         return np.array([]), -1.0
 
     try:
-        vectors = vectorizer.transform([element.text for element in elements]).toarray()
+        vectors = vectorizer.transform(
+            [_clean_text_for_vectorization(element.text) for element in elements]
+        ).toarray()
     except ValueError as exc:
         logger.warning("Failed to vectorize elements for %s: %s", spec_index.lib_id, exc)
         return np.array([]), -1.0
