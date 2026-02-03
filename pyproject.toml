@@ -21,6 +21,7 @@ dependencies = [
     "anthropic>=0.77.0,<0.78.0",
     "urllib3>=2.6.3,<3.0.0",
     "aiohttp>=3.13.3,<4.0.0",
+    "scikit-learn>=1.6.1,<1.7.0",
 ]
 
 [build-system]

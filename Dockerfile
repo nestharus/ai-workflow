@@ -15,6 +15,12 @@ WORKDIR /app
 # Set shell to strict mode
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# Install build dependencies for packages that compile from source (e.g. scikit-learn)
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install uv by copying the prebuilt binary from the official image.
 COPY --from=uv /uv /usr/local/bin/uv
 
