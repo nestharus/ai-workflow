@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,12 +22,26 @@ from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 
 from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.refinement.formats import LibraryEvent, LibraryEventType, parse_evidence_pointer
 from spec_manager.refinement.progress import ProgressTracker
+from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
+from spec_manager.refinement.validation_utils import build_file_id_lookup
+from spec_manager.refinement.workflows.library_synthesis import (
+    _read_library_events,
+    _rewrite_library_events,
+    _write_library_event,
+)
+from spec_manager.refinement.workflows.spec_stabilization import (
+    _extract_sections_with_positions,
+    build_spec_index,
+    extract_existing_id,
+)
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from spec_manager.schemas.review_actions import (
     ReviewAction,
     ReviewActionsReport,
     generate_stable_action_ids,
+    read_review_actions_json,
     validate_pointer_references,
     write_review_actions_json,
     write_review_actions_markdown,
@@ -1225,6 +1240,705 @@ def write_review_reports(
     return json_path, md_path
 
 
+def _derive_split_group_from_action(action: ReviewAction) -> dict[str, Any]:
+    summary = (action.summary or "").strip()
+    proposed_name = ""
+    charter_summary = ""
+    if " - " in summary:
+        proposed_name, charter_summary = [part.strip() for part in summary.split(" - ", 1)]
+    else:
+        proposed_name = summary
+
+    if not charter_summary:
+        charter_summary = summary or (action.rationale or "").strip()
+
+    group_id = 0
+    if action.action_id:
+        try:
+            group_id = int(action.action_id.split("-", 1)[1])
+        except (IndexError, ValueError):
+            group_id = 0
+
+    if not proposed_name:
+        proposed_name = f"Split Group {group_id or 1}"
+    if not charter_summary:
+        charter_summary = proposed_name
+
+    return {
+        "group_id": group_id,
+        "proposed_name": proposed_name,
+        "charter_summary": charter_summary,
+        "element_ids": list(action.elements),
+    }
+
+
+def _format_split_charter(
+    lib_id: str,
+    group_proposal: dict[str, Any],
+    source_lib_id: str,
+) -> str:
+    proposed_name = str(group_proposal.get("proposed_name", "")).strip()
+    charter_summary = str(group_proposal.get("charter_summary", "")).strip()
+    intent = charter_summary or proposed_name or f"Split from {source_lib_id}."
+    boundaries = proposed_name or f"Derived from {source_lib_id}."
+
+    lines = [
+        f"# Library Charter: {lib_id}",
+        "",
+        "## Intent",
+        intent,
+        "",
+        "## Boundaries",
+        boundaries,
+        "",
+        "## Responsibilities",
+        "- None",
+        "",
+        "## Evidence",
+        "- None",
+        "",
+        "## Overlap Resolutions",
+        "- None",
+        "",
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _partition_spec_elements(
+    source_spec_content: str,
+    element_ids: list[str],
+    new_lib_id: str,
+) -> str:
+    selected_ids = {element_id.strip() for element_id in element_ids if element_id}
+    sections = _extract_sections_with_positions(source_spec_content, level=2)
+    section_map = {title: source_spec_content[start:end] for title, start, end in sections}
+
+    def _next_element_id(
+        element_id: str,
+        counters: dict[str, int],
+        lib_id: str,
+    ) -> str:
+        prefix = element_id.split("-", 1)[0]
+        counters.setdefault(prefix, 0)
+        counters[prefix] += 1
+        width = 2 if prefix == "FLOW" else 4
+        lib_suffix = lib_id.split("-", 1)[1]
+        return f"{prefix}-LIB-{lib_suffix}-{counters[prefix]:0{width}d}"
+
+    def _filter_section(section_content: str, counters: dict[str, int]) -> list[str]:
+        filtered: list[str] = []
+        include_continuation = False
+        for line in section_content.splitlines():
+            element_id = extract_existing_id(line)
+            bullet_match = re.match(r"^([ \t]*[-*])\s+", line)
+            if bullet_match and element_id:
+                if element_id in selected_ids:
+                    include_continuation = True
+                    new_id = _next_element_id(element_id, counters, new_lib_id)
+                    filtered.append(line.replace(element_id, new_id, 1))
+                else:
+                    include_continuation = False
+                continue
+            if include_continuation:
+                filtered.append(line)
+        return filtered
+
+    counters: dict[str, int] = {}
+    ordered_sections = ["Requirements", "Flows", "Constraints", "Dependencies"]
+    lines: list[str] = [f"# Library Spec: {new_lib_id}", ""]
+
+    for section_title in ordered_sections:
+        lines.append(f"## {section_title}")
+        section_content = section_map.get(section_title, "")
+        filtered_lines = _filter_section(section_content, counters)
+        if filtered_lines:
+            lines.extend(filtered_lines)
+        else:
+            lines.append("<!-- No elements assigned -->")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _partition_evidence(
+    source_evidence: dict[str, Any],
+    element_ids: list[str],
+    source_spec_index: dict[str, Any],
+) -> dict[str, Any]:
+    sources = source_evidence.get("sources", [])
+    if not isinstance(sources, list):
+        return {"sources": []}
+
+    file_manifest = source_spec_index.get("file_manifest")
+    file_id_lookup: dict[str, str] = {}
+    if isinstance(file_manifest, dict) and file_manifest:
+        file_id_lookup = build_file_id_lookup(file_manifest)
+
+    target_ids = {element_id for element_id in element_ids if element_id}
+    citations_by_file: dict[str, set[str]] = {}
+    for element in source_spec_index.get("elements", []) or []:
+        element_id = element.get("element_id")
+        if element_id not in target_ids:
+            continue
+        for citation in element.get("citations", []) or []:
+            parsed = parse_evidence_pointer(citation, allow_multi_hop=True)
+            if not parsed or "intermediate" in parsed:
+                continue
+            file_ref = parsed["file_ref"]
+            section_ref = parsed["section_ref"]
+            resolved_file_id = file_id_lookup.get(file_ref, file_ref)
+            if not resolved_file_id:
+                continue
+            citations_by_file.setdefault(resolved_file_id, set()).add(section_ref)
+
+    filtered_sources: list[dict[str, Any]] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        file_id = source.get("file_id")
+        if not isinstance(file_id, str) or not file_id:
+            continue
+        sections = source.get("sections", [])
+        if not isinstance(sections, list):
+            sections = []
+        section_set = {section for section in sections if isinstance(section, str)}
+        cited_sections = citations_by_file.get(file_id, set())
+        if not cited_sections:
+            continue
+        if not section_set or cited_sections.intersection(section_set):
+            filtered_sources.append(source)
+            continue
+        # Fallback: include if the file is cited but section labels don't match.
+        filtered_sources.append(source)
+
+    return {"sources": filtered_sources}
+
+
+def _add_spec_tombstones(
+    source_spec_content: str,
+    element_ids: list[str],
+    target_lib_id: str,
+) -> str:
+    selected_ids = {element_id for element_id in element_ids if element_id}
+    updated_lines: list[str] = []
+    for line in source_spec_content.splitlines(keepends=True):
+        line_text = line.rstrip("\r\n")
+        line_ending = line[len(line_text) :]
+        element_id = extract_existing_id(line_text)
+        if element_id and element_id in selected_ids:
+            indent_match = re.match(r"^(\s*)", line_text)
+            indent = indent_match.group(1) if indent_match else ""
+            updated_lines.append(
+                f"{indent}<!-- {element_id} moved to {target_lib_id} -->{line_ending}"
+            )
+        else:
+            updated_lines.append(line)
+    return "".join(updated_lines)
+
+
+def _validate_split_artifacts(
+    manager: WorkspaceManager,
+    lib_id: str,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    lib_dir = manager.structure.libraries_dir / lib_id
+    spec_path = lib_dir / "spec.md"
+    charter_path = lib_dir / "charter.md"
+    evidence_path = lib_dir / "evidence.json"
+
+    if not spec_path.exists():
+        issues.append(
+            {
+                "type": "missing_artifact",
+                "artifact": "spec",
+                "lib_id": lib_id,
+                "message": "Missing spec.md for split library.",
+            }
+        )
+        return issues
+
+    if not charter_path.exists():
+        issues.append(
+            {
+                "type": "missing_artifact",
+                "artifact": "charter",
+                "lib_id": lib_id,
+                "message": "Missing charter.md for split library.",
+            }
+        )
+
+    if not evidence_path.exists():
+        issues.append(
+            {
+                "type": "missing_artifact",
+                "artifact": "evidence",
+                "lib_id": lib_id,
+                "message": "Missing evidence.json for split library.",
+            }
+        )
+
+    spec_content = spec_path.read_text(encoding="utf-8")
+    charter_content = charter_path.read_text(encoding="utf-8") if charter_path.exists() else ""
+
+    spec_index = build_spec_index(spec_content, lib_id)
+    for element in spec_index.get("elements", []) or []:
+        element_id = str(element.get("element_id", "")).strip()
+        if not element_id:
+            continue
+        if not _ELEMENT_ID_RE.fullmatch(element_id):
+            issues.append(
+                {
+                    "type": "invalid_element_id",
+                    "artifact": "spec",
+                    "lib_id": lib_id,
+                    "element_id": element_id,
+                    "message": "Element ID does not match expected pattern.",
+                }
+            )
+            continue
+        if f"-{lib_id}-" not in element_id:
+            issues.append(
+                {
+                    "type": "element_id_mismatch",
+                    "artifact": "spec",
+                    "lib_id": lib_id,
+                    "element_id": element_id,
+                    "message": "Element ID does not match new library ID.",
+                }
+            )
+
+    def _extract_pointers(text: str) -> list[str]:
+        if not text:
+            return []
+        return re.findall(r"\[[^\[\]]+::[^\[\]]+\]", text)
+
+    for pointer in _extract_pointers(spec_content):
+        valid, error_msg = validate_pointer_references(
+            pointer,
+            manager.state.file_manifest,
+            manager.allocated_library_ids,
+        )
+        if not valid:
+            issues.append(
+                {
+                    "type": "invalid_pointer",
+                    "artifact": "spec",
+                    "lib_id": lib_id,
+                    "pointer": pointer,
+                    "message": error_msg or "Invalid pointer reference.",
+                }
+            )
+
+    for pointer in _extract_pointers(charter_content):
+        valid, error_msg = validate_pointer_references(
+            pointer,
+            manager.state.file_manifest,
+            manager.allocated_library_ids,
+        )
+        if not valid:
+            issues.append(
+                {
+                    "type": "invalid_pointer",
+                    "artifact": "charter",
+                    "lib_id": lib_id,
+                    "pointer": pointer,
+                    "message": error_msg or "Invalid pointer reference.",
+                }
+            )
+
+    return issues
+
+
+def _repair_split_artifacts(
+    manager: WorkspaceManager,
+    lib_id: str,
+    issues: list[dict[str, Any]],
+) -> bool:
+    if not issues:
+        return True
+
+    lib_dir = manager.structure.libraries_dir / lib_id
+    spec_path = lib_dir / "spec.md"
+    charter_path = lib_dir / "charter.md"
+    allowlists = {"file_refs": sorted(manager.state.file_manifest), "sections": {}}
+    issues_by_artifact: dict[str, list[dict[str, Any]]] = {"spec": [], "charter": []}
+    for issue in issues:
+        artifact = issue.get("artifact", "spec")
+        issues_by_artifact.setdefault(artifact, []).append(issue)
+
+    if issues_by_artifact.get("spec"):
+        if not spec_path.exists():
+            return False
+        try:
+            repaired_spec, _ = repair_artifact(
+                output=spec_path.read_text(encoding="utf-8"),
+                errors=issues_by_artifact["spec"],
+                allowlists=allowlists,
+                artifact_type=ArtifactType.SPEC,
+                model_override=get_repair_model(),
+                manager=manager,
+            )
+            spec_path.write_text(repaired_spec, encoding="utf-8")
+        except Exception:
+            logger.exception("Spec repair failed for split library %s", lib_id)
+            return False
+
+    if issues_by_artifact.get("charter"):
+        if not charter_path.exists():
+            return False
+        try:
+            repaired_charter, _ = repair_artifact(
+                output=charter_path.read_text(encoding="utf-8"),
+                errors=issues_by_artifact["charter"],
+                allowlists=allowlists,
+                artifact_type=ArtifactType.CHARTER,
+                model_override=get_repair_model(),
+                manager=manager,
+            )
+            charter_path.write_text(repaired_charter, encoding="utf-8")
+        except Exception:
+            logger.exception("Charter repair failed for split library %s", lib_id)
+            return False
+
+    return True
+
+
+def _create_split_library(
+    manager: WorkspaceManager,
+    source_lib_id: str,
+    group_proposal: dict[str, Any],
+    source_spec_index: dict[str, Any],
+    source_evidence: dict[str, Any],
+) -> str:
+    new_lib_id = manager.allocate_library_id()
+    lib_dir = manager.structure.libraries_dir / new_lib_id
+    if lib_dir.exists():
+        raise RuntimeError(f"Split library directory already exists: {lib_dir}")
+
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    source_spec_path = manager.structure.libraries_dir / source_lib_id / "spec.md"
+    source_spec_content = source_spec_path.read_text(encoding="utf-8")
+    element_ids = list(group_proposal.get("element_ids", []))
+
+    spec_content = _partition_spec_elements(source_spec_content, element_ids, new_lib_id)
+    (lib_dir / "spec.md").write_text(spec_content, encoding="utf-8")
+
+    charter_content = _format_split_charter(new_lib_id, group_proposal, source_lib_id)
+    (lib_dir / "charter.md").write_text(charter_content, encoding="utf-8")
+
+    evidence_payload = _partition_evidence(source_evidence, element_ids, source_spec_index)
+    (lib_dir / "evidence.json").write_text(
+        json.dumps(evidence_payload, indent=2),
+        encoding="utf-8",
+    )
+
+    (lib_dir / "gaps.md").write_text("", encoding="utf-8")
+    (lib_dir / "decisions.md").write_text("", encoding="utf-8")
+
+    spec_index = build_spec_index(spec_content, new_lib_id)
+    initial_elements = [element.get("element_id") for element in spec_index.get("elements", [])]
+    if element_ids and len(initial_elements) < len(
+        {element_id for element_id in element_ids if element_id}
+    ):
+        raise RuntimeError("Element ID rewrite failed for split spec.")
+    (lib_dir / "spec_index.json").write_text(
+        json.dumps(spec_index, indent=2),
+        encoding="utf-8",
+    )
+    metadata = {
+        "derived_from": source_lib_id,
+        "split_group": group_proposal.get("group_id"),
+        "initial_intent": group_proposal.get("charter_summary", ""),
+        "initial_elements": [element_id for element_id in initial_elements if element_id],
+    }
+    event = LibraryEvent(
+        event_type=LibraryEventType.LIBRARY_CREATED,
+        timestamp=datetime.now().isoformat(),
+        lib_id=new_lib_id,
+        metadata=metadata,
+        previous_state=None,
+    )
+    try:
+        _write_library_event(lib_dir, event)
+    except Exception:
+        shutil.rmtree(lib_dir, ignore_errors=True)
+        raise
+
+    return new_lib_id
+
+
+def _apply_single_split(
+    manager: WorkspaceManager,
+    action: ReviewAction,
+    split_proposal: dict[str, Any],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "action_id": action.action_id,
+        "new_lib_ids": [],
+        "errors": [],
+        "validation_issues": [],
+    }
+
+    if not action.source_libs:
+        result["errors"].append(
+            {"type": "missing_source_lib", "error": "Split action missing source library."}
+        )
+        return result
+
+    source_lib_id = action.source_libs[0]
+    lib_dir = manager.structure.libraries_dir / source_lib_id
+    if not lib_dir.exists():
+        result["errors"].append(
+            {
+                "type": "missing_source_library",
+                "lib_id": source_lib_id,
+                "error": "Source library directory not found.",
+            }
+        )
+        return result
+
+    spec_path = lib_dir / "spec.md"
+    charter_path = lib_dir / "charter.md"
+    evidence_path = lib_dir / "evidence.json"
+    spec_index_path = lib_dir / "spec_index.json"
+
+    if not spec_path.exists() or not charter_path.exists() or not evidence_path.exists():
+        result["errors"].append(
+            {
+                "type": "missing_source_artifacts",
+                "lib_id": source_lib_id,
+                "error": "Source library missing required artifacts.",
+            }
+        )
+        return result
+
+    if not spec_index_path.exists():
+        result["errors"].append(
+            {
+                "type": "missing_spec_index",
+                "lib_id": source_lib_id,
+                "error": "Source library spec_index.json missing.",
+            }
+        )
+        return result
+
+    source_spec_content = spec_path.read_text(encoding="utf-8")
+    try:
+        source_spec_index_content = spec_index_path.read_text(encoding="utf-8")
+        source_spec_index = json.loads(source_spec_index_content)
+    except json.JSONDecodeError:
+        result["errors"].append(
+            {
+                "type": "invalid_spec_index",
+                "lib_id": source_lib_id,
+                "error": "Source library spec_index.json is invalid JSON.",
+            }
+        )
+        return result
+    if not isinstance(source_spec_index, dict):
+        result["errors"].append(
+            {
+                "type": "invalid_spec_index",
+                "lib_id": source_lib_id,
+                "error": "Source library spec_index.json must be an object.",
+            }
+        )
+        return result
+    source_spec_index.setdefault("file_manifest", manager.state.file_manifest)
+
+    try:
+        source_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        source_evidence = {"sources": []}
+
+    split_groups = split_proposal.get("split_groups")
+    if not isinstance(split_groups, list):
+        split_groups = [split_proposal]
+    split_groups = [group for group in split_groups if isinstance(group, dict)]
+    if not split_groups:
+        result["errors"].append(
+            {
+                "type": "invalid_split_proposal",
+                "lib_id": source_lib_id,
+                "error": "Split proposal missing groups.",
+            }
+        )
+        return result
+
+    new_lib_ids: list[str] = []
+    created_dirs: list[Path] = []
+    pre_split_allocated_ids = set(manager.state.allocated_library_ids)
+    pre_split_next_number = manager.state.next_library_number
+    try:
+        for group in split_groups:
+            new_lib_id = _create_split_library(
+                manager,
+                source_lib_id,
+                group,
+                source_spec_index,
+                source_evidence,
+            )
+            new_lib_ids.append(new_lib_id)
+            created_dirs.append(manager.structure.libraries_dir / new_lib_id)
+
+            issues = _validate_split_artifacts(manager, new_lib_id)
+            if issues:
+                repaired = _repair_split_artifacts(manager, new_lib_id, issues)
+                if repaired:
+                    issues = _validate_split_artifacts(manager, new_lib_id)
+            if issues:
+                result["validation_issues"].extend(issues)
+                raise RuntimeError("Split library validation failed.")
+    except Exception as exc:
+        for lib_dir in created_dirs:
+            shutil.rmtree(lib_dir, ignore_errors=True)
+        manager.state.allocated_library_ids = pre_split_allocated_ids
+        manager.state.next_library_number = pre_split_next_number
+        manager.save_state()
+        result["errors"].append(
+            {
+                "type": "split_failed",
+                "lib_id": source_lib_id,
+                "error": str(exc),
+            }
+        )
+        return result
+
+    updated_spec_content = source_spec_content
+    for group, new_lib_id in zip(split_groups, new_lib_ids, strict=False):
+        updated_spec_content = _add_spec_tombstones(
+            updated_spec_content,
+            list(group.get("element_ids", [])),
+            new_lib_id,
+        )
+
+    try:
+        spec_path.write_text(updated_spec_content, encoding="utf-8")
+        updated_index = build_spec_index(updated_spec_content, source_lib_id)
+        for key, value in source_spec_index.items():
+            if key not in updated_index:
+                updated_index[key] = value
+        (lib_dir / "spec_index.json").write_text(
+            json.dumps(updated_index, indent=2),
+            encoding="utf-8",
+        )
+        existing_events = _read_library_events(lib_dir)
+        split_event = LibraryEvent(
+            event_type=LibraryEventType.LIBRARY_SPLIT,
+            timestamp=datetime.now().isoformat(),
+            lib_id=source_lib_id,
+            metadata={
+                "target_libs": new_lib_ids,
+                "split_groups": len(split_groups),
+                "reason": action.summary,
+                "element_count": sum(
+                    len(group.get("element_ids", []))
+                    for group in split_groups
+                    if isinstance(group, dict)
+                ),
+            },
+            previous_state=None,
+        )
+        _rewrite_library_events(lib_dir, [*existing_events, split_event])
+    except Exception as exc:
+        spec_path.write_text(source_spec_content, encoding="utf-8")
+        spec_index_path.write_text(source_spec_index_content, encoding="utf-8")
+        for lib_dir in created_dirs:
+            shutil.rmtree(lib_dir, ignore_errors=True)
+        manager.state.allocated_library_ids = pre_split_allocated_ids
+        manager.state.next_library_number = pre_split_next_number
+        manager.save_state()
+        result["errors"].append(
+            {
+                "type": "split_event_failed",
+                "lib_id": source_lib_id,
+                "error": str(exc),
+            }
+        )
+        return result
+
+    manager.save_state()
+    result["new_lib_ids"] = new_lib_ids
+    return result
+
+
+def apply_split_actions(
+    manager: WorkspaceManager,
+    review_actions_path: Path,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply proposed library split actions from a review actions file."""
+    summary: dict[str, Any] = {
+        "applied_actions": [],
+        "rejected_actions": [],
+        "new_library_ids": [],
+        "validation_issues": [],
+        "action_errors": [],
+        "errors": [],
+        "dry_run": dry_run,
+    }
+    summary: dict[str, Any] = {
+        "applied_actions": [],
+        "rejected_actions": [],
+        "new_library_ids": [],
+        "validation_issues": [],
+        "action_errors": [],
+        "errors": [],
+        "dry_run": dry_run,
+    }
+
+    try:
+        report = read_review_actions_json(review_actions_path)
+    except Exception as exc:
+        summary["errors"].append({"type": "review_actions_read_failed", "error": str(exc)})
+        summary["success"] = False
+        return summary
+
+    split_actions = [
+        action
+        for action in report.actions
+        if action.type == "split" and action.status == "proposed"
+    ]
+
+    if dry_run:
+        summary["applied_actions"] = [action.action_id for action in split_actions]
+        summary["applied_count"] = len(summary["applied_actions"])
+        summary["rejected_count"] = 0
+        summary["success"] = True
+        return summary
+
+    for action in split_actions:
+        split_group = _derive_split_group_from_action(action)
+        result = _apply_single_split(manager, action, {"split_groups": [split_group]})
+        if result.get("errors"):
+            action.status = "rejected"
+            action.notes = "; ".join(error.get("error", "error") for error in result["errors"])
+            summary["rejected_actions"].append(action.action_id)
+            summary["action_errors"].extend(result["errors"])
+            if result.get("validation_issues"):
+                summary["validation_issues"].extend(result["validation_issues"])
+            continue
+
+        new_lib_ids = result.get("new_lib_ids", [])
+        action.status = "applied"
+        if new_lib_ids:
+            action.target_libs = list(new_lib_ids)
+        summary["applied_actions"].append(action.action_id)
+        summary["new_library_ids"].extend(new_lib_ids)
+        if result.get("validation_issues"):
+            summary["validation_issues"].extend(result["validation_issues"])
+
+    try:
+        write_review_actions_json(report, review_actions_path)
+    except Exception as exc:
+        summary["errors"].append({"type": "review_actions_write_failed", "error": str(exc)})
+
+    summary["applied_count"] = len(summary["applied_actions"])
+    summary["rejected_count"] = len(summary["rejected_actions"])
+    summary["success"] = not summary["errors"]
+    return summary
+
+
 def review_library_structure(
     run_id: str,
     apply_splits: bool = False,
@@ -1263,18 +1977,37 @@ def review_library_structure(
     tracker.update(status="review complete")
     tracker.finish()
 
-    if apply_splits or apply_moves:
-        logger.warning(
-            "apply_splits/apply_moves requested but not implemented yet "
-            "(apply_splits=%s, apply_moves=%s).",
-            apply_splits,
-            apply_moves,
-        )
-
     overlap_candidates = results.get("overlap_candidates", [])
     split_candidates = results.get("split_candidates", [])
     report_paths = results.get("report_paths", {})
     errors = results.get("errors", [])
+    split_application: dict[str, Any] | None = None
+
+    if apply_splits:
+        report_path_value = report_paths.get("json") or (
+            manager.structure.reports_dir / "review_actions.json"
+        )
+        review_actions_path = Path(report_path_value)
+        if not review_actions_path.exists():
+            errors.append(
+                {
+                    "type": "review_actions_missing",
+                    "error": f"Review actions report not found at {review_actions_path}",
+                }
+            )
+        else:
+            split_application = apply_split_actions(manager, review_actions_path)
+            if split_application.get("errors"):
+                errors.extend(
+                    {
+                        "type": "split_application_failed",
+                        "error": error.get("error", "split application failed"),
+                    }
+                    for error in split_application["errors"]
+                )
+
+    if apply_moves:
+        logger.warning("apply_moves requested but not implemented yet.")
     success = not errors
 
     outputs = {
@@ -1282,6 +2015,8 @@ def review_library_structure(
         "split_candidates_count": len(split_candidates),
         "report_paths": report_paths,
     }
+    if split_application is not None:
+        outputs["split_application"] = split_application
     if success:
         manager.complete_phase(Phase.LIBRARY_STRUCTURE_REVIEW, outputs=outputs)
     else:
@@ -1295,5 +2030,6 @@ def review_library_structure(
         "overlap_candidates_count": len(overlap_candidates),
         "split_candidates_count": len(split_candidates),
         "report_paths": report_paths,
+        "split_application": split_application,
         "errors": errors,
     }

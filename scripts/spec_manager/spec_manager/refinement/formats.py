@@ -11,9 +11,12 @@ Library events are persisted per library as append-only JSON lines in
 - previous_state: optional snapshot of the prior state
 
 Metadata schemas by event type:
-- LIBRARY_CREATED: {created_from: list[str], initial_intent: str, initial_files: list[str]}
+- LIBRARY_CREATED (synthesis): {created_from: list[str], initial_intent: str,
+  initial_files: list[str]}
+- LIBRARY_CREATED (split): {derived_from: str, split_group: int, initial_intent: str,
+  initial_elements: list[str]}
 - LIBRARY_RENAMED: {old_name: str, new_name: str, reason: str}
-- LIBRARY_SPLIT: {source_lib_id: str, target_lib_ids: list[str], rationale: str}
+- LIBRARY_SPLIT: {target_libs: list[str], split_groups: int, reason: str, element_count: int}
 - LIBRARY_MERGED: {source_lib_ids: list[str], target_lib_id: str, rationale: str}
 - BOUNDARY_CHANGED: {added_files: list[str], removed_files: list[str], reason: str}
 """

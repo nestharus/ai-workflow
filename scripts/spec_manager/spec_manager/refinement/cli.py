@@ -749,6 +749,15 @@ def cmd_spec_review_structure(args: argparse.Namespace) -> int:
     apply_splits = args.apply_splits
     apply_moves = args.apply_moves
 
+    if apply_splits:
+        manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+        if not manager.is_initialized:
+            print("Workspace not initialized. Run 'init' first.")
+            return 1
+        if not _phase_completed(manager, Phase.SPEC_STABILIZATION):
+            print("Spec stabilization must be completed before applying splits.")
+            return 1
+
     from spec_manager.refinement.workflows import review_library_structure
 
     try:
@@ -767,6 +776,21 @@ def cmd_spec_review_structure(args: argparse.Namespace) -> int:
         print(f"Report (json): {report_paths['json']}")
     if report_paths.get("markdown"):
         print(f"Report (markdown): {report_paths['markdown']}")
+
+    split_application = result.get("split_application")
+    if split_application:
+        print(f"Applied splits: {split_application.get('applied_count', 0)}")
+        if split_application.get("new_library_ids"):
+            new_libs = ", ".join(split_application["new_library_ids"])
+            print(f"New libraries: {new_libs}")
+        if split_application.get("rejected_count"):
+            print(f"Rejected splits: {split_application['rejected_count']}")
+        if split_application.get("validation_issues"):
+            print("Split validation warnings:")
+            for issue in split_application["validation_issues"]:
+                message = issue.get("message", "validation issue")
+                lib_id = issue.get("lib_id", "unknown")
+                print(f"  - {lib_id}: {message}")
 
     if result.get("errors"):
         print("Errors:")
@@ -1172,7 +1196,7 @@ def main(argv: list[str] | None = None) -> int:
     p_spec_review.add_argument(
         "--apply-splits",
         action="store_true",
-        help="Apply split actions (not yet implemented)",
+        help="Apply split actions after generating review actions report",
     )
     p_spec_review.add_argument(
         "--apply-moves",
