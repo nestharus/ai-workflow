@@ -1,22 +1,33 @@
 """Spec stabilization workflow for Phase 4 outputs.
 
-This module normalizes spec pointers, assigns stable element IDs, persists
+This module normalizes evidence pointers from legacy `[F####::SECTION]`
+format to canonical `[spec_snapshot/relpath::SEC-F####-####]` format while
+preserving multi-hop pointers, assigns stable element IDs, persists
 per-library counters, and builds indexes to support downstream phases.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.formats import (
+    EVIDENCE_POINTER_RE,
+    migrate_pointers_to_new_format,
+    parse_evidence_pointer,
+)
+from spec_manager.refinement.validation_utils import build_file_id_lookup
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 DEFAULT_COUNTERS: dict[str, int] = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
 COUNTER_LIMITS: dict[str, int] = {"REQ": 9999, "FLOW": 99, "INV": 9999, "DEC": 9999}
 ELEMENT_ID_RE = re.compile(r"^\s*-\s*((?:REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*")
+logger = logging.getLogger(__name__)
+_POINTER_MIGRATION_ERRORS: list[dict[str, str]] = []
 
 
 def _default_counters() -> dict[str, int]:
@@ -176,20 +187,81 @@ def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[
     return issues
 
 
-def normalize_spec_pointers(
-    spec_content: str, file_manifest: dict[str, Any], section_manifest: dict[str, Any]
-) -> str:
-    """Normalize pointers in spec.md. Implementation in Phase 2.
+def _record_pointer_migration_error(context: str, error: str) -> None:
+    """Record a pointer migration error for later issue reporting."""
+    _POINTER_MIGRATION_ERRORS.append({"context": context, "error": error})
+
+
+def _consume_pointer_migration_errors() -> list[dict[str, str]]:
+    """Return and clear any recorded pointer migration errors."""
+    if not _POINTER_MIGRATION_ERRORS:
+        return []
+    errors = list(_POINTER_MIGRATION_ERRORS)
+    _POINTER_MIGRATION_ERRORS.clear()
+    return errors
+
+
+def _normalize_pointers(content: str, manager: WorkspaceManager, *, context: str) -> str:
+    """Normalize legacy evidence pointers using the migration infrastructure.
+
+    Converts legacy `[F####::SECTION]` pointers to canonical
+    `[spec_snapshot/relpath::SEC-F####-####]` format while preserving
+    multi-hop pointers such as `[LIB-0001::spec.md::REQ-LIB-0001-0001]`.
+    Delegates conversion to `migrate_pointers_to_new_format`, ensuring
+    consistency with other refinement workflows.
+
+    Args:
+        content: Raw markdown content to normalize.
+        manager: Workspace manager providing manifest and snapshot context.
+        context: Label used for logging (e.g., "spec.md").
+
+    Returns:
+        Content with legacy evidence pointers migrated to canonical format.
+    """
+    if not content:
+        return content
+    try:
+        return migrate_pointers_to_new_format(content, manager)
+    except Exception as exc:
+        logger.warning("Pointer normalization failed for %s: %s", context, exc)
+        _record_pointer_migration_error(context, str(exc))
+        return content
+
+
+def normalize_spec_pointers(spec_content: str, manager: WorkspaceManager) -> str:
+    """Normalize evidence pointers in spec.md content.
+
+    Legacy `[F####::SECTION]` pointers are converted to
+    `[spec_snapshot/relpath::SEC-F####-####]` using the shared migration
+    logic from `migrate_pointers_to_new_format`, while multi-hop pointers like
+    `[LIB-0001::spec.md::REQ-LIB-0001-0001]` remain unchanged.
 
     Args:
         spec_content: Raw spec content.
-        file_manifest: File manifest for pointer resolution.
-        section_manifest: Section manifest for pointer resolution.
+        manager: Workspace manager providing manifest and snapshot context.
 
     Returns:
-        Spec content with normalized pointers.
+        Spec content with normalized evidence pointers.
     """
-    return spec_content
+    return _normalize_pointers(spec_content, manager, context="spec.md")
+
+
+def normalize_decisions_pointers(decisions_content: str, manager: WorkspaceManager) -> str:
+    """Normalize evidence pointers in decisions.md content.
+
+    Converts legacy `[F####::SECTION]` pointers to
+    `[spec_snapshot/relpath::SEC-F####-####]` using the shared migration
+    logic from `migrate_pointers_to_new_format`, while preserving multi-hop pointers such as
+    `[LIB-0001::spec.md::REQ-LIB-0001-0001]`.
+
+    Args:
+        decisions_content: Raw decisions content.
+        manager: Workspace manager providing manifest and snapshot context.
+
+    Returns:
+        Decisions content with normalized evidence pointers.
+    """
+    return _normalize_pointers(decisions_content, manager, context="decisions.md")
 
 
 def insert_element_ids(
@@ -314,10 +386,73 @@ def _write_json_file(path: Path, payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _count_legacy_pointers(content: str) -> int:
+    """Count legacy evidence pointers not using the spec_snapshot prefix.
+
+    Legacy pointers are any `[FILE_REF::SECTION]` pointers whose file
+    reference does not begin with `spec_snapshot/`, including multi-hop
+    pointers that should remain unchanged.
+    """
+    if not content:
+        return 0
+    count = 0
+    for match in EVIDENCE_POINTER_RE.finditer(content):
+        file_ref = match.group(1).strip()
+        if not file_ref.startswith("spec_snapshot/"):
+            count += 1
+    return count
+
+
+def _validate_pointers(
+    content: str, file_manifest: dict[str, dict[str, str]], lib_id: str
+) -> list[dict[str, Any]]:
+    """Validate evidence pointers resolve to known files.
+
+    Only unresolved file references are reported, and multi-hop pointers
+    (e.g. `[LIB-0001::spec.md::REQ-...]`) are excluded from validation.
+
+    Args:
+        content: Markdown content containing evidence pointers.
+        file_manifest: Manifest mapping file IDs to relpaths.
+        lib_id: Library identifier used for issue reporting.
+
+    Returns:
+        List of issues for pointers with unresolved file references.
+    """
+    if not content:
+        return []
+    issues: list[dict[str, Any]] = []
+    file_id_lookup = build_file_id_lookup(file_manifest)
+    for match in EVIDENCE_POINTER_RE.finditer(content):
+        pointer = match.group(0)
+        parsed = parse_evidence_pointer(pointer, allow_multi_hop=True)
+        if not parsed:
+            continue
+        if "intermediate" in parsed:
+            continue
+        file_ref = parsed["file_ref"]
+        if file_ref in file_id_lookup:
+            continue
+        issues.append(
+            {
+                "type": "unresolved_pointer",
+                "lib_id": lib_id,
+                "pointer": pointer,
+                "file_ref": file_ref,
+                "message": f"Unresolved file reference for pointer: {pointer}",
+            }
+        )
+    return issues
+
+
 def stabilize_specs(
     run_id: str, lib_ids: list[str] | None = None, write_run_index: bool = False
 ) -> dict[str, Any]:
     """Stabilize spec and decision IDs for all libraries.
+
+    Normalizes legacy evidence pointers to the canonical spec snapshot
+    format (preserving multi-hop pointers), validates unresolved file
+    references, allocates stable IDs, and emits per-library indexes.
 
     Args:
         run_id: Run identifier.
@@ -347,6 +482,8 @@ def stabilize_specs(
     processed_libs: list[str] = []
     elements_assigned = 0
     decisions_assigned = 0
+    pointers_migrated_total = 0
+    legacy_pointers_remaining_total = 0
     spec_indexes: list[dict[str, Any]] = []
 
     target_libs: list[Path] = []
@@ -416,20 +553,41 @@ def stabilize_specs(
                     }
                 )
             except OSError as exc:
-                errors.append(
-                    {"lib_id": lib_id, "error": f"Failed to create decisions.md: {exc}"}
-                )
+                errors.append({"lib_id": lib_id, "error": f"Failed to create decisions.md: {exc}"})
 
-        normalized_spec = normalize_spec_pointers(
-            spec_content,
-            manager.state.file_manifest,
-            manager.state.section_manifest,
+        legacy_before_spec = _count_legacy_pointers(spec_content)
+        legacy_before_decisions = _count_legacy_pointers(decisions_content)
+
+        normalized_spec = normalize_spec_pointers(spec_content, manager)
+        normalized_decisions = normalize_decisions_pointers(decisions_content, manager)
+
+        for error in _consume_pointer_migration_errors():
+            issues.append(
+                {
+                    "type": "pointer_migration_failed",
+                    "lib_id": lib_id,
+                    "context": error["context"],
+                    "message": (
+                        f"Pointer migration failed for {error['context']}: {error['error']}"
+                    ),
+                }
+            )
+
+        issues.extend(_validate_pointers(normalized_spec, manager.state.file_manifest, lib_id))
+        issues.extend(_validate_pointers(normalized_decisions, manager.state.file_manifest, lib_id))
+
+        legacy_after_spec = _count_legacy_pointers(normalized_spec)
+        legacy_after_decisions = _count_legacy_pointers(normalized_decisions)
+        migrated_count = (legacy_before_spec + legacy_before_decisions) - (
+            legacy_after_spec + legacy_after_decisions
         )
-        normalized_spec, assigned_elements = insert_element_ids(
-            normalized_spec, lib_id, counters
-        )
+        pointers_migrated_total += migrated_count
+        legacy_pointers_remaining_total += legacy_after_spec + legacy_after_decisions
+        logger.info("Migrated %s pointers in %s", migrated_count, lib_id)
+
+        normalized_spec, assigned_elements = insert_element_ids(normalized_spec, lib_id, counters)
         normalized_decisions, assigned_decisions = insert_decision_ids(
-            decisions_content, lib_id, counters
+            normalized_decisions, lib_id, counters
         )
 
         elements_assigned += assigned_elements
@@ -445,9 +603,7 @@ def stabilize_specs(
             try:
                 decisions_path.write_text(normalized_decisions, encoding="utf-8")
             except OSError as exc:
-                errors.append(
-                    {"lib_id": lib_id, "error": f"Failed to write decisions.md: {exc}"}
-                )
+                errors.append({"lib_id": lib_id, "error": f"Failed to write decisions.md: {exc}"})
 
         try:
             save_id_counters(lib_dir, counters)
@@ -504,6 +660,8 @@ def stabilize_specs(
         "libraries_processed": len(processed_libs),
         "elements_assigned": elements_assigned,
         "decisions_assigned": decisions_assigned,
+        "pointers_migrated": pointers_migrated_total,
+        "legacy_pointers_remaining": legacy_pointers_remaining_total,
         "spec_index": "workspace/indexes/library_spec_index.json" if write_run_index else None,
     }
     if stabilized:
