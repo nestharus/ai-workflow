@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.schemas.review_actions import ReviewActionsReport
 from spec_manager.schemas.spec_indexes import SpecIndex
@@ -33,6 +35,16 @@ _DEFAULT_THRESHOLDS = {
     "split_silhouette": 0.3,
     "split_min_elements": 10,
 }
+_ELEMENT_ID_RE = re.compile(
+    r"^(?:REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})$"
+)
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    trimmed = value.strip()
+    if len(trimmed) <= limit:
+        return trimmed
+    return trimmed[:limit]
 
 
 def _is_library_id(value: str) -> bool:
@@ -423,7 +435,7 @@ def detect_split_candidates(
 
         cluster_assignments = {
             element.element_id: int(label)
-            for element, label in zip(elements, best_labels)
+            for element, label in zip(elements, best_labels, strict=True)
         }
         candidates.append(
             {
@@ -471,7 +483,7 @@ def detect_structure_issues(
             min_shared_elements=int(effective_thresholds["min_shared_elements"]),
         )
     except Exception as exc:
-        logger.exception("Overlap detection failed: %s", exc)
+        logger.exception("Overlap detection failed")
         errors.append({"type": "overlap_detection_failed", "error": str(exc)})
 
     try:
@@ -481,7 +493,7 @@ def detect_structure_issues(
             min_elements=int(effective_thresholds["split_min_elements"]),
         )
     except Exception as exc:
-        logger.exception("Split detection failed: %s", exc)
+        logger.exception("Split detection failed")
         errors.append({"type": "split_detection_failed", "error": str(exc)})
 
     if errors:
@@ -495,3 +507,365 @@ def detect_structure_issues(
         len(results["split_candidates"]),
     )
     return results
+
+
+def _build_boundary_judge_prompt(
+    lib_a_id: str,
+    lib_b_id: str,
+    charter_a: str,
+    charter_b: str,
+    matched_elements: list[dict[str, Any]],
+    architecture_context: str | None,
+) -> str:
+    """Build prompt for boundary overlap judge agent."""
+    charter_a_excerpt = _truncate_text(charter_a, 500)
+    charter_b_excerpt = _truncate_text(charter_b, 500)
+
+    lines = [
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "Return a JSON object with this schema:",
+        "{",
+        '  "action": "merge|keep_separate|move_elements",',
+        '  "rationale": "string with [LIB-####::spec.md::ELEMENT_ID] citations",',
+        '  "elements_to_move": ["REQ-LIB-####-####", "..."],',
+        '  "target_lib": "LIB-####",',
+        '  "confidence": 0.0',
+        "}",
+        "",
+        "Validation rules:",
+        "- action must be merge, keep_separate, or move_elements",
+        (
+            "- element IDs must match REQ-LIB-####-####, INV-LIB-####-####, "
+            "FLOW-LIB-####-##, DEC-LIB-####-####"
+        ),
+        "- citations must use [LIB-####::spec.md::ELEMENT_ID] or [LIB-####::charter.md]",
+        f"- target_lib must be {lib_a_id} or {lib_b_id}",
+        "- confidence must be between 0.0 and 1.0",
+        "",
+        "## INPUT DATA",
+        f"Library A ID: {lib_a_id}",
+        "Library A Charter (excerpt, first 500 chars):",
+        charter_a_excerpt or "(empty)",
+        "",
+        f"Library B ID: {lib_b_id}",
+        "Library B Charter (excerpt, first 500 chars):",
+        charter_b_excerpt or "(empty)",
+        "",
+        "Matched Elements (top 10):",
+    ]
+
+    if matched_elements:
+        for idx, match in enumerate(matched_elements[:10], start=1):
+            a_id = str(match.get("element_a_id", "")).strip()
+            b_id = str(match.get("element_b_id", "")).strip()
+            a_text = _truncate_text(str(match.get("element_a_text", "")), 200)
+            b_text = _truncate_text(str(match.get("element_b_text", "")), 200)
+            similarity = match.get("similarity", 0.0)
+            try:
+                similarity_value = float(similarity)
+            except (TypeError, ValueError):
+                similarity_value = 0.0
+            lines.append(
+                f"- Pair {idx}: A {a_id}: {a_text} | B {b_id}: {b_text} | "
+                f"similarity={similarity_value:.2f}"
+            )
+    else:
+        lines.append("- (none)")
+
+    if architecture_context:
+        lines.extend(
+            [
+                "",
+                "Architecture Mapping Context:",
+                _truncate_text(architecture_context, 1000) or "(empty)",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "## OUTPUT FORMAT",
+            "{",
+            '  "action": "keep_separate",',
+            '  "rationale": "Reasons with citations [LIB-0001::spec.md::REQ-LIB-0001-0001].",',
+            '  "elements_to_move": [],',
+            '  "target_lib": "LIB-0001",',
+            '  "confidence": 0.62',
+            "}",
+        ]
+    )
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def _build_split_planner_prompt(
+    lib_id: str,
+    charter: str,
+    spec_excerpt: str,
+    cluster_assignments: dict[str, int],
+    silhouette_score: float,
+    num_clusters: int,
+) -> str:
+    """Build prompt for split planner agent."""
+    charter_excerpt = _truncate_text(charter, 500)
+    spec_excerpt_trimmed = _truncate_text(spec_excerpt, 1000)
+
+    clusters: dict[int, list[str]] = {}
+    for element_id, cluster_id in cluster_assignments.items():
+        clusters.setdefault(int(cluster_id), []).append(element_id)
+
+    lines = [
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "Return a JSON object with this schema:",
+        "{",
+        '  "split_groups": [',
+        "    {",
+        '      "group_id": 0,',
+        '      "proposed_name": "string",',
+        '      "charter_summary": "string",',
+        '      "element_ids": ["REQ-LIB-####-####", "..."],',
+        '      "justification": "string with citations"',
+        "    }",
+        "  ],",
+        '  "interface_notes": "string",',
+        '  "confidence": 0.0',
+        "}",
+        "",
+        "Termination criteria: return an empty split_groups list if clusters reflect",
+        "implementation details, boundaries are unclear, cross-cluster dependencies exceed 30%,",
+        "or silhouette score is below 0.3.",
+        "",
+        "Validation rules:",
+        "- each split group must include at least 3 element IDs",
+        (
+            "- element IDs must match REQ-LIB-####-####, INV-LIB-####-####, "
+            "FLOW-LIB-####-##, DEC-LIB-####-####"
+        ),
+        "- citations must use [LIB-####::spec.md::ELEMENT_ID]",
+        "- proposed_name must describe capability, not technical layer",
+        "",
+        "## INPUT DATA",
+        f"Library ID: {lib_id}",
+        "Library Charter (excerpt, first 500 chars):",
+        charter_excerpt or "(empty)",
+        "",
+        "Spec Excerpt (requirements/invariants, first 1000 chars):",
+        spec_excerpt_trimmed or "(empty)",
+        "",
+        f"Silhouette score: {silhouette_score:.3f}",
+        f"Number of clusters: {num_clusters}",
+        "",
+        "Cluster assignments:",
+    ]
+
+    if clusters:
+        for cluster_id in sorted(clusters):
+            element_ids = sorted(clusters[cluster_id])
+            lines.append(f"- Cluster {cluster_id} ({len(element_ids)} elements):")
+            for element_id in element_ids:
+                lines.append(f"  - {element_id}")
+    else:
+        lines.append("- (none)")
+
+    lines.extend(
+        [
+            "",
+            "## OUTPUT FORMAT",
+            "{",
+            '  "split_groups": [',
+            "    {",
+            '      "group_id": 0,',
+            '      "proposed_name": "Input Routing",',
+            '      "charter_summary": "Own intake and routing capabilities.",',
+            '      "element_ids": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "INV-LIB-0001-0003"],',
+            '      "justification": "Evidence [LIB-0001::spec.md::REQ-LIB-0001-0001]."',
+            "    }",
+            "  ],",
+            '  "interface_notes": "Describe how groups interact.",',
+            '  "confidence": 0.58',
+            "}",
+        ]
+    )
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def _parse_agent_json(output: str) -> dict[str, Any]:
+    json_match = re.search(r"```json\s*(\{.*?\})\s*```", output, re.DOTALL)
+    if json_match:
+        return json.loads(json_match.group(1))
+    return json.loads(output)
+
+
+def _extract_spec_excerpt(spec_content: str, limit: int = 1000) -> str:
+    lines = spec_content.splitlines()
+    capture = False
+    collected: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            heading = stripped[3:].strip().lower()
+            capture = heading in {"requirements", "invariants"}
+        if capture:
+            collected.append(line)
+    excerpt = "\n".join(collected).strip()
+    if not excerpt:
+        excerpt = spec_content.strip()
+    return _truncate_text(excerpt, limit)
+
+
+def _judge_boundary_overlap(
+    candidate: dict[str, Any],
+    manager: WorkspaceManager,
+    architecture_context: str | None,
+) -> dict[str, Any]:
+    lib_a = candidate["lib_a"]
+    lib_b = candidate["lib_b"]
+    matched_elements = candidate.get("matched_elements", [])
+
+    lib_a_dir = manager.structure.libraries_dir / lib_a
+    lib_b_dir = manager.structure.libraries_dir / lib_b
+    charter_a = (lib_a_dir / "charter.md").read_text(encoding="utf-8")
+    charter_b = (lib_b_dir / "charter.md").read_text(encoding="utf-8")
+
+    prompt = _build_boundary_judge_prompt(
+        lib_a_id=lib_a,
+        lib_b_id=lib_b,
+        charter_a=charter_a,
+        charter_b=charter_b,
+        matched_elements=matched_elements,
+        architecture_context=architecture_context,
+    )
+
+    output = run_agent(
+        agent_name="chatgpt-library-boundary-judge",
+        prompt=prompt,
+        workspace=manager.workspace_path,
+    )
+
+    data = _parse_agent_json(str(output))
+    errors = _validate_boundary_judge_output(data, lib_a, lib_b)
+    if errors:
+        raise ValueError(f"Boundary judge output failed validation: {errors}")
+    return data
+
+
+def _plan_library_split(
+    candidate: dict[str, Any],
+    manager: WorkspaceManager,
+) -> dict[str, Any]:
+    lib_id = candidate["lib_id"]
+    cluster_assignments = candidate["cluster_assignments"]
+    silhouette_score = float(candidate["silhouette_score"])
+    num_clusters = int(candidate["num_clusters"])
+
+    lib_dir = manager.structure.libraries_dir / lib_id
+    charter = (lib_dir / "charter.md").read_text(encoding="utf-8")
+    spec_content = (lib_dir / "spec.md").read_text(encoding="utf-8")
+    spec_excerpt = _extract_spec_excerpt(spec_content, limit=1000)
+
+    prompt = _build_split_planner_prompt(
+        lib_id=lib_id,
+        charter=charter,
+        spec_excerpt=spec_excerpt,
+        cluster_assignments=cluster_assignments,
+        silhouette_score=silhouette_score,
+        num_clusters=num_clusters,
+    )
+
+    output = run_agent(
+        agent_name="opus-library-split-planner",
+        prompt=prompt,
+        workspace=manager.workspace_path,
+    )
+
+    data = _parse_agent_json(str(output))
+    errors = _validate_split_planner_output(data, lib_id)
+    if errors:
+        raise ValueError(f"Split planner output failed validation: {errors}")
+    return data
+
+
+def _validate_boundary_judge_output(
+    output: dict[str, Any],
+    lib_a: str,
+    lib_b: str,
+) -> list[str]:
+    errors: list[str] = []
+
+    action = output.get("action")
+    if action not in {"merge", "keep_separate", "move_elements"}:
+        errors.append("action must be merge, keep_separate, or move_elements")
+
+    rationale = output.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        errors.append("rationale must be a non-empty string")
+
+    if action == "move_elements":
+        elements_to_move = output.get("elements_to_move")
+        if not isinstance(elements_to_move, list) or not elements_to_move:
+            errors.append("elements_to_move must be a non-empty list for move_elements")
+        else:
+            for element_id in elements_to_move:
+                if not isinstance(element_id, str) or not _ELEMENT_ID_RE.fullmatch(element_id):
+                    errors.append(f"invalid element id: {element_id}")
+
+        target_lib = output.get("target_lib")
+        if target_lib not in {lib_a, lib_b}:
+            errors.append("target_lib must be one of the input libraries")
+
+    confidence = output.get("confidence")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        errors.append("confidence must be a number between 0.0 and 1.0")
+    elif not 0.0 <= float(confidence) <= 1.0:
+        errors.append("confidence must be between 0.0 and 1.0")
+
+    return errors
+
+
+def _validate_split_planner_output(output: dict[str, Any], lib_id: str) -> list[str]:
+    errors: list[str] = []
+
+    split_groups = output.get("split_groups")
+    if not isinstance(split_groups, list):
+        errors.append("split_groups must be a list")
+        split_groups = []
+
+    for group in split_groups:
+        if not isinstance(group, dict):
+            errors.append("split group must be an object")
+            continue
+
+        group_id = group.get("group_id")
+        if not isinstance(group_id, int) or isinstance(group_id, bool):
+            errors.append("group_id must be an integer")
+
+        proposed_name = group.get("proposed_name")
+        if not isinstance(proposed_name, str) or not proposed_name.strip():
+            errors.append("proposed_name must be a non-empty string")
+
+        charter_summary = group.get("charter_summary")
+        if not isinstance(charter_summary, str) or not charter_summary.strip():
+            errors.append("charter_summary must be a non-empty string")
+
+        element_ids = group.get("element_ids")
+        if not isinstance(element_ids, list):
+            errors.append("element_ids must be a list")
+            element_ids = []
+        if isinstance(element_ids, list) and len(element_ids) < 3:
+            errors.append("each split group must include at least 3 element IDs")
+        for element_id in element_ids:
+            if not isinstance(element_id, str) or not _ELEMENT_ID_RE.fullmatch(element_id):
+                errors.append(f"invalid element id: {element_id}")
+
+        justification = group.get("justification")
+        if not isinstance(justification, str) or not justification.strip():
+            errors.append("justification must be a non-empty string")
+
+    confidence = output.get("confidence")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        errors.append("confidence must be a number between 0.0 and 1.0")
+    elif not 0.0 <= float(confidence) <= 1.0:
+        errors.append("confidence must be between 0.0 and 1.0")
+
+    return errors

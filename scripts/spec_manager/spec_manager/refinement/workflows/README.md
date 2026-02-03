@@ -214,6 +214,30 @@ hashes across platforms.
 - All libraries must be mapped to components
 - Cross-component dependencies must be documented
 
+## Phase 7: Library Structure Review
+
+### Purpose
+
+Detect library boundary issues (overlaps, splits) and generate reviewable action proposals.
+
+### Agents
+
+- **chatgpt-library-boundary-judge**: Evaluates overlap pairs and recommends merge/keep_separate/move_elements
+- **opus-library-split-planner**: Proposes split groups based on clustering analysis
+
+### Outputs
+
+- `runs/<run_id>/reports/review_actions.json`: Structured action proposals
+- `runs/<run_id>/reports/review_actions.md`: Human-readable summary
+
+### Workflow
+
+1. Detect overlap candidates using TF-IDF similarity (threshold: 0.35)
+2. For each overlap pair, call boundary judge agent
+3. Detect split candidates using k-means clustering (K=2..5)
+4. For each split candidate, call split planner agent
+5. Consolidate proposals into review actions report
+
 ## Workflow Diagram
 
 ```mermaid
