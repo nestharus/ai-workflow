@@ -17,6 +17,7 @@ from .library_labeling import (
     refine_library_labels,
     resolve_all_overlaps,
 )
+from .library_structure_review import review_library_structure
 from .library_synthesis import synthesize_libraries
 from .phase_01_sectionization import sectionize_all
 from .spec_building import build_specs
@@ -59,6 +60,7 @@ __all__ = [
     "refine_library_labels",
     "render_spec",
     "resolve_all_overlaps",
+    "review_library_structure",
     "sectionize_all",
     "select_architecture",
     "spotcheck_evidence",

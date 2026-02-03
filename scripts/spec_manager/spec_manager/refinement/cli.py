@@ -743,6 +743,46 @@ def cmd_arch_map(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_review_structure(args: argparse.Namespace) -> int:
+    """Review library structure for Phase 7."""
+    run_id = args.run_id
+    apply_splits = args.apply_splits
+    apply_moves = args.apply_moves
+
+    from spec_manager.refinement.workflows import review_library_structure
+
+    try:
+        result = review_library_structure(
+            run_id, apply_splits=apply_splits, apply_moves=apply_moves
+        )
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Overlap candidates: {result['overlap_candidates_count']}")
+    print(f"Split candidates: {result['split_candidates_count']}")
+
+    report_paths = result.get("report_paths", {})
+    if report_paths.get("json"):
+        print(f"Report (json): {report_paths['json']}")
+    if report_paths.get("markdown"):
+        print(f"Report (markdown): {report_paths['markdown']}")
+
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            error_type = error.get("type", "error")
+            message = error.get("error", "error")
+            print(f"  - {error_type}: {message}")
+
+    if not result.get("success", True):
+        return 1
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.LIBRARY_STRUCTURE_REVIEW):
+        return 1
+    return 0
+
+
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
     from spec_manager.refinement.qa import QA_CASES
@@ -844,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
             "  spec propose-architectures (agent: opus-architecture-proposer)\n"
             "  spec select-architecture (agent: chatgpt-architecture-tradeoff-judge)\n"
             "  spec map-libraries (agent: glm-architecture-mapper)\n"
+            "  spec review-structure (Phase 7: library boundary review)\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1116,6 +1157,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_arch_map.add_argument("run_id", help="Run identifier")
     p_arch_map.set_defaults(func=cmd_arch_map)
+
+    p_spec_review = spec_subparsers.add_parser(
+        "review-structure",
+        help="Review library structure for Phase 7",
+        description=(
+            "Run Phase 7 library structure review to detect splits, merges, and boundary issues.\n"
+            "Requires Phase 6 spec stabilization to be completed.\n"
+            "Outputs: reports/review_actions.json, reports/review_actions.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_review.add_argument("run_id", help="Run identifier")
+    p_spec_review.add_argument(
+        "--apply-splits",
+        action="store_true",
+        help="Apply split actions (not yet implemented)",
+    )
+    p_spec_review.add_argument(
+        "--apply-moves",
+        action="store_true",
+        help="Apply move actions (not yet implemented)",
+    )
+    p_spec_review.set_defaults(func=cmd_spec_review_structure)
 
     if argv is None:
         argv = sys.argv[1:]

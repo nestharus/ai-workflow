@@ -21,7 +21,8 @@ from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 
 from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.workspace import WorkspaceManager
+from spec_manager.refinement.progress import ProgressTracker
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from spec_manager.schemas.review_actions import (
     ReviewAction,
     ReviewActionsReport,
@@ -1222,3 +1223,72 @@ def write_review_reports(
     logger.info("Wrote review actions JSON report to %s", json_path)
     logger.info("Wrote review actions Markdown report to %s", md_path)
     return json_path, md_path
+
+
+def review_library_structure(
+    run_id: str,
+    apply_splits: bool = False,
+    apply_moves: bool = False,
+) -> dict[str, Any]:
+    """Run Phase 7 library structure review."""
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        raise RuntimeError("Workspace not initialized.")
+
+    stabilization_status = manager.state.phases[Phase.SPEC_STABILIZATION.value].status
+    if stabilization_status != PhaseStatus.COMPLETED:
+        raise RuntimeError("Spec stabilization must be completed before library structure review.")
+
+    manager.start_phase(Phase.LIBRARY_STRUCTURE_REVIEW)
+
+    tracker = ProgressTracker(
+        total=1,
+        description="Reviewing library structure",
+        manager=manager,
+    )
+
+    try:
+        results = detect_structure_issues(manager, thresholds=None, consolidate=True)
+    except Exception as exc:
+        tracker.finish()
+        manager.fail_phase(Phase.LIBRARY_STRUCTURE_REVIEW, error=str(exc))
+        return {
+            "success": False,
+            "overlap_candidates_count": 0,
+            "split_candidates_count": 0,
+            "report_paths": {},
+            "errors": [{"error": str(exc)}],
+        }
+
+    tracker.update(status="review complete")
+    tracker.finish()
+
+    if apply_splits or apply_moves:
+        logger.warning(
+            "apply_splits/apply_moves requested but not implemented yet "
+            "(apply_splits=%s, apply_moves=%s).",
+            apply_splits,
+            apply_moves,
+        )
+
+    overlap_candidates = results.get("overlap_candidates", [])
+    split_candidates = results.get("split_candidates", [])
+    report_paths = results.get("report_paths", {})
+    errors = results.get("errors", [])
+    success = not errors
+
+    outputs = {
+        "overlap_candidates_count": len(overlap_candidates),
+        "split_candidates_count": len(split_candidates),
+        "report_paths": report_paths,
+    }
+    if success:
+        manager.complete_phase(Phase.LIBRARY_STRUCTURE_REVIEW, outputs=outputs)
+
+    return {
+        "success": success,
+        "overlap_candidates_count": len(overlap_candidates),
+        "split_candidates_count": len(split_candidates),
+        "report_paths": report_paths,
+        "errors": errors,
+    }

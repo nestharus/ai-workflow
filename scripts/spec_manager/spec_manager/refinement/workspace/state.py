@@ -36,6 +36,7 @@ class Phase(Enum):
     ARCHITECTURE_PROPOSAL = "architecture_proposal"
     ARCHITECTURE_SELECTION = "architecture_selection"
     ARCHITECTURE_MAPPING = "architecture_mapping"
+    LIBRARY_STRUCTURE_REVIEW = "library_structure_review"
     INTERFACES = "interfaces"
     TASKS = "tasks"
     IMPLEMENTATION = "implementation"
@@ -234,6 +235,7 @@ class WorkspaceState:
             Phase.ARCHITECTURE_PROPOSAL,
             Phase.ARCHITECTURE_SELECTION,
             Phase.ARCHITECTURE_MAPPING,
+            Phase.LIBRARY_STRUCTURE_REVIEW,
             Phase.INTERFACES,
             Phase.TASKS,
             Phase.IMPLEMENTATION,
