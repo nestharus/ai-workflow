@@ -73,6 +73,11 @@ class RunFolderStructure:
         return self.root / "audits"
 
     @property
+    def reports_dir(self) -> Path:
+        """Path to the reports directory."""
+        return self.root / "reports"
+
+    @property
     def files_json(self) -> Path:
         """Path to the files manifest."""
         return self.manifest_dir / "files.json"
@@ -209,6 +214,7 @@ class WorkspaceManager:
             self.structure.architecture_dir,
             self.structure.tasks_dir,
             self.structure.audits_dir,
+            self.structure.reports_dir,
         ]:
             subdir.mkdir(parents=True, exist_ok=True)
 

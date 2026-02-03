@@ -25,6 +25,7 @@ from typing import Literal
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, format_gap_table
+from spec_manager.refinement.qa.contract_lint import run_contract_lint
 from spec_manager.refinement.workflows import summarize_all, synthesize_libraries
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -750,6 +751,33 @@ def cmd_qa_run_all(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_qa_lint_contracts(args: argparse.Namespace) -> int:
+    """Lint agent prompts and workflow contracts."""
+    output_dir = Path("runs") / args.run_id / "reports" if args.run_id is not None else Path(".tmp")
+    issues, exit_code = run_contract_lint(
+        agents_dir=Path(".agents/agents"),
+        workflows_dir=Path("scripts/spec_manager/spec_manager/refinement/workflows"),
+        output_dir=output_dir,
+    )
+
+    summary = {"total": len(issues), "error": 0, "warning": 0, "info": 0}
+    for issue in issues:
+        if issue.severity in summary:
+            summary[issue.severity] += 1
+
+    print(f"Total issues: {summary['total']}")
+    print(
+        "Errors: {error} | Warnings: {warning} | Info: {info}".format(
+            error=summary["error"],
+            warning=summary["warning"],
+            info=summary["info"],
+        )
+    )
+    print(f"Report (markdown): {output_dir / 'contract_lint.md'}")
+    print(f"Report (json): {output_dir / 'contract_lint.json'}")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for spec refinement CLI."""
     parser = argparse.ArgumentParser(
@@ -771,7 +799,8 @@ def main(argv: list[str] | None = None) -> int:
             "  spec map-libraries (agent: glm-architecture-mapper)\n"
             "  qa list\n"
             "  qa run\n"
-            "  qa run-all"
+            "  qa run-all\n"
+            "  qa lint-contracts"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -851,6 +880,16 @@ def main(argv: list[str] | None = None) -> int:
         "--force", action="store_true", help="Recreate workspace before running"
     )
     p_qa_run_all.set_defaults(func=cmd_qa_run_all)
+
+    p_qa_lint_contracts = qa_subparsers.add_parser(
+        "lint-contracts",
+        help="Lint agent prompts and workflow contracts",
+    )
+    p_qa_lint_contracts.add_argument(
+        "--run-id",
+        help="Optional run identifier for storing reports under runs/<run_id>/reports/",
+    )
+    p_qa_lint_contracts.set_defaults(func=cmd_qa_lint_contracts)
 
     p_spec = subparsers.add_parser(
         "spec",
