@@ -38,6 +38,10 @@ _DEFAULT_THRESHOLDS = {
 _ELEMENT_ID_RE = re.compile(
     r"^(?:REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})$"
 )
+_CITATION_RE = re.compile(
+    r"\[LIB-\d{4}::spec\.md::(REQ|INV|FLOW|DEC)-LIB-\d{4}-\d{2,4}\]"
+    r"|\[LIB-\d{4}::charter\.md\]"
+)
 
 
 def _truncate_text(value: str, limit: int) -> str:
@@ -800,6 +804,11 @@ def _validate_boundary_judge_output(
     rationale = output.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
         errors.append("rationale must be a non-empty string")
+    elif not _CITATION_RE.search(rationale):
+        errors.append(
+            "rationale must contain at least one citation matching "
+            "[LIB-####::spec.md::ELEMENT_ID] or [LIB-####::charter.md]"
+        )
 
     if action == "move_elements":
         elements_to_move = output.get("elements_to_move")
@@ -861,6 +870,11 @@ def _validate_split_planner_output(output: dict[str, Any], lib_id: str) -> list[
         justification = group.get("justification")
         if not isinstance(justification, str) or not justification.strip():
             errors.append("justification must be a non-empty string")
+        elif not _CITATION_RE.search(justification):
+            errors.append(
+                "justification must contain at least one citation matching "
+                "[LIB-####::spec.md::ELEMENT_ID] or [LIB-####::charter.md]"
+            )
 
     confidence = output.get("confidence")
     if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):

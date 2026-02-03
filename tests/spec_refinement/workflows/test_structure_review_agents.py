@@ -79,21 +79,21 @@ def test_split_planner_prompt_structure() -> None:
 def test_boundary_judge_output_validation() -> None:
     valid_merge = {
         "action": "merge",
-        "rationale": "Overlap is substantial.",
+        "rationale": "Overlap is substantial [LIB-0001::spec.md::REQ-LIB-0001-0001].",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.7,
     }
     valid_keep = {
         "action": "keep_separate",
-        "rationale": "Intents differ.",
+        "rationale": "Intents differ [LIB-0002::charter.md].",
         "elements_to_move": [],
         "target_lib": "LIB-0002",
         "confidence": 0.55,
     }
     valid_move = {
         "action": "move_elements",
-        "rationale": "Move the shared intake requirement.",
+        "rationale": "Move the shared intake requirement [LIB-0001::spec.md::REQ-LIB-0001-0001].",
         "elements_to_move": ["REQ-LIB-0001-0001"],
         "target_lib": "LIB-0002",
         "confidence": 0.82,
@@ -104,12 +104,12 @@ def test_boundary_judge_output_validation() -> None:
     assert _validate_boundary_judge_output(valid_move, "LIB-0001", "LIB-0002") == []
 
     missing_action = {
-        "rationale": "Missing action.",
+        "rationale": "Missing action [LIB-0001::charter.md].",
         "confidence": 0.5,
     }
     invalid_element = {
         "action": "move_elements",
-        "rationale": "Bad element id.",
+        "rationale": "Bad element id [LIB-0002::spec.md::REQ-LIB-0002-0001].",
         "elements_to_move": ["BAD-ID"],
         "target_lib": "LIB-0002",
         "confidence": 0.4,
@@ -117,6 +117,64 @@ def test_boundary_judge_output_validation() -> None:
 
     assert _validate_boundary_judge_output(missing_action, "LIB-0001", "LIB-0002")
     assert _validate_boundary_judge_output(invalid_element, "LIB-0001", "LIB-0002")
+
+
+def test_boundary_judge_rationale_citation_validation() -> None:
+    no_citation = {
+        "action": "merge",
+        "rationale": "Overlap is substantial but no citation provided.",
+        "elements_to_move": [],
+        "target_lib": "LIB-0001",
+        "confidence": 0.7,
+    }
+    errors = _validate_boundary_judge_output(no_citation, "LIB-0001", "LIB-0002")
+    assert any("rationale must contain at least one citation" in e for e in errors)
+
+    malformed_citation = {
+        "action": "merge",
+        "rationale": "Overlap [LIB-0001::spec.md] without element ID.",
+        "elements_to_move": [],
+        "target_lib": "LIB-0001",
+        "confidence": 0.7,
+    }
+    errors = _validate_boundary_judge_output(malformed_citation, "LIB-0001", "LIB-0002")
+    assert any("rationale must contain at least one citation" in e for e in errors)
+
+    with_spec_citation = {
+        "action": "keep_separate",
+        "rationale": "See [LIB-0001::spec.md::INV-LIB-0001-0003] for invariant.",
+        "elements_to_move": [],
+        "target_lib": "LIB-0001",
+        "confidence": 0.6,
+    }
+    assert _validate_boundary_judge_output(with_spec_citation, "LIB-0001", "LIB-0002") == []
+
+    with_charter_citation = {
+        "action": "keep_separate",
+        "rationale": "Charter scopes differ [LIB-0002::charter.md].",
+        "elements_to_move": [],
+        "target_lib": "LIB-0001",
+        "confidence": 0.6,
+    }
+    assert _validate_boundary_judge_output(with_charter_citation, "LIB-0001", "LIB-0002") == []
+
+    with_flow_citation = {
+        "action": "merge",
+        "rationale": "Flow overlap [LIB-0001::spec.md::FLOW-LIB-0001-01].",
+        "elements_to_move": [],
+        "target_lib": "LIB-0001",
+        "confidence": 0.7,
+    }
+    assert _validate_boundary_judge_output(with_flow_citation, "LIB-0001", "LIB-0002") == []
+
+    with_dec_citation = {
+        "action": "merge",
+        "rationale": "Decision conflict [LIB-0001::spec.md::DEC-LIB-0001-0001].",
+        "elements_to_move": [],
+        "target_lib": "LIB-0001",
+        "confidence": 0.7,
+    }
+    assert _validate_boundary_judge_output(with_dec_citation, "LIB-0001", "LIB-0002") == []
 
 
 def test_split_planner_output_validation() -> None:
@@ -131,7 +189,7 @@ def test_split_planner_output_validation() -> None:
                     "REQ-LIB-0001-0002",
                     "INV-LIB-0001-0003",
                 ],
-                "justification": "Distinct intake requirements.",
+                "justification": "Distinct intake requirements [LIB-0001::spec.md::REQ-LIB-0001-0001].",
             },
             {
                 "group_id": 1,
@@ -142,7 +200,7 @@ def test_split_planner_output_validation() -> None:
                     "REQ-LIB-0001-0005",
                     "INV-LIB-0001-0006",
                 ],
-                "justification": "Distinct processing requirements.",
+                "justification": "Distinct processing requirements [LIB-0001::spec.md::REQ-LIB-0001-0004].",
             },
         ],
         "interface_notes": "Intake hands off to processing.",
@@ -170,6 +228,105 @@ def test_split_planner_output_validation() -> None:
     assert _validate_split_planner_output(valid_output, "LIB-0001") == []
     assert _validate_split_planner_output(empty_output, "LIB-0001") == []
     assert _validate_split_planner_output(invalid_output, "LIB-0001")
+
+
+def test_split_planner_justification_citation_validation() -> None:
+    no_citation = {
+        "split_groups": [
+            {
+                "group_id": 0,
+                "proposed_name": "Intake",
+                "charter_summary": "Own intake.",
+                "element_ids": [
+                    "REQ-LIB-0001-0001",
+                    "REQ-LIB-0001-0002",
+                    "INV-LIB-0001-0003",
+                ],
+                "justification": "Distinct intake requirements without any citation.",
+            }
+        ],
+        "interface_notes": "",
+        "confidence": 0.5,
+    }
+    errors = _validate_split_planner_output(no_citation, "LIB-0001")
+    assert any("justification must contain at least one citation" in e for e in errors)
+
+    malformed_citation = {
+        "split_groups": [
+            {
+                "group_id": 0,
+                "proposed_name": "Intake",
+                "charter_summary": "Own intake.",
+                "element_ids": [
+                    "REQ-LIB-0001-0001",
+                    "REQ-LIB-0001-0002",
+                    "INV-LIB-0001-0003",
+                ],
+                "justification": "See [LIB-0001::spec.md] for details.",
+            }
+        ],
+        "interface_notes": "",
+        "confidence": 0.5,
+    }
+    errors = _validate_split_planner_output(malformed_citation, "LIB-0001")
+    assert any("justification must contain at least one citation" in e for e in errors)
+
+    with_charter_citation = {
+        "split_groups": [
+            {
+                "group_id": 0,
+                "proposed_name": "Intake",
+                "charter_summary": "Own intake.",
+                "element_ids": [
+                    "REQ-LIB-0001-0001",
+                    "REQ-LIB-0001-0002",
+                    "INV-LIB-0001-0003",
+                ],
+                "justification": "Charter scope supports split [LIB-0001::charter.md].",
+            }
+        ],
+        "interface_notes": "",
+        "confidence": 0.5,
+    }
+    assert _validate_split_planner_output(with_charter_citation, "LIB-0001") == []
+
+    with_inv_citation = {
+        "split_groups": [
+            {
+                "group_id": 0,
+                "proposed_name": "Intake",
+                "charter_summary": "Own intake.",
+                "element_ids": [
+                    "REQ-LIB-0001-0001",
+                    "REQ-LIB-0001-0002",
+                    "INV-LIB-0001-0003",
+                ],
+                "justification": "Invariant boundary [LIB-0001::spec.md::INV-LIB-0001-0003].",
+            }
+        ],
+        "interface_notes": "",
+        "confidence": 0.5,
+    }
+    assert _validate_split_planner_output(with_inv_citation, "LIB-0001") == []
+
+    with_flow_citation = {
+        "split_groups": [
+            {
+                "group_id": 0,
+                "proposed_name": "Intake",
+                "charter_summary": "Own intake.",
+                "element_ids": [
+                    "REQ-LIB-0001-0001",
+                    "REQ-LIB-0001-0002",
+                    "INV-LIB-0001-0003",
+                ],
+                "justification": "Flow isolation [LIB-0001::spec.md::FLOW-LIB-0001-01].",
+            }
+        ],
+        "interface_notes": "",
+        "confidence": 0.5,
+    }
+    assert _validate_split_planner_output(with_flow_citation, "LIB-0001") == []
 
 
 def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
@@ -212,7 +369,7 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
 
     boundary_output = {
         "action": "merge",
-        "rationale": "Overlap is strong.",
+        "rationale": "Overlap is strong [LIB-0001::spec.md::REQ-LIB-0001-0001].",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.74,
@@ -228,7 +385,7 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
                     "REQ-LIB-0001-0002",
                     "INV-LIB-0001-0003",
                 ],
-                "justification": "Distinct intake requirements.",
+                "justification": "Distinct intake requirements [LIB-0001::spec.md::REQ-LIB-0001-0001].",
             }
         ],
         "interface_notes": "",
