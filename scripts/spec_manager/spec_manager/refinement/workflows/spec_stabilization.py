@@ -1165,6 +1165,8 @@ def stabilize_specs(
     if build_status != PhaseStatus.COMPLETED:
         raise RuntimeError("Spec building must be completed before stabilization.")
 
+    manager.start_phase(Phase.SPEC_STABILIZATION)
+
     libraries_dir = manager.structure.libraries_dir
     if not libraries_dir.exists():
         raise RuntimeError(f"Libraries directory missing: {libraries_dir}")
@@ -1402,7 +1404,7 @@ def stabilize_specs(
         else:
             logger.info("Wrote run-level spec index for %s", run_id)
 
-    phase_result = manager.state.phases[Phase.SPEC_BUILDING.value]
+    phase_result = manager.state.phases[Phase.SPEC_STABILIZATION.value]
     phase_result.issues.extend(errors + issues)
 
     stabilized = not errors and bool(processed_libs)
@@ -1421,7 +1423,7 @@ def stabilize_specs(
         "spec_index": "workspace/indexes/library_spec_index.json" if write_run_index else None,
     }
     if stabilized:
-        manager.complete_phase(Phase.SPEC_BUILDING, outputs=outputs)
+        manager.complete_phase(Phase.SPEC_STABILIZATION, outputs=outputs)
 
     return {
         "success": not errors,

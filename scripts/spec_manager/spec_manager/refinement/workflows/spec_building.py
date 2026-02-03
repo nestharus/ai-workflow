@@ -785,7 +785,7 @@ def _check_stabilization_status(manager: WorkspaceManager) -> bool:
     Returns:
         True if stabilization has completed, False otherwise.
     """
-    phase_result = manager.state.phases.get(Phase.SPEC_BUILDING.value)
+    phase_result = manager.state.phases.get(Phase.SPEC_STABILIZATION.value)
     if not phase_result:
         return False
 

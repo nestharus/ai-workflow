@@ -462,27 +462,6 @@ def _extract_id_prefix(line: str) -> str | None:
     return existing_id
 
 
-def _is_stabilization_enabled(spec_doc: SpecDocument) -> bool:
-    """Check if spec stabilization has been run (IDs should be preserved).
-
-    This is a heuristic check - if any bullet in Requirements/Constraints/Dependencies
-    sections has an element ID, we assume stabilization has run.
-
-    Args:
-        spec_doc: The spec document to check.
-
-    Returns:
-        True if stabilization appears to have run, False otherwise.
-    """
-    id_managed_sections = ["Requirements", "Constraints", "Dependencies", "Flows"]
-    for section in id_managed_sections:
-        lines = spec_doc.get_lines(section)
-        for line in lines:
-            if _is_bullet_line(line) and extract_existing_id(line):
-                return True
-    return False
-
-
 def _resolve_bullet_line_index(lines: list[str], bullet_index: int | None) -> int:
     if bullet_index is None:
         raise ValueError("bullet_index is required for this operation.")

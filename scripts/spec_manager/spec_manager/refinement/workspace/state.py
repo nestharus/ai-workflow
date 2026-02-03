@@ -31,6 +31,7 @@ class Phase(Enum):
     LIBRARY_SYNTHESIS = "library_synthesis"
     EVIDENCE_EXPANSION = "evidence_expansion"
     SPEC_BUILDING = "spec_building"
+    SPEC_STABILIZATION = "spec_stabilization"
     SUBLIBRARY_DETECTION = "sublibrary_detection"
     ARCHITECTURE_PROPOSAL = "architecture_proposal"
     ARCHITECTURE_SELECTION = "architecture_selection"
@@ -228,6 +229,7 @@ class WorkspaceState:
             Phase.LIBRARY_SYNTHESIS,
             Phase.EVIDENCE_EXPANSION,
             Phase.SPEC_BUILDING,
+            Phase.SPEC_STABILIZATION,
             Phase.SUBLIBRARY_DETECTION,
             Phase.ARCHITECTURE_PROPOSAL,
             Phase.ARCHITECTURE_SELECTION,
