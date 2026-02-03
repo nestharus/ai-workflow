@@ -214,10 +214,9 @@ def _process_bullet_line(
         element_id = allocate_element_id(lib_id, element_type, counters)
     except ValueError as exc:
         logger.exception(
-            "Failed to allocate %s ID for %s spec: %s",
+            "Failed to allocate %s ID for %s spec",
             element_type,
             lib_id,
-            exc,
         )
         return line, False
 
@@ -254,7 +253,7 @@ def _ensure_flows_section(content: str) -> str:
             insert_text = "\n## Flows\n\n"
             return f"{content[:end]}{insert_text}{content[end:]}"
 
-    return content
+    return content + "\n## Flows\n\n"
 
 
 def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[dict[str, Any]]:
