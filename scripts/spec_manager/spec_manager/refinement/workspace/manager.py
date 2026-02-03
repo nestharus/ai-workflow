@@ -26,6 +26,14 @@ from spec_manager.refinement.core.gap import (
     parse_gaps_markdown,
 )
 from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.schemas.edge_list import (
+    EdgeListSchema,
+    InterfaceIndexSchema,
+    read_edge_list_json,
+    read_interface_index_json,
+    write_edge_list_json,
+    write_interface_index_json,
+)
 
 from .state import Phase, WorkspaceState
 
@@ -1124,6 +1132,36 @@ class WorkspaceManager:
         """Get gap coverage metrics for a library."""
         queue = self.get_library_gap_queue(lib_id)
         return queue.get_coverage_metrics()
+
+    def write_edge_list(self, edge_list: EdgeListSchema) -> Path:
+        """Write edge list to workspace/indexes/edge_list.json."""
+        edge_list_path = self.structure.indexes_dir / "edge_list.json"
+        write_edge_list_json(edge_list, edge_list_path)
+        return edge_list_path
+
+    def read_edge_list(self) -> EdgeListSchema | None:
+        """Read edge list from workspace/indexes/edge_list.json."""
+        edge_list_path = self.structure.indexes_dir / "edge_list.json"
+        if not edge_list_path.exists():
+            return None
+        return read_edge_list_json(edge_list_path)
+
+    def write_interface_index(self, index: InterfaceIndexSchema) -> Path:
+        """Write interface index to workspace/indexes/interface_index.json."""
+        interface_index_path = self.structure.indexes_dir / "interface_index.json"
+        write_interface_index_json(index, interface_index_path)
+        return interface_index_path
+
+    def read_interface_index(self) -> InterfaceIndexSchema | None:
+        """Read interface index from workspace/indexes/interface_index.json."""
+        interface_index_path = self.structure.indexes_dir / "interface_index.json"
+        if not interface_index_path.exists():
+            return None
+        return read_interface_index_json(interface_index_path)
+
+    def get_interface_contracts_dir(self, consumer_lib: str) -> Path:
+        """Get interfaces directory for a consumer library."""
+        return self.structure.libraries_dir / consumer_lib / "interfaces"
 
     def write_library_shapes(self, shapes: dict[str, dict[str, Any]]) -> Path:
         """Write library shapes to workspace/indexes/library_shapes.json."""

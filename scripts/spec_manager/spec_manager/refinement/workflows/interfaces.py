@@ -19,7 +19,14 @@ from spec_manager.schemas.edge_list import (
     EdgeListSchema,
     EdgeSchema,
     allocate_edge_id,
+    build_interface_index,
     validate_edge_references,
+)
+from spec_manager.schemas.interface_contract import (
+    InterfaceContractSchema,
+    validate_contract_references,
+    write_interface_contract_json,
+    write_interface_contract_markdown,
 )
 from spec_manager.schemas.spec_indexes import DecisionsIndex, SpecIndex
 
@@ -719,15 +726,261 @@ def build_edge_context_bundles(
     return bundles
 
 
+def _build_contract_prompt(bundle: dict[str, Any]) -> str:
+    payload = json.dumps(bundle, indent=2)
+    return "\n".join(["## Interface Context Bundle", payload])
+
+
+def _extract_contract_markdown(output: str) -> str:
+    if not output:
+        return ""
+    markdown = re.sub(r"```(?:json)?\s*.*?```", "", output, flags=re.DOTALL)
+    return markdown.strip()
+
+
+def draft_interface_contracts(
+    edges: list[EdgeSchema],
+    context_bundles: dict[str, dict[str, Any]],
+    manager: WorkspaceManager,
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    """Draft interface contracts for each edge using the contract writer agent."""
+    contracts: dict[str, tuple[str, dict[str, Any]]] = {}
+    if not edges:
+        return contracts
+
+    tracker = ProgressTracker(
+        total=len(edges), description="Drafting interface contracts", manager=manager
+    )
+
+    def _draft(edge: EdgeSchema) -> tuple[str, str, dict[str, Any] | None]:
+        bundle = context_bundles.get(edge.edge_id)
+        if bundle is None:
+            _record_issue(
+                edge.consumer_lib,
+                "contract_draft_error",
+                "Context bundle missing for edge.",
+                edge_id=edge.edge_id,
+            )
+            return edge.edge_id, "", None
+
+        prompt = _build_contract_prompt(bundle)
+        try:
+            output = run_agent(
+                agent_name="opus-interface-contract-writer",
+                prompt=prompt,
+                workspace=manager.workspace_path,
+            )
+        except RuntimeError as exc:
+            _record_issue(
+                edge.consumer_lib,
+                "contract_draft_error",
+                f"Agent error: {exc}",
+                edge_id=edge.edge_id,
+            )
+            return edge.edge_id, "", None
+
+        payload = _parse_contract_output(output)
+        if not isinstance(payload, dict):
+            _record_issue(
+                edge.consumer_lib,
+                "contract_draft_error",
+                "Failed to parse contract JSON.",
+                edge_id=edge.edge_id,
+            )
+            return edge.edge_id, "", None
+
+        markdown = _extract_contract_markdown(output)
+        if not markdown:
+            _record_issue(
+                edge.consumer_lib,
+                "contract_draft_error",
+                "Contract markdown section missing.",
+                edge_id=edge.edge_id,
+            )
+
+        return edge.edge_id, markdown, payload
+
+    max_workers = min(10, max(1, len(edges)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_draft, edge): edge.edge_id for edge in edges}
+        for future in as_completed(futures):
+            edge_id = futures[future]
+            try:
+                edge_id, markdown, payload = future.result()
+            except Exception as exc:
+                _record_issue("unknown", "contract_draft_error", str(exc), edge_id=edge_id)
+                tracker.update(status=f"{edge_id} (failed)")
+                continue
+            if payload is not None:
+                contracts[edge_id] = (markdown, payload)
+            tracker.update(status=edge_id)
+
+    tracker.finish()
+    return contracts
+
+
+def validate_and_repair_contracts(
+    contracts: dict[str, tuple[str, dict[str, Any]]],
+    allocated_library_ids: set[str],
+    element_lookup: dict[str, set[str]],
+    manager: WorkspaceManager,
+) -> dict[str, InterfaceContractSchema]:
+    """Validate contracts and repair when schema validation fails."""
+    validated: dict[str, InterfaceContractSchema] = {}
+
+    for edge_id, (_markdown, payload) in contracts.items():
+        if not isinstance(payload, dict):
+            _record_issue(
+                "unknown",
+                "contract_validation",
+                "Contract payload is not a JSON object.",
+                edge_id=edge_id,
+            )
+            continue
+
+        try:
+            contract = InterfaceContractSchema.model_validate(payload)
+        except Exception as exc:
+            errors = [
+                {
+                    "type": "schema_validation",
+                    "message": str(exc),
+                    "edge_id": edge_id,
+                }
+            ]
+            try:
+                repaired_output, _ = repair_artifact(
+                    output=json.dumps(payload, indent=2),
+                    errors=errors,
+                    allowlists={"library_ids": sorted(allocated_library_ids)},
+                    artifact_type=ArtifactType.INTERFACE_CONTRACT,
+                    model_override="",
+                    manager=manager,
+                )
+            except Exception as repair_exc:
+                _record_issue(
+                    "unknown",
+                    "contract_validation",
+                    f"Contract repair failed: {repair_exc}",
+                    edge_id=edge_id,
+                )
+                continue
+
+            repaired_payload = _parse_contract_output(repaired_output)
+            if not isinstance(repaired_payload, dict):
+                _record_issue(
+                    "unknown",
+                    "contract_validation",
+                    "Repaired contract JSON is invalid.",
+                    edge_id=edge_id,
+                )
+                continue
+
+            try:
+                contract = InterfaceContractSchema.model_validate(repaired_payload)
+            except Exception as exc:
+                _record_issue(
+                    "unknown",
+                    "contract_validation",
+                    f"Repaired contract validation failed: {exc}",
+                    edge_id=edge_id,
+                )
+                continue
+
+        if contract.edge_id != edge_id:
+            _record_issue(
+                contract.consumer_lib,
+                "contract_validation",
+                "Contract edge_id does not match edge.",
+                edge_id=edge_id,
+            )
+            continue
+
+        is_valid, messages = validate_contract_references(
+            contract, allocated_library_ids, element_lookup
+        )
+        if not is_valid:
+            for message in messages:
+                _record_issue(
+                    contract.consumer_lib,
+                    "contract_validation",
+                    message,
+                    edge_id=edge_id,
+                )
+            continue
+
+        validated[edge_id] = contract
+
+    return validated
+
+
+def write_interface_outputs(
+    edges: list[EdgeSchema],
+    contracts: dict[str, InterfaceContractSchema],
+    contract_markdown: dict[str, str],
+    manager: WorkspaceManager,
+    run_id: str,
+) -> dict[str, Any]:
+    """Write interface edge list, contract artifacts, and index outputs."""
+    edge_list = EdgeListSchema(
+        run_id=run_id,
+        generated_at=time.now().isoformat(),
+        edges=edges,
+    )
+    edge_list_path = manager.write_edge_list(edge_list)
+
+    contract_paths: dict[str, dict[str, str]] = {}
+    contracts_ready: set[str] = set()
+    markdown_missing = 0
+
+    for edge_id, contract in contracts.items():
+        contracts_dir = manager.get_interface_contracts_dir(contract.consumer_lib)
+        contract_base = contracts_dir / contract.edge_id
+
+        write_interface_contract_markdown(contract, contract_base.with_suffix(".md"))
+        write_interface_contract_json(contract, contract_base.with_suffix(".json"))
+
+        contract_paths[edge_id] = {
+            "markdown": str(contract_base.with_suffix(".md")),
+            "json": str(contract_base.with_suffix(".json")),
+        }
+        contracts_ready.add(edge_id)
+        if not contract_markdown.get(edge_id):
+            markdown_missing += 1
+
+    interface_index = build_interface_index(
+        edges,
+        run_id,
+        manager.workspace_path,
+        contracts_ready=contracts_ready,
+    )
+    interface_index_path = manager.write_interface_index(interface_index)
+
+    return {
+        "edge_list_path": edge_list_path,
+        "interface_index_path": interface_index_path,
+        "contract_paths": contract_paths,
+        "contracts_written": len(contracts_ready),
+        "contracts_missing": max(0, len(edges) - len(contracts_ready)),
+        "validation_stats": {
+            "contracts_ready": len(contracts_ready),
+            "contracts_missing": max(0, len(edges) - len(contracts_ready)),
+            "markdown_missing": markdown_missing,
+        },
+    }
+
+
 def extract_interface_edges(run_id: str) -> dict[str, Any]:
     """Extract interface edges for Phase 8."""
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
     if not manager.is_initialized:
         raise RuntimeError("Workspace not initialized.")
 
-    stabilization_status = manager.state.phases[Phase.SPEC_STABILIZATION.value].status
-    if stabilization_status != PhaseStatus.COMPLETED:
-        raise RuntimeError("Spec stabilization must be completed before interface extraction.")
+    structure_review_status = manager.state.phases[Phase.LIBRARY_STRUCTURE_REVIEW.value].status
+    if structure_review_status != PhaseStatus.COMPLETED:
+        raise RuntimeError(
+            "Library structure review must be completed before interface extraction."
+        )
 
     mapping_status = manager.state.phases[Phase.ARCHITECTURE_MAPPING.value].status
     if mapping_status != PhaseStatus.COMPLETED:
@@ -793,12 +1046,92 @@ def extract_interface_edges(run_id: str) -> dict[str, Any]:
 
         outputs = {
             "edges_count": len(edges),
-            "edges": [edge.model_dump() for edge in edges],
+            "edges": edges,
             "validation_errors": validation_errors,
+            "context_bundles": context_bundles,
             "context_bundles_count": len(context_bundles),
+            "issues": issues,
         }
-        manager.complete_phase(Phase.INTERFACES, outputs=outputs)
         return outputs
+    except Exception as exc:
+        manager.fail_phase(Phase.INTERFACES, error=str(exc))
+        raise
+    finally:
+        _set_issue_sink(None)
+
+
+def build_interface_graph(run_id: str) -> dict[str, Any]:
+    """Build the interface graph and contracts for Phase 8."""
+    extraction = extract_interface_edges(run_id)
+    edges = extraction.get("edges") or []
+    context_bundles = extraction.get("context_bundles") or {}
+    edge_validation_errors = extraction.get("validation_errors") or []
+    issues = extraction.get("issues") or []
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        raise RuntimeError("Workspace not initialized.")
+
+    phase_result = manager.state.phases[Phase.INTERFACES.value]
+    phase_result.issues = issues
+    _set_issue_sink(issues)
+
+    try:
+        allocated_library_ids = manager.allocated_library_ids
+        element_lookup = _build_element_lookup(manager)
+
+        drafted_contracts = draft_interface_contracts(edges, context_bundles, manager)
+        contract_markdown = {
+            edge_id: markdown for edge_id, (markdown, _payload) in drafted_contracts.items()
+        }
+        validated_contracts = validate_and_repair_contracts(
+            drafted_contracts,
+            allocated_library_ids,
+            element_lookup,
+            manager,
+        )
+        outputs = write_interface_outputs(
+            edges,
+            validated_contracts,
+            contract_markdown,
+            manager,
+            run_id,
+        )
+
+        contract_validation_errors = [
+            issue for issue in issues if issue.get("error_type") == "contract_validation"
+        ]
+        validation_errors = list(edge_validation_errors) + contract_validation_errors
+        validation_stats = {
+            "edge_validation_errors": len(edge_validation_errors),
+            "contract_validation_errors": len(contract_validation_errors),
+            "contracts_drafted": len(drafted_contracts),
+            "contracts_validated": len(validated_contracts),
+        }
+
+        phase_outputs = {
+            "edge_list_path": str(outputs.get("edge_list_path"))
+            if outputs.get("edge_list_path")
+            else None,
+            "interface_index_path": str(outputs.get("interface_index_path"))
+            if outputs.get("interface_index_path")
+            else None,
+            "edges_count": len(edges),
+            "contract_count": len(validated_contracts),
+            "validation_stats": validation_stats,
+        }
+        manager.complete_phase(Phase.INTERFACES, outputs=phase_outputs)
+
+        return {
+            "success": True,
+            "edges_count": len(edges),
+            "contracts_count": len(validated_contracts),
+            "validation_errors": validation_errors,
+            "edge_list_path": outputs.get("edge_list_path"),
+            "interface_index_path": outputs.get("interface_index_path"),
+            "validation_stats": validation_stats,
+            "contract_paths": outputs.get("contract_paths", {}),
+        }
     except Exception as exc:
         manager.fail_phase(Phase.INTERFACES, error=str(exc))
         raise

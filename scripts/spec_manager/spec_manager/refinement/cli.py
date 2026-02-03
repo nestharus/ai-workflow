@@ -807,6 +807,47 @@ def cmd_spec_review_structure(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_build_interfaces(args: argparse.Namespace) -> int:
+    """Build interface graph and contracts for Phase 8."""
+    run_id = args.run_id
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+    if not _phase_completed(manager, Phase.LIBRARY_STRUCTURE_REVIEW):
+        print("Library structure review must be completed before building interfaces.")
+        return 1
+    if not _phase_completed(manager, Phase.ARCHITECTURE_MAPPING):
+        print("Architecture mapping must be completed before building interfaces.")
+        return 1
+
+    from spec_manager.refinement.workflows.interfaces import build_interface_graph
+
+    try:
+        result = build_interface_graph(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Edges extracted: {result['edges_count']}")
+    print(f"Contracts generated: {result['contracts_count']}")
+    print(f"Validation errors: {len(result.get('validation_errors', []))}")
+
+    if result.get("edge_list_path"):
+        print(f"Edge list: {result['edge_list_path']}")
+    if result.get("interface_index_path"):
+        print(f"Interface index: {result['interface_index_path']}")
+
+    if not result.get("success", True):
+        return 1
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.INTERFACES):
+        return 1
+    return 0
+
+
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
     from spec_manager.refinement.qa import QA_CASES
@@ -909,6 +950,7 @@ def main(argv: list[str] | None = None) -> int:
             "  spec select-architecture (agent: chatgpt-architecture-tradeoff-judge)\n"
             "  spec map-libraries (agent: glm-architecture-mapper)\n"
             "  spec review-structure (Phase 7: library boundary review)\n"
+            "  spec build-interfaces (Phase 8: interface graph and contracts)\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1204,6 +1246,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Apply move actions (not yet implemented)",
     )
     p_spec_review.set_defaults(func=cmd_spec_review_structure)
+
+    p_spec_build_interfaces = spec_subparsers.add_parser(
+        "build-interfaces",
+        help="Build interface graph and contracts for Phase 8",
+        description=(
+            "Run Phase 8 interface graph building to extract edges, draft contracts, "
+            "and validate cross-library dependencies.\n"
+            "Requires Phase 6 architecture mapping and Phase 7 structure review to be completed.\n"
+            "Outputs: workspace/indexes/edge_list.json, workspace/indexes/interface_index.json, "
+            "libraries/*/interfaces/EDGE-*.md, libraries/*/interfaces/EDGE-*.json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_build_interfaces.add_argument("run_id", help="Run identifier")
+    p_spec_build_interfaces.set_defaults(func=cmd_spec_build_interfaces)
 
     if argv is None:
         argv = sys.argv[1:]
