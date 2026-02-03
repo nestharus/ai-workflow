@@ -161,6 +161,102 @@ def extract_existing_id(line: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _extract_sections_with_positions(content: str, level: int) -> list[tuple[str, int, int]]:
+    pattern = re.compile(rf"^{'#' * level}\s+(.+)$", re.MULTILINE)
+    matches = list(pattern.finditer(content))
+    if not matches:
+        return []
+
+    sections: list[tuple[str, int, int]] = []
+    for index, match in enumerate(matches):
+        title = match.group(1).strip()
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        sections.append((title, start, end))
+    return sections
+
+
+def _get_section_element_type(section_title: str) -> str | None:
+    mapping = {
+        "Requirements": "REQ",
+        "Flows": "FLOW",
+        "Constraints": "INV",
+        "Dependencies": "INV",
+    }
+    return mapping.get(section_title)
+
+
+def _process_bullet_line(
+    line: str, lib_id: str, element_type: str, counters: dict[str, int]
+) -> tuple[str, bool]:
+    bullet_match = re.match(r"^([ \t]*)([-*])\s+(.*)$", line)
+    if not bullet_match:
+        return line, False
+
+    indent = bullet_match.group(1)
+    indent_width = len(indent.expandtabs(4))
+    if indent_width > 3:
+        return line, False
+
+    if has_element_id(line, element_type):
+        existing_id = extract_existing_id(line)
+        if existing_id and not existing_id.startswith(f"{element_type}-{lib_id}-"):
+            logger.warning(
+                "Element ID %s does not match library %s in %s section.",
+                existing_id,
+                lib_id,
+                element_type,
+            )
+        return line, False
+
+    rest_of_line = bullet_match.group(3)
+    try:
+        element_id = allocate_element_id(lib_id, element_type, counters)
+    except ValueError as exc:
+        logger.exception(
+            "Failed to allocate %s ID for %s spec: %s",
+            element_type,
+            lib_id,
+            exc,
+        )
+        return line, False
+
+    updated_line = f"{indent}- {element_id}: {rest_of_line}"
+    return updated_line, True
+
+
+def _process_id_managed_section(
+    section_content: str, lib_id: str, element_type: str, counters: dict[str, int]
+) -> tuple[str, int]:
+    if not section_content:
+        return section_content, 0
+
+    lines = section_content.splitlines(keepends=True)
+    updated_lines: list[str] = []
+    ids_assigned = 0
+    for line in lines:
+        line_text = line.rstrip("\r\n")
+        line_ending = line[len(line_text) :]
+        updated_line, assigned = _process_bullet_line(line_text, lib_id, element_type, counters)
+        if assigned:
+            ids_assigned += 1
+        updated_lines.append(updated_line + line_ending)
+    return "".join(updated_lines), ids_assigned
+
+
+def _ensure_flows_section(content: str) -> str:
+    sections = _extract_sections_with_positions(content, level=2)
+    if any(title == "Flows" for title, _, _ in sections):
+        return content
+
+    for title, _, end in sections:
+        if title == "Requirements":
+            insert_text = "\n## Flows\n\n"
+            return f"{content[:end]}{insert_text}{content[end:]}"
+
+    return content
+
+
 def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[dict[str, Any]]:
     """Validate that element IDs are unique within a library.
 
@@ -305,7 +401,37 @@ def insert_element_ids(
     Returns:
         Tuple of updated spec content and number of IDs assigned.
     """
-    return spec_content, 0
+    updated_content = _ensure_flows_section(spec_content)
+    if updated_content != spec_content:
+        logger.info("Created missing ## Flows section for %s", lib_id)
+
+    sections = _extract_sections_with_positions(updated_content, level=2)
+    if not sections:
+        logger.info("Assigned 0 element IDs to %s spec", lib_id)
+        return updated_content, 0
+
+    ids_assigned = 0
+    rebuilt_parts: list[str] = []
+    cursor = 0
+    for title, start, end in sections:
+        rebuilt_parts.append(updated_content[cursor:start])
+        element_type = _get_section_element_type(title)
+        if element_type:
+            logger.debug("Processing section '%s' with element type %s", title, element_type)
+            section_content = updated_content[start:end]
+            updated_section, section_ids = _process_id_managed_section(
+                section_content, lib_id, element_type, id_counters
+            )
+            ids_assigned += section_ids
+            rebuilt_parts.append(updated_section)
+        else:
+            rebuilt_parts.append(updated_content[start:end])
+        cursor = end
+
+    rebuilt_parts.append(updated_content[cursor:])
+    final_content = "".join(rebuilt_parts)
+    logger.info("Assigned %s element IDs to %s spec", ids_assigned, lib_id)
+    return final_content, ids_assigned
 
 
 def insert_decision_ids(
