@@ -15,6 +15,7 @@ from .gap_judge import GapFinding, GapJudgeOutput
 from .library_labels import LibraryLabel, LibraryLabelerOutput
 from .qa_judge import QaCriterionResult, QaJudgeOutput
 from .sections import FileSections, SectionSpan
+from .spec_indexes import Decision, DecisionsIndex, SpecElement, SpecIndex
 from .spec_patches import SpecPatchOp, SpecPatchOutput
 from .terms import FileTerms, SectionTerms
 
@@ -25,6 +26,8 @@ __all__ = [
     "ArchitectureProposal",
     "ArchitectureSelection",
     "ArchitectureTradeoffs",
+    "Decision",
+    "DecisionsIndex",
     "EvidenceMapperOutput",
     "FileManifestEntry",
     "FileSections",
@@ -39,6 +42,8 @@ __all__ = [
     "QaJudgeOutput",
     "SectionSpan",
     "SectionTerms",
+    "SpecElement",
+    "SpecIndex",
     "SpecPatchOp",
     "SpecPatchOutput",
 ]

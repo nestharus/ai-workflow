@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     migrate_pointers_to_new_format,
@@ -26,10 +28,14 @@ from spec_manager.refinement.validation_utils import (
     resolve_section_reference,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+from spec_manager.schemas.spec_indexes import Decision, DecisionsIndex, SpecElement, SpecIndex
 
 DEFAULT_COUNTERS: dict[str, int] = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
 COUNTER_LIMITS: dict[str, int] = {"REQ": 9999, "FLOW": 99, "INV": 9999, "DEC": 9999}
 ELEMENT_ID_RE = re.compile(r"^\s*-\s*((?:REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*")
+VALID_ELEMENT_ID_RE = re.compile(
+    r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
+)
 _DECISION_FIELD_RE = re.compile(r"\*\*\[(\w+)\]\*\*:\s*")
 _DECISION_FIELD_NAMES = frozenset({"status", "context", "options", "default"})
 logger = logging.getLogger(__name__)
@@ -299,11 +305,94 @@ def _ensure_decisions_header(decisions_content: str) -> str:
     return f"# Decisions\n\n{decisions_content}"
 
 
-def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[dict[str, Any]]:
+def format_validation_error(
+    error: dict[str, Any],
+    lib_id: str,
+    *,
+    issue_type: str = "schema_error",
+) -> dict[str, Any]:
+    """Format a Pydantic validation error into a standardized issue dict.
+
+    Args:
+        error: Pydantic validation error dict.
+        lib_id: Library identifier for the error.
+        issue_type: Type string for the formatted error.
+
+    Returns:
+        Dict with type, lib_id, field, message, and error_type keys.
+    """
+    field_path = ".".join(str(part) for part in error.get("loc", ()) or ())
+    return {
+        "type": issue_type,
+        "lib_id": lib_id,
+        "field": field_path,
+        "message": error.get("msg", "Schema validation error"),
+        "error_type": error.get("type", "value_error"),
+    }
+
+
+def collect_validation_metrics(issues: list[dict[str, Any]]) -> dict[str, int]:
+    """Aggregate validation issues by type into count metrics.
+
+    Args:
+        issues: List of validation issue dicts.
+
+    Returns:
+        Dict mapping issue category to count.
+    """
+    metrics = {
+        "duplicate_ids": 0,
+        "missing_ids": 0,
+        "invalid_id_formats": 0,
+        "invalid_pointers": 0,
+        "schema_errors": 0,
+        "other": 0,
+    }
+    for issue in issues:
+        issue_type = issue.get("type")
+        if issue_type == "duplicate_id":
+            metrics["duplicate_ids"] += 1
+        elif issue_type == "missing_id":
+            metrics["missing_ids"] += 1
+        elif issue_type in {"invalid_id_format", "mismatched_id"}:
+            metrics["invalid_id_formats"] += 1
+        elif issue_type in {"unresolved_pointer", "unresolved_section", "invalid_pointer"}:
+            metrics["invalid_pointers"] += 1
+        elif issue_type == "schema_error":
+            metrics["schema_errors"] += 1
+        else:
+            metrics["other"] += 1
+    return metrics
+
+
+def _extract_element_identifier(
+    element: SpecElement | Decision | dict[str, Any],
+) -> str | None:
+    if isinstance(element, dict):
+        value = element.get("element_id") or element.get("decision_id")
+        return value if isinstance(value, str) else None
+    if isinstance(element, SpecElement):
+        return element.element_id
+    if isinstance(element, Decision):
+        return element.decision_id
+    return None
+
+
+def _is_valid_element_id(element_id: str, *, expected_prefix: str | None = None) -> bool:
+    return bool(
+        VALID_ELEMENT_ID_RE.fullmatch(element_id)
+        and (not expected_prefix or element_id.startswith(f"{expected_prefix}-"))
+    )
+
+
+def validate_id_uniqueness(
+    elements: list[SpecElement | Decision | dict[str, Any]],
+    lib_id: str,
+) -> list[dict[str, Any]]:
     """Validate that element IDs are unique within a library.
 
     Args:
-        elements: List of element metadata dicts.
+        elements: List of element metadata dicts or schema objects.
         lib_id: Library identifier.
 
     Returns:
@@ -312,8 +401,18 @@ def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[
     issues: list[dict[str, Any]] = []
     seen: set[str] = set()
     for element in elements:
-        element_id = element.get("element_id") or element.get("id")
-        if not isinstance(element_id, str) or not element_id:
+        element_id = _extract_element_identifier(element)
+        if not element_id:
+            continue
+        if not _is_valid_element_id(element_id):
+            issues.append(
+                {
+                    "type": "invalid_id_format",
+                    "element_id": element_id,
+                    "lib_id": lib_id,
+                    "message": f"Invalid element ID format: {element_id}",
+                }
+            )
             continue
         if element_id in seen:
             issues.append(
@@ -326,6 +425,91 @@ def validate_id_uniqueness(elements: list[dict[str, Any]], lib_id: str) -> list[
             )
         else:
             seen.add(element_id)
+    return issues
+
+
+def validate_all_bullets_have_ids(spec_content: str, lib_id: str) -> list[dict[str, Any]]:
+    """Validate that ID-managed bullet lines have stable IDs.
+
+    Args:
+        spec_content: Spec content to inspect.
+        lib_id: Library identifier.
+
+    Returns:
+        List of validation issues for bullets missing IDs.
+    """
+    if not spec_content:
+        return []
+    issues: list[dict[str, Any]] = []
+    sections = _extract_sections_with_positions(spec_content, level=2)
+    if not sections:
+        return issues
+
+    bullet_pattern = re.compile(r"^([ \t]*)([-*])\s+(.+)$")
+    for section_title, start, end in sections:
+        element_type = _get_section_element_type(section_title)
+        if not element_type:
+            continue
+        section_content = spec_content[start:end]
+        for line in section_content.splitlines():
+            match = bullet_pattern.match(line)
+            if not match:
+                continue
+            indent = match.group(1)
+            indent_width = len(indent.expandtabs(4))
+            if indent_width > 3:
+                continue
+            element_id = extract_existing_id(line)
+            if not element_id:
+                issues.append(
+                    {
+                        "type": "missing_id",
+                        "lib_id": lib_id,
+                        "section": section_title,
+                        "message": f"Missing {element_type} ID for bullet: {line.strip()}",
+                    }
+                )
+                continue
+            if not _is_valid_element_id(element_id, expected_prefix=element_type):
+                issues.append(
+                    {
+                        "type": "mismatched_id",
+                        "lib_id": lib_id,
+                        "element_id": element_id,
+                        "section": section_title,
+                        "message": (
+                            f"Invalid {element_type} ID for bullet in {section_title}: {element_id}"
+                        ),
+                    }
+                )
+    return issues
+
+
+def validate_spec_index_schema(
+    index_payload: dict[str, Any],
+    lib_id: str,
+) -> list[dict[str, Any]]:
+    """Validate spec index payload against the Pydantic schema."""
+    issues: list[dict[str, Any]] = []
+    try:
+        SpecIndex.model_validate(index_payload)
+    except ValidationError as exc:
+        for error in exc.errors():
+            issues.append(format_validation_error(error, lib_id, issue_type="schema_error"))
+    return issues
+
+
+def validate_decisions_index_schema(
+    index_payload: dict[str, Any],
+    lib_id: str,
+) -> list[dict[str, Any]]:
+    """Validate decisions index payload against the Pydantic schema."""
+    issues: list[dict[str, Any]] = []
+    try:
+        DecisionsIndex.model_validate(index_payload)
+    except ValidationError as exc:
+        for error in exc.errors():
+            issues.append(format_validation_error(error, lib_id, issue_type="schema_error"))
     return issues
 
 
@@ -876,6 +1060,15 @@ def _validate_pointers(
         if not parsed:
             continue
         if "intermediate" in parsed:
+            if not parsed.get("intermediate") or not parsed.get("section_ref"):
+                issues.append(
+                    {
+                        "type": "invalid_pointer",
+                        "lib_id": lib_id,
+                        "pointer": pointer,
+                        "message": f"Invalid multi-hop pointer syntax: {pointer}",
+                    }
+                )
             continue
         file_ref = parsed["file_ref"]
         resolved_file_id = file_id_lookup.get(file_ref)
@@ -905,6 +1098,43 @@ def _validate_pointers(
                     }
                 )
     return issues
+
+
+def validate_library_stabilization(
+    spec_content: str,
+    decisions_content: str,
+    spec_index: dict[str, Any],
+    decisions_index: dict[str, Any],
+    file_manifest: dict[str, dict[str, str]],
+    lib_id: str,
+    section_alias_map: dict[str, dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Run all stabilization validations and return a combined report."""
+    issues: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    issues.extend(validate_spec_index_schema(spec_index, lib_id))
+    issues.extend(validate_decisions_index_schema(decisions_index, lib_id))
+    issues.extend(validate_all_bullets_have_ids(spec_content, lib_id))
+
+    elements: list[SpecElement | Decision | dict[str, Any]] = []
+    elements.extend(spec_index.get("elements", []) or [])
+    elements.extend(decisions_index.get("decisions", []) or [])
+    issues.extend(validate_id_uniqueness(elements, lib_id))
+
+    content_elements: list[dict[str, Any]] = []
+    content_elements.extend(_collect_ids_from_content(spec_content))
+    content_elements.extend(_collect_ids_from_content(decisions_content))
+    issues.extend(validate_id_uniqueness(content_elements, lib_id))
+
+    issues.extend(_validate_pointers(spec_content, file_manifest, lib_id, section_alias_map))
+    issues.extend(_validate_pointers(decisions_content, file_manifest, lib_id, section_alias_map))
+
+    return {
+        "valid": not issues,
+        "issues": issues,
+        "warnings": warnings,
+    }
 
 
 def stabilize_specs(
@@ -1041,17 +1271,6 @@ def stabilize_specs(
                 }
             )
 
-        issues.extend(
-            _validate_pointers(
-                normalized_spec, manager.state.file_manifest, lib_id, section_alias_map
-            )
-        )
-        issues.extend(
-            _validate_pointers(
-                normalized_decisions, manager.state.file_manifest, lib_id, section_alias_map
-            )
-        )
-
         legacy_after_spec = _count_legacy_pointers(normalized_spec)
         legacy_after_decisions = _count_legacy_pointers(normalized_decisions)
         migrated_count = (legacy_before_spec + legacy_before_decisions) - (
@@ -1130,47 +1349,17 @@ def stabilize_specs(
                 }
             )
 
-        spec_required = {"lib_id", "generated_at", "spec_path", "elements"}
-        missing_spec_keys = sorted(key for key in spec_required if key not in spec_index)
-        if missing_spec_keys:
-            issues.append(
-                {
-                    "type": "spec_index_invalid",
-                    "lib_id": lib_id,
-                    "message": f"Spec index missing keys: {', '.join(missing_spec_keys)}",
-                }
-            )
-            for key in missing_spec_keys:
-                if key == "lib_id":
-                    spec_index[key] = lib_id
-                elif key == "generated_at":
-                    spec_index[key] = datetime.now().isoformat()
-                elif key == "spec_path":
-                    spec_index[key] = f"libraries/{lib_id}/spec.md"
-                elif key == "elements":
-                    spec_index[key] = []
-
-        decisions_required = {"lib_id", "generated_at", "decisions_path", "decisions"}
-        missing_decision_keys = sorted(
-            key for key in decisions_required if key not in decisions_index
+        validation_report = validate_library_stabilization(
+            normalized_spec,
+            normalized_decisions,
+            spec_index,
+            decisions_index,
+            manager.state.file_manifest,
+            lib_id,
+            section_alias_map,
         )
-        if missing_decision_keys:
-            issues.append(
-                {
-                    "type": "decisions_index_invalid",
-                    "lib_id": lib_id,
-                    "message": f"Decisions index missing keys: {', '.join(missing_decision_keys)}",
-                }
-            )
-            for key in missing_decision_keys:
-                if key == "lib_id":
-                    decisions_index[key] = lib_id
-                elif key == "generated_at":
-                    decisions_index[key] = datetime.now().isoformat()
-                elif key == "decisions_path":
-                    decisions_index[key] = f"libraries/{lib_id}/decisions.md"
-                elif key == "decisions":
-                    decisions_index[key] = []
+        issues.extend(validation_report["issues"])
+        issues.extend(validation_report["warnings"])
 
         spec_indexes.append(spec_index)
 
@@ -1196,10 +1385,6 @@ def stabilize_specs(
         elements_indexed += len(spec_index.get("elements", []))
         decisions_indexed += len(decisions_index.get("decisions", []))
 
-        elements = _collect_ids_from_content(normalized_spec)
-        elements.extend(_collect_ids_from_content(normalized_decisions))
-        issues.extend(validate_id_uniqueness(elements, lib_id))
-
     if write_run_index:
         logger.info("Writing run-level spec index for %s", run_id)
         run_index = {
@@ -1221,6 +1406,8 @@ def stabilize_specs(
     phase_result.issues.extend(errors + issues)
 
     stabilized = not errors and bool(processed_libs)
+    validation_metrics = collect_validation_metrics(issues)
+    validation_issues_count = sum(validation_metrics.values())
     outputs = {
         "specs_stabilized": stabilized,
         "libraries_processed": len(processed_libs),
@@ -1230,6 +1417,7 @@ def stabilize_specs(
         "decisions_indexed": decisions_indexed,
         "pointers_migrated": pointers_migrated_total,
         "legacy_pointers_remaining": legacy_pointers_remaining_total,
+        "validation_issues_count": validation_issues_count,
         "spec_index": "workspace/indexes/library_spec_index.json" if write_run_index else None,
     }
     if stabilized:
