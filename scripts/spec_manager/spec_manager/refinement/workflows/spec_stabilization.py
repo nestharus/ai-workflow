@@ -30,8 +30,11 @@ from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 DEFAULT_COUNTERS: dict[str, int] = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
 COUNTER_LIMITS: dict[str, int] = {"REQ": 9999, "FLOW": 99, "INV": 9999, "DEC": 9999}
 ELEMENT_ID_RE = re.compile(r"^\s*-\s*((?:REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*")
+_DECISION_FIELD_RE = re.compile(r"\*\*\[(\w+)\]\*\*:\s*")
+_DECISION_FIELD_NAMES = frozenset({"status", "context", "options", "default"})
 logger = logging.getLogger(__name__)
 _POINTER_MIGRATION_ERRORS: list[dict[str, str]] = []
+_INDEX_BUILD_ERRORS: list[dict[str, str]] = []
 
 
 def _default_counters() -> dict[str, int]:
@@ -159,6 +162,27 @@ def extract_existing_id(line: str) -> str | None:
     """
     match = ELEMENT_ID_RE.search(line)
     return match.group(1) if match else None
+
+
+def _extract_citations(line: str) -> list[str]:
+    citations: list[str] = []
+    for match in EVIDENCE_POINTER_RE.findall(line):
+        if isinstance(match, tuple):
+            file_ref, section_ref = match
+            citations.append(f"[{file_ref}::{section_ref}]")
+        else:
+            citations.append(f"[{match}]")
+    return citations
+
+
+def _extract_library_mentions(line: str, lib_id: str) -> list[str]:
+    text = _remove_element_id_prefix(line)
+    mentions = re.findall(r"LIB-\d{4}", text)
+    return sorted(set(mentions) - {lib_id})
+
+
+def _remove_element_id_prefix(line: str) -> str:
+    return re.sub(r"^\s*[-*]\s*((?:REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*", "", line)
 
 
 def _extract_sections_with_positions(content: str, level: int) -> list[tuple[str, int, int]]:
@@ -316,6 +340,20 @@ def _consume_pointer_migration_errors() -> list[dict[str, str]]:
         return []
     errors = list(_POINTER_MIGRATION_ERRORS)
     _POINTER_MIGRATION_ERRORS.clear()
+    return errors
+
+
+def _record_index_build_error(context: str, lib_id: str, error: str) -> None:
+    """Record an index build error for later issue reporting."""
+    _INDEX_BUILD_ERRORS.append({"context": context, "lib_id": lib_id, "error": error})
+
+
+def _consume_index_build_errors() -> list[dict[str, str]]:
+    """Return and clear any recorded index build errors."""
+    if not _INDEX_BUILD_ERRORS:
+        return []
+    errors = list(_INDEX_BUILD_ERRORS)
+    _INDEX_BUILD_ERRORS.clear()
     return errors
 
 
@@ -514,15 +552,154 @@ def build_spec_index(spec_content: str, lib_id: str) -> dict[str, Any]:
     Returns:
         Index payload with minimal schema.
     """
-    return {
+    index = {
         "lib_id": lib_id,
         "generated_at": datetime.now().isoformat(),
+        "spec_path": f"libraries/{lib_id}/spec.md",
         "elements": [],
     }
 
+    if not spec_content:
+        logger.info("Built spec index for %s with 0 elements", lib_id)
+        return index
+
+    try:
+        sections = _extract_sections_with_positions(spec_content, level=2)
+    except Exception as exc:
+        logger.warning("Failed to parse sections for %s spec index: %s", lib_id, exc)
+        _record_index_build_error("spec_index", lib_id, str(exc))
+        return index
+
+    if not sections:
+        logger.info("Built spec index for %s with 0 elements", lib_id)
+        return index
+
+    kind_map = {
+        "Requirements": "requirement",
+        "Flows": "flow",
+        "Constraints": "invariant",
+        "Dependencies": "invariant",
+    }
+    bullet_pattern = re.compile(r"^\s*[-*]\s+(.+)$")
+    elements: list[dict[str, Any]] = []
+
+    for section_title, start, end in sections:
+        element_type = _get_section_element_type(section_title)
+        if not element_type:
+            continue
+        try:
+            section_content = spec_content[start:end]
+            section_count = 0
+            for line in section_content.splitlines():
+                if not bullet_pattern.match(line):
+                    continue
+                element_id = extract_existing_id(line)
+                if not element_id:
+                    continue
+                element = {
+                    "element_id": element_id,
+                    "kind": kind_map.get(section_title, element_type.lower()),
+                    "section": section_title,
+                    "text": _remove_element_id_prefix(line).strip(),
+                    "raw_line": line,
+                    "citations": _extract_citations(line),
+                    "mentions_libs": _extract_library_mentions(line, lib_id),
+                }
+                elements.append(element)
+                section_count += 1
+            logger.info(
+                "Extracted %d elements from %s section for %s",
+                section_count,
+                section_title,
+                lib_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse %s section for %s spec index: %s",
+                section_title,
+                lib_id,
+                exc,
+            )
+            _record_index_build_error(f"spec_index:{section_title}", lib_id, str(exc))
+            continue
+
+    index["elements"] = elements
+    logger.info("Built spec index for %s with %d elements", lib_id, len(elements))
+    return index
+
+
+def _parse_decision_fields(main_text: str, sub_lines: list[str]) -> dict[str, str]:
+    """Parse structured decision fields from decision text.
+
+    Recognizes ``**[FieldName]**: value`` patterns in the main bullet text
+    and in sub-bullet lines.  Also recognizes plain ``FieldName: value``
+    sub-bullets for known fields (status, context, options, default).
+
+    Args:
+        main_text: Text of the main decision bullet (after ID prefix removal).
+        sub_lines: Subsequent indented or continuation lines belonging to the
+            same decision block.
+
+    Returns:
+        Dict mapping lowercase field name to raw string value for recognised
+        fields.
+    """
+    fields: dict[str, str] = {}
+    for line in [main_text, *sub_lines]:
+        matches = list(_DECISION_FIELD_RE.finditer(line))
+        for i, match in enumerate(matches):
+            name = match.group(1).lower()
+            if name not in _DECISION_FIELD_NAMES:
+                continue
+            start = match.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(line)
+            value = line[start:end].strip()
+            if value:
+                fields.setdefault(name, value)
+        plain = re.match(r"^\s+[-*]\s+(\w+):\s*(.+)$", line)
+        if plain:
+            name = plain.group(1).lower()
+            value = plain.group(2).strip()
+            if name in _DECISION_FIELD_NAMES and value:
+                fields.setdefault(name, value)
+    return fields
+
+
+def _parse_options_list(raw: str) -> list[str]:
+    """Split a comma-separated options string into a list."""
+    if not raw:
+        return []
+    return [opt.strip() for opt in raw.split(",") if opt.strip()]
+
+
+def _clean_question_text(raw_question: str) -> str:
+    """Remove trailing known-field markers from a question string.
+
+    Strips ``**[Status]**:``, ``**[Context]**:``, ``**[Options]**:``, and
+    ``**[Default]**:`` suffixes (and their values) so that the question
+    contains only the decision question text.
+    """
+    match = re.search(
+        r"\*\*\[(?:Status|Context|Options|Default)\]\*\*:",
+        raw_question,
+        re.IGNORECASE,
+    )
+    if match:
+        cleaned = raw_question[: match.start()].strip()
+        if cleaned:
+            return cleaned
+    return raw_question
+
 
 def build_decisions_index(decisions_content: str, lib_id: str) -> dict[str, Any]:
-    """Build decisions index. Implementation in Phase 5.
+    """Build decisions index with structured field extraction.
+
+    Parses decision bullets and their sub-lines to extract structured
+    fields (status, context, options, default) when present.  Recognised
+    field patterns are ``**[FieldName]**: value`` on the bullet line or
+    sub-bullets, and plain ``FieldName: value`` sub-bullets for the known
+    field set.  Fields that are absent fall back to their defaults
+    (status ``"open"``, context ``""``, options ``[]``, default ``None``).
 
     Args:
         decisions_content: Decisions content to index.
@@ -531,11 +708,65 @@ def build_decisions_index(decisions_content: str, lib_id: str) -> dict[str, Any]
     Returns:
         Index payload with minimal schema.
     """
-    return {
+    index: dict[str, Any] = {
         "lib_id": lib_id,
         "generated_at": datetime.now().isoformat(),
+        "decisions_path": f"libraries/{lib_id}/decisions.md",
         "decisions": [],
     }
+
+    if not decisions_content:
+        logger.info("Built decisions index for %s with 0 decisions", lib_id)
+        return index
+
+    bullet_pattern = re.compile(r"^\s*[-*]\s+(.+)$")
+    decisions: list[dict[str, Any]] = []
+    try:
+        lines = decisions_content.splitlines()
+
+        # Group lines into decision blocks.  Each top-level bullet that
+        # carries a decision ID starts a new block; subsequent lines
+        # (sub-bullets, continuations) belong to the preceding block.
+        blocks: list[tuple[str, list[str]]] = []
+        for line in lines:
+            is_bullet = bullet_pattern.match(line)
+            decision_id = extract_existing_id(line) if is_bullet else None
+            if decision_id:
+                blocks.append((line, []))
+            elif blocks:
+                blocks[-1][1].append(line)
+
+        for main_line, sub_lines in blocks:
+            decision_id = extract_existing_id(main_line)
+            if not decision_id:
+                continue
+
+            text = _remove_element_id_prefix(main_line).strip()
+            title_match = re.match(r"^\*\*\[Title\]\*\*:\s*(.+)", text)
+            question = title_match.group(1).strip() if title_match else text
+            question = _clean_question_text(question)
+
+            fields = _parse_decision_fields(text, sub_lines)
+
+            decisions.append(
+                {
+                    "decision_id": decision_id,
+                    "status": fields.get("status", "open"),
+                    "question": question,
+                    "context": fields.get("context", ""),
+                    "options": _parse_options_list(fields.get("options", "")),
+                    "default": fields.get("default"),
+                    "citations": _extract_citations(main_line),
+                }
+            )
+    except Exception as exc:
+        logger.warning("Failed to parse decisions for %s index: %s", lib_id, exc)
+        _record_index_build_error("decisions_index", lib_id, str(exc))
+        return index
+
+    index["decisions"] = decisions
+    logger.info("Built decisions index for %s with %d decisions", lib_id, len(decisions))
+    return index
 
 
 def _collect_ids_from_content(content: str) -> list[dict[str, Any]]:
@@ -713,6 +944,8 @@ def stabilize_specs(
     processed_libs: list[str] = []
     elements_assigned = 0
     decisions_assigned = 0
+    elements_indexed = 0
+    decisions_indexed = 0
     pointers_migrated_total = 0
     legacy_pointers_remaining_total = 0
     spec_indexes: list[dict[str, Any]] = []
@@ -853,8 +1086,92 @@ def stabilize_specs(
         except OSError as exc:
             errors.append({"lib_id": lib_id, "error": f"Failed to save id_counters.json: {exc}"})
 
-        spec_index = build_spec_index(normalized_spec, lib_id)
-        decisions_index = build_decisions_index(normalized_decisions, lib_id)
+        try:
+            spec_index = build_spec_index(normalized_spec, lib_id)
+        except Exception as exc:
+            issues.append(
+                {
+                    "type": "spec_index_failed",
+                    "lib_id": lib_id,
+                    "message": f"Spec index build failed: {exc}",
+                }
+            )
+            spec_index = {
+                "lib_id": lib_id,
+                "generated_at": datetime.now().isoformat(),
+                "spec_path": f"libraries/{lib_id}/spec.md",
+                "elements": [],
+            }
+
+        try:
+            decisions_index = build_decisions_index(normalized_decisions, lib_id)
+        except Exception as exc:
+            issues.append(
+                {
+                    "type": "decisions_index_failed",
+                    "lib_id": lib_id,
+                    "message": f"Decisions index build failed: {exc}",
+                }
+            )
+            decisions_index = {
+                "lib_id": lib_id,
+                "generated_at": datetime.now().isoformat(),
+                "decisions_path": f"libraries/{lib_id}/decisions.md",
+                "decisions": [],
+            }
+
+        for error in _consume_index_build_errors():
+            issues.append(
+                {
+                    "type": "index_build_failed",
+                    "lib_id": error["lib_id"],
+                    "context": error["context"],
+                    "message": f"Index build failed for {error['context']}: {error['error']}",
+                }
+            )
+
+        spec_required = {"lib_id", "generated_at", "spec_path", "elements"}
+        missing_spec_keys = sorted(key for key in spec_required if key not in spec_index)
+        if missing_spec_keys:
+            issues.append(
+                {
+                    "type": "spec_index_invalid",
+                    "lib_id": lib_id,
+                    "message": f"Spec index missing keys: {', '.join(missing_spec_keys)}",
+                }
+            )
+            for key in missing_spec_keys:
+                if key == "lib_id":
+                    spec_index[key] = lib_id
+                elif key == "generated_at":
+                    spec_index[key] = datetime.now().isoformat()
+                elif key == "spec_path":
+                    spec_index[key] = f"libraries/{lib_id}/spec.md"
+                elif key == "elements":
+                    spec_index[key] = []
+
+        decisions_required = {"lib_id", "generated_at", "decisions_path", "decisions"}
+        missing_decision_keys = sorted(
+            key for key in decisions_required if key not in decisions_index
+        )
+        if missing_decision_keys:
+            issues.append(
+                {
+                    "type": "decisions_index_invalid",
+                    "lib_id": lib_id,
+                    "message": f"Decisions index missing keys: {', '.join(missing_decision_keys)}",
+                }
+            )
+            for key in missing_decision_keys:
+                if key == "lib_id":
+                    decisions_index[key] = lib_id
+                elif key == "generated_at":
+                    decisions_index[key] = datetime.now().isoformat()
+                elif key == "decisions_path":
+                    decisions_index[key] = f"libraries/{lib_id}/decisions.md"
+                elif key == "decisions":
+                    decisions_index[key] = []
+
         spec_indexes.append(spec_index)
 
         spec_index_path = lib_dir / "spec_index.json"
@@ -876,11 +1193,15 @@ def stabilize_specs(
                 }
             )
 
+        elements_indexed += len(spec_index.get("elements", []))
+        decisions_indexed += len(decisions_index.get("decisions", []))
+
         elements = _collect_ids_from_content(normalized_spec)
         elements.extend(_collect_ids_from_content(normalized_decisions))
         issues.extend(validate_id_uniqueness(elements, lib_id))
 
     if write_run_index:
+        logger.info("Writing run-level spec index for %s", run_id)
         run_index = {
             "generated_at": datetime.now().isoformat(),
             "libraries": spec_indexes,
@@ -893,6 +1214,8 @@ def stabilize_specs(
                     "error": f"Failed to write run-level spec index: {run_index_error}",
                 }
             )
+        else:
+            logger.info("Wrote run-level spec index for %s", run_id)
 
     phase_result = manager.state.phases[Phase.SPEC_BUILDING.value]
     phase_result.issues.extend(errors + issues)
@@ -903,6 +1226,8 @@ def stabilize_specs(
         "libraries_processed": len(processed_libs),
         "elements_assigned": elements_assigned,
         "decisions_assigned": decisions_assigned,
+        "elements_indexed": elements_indexed,
+        "decisions_indexed": decisions_indexed,
         "pointers_migrated": pointers_migrated_total,
         "legacy_pointers_remaining": legacy_pointers_remaining_total,
         "spec_index": "workspace/indexes/library_spec_index.json" if write_run_index else None,
