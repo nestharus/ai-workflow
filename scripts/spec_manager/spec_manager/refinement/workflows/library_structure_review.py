@@ -6,6 +6,7 @@ returns in-memory overlap/split candidates for downstream review agents.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -1420,20 +1421,529 @@ def _add_spec_tombstones(
     target_lib_id: str,
 ) -> str:
     selected_ids = {element_id for element_id in element_ids if element_id}
+    lines = source_spec_content.splitlines(keepends=True)
     updated_lines: list[str] = []
-    for line in source_spec_content.splitlines(keepends=True):
+    skip_indent: int | None = None
+    pending_blanks: list[str] = []
+
+    for line in lines:
         line_text = line.rstrip("\r\n")
         line_ending = line[len(line_text) :]
         element_id = extract_existing_id(line_text)
-        if element_id and element_id in selected_ids:
-            indent_match = re.match(r"^(\s*)", line_text)
-            indent = indent_match.group(1) if indent_match else ""
-            updated_lines.append(
-                f"{indent}<!-- {element_id} moved to {target_lib_id} -->{line_ending}"
+        bullet_match = re.match(r"^([ \t]*)([-*])\s+", line_text)
+
+        if bullet_match and element_id:
+            if element_id in selected_ids:
+                indent = bullet_match.group(1)
+                indent_width = len(indent.expandtabs(4))
+                updated_lines.extend(pending_blanks)
+                pending_blanks = []
+                updated_lines.append(
+                    f"{indent}<!-- {element_id} moved to {target_lib_id} -->{line_ending}"
+                )
+                skip_indent = indent_width
+                continue
+            else:
+                updated_lines.extend(pending_blanks)
+                pending_blanks = []
+                skip_indent = None
+
+        elif skip_indent is not None:
+            if line_text.strip() == "":
+                pending_blanks.append(line)
+                continue
+            current_indent_match = re.match(r"^([ \t]*)", line_text)
+            current_indent = (
+                len(current_indent_match.group(1).expandtabs(4)) if current_indent_match else 0
             )
-        else:
-            updated_lines.append(line)
+            if current_indent > skip_indent:
+                pending_blanks = []
+                continue
+            else:
+                updated_lines.extend(pending_blanks)
+                pending_blanks = []
+                skip_indent = None
+
+        updated_lines.append(line)
+
+    updated_lines.extend(pending_blanks)
     return "".join(updated_lines)
+
+
+def _extract_elements_from_spec(
+    spec_content: str,
+    element_ids: list[str],
+) -> dict[str, str]:
+    selected_ids = {element_id.strip() for element_id in element_ids if element_id}
+    if not selected_ids:
+        return {}
+
+    sections = _extract_sections_with_positions(spec_content, level=2)
+    section_map = {title: spec_content[start:end] for title, start, end in sections}
+
+    extracted: dict[str, str] = {}
+    ordered_sections = ["Requirements", "Flows", "Constraints", "Dependencies"]
+    for section_title in ordered_sections:
+        section_content = section_map.get(section_title, "")
+        if not section_content:
+            continue
+        current_id: str | None = None
+        current_lines: list[str] = []
+        current_indent = 0
+        capturing = False
+        for line in section_content.splitlines():
+            element_id = extract_existing_id(line)
+            bullet_match = re.match(r"^([ \t]*)([-*])\s+", line)
+            if bullet_match and element_id:
+                if capturing and current_id and current_lines:
+                    extracted[current_id] = "\n".join(current_lines).rstrip()
+                if element_id in selected_ids:
+                    capturing = True
+                    current_id = element_id
+                    current_lines = [line]
+                    current_indent = len(bullet_match.group(1).expandtabs(4))
+                else:
+                    capturing = False
+                    current_id = None
+                    current_lines = []
+                continue
+            if capturing:
+                if bullet_match:
+                    indent_width = len(bullet_match.group(1).expandtabs(4))
+                    if indent_width > current_indent:
+                        current_lines.append(line)
+                        continue
+                    extracted[current_id] = "\n".join(current_lines).rstrip()
+                    capturing = False
+                    current_id = None
+                    current_lines = []
+                    continue
+                if line.strip() == "":
+                    current_lines.append(line)
+                    continue
+                indent_width = len(re.match(r"^([ \t]*)", line).group(1).expandtabs(4))
+                if indent_width > current_indent:
+                    current_lines.append(line)
+                    continue
+                extracted[current_id] = "\n".join(current_lines).rstrip()
+                capturing = False
+                current_id = None
+                current_lines = []
+        if capturing and current_id and current_lines:
+            extracted[current_id] = "\n".join(current_lines).rstrip()
+
+    return extracted
+
+
+def _rewrite_element_id(
+    element_text: str,
+    old_id: str,
+    target_lib_id: str,
+    counters: dict[str, int],
+) -> str:
+    prefix = old_id.split("-", 1)[0]
+    counters.setdefault(prefix, 0)
+    counters[prefix] += 1
+    width = 2 if prefix == "FLOW" else 4
+    lib_suffix = target_lib_id.split("-", 1)[1]
+    new_id = f"{prefix}-LIB-{lib_suffix}-{counters[prefix]:0{width}d}"
+    return element_text.replace(old_id, new_id, 1)
+
+
+def _append_elements_to_spec(
+    target_spec_content: str,
+    elements: dict[str, str],
+    target_lib_id: str,
+    source_lib_id: str,
+) -> str:
+    if not elements:
+        return target_spec_content
+
+    header_pattern = re.compile(r"^(##\s+(.+))$", re.MULTILINE)
+    matches = list(header_pattern.finditer(target_spec_content))
+    sections: list[dict[str, Any]] = []
+    for index, match in enumerate(matches):
+        title = match.group(2).strip()
+        header_start = match.start()
+        content_start = match.end()
+        content_end = (
+            matches[index + 1].start() if index + 1 < len(matches) else len(target_spec_content)
+        )
+        sections.append(
+            {
+                "title": title,
+                "header_start": header_start,
+                "content_start": content_start,
+                "content_end": content_end,
+            }
+        )
+    section_by_title = {section["title"]: section for section in sections}
+
+    counters: dict[str, int] = {}
+    for line in target_spec_content.splitlines():
+        element_id = extract_existing_id(line)
+        if not element_id:
+            continue
+        if f"-{target_lib_id}-" not in element_id:
+            continue
+        prefix = element_id.split("-", 1)[0]
+        suffix = element_id.split("-")[-1]
+        if not suffix.isdigit():
+            continue
+        counters[prefix] = max(counters.get(prefix, 0), int(suffix))
+
+    elements_by_section: dict[str, list[list[str]]] = {}
+    for old_id, element_text in elements.items():
+        prefix = old_id.split("-", 1)[0]
+        if prefix == "REQ":
+            section_title = "Requirements"
+        elif prefix == "FLOW":
+            section_title = "Flows"
+        elif prefix == "INV":
+            if "Constraints" in section_by_title:
+                section_title = "Constraints"
+            elif "Dependencies" in section_by_title:
+                section_title = "Dependencies"
+            else:
+                section_title = "Constraints"
+        elif prefix == "DEC":
+            section_title = "Dependencies"
+        else:
+            logger.warning("Unknown element prefix %s for %s", prefix, old_id)
+            continue
+
+        updated_text = _rewrite_element_id(element_text, old_id, target_lib_id, counters)
+        first_line = updated_text.splitlines()[0] if updated_text.splitlines() else ""
+        indent_match = re.match(r"^(\s*)", first_line)
+        indent = indent_match.group(1) if indent_match else ""
+        comment_line = f"{indent}<!-- Moved from {source_lib_id} -->"
+        entry_lines = [comment_line, *updated_text.splitlines()]
+        elements_by_section.setdefault(section_title, []).append(entry_lines)
+
+    if not elements_by_section:
+        return target_spec_content
+
+    def _append_entries(section_content: str, entry_sets: list[list[str]]) -> str:
+        lines = [
+            line
+            for line in section_content.splitlines()
+            if line.strip() != "<!-- No elements assigned -->"
+        ]
+        cleaned = "\n".join(lines).rstrip("\n")
+        additions: list[str] = []
+        for entry in entry_sets:
+            additions.extend(entry)
+        if not additions:
+            return section_content
+        if cleaned:
+            cleaned += "\n"
+        cleaned += "\n".join(additions) + "\n"
+        return cleaned
+
+    operations: list[tuple[int, int, int, str]] = []
+    op_index = 0
+    missing_sections: dict[str, list[list[str]]] = {}
+    for section_title, entry_sets in elements_by_section.items():
+        section_info = section_by_title.get(section_title)
+        if section_info:
+            updated_section = _append_entries(
+                target_spec_content[section_info["content_start"] : section_info["content_end"]],
+                entry_sets,
+            )
+            operations.append(
+                (
+                    section_info["content_start"],
+                    op_index,
+                    section_info["content_end"],
+                    updated_section,
+                )
+            )
+            op_index += 1
+        else:
+            missing_sections[section_title] = entry_sets
+
+    ordered_sections = ["Requirements", "Flows", "Constraints", "Dependencies"]
+    for section_title in ordered_sections:
+        if section_title not in missing_sections:
+            continue
+        entry_sets = missing_sections[section_title]
+        if not entry_sets:
+            continue
+        insert_pos = len(target_spec_content)
+        for next_section in ordered_sections[ordered_sections.index(section_title) + 1 :]:
+            next_info = section_by_title.get(next_section)
+            if next_info:
+                insert_pos = next_info["header_start"]
+                break
+        additions: list[str] = []
+        for entry in entry_sets:
+            additions.extend(entry)
+        section_lines = [f"## {section_title}", *additions, ""]
+        insert_text = "\n".join(section_lines) + "\n"
+        if insert_pos > 0 and not target_spec_content[:insert_pos].endswith("\n"):
+            insert_text = "\n" + insert_text
+        operations.append((insert_pos, op_index, insert_pos, insert_text))
+        op_index += 1
+
+    updated_content = target_spec_content
+    for start, _, end, replacement in sorted(
+        operations, key=lambda item: (item[0], item[1]), reverse=True
+    ):
+        updated_content = updated_content[:start] + replacement + updated_content[end:]
+    return updated_content
+
+
+def _update_evidence_for_move(
+    source_evidence: dict[str, Any],
+    target_evidence: dict[str, Any],
+    element_ids: list[str],
+    source_spec_index: dict[str, Any],
+    target_spec_index: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    moved_evidence = _partition_evidence(source_evidence, element_ids, source_spec_index)
+    moved_sources = moved_evidence.get("sources", [])
+    if not isinstance(moved_sources, list):
+        moved_sources = []
+
+    file_manifest: dict[str, dict[str, str]] = {}
+    if isinstance(source_spec_index.get("file_manifest"), dict):
+        file_manifest.update(source_spec_index["file_manifest"])
+    if isinstance(target_spec_index.get("file_manifest"), dict):
+        file_manifest.update(target_spec_index["file_manifest"])
+    file_id_lookup = build_file_id_lookup(file_manifest) if file_manifest else {}
+
+    def _normalize_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            entry = dict(source)
+            file_id = entry.get("file_id")
+            if isinstance(file_id, str) and file_id:
+                entry["file_id"] = file_id_lookup.get(file_id, file_id)
+            sections = entry.get("sections", [])
+            if isinstance(sections, list):
+                seen: set[str] = set()
+                unique_sections: list[str] = []
+                for section in sections:
+                    if not isinstance(section, str) or not section:
+                        continue
+                    if section in seen:
+                        continue
+                    seen.add(section)
+                    unique_sections.append(section)
+                entry["sections"] = unique_sections
+            normalized.append(entry)
+        return normalized
+
+    moved_sources = _normalize_sources(moved_sources)
+    source_sources = _normalize_sources(
+        list(source_evidence.get("sources", [])) if isinstance(source_evidence, dict) else []
+    )
+    target_sources = _normalize_sources(
+        list(target_evidence.get("sources", [])) if isinstance(target_evidence, dict) else []
+    )
+
+    moved_file_ids = {
+        source.get("file_id") for source in moved_sources if isinstance(source.get("file_id"), str)
+    }
+
+    # Compute remaining citations from elements NOT being moved.
+    moved_element_ids = set(element_ids)
+    remaining_cited_files: dict[str, set[str]] = {}
+    for element in source_spec_index.get("elements", []) or []:
+        eid = element.get("element_id")
+        if eid in moved_element_ids:
+            continue
+        for citation in element.get("citations", []) or []:
+            parsed = parse_evidence_pointer(citation, allow_multi_hop=True)
+            if not parsed or "intermediate" in parsed:
+                continue
+            file_ref = parsed["file_ref"]
+            section_ref = parsed["section_ref"]
+            resolved = file_id_lookup.get(file_ref, file_ref)
+            if resolved:
+                remaining_cited_files.setdefault(resolved, set()).add(section_ref)
+
+    # Build moved sections per file_id so we can prune at section level.
+    moved_sections_by_file: dict[str, set[str]] = {}
+    for ms in moved_sources:
+        fid = ms.get("file_id")
+        if isinstance(fid, str) and fid:
+            sects = ms.get("sections", [])
+            if isinstance(sects, list):
+                moved_sections_by_file.setdefault(fid, set()).update(
+                    s for s in sects if isinstance(s, str)
+                )
+
+    # Prune source_sources: keep entries still cited by remaining elements,
+    # removing only sections that moved and are no longer needed.
+    pruned_sources: list[dict[str, Any]] = []
+    for source in source_sources:
+        fid = source.get("file_id")
+        if fid not in moved_file_ids:
+            pruned_sources.append(source)
+            continue
+        if fid not in remaining_cited_files:
+            continue
+        sections = source.get("sections", [])
+        if isinstance(sections, list) and sections:
+            still_cited = remaining_cited_files.get(fid, set())
+            moved_sects = moved_sections_by_file.get(fid, set())
+            kept = [s for s in sections if s not in moved_sects or s in still_cited]
+            if not kept:
+                continue
+            source = dict(source)
+            source["sections"] = kept
+        pruned_sources.append(source)
+    source_sources = pruned_sources
+
+    target_by_id: dict[str, dict[str, Any]] = {}
+    for source in target_sources:
+        file_id = source.get("file_id")
+        if isinstance(file_id, str) and file_id:
+            target_by_id[file_id] = source
+
+    for moved_source in moved_sources:
+        file_id = moved_source.get("file_id")
+        if not isinstance(file_id, str) or not file_id:
+            continue
+        if file_id in target_by_id:
+            existing = target_by_id[file_id]
+            existing_sections = (
+                existing.get("sections", []) if isinstance(existing.get("sections"), list) else []
+            )
+            moved_sections = (
+                moved_source.get("sections", [])
+                if isinstance(moved_source.get("sections"), list)
+                else []
+            )
+            seen_sections = set(existing_sections)
+            merged_sections = list(existing_sections)
+            for section in moved_sections:
+                if section in seen_sections:
+                    continue
+                seen_sections.add(section)
+                merged_sections.append(section)
+            existing["sections"] = merged_sections
+        else:
+            target_sources.append(moved_source)
+            target_by_id[file_id] = moved_source
+
+    updated_source = dict(source_evidence) if isinstance(source_evidence, dict) else {}
+    updated_target = dict(target_evidence) if isinstance(target_evidence, dict) else {}
+    updated_source["sources"] = source_sources
+    updated_target["sources"] = target_sources
+    return updated_source, updated_target
+
+
+def _validate_moved_elements(
+    source_spec: str,
+    target_spec: str,
+    element_ids: list[str],
+    target_lib_id: str,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    if not element_ids:
+        return issues
+
+    for element_id in element_ids:
+        tombstone = f"<!-- {element_id} moved to {target_lib_id} -->"
+        if tombstone not in source_spec:
+            issues.append(
+                {
+                    "type": "missing_tombstone",
+                    "element_id": element_id,
+                    "message": "Missing tombstone in source spec.",
+                }
+            )
+
+    source_elements = {
+        extract_existing_id(line) for line in source_spec.splitlines() if extract_existing_id(line)
+    }
+    for element_id in element_ids:
+        if element_id in source_elements:
+            issues.append(
+                {
+                    "type": "element_still_in_source",
+                    "element_id": element_id,
+                    "message": "Element still present in source spec.",
+                }
+            )
+
+    target_elements = {
+        extract_existing_id(line) for line in target_spec.splitlines() if extract_existing_id(line)
+    }
+    for element_id in element_ids:
+        if element_id in target_elements:
+            issues.append(
+                {
+                    "type": "element_id_not_rewritten",
+                    "element_id": element_id,
+                    "message": "Element ID not rewritten in target spec.",
+                }
+            )
+
+    moved_entries: list[tuple[str, str]] = []
+    lines = target_spec.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip().startswith("<!-- Moved from"):
+            continue
+        element_id = None
+        element_lines: list[str] = []
+        for next_line in lines[index + 1 :]:
+            if element_id is None:
+                element_id = extract_existing_id(next_line)
+                if element_id:
+                    element_lines.append(next_line)
+                    continue
+                if next_line.strip():
+                    break
+                continue
+            indent_match = re.match(r"^([ \t]*)", next_line)
+            indent_width = len(indent_match.group(1).expandtabs(4)) if indent_match else 0
+            if indent_width > 0 and next_line.strip():
+                element_lines.append(next_line)
+                continue
+            if next_line.strip() == "":
+                element_lines.append(next_line)
+                continue
+            break
+        if element_id:
+            moved_entries.append((element_id, "\n".join(element_lines).strip()))
+
+    moved_target_ids = [
+        element_id
+        for element_id, _ in moved_entries
+        if element_id and f"-{target_lib_id}-" in element_id
+    ]
+    if len(moved_target_ids) < len(element_ids):
+        issues.append(
+            {
+                "type": "missing_target_elements",
+                "message": "Moved elements missing from target spec.",
+            }
+        )
+
+    for element_id, element_text in moved_entries:
+        if f"-{target_lib_id}-" not in element_id:
+            issues.append(
+                {
+                    "type": "element_id_mismatch",
+                    "element_id": element_id,
+                    "message": "Moved element ID does not match target library format.",
+                }
+            )
+        if element_text and not _CITATION_RE.search(element_text):
+            issues.append(
+                {
+                    "type": "missing_citations",
+                    "element_id": element_id,
+                    "message": "Moved element missing citations.",
+                }
+            )
+
+    return issues
 
 
 def _validate_split_artifacts(
@@ -1862,6 +2372,440 @@ def _apply_single_split(
     return result
 
 
+def _apply_single_move(
+    manager: WorkspaceManager,
+    action: ReviewAction,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "action_id": action.action_id,
+        "source_lib": None,
+        "target_lib": None,
+        "elements_moved": 0,
+        "errors": [],
+    }
+
+    if len(action.source_libs) != 1 or len(action.target_libs) != 1:
+        result["errors"].append(
+            {
+                "type": "invalid_move_action",
+                "error": "Move action must include exactly one source and one target library.",
+            }
+        )
+        return result
+
+    source_lib_id = action.source_libs[0]
+    target_lib_id = action.target_libs[0]
+    result["source_lib"] = source_lib_id
+    result["target_lib"] = target_lib_id
+
+    if source_lib_id == target_lib_id:
+        result["errors"].append(
+            {
+                "type": "invalid_move_action",
+                "error": "Move action cannot target the same library as the source.",
+            }
+        )
+        return result
+
+    source_dir = manager.structure.libraries_dir / source_lib_id
+    target_dir = manager.structure.libraries_dir / target_lib_id
+    if not source_dir.exists() or not target_dir.exists():
+        result["errors"].append(
+            {
+                "type": "missing_library",
+                "error": "Source or target library directory not found.",
+            }
+        )
+        return result
+
+    source_spec_path = source_dir / "spec.md"
+    source_evidence_path = source_dir / "evidence.json"
+    source_spec_index_path = source_dir / "spec_index.json"
+    target_spec_path = target_dir / "spec.md"
+    target_evidence_path = target_dir / "evidence.json"
+    target_spec_index_path = target_dir / "spec_index.json"
+
+    if not source_spec_path.exists() or not target_spec_path.exists():
+        result["errors"].append(
+            {
+                "type": "missing_spec",
+                "error": "Source or target spec.md missing.",
+            }
+        )
+        return result
+
+    if not source_spec_index_path.exists() or not target_spec_index_path.exists():
+        result["errors"].append(
+            {
+                "type": "missing_spec_index",
+                "error": "Source or target spec_index.json missing.",
+            }
+        )
+        return result
+
+    if not source_evidence_path.exists() or not target_evidence_path.exists():
+        result["errors"].append(
+            {
+                "type": "missing_evidence",
+                "error": "Source or target evidence.json missing.",
+            }
+        )
+        return result
+
+    source_spec_content = source_spec_path.read_text(encoding="utf-8")
+    target_spec_content = target_spec_path.read_text(encoding="utf-8")
+
+    try:
+        source_spec_index_content = source_spec_index_path.read_text(encoding="utf-8")
+        source_spec_index = json.loads(source_spec_index_content)
+    except json.JSONDecodeError:
+        result["errors"].append(
+            {
+                "type": "invalid_spec_index",
+                "lib_id": source_lib_id,
+                "error": "Source library spec_index.json is invalid JSON.",
+            }
+        )
+        return result
+    if not isinstance(source_spec_index, dict):
+        result["errors"].append(
+            {
+                "type": "invalid_spec_index",
+                "lib_id": source_lib_id,
+                "error": "Source library spec_index.json must be an object.",
+            }
+        )
+        return result
+    source_spec_index.setdefault("file_manifest", manager.state.file_manifest)
+
+    try:
+        target_spec_index_content = target_spec_index_path.read_text(encoding="utf-8")
+        target_spec_index = json.loads(target_spec_index_content)
+    except json.JSONDecodeError:
+        result["errors"].append(
+            {
+                "type": "invalid_spec_index",
+                "lib_id": target_lib_id,
+                "error": "Target library spec_index.json is invalid JSON.",
+            }
+        )
+        return result
+    if not isinstance(target_spec_index, dict):
+        result["errors"].append(
+            {
+                "type": "invalid_spec_index",
+                "lib_id": target_lib_id,
+                "error": "Target library spec_index.json must be an object.",
+            }
+        )
+        return result
+    target_spec_index.setdefault("file_manifest", manager.state.file_manifest)
+
+    try:
+        source_evidence = json.loads(source_evidence_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        source_evidence = {"sources": []}
+
+    try:
+        target_evidence = json.loads(target_evidence_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        target_evidence = {"sources": []}
+
+    element_ids = [element_id for element_id in action.elements if element_id]
+    if not element_ids:
+        logger.warning("Move action %s has no elements.", action.action_id)
+        result["errors"].append(
+            {
+                "type": "empty_elements",
+                "error": "Move action has no elements to move.",
+            }
+        )
+        return result
+
+    target_existing_ids = {
+        extract_existing_id(line)
+        for line in target_spec_content.splitlines()
+        if extract_existing_id(line)
+    }
+
+    filtered_ids: list[str] = []
+    for element_id in element_ids:
+        if f"-{target_lib_id}-" in element_id:
+            logger.warning(
+                "Skipping element %s already scoped to target library %s.",
+                element_id,
+                target_lib_id,
+            )
+            continue
+        if f"-{source_lib_id}-" not in element_id:
+            logger.warning(
+                "Skipping element %s not scoped to source library %s.",
+                element_id,
+                source_lib_id,
+            )
+            continue
+        if element_id in target_existing_ids:
+            logger.warning("Skipping element %s already present in target spec.", element_id)
+            continue
+        filtered_ids.append(element_id)
+
+    unique_filtered: list[str] = []
+    seen_ids: set[str] = set()
+    for element_id in filtered_ids:
+        if element_id in seen_ids:
+            continue
+        seen_ids.add(element_id)
+        unique_filtered.append(element_id)
+    filtered_ids = unique_filtered
+
+    if not filtered_ids:
+        result["errors"].append(
+            {
+                "type": "no_elements_to_move",
+                "error": "No eligible elements remained after filtering.",
+            }
+        )
+        return result
+
+    elements = _extract_elements_from_spec(source_spec_content, filtered_ids)
+    missing_ids = [element_id for element_id in filtered_ids if element_id not in elements]
+    for missing_id in missing_ids:
+        logger.warning(
+            "Move action %s missing element %s in source spec.",
+            action.action_id,
+            missing_id,
+        )
+    filtered_ids = [element_id for element_id in filtered_ids if element_id in elements]
+    if not filtered_ids:
+        result["errors"].append(
+            {
+                "type": "no_elements_found",
+                "error": "No matching elements found in source spec.",
+            }
+        )
+        return result
+
+    source_spec_backup = source_spec_content
+    target_spec_backup = target_spec_content
+    source_evidence_backup = copy.deepcopy(source_evidence)
+    target_evidence_backup = copy.deepcopy(target_evidence)
+    source_events_backup = copy.deepcopy(_read_library_events(source_dir))
+    target_events_backup = copy.deepcopy(_read_library_events(target_dir))
+    source_spec_index_backup = source_spec_index_content
+    target_spec_index_backup = target_spec_index_content
+
+    def _validate_spec_content(
+        lib_id: str,
+        spec_content: str,
+        spec_index_payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        for element in spec_index_payload.get("elements", []) or []:
+            element_id = str(element.get("element_id", "")).strip()
+            if not element_id:
+                continue
+            if not _ELEMENT_ID_RE.fullmatch(element_id):
+                issues.append(
+                    {
+                        "type": "invalid_element_id",
+                        "artifact": "spec",
+                        "lib_id": lib_id,
+                        "element_id": element_id,
+                        "message": "Element ID does not match expected pattern.",
+                    }
+                )
+                continue
+            if f"-{lib_id}-" not in element_id:
+                issues.append(
+                    {
+                        "type": "element_id_mismatch",
+                        "artifact": "spec",
+                        "lib_id": lib_id,
+                        "element_id": element_id,
+                        "message": "Element ID does not match library ID.",
+                    }
+                )
+
+        for pointer in re.findall(r"\[[^\[\]]+::[^\[\]]+\]", spec_content or ""):
+            valid, error_msg = validate_pointer_references(
+                pointer,
+                manager.state.file_manifest,
+                manager.allocated_library_ids,
+            )
+            if not valid:
+                issues.append(
+                    {
+                        "type": "invalid_pointer",
+                        "artifact": "spec",
+                        "lib_id": lib_id,
+                        "pointer": pointer,
+                        "message": error_msg or "Invalid pointer reference.",
+                    }
+                )
+        return issues
+
+    try:
+        updated_source_spec = _add_spec_tombstones(source_spec_content, filtered_ids, target_lib_id)
+        updated_target_spec = _append_elements_to_spec(
+            target_spec_content, elements, target_lib_id, source_lib_id
+        )
+
+        updated_source_evidence, updated_target_evidence = _update_evidence_for_move(
+            source_evidence,
+            target_evidence,
+            filtered_ids,
+            source_spec_index,
+            target_spec_index,
+        )
+
+        source_spec_path.write_text(updated_source_spec, encoding="utf-8")
+        target_spec_path.write_text(updated_target_spec, encoding="utf-8")
+        source_evidence_path.write_text(
+            json.dumps(updated_source_evidence, indent=2), encoding="utf-8"
+        )
+        target_evidence_path.write_text(
+            json.dumps(updated_target_evidence, indent=2), encoding="utf-8"
+        )
+
+        updated_source_index = build_spec_index(updated_source_spec, source_lib_id)
+        for key, value in source_spec_index.items():
+            if key not in updated_source_index:
+                updated_source_index[key] = value
+        updated_target_index = build_spec_index(updated_target_spec, target_lib_id)
+        for key, value in target_spec_index.items():
+            if key not in updated_target_index:
+                updated_target_index[key] = value
+        source_spec_index_path.write_text(
+            json.dumps(updated_source_index, indent=2), encoding="utf-8"
+        )
+        target_spec_index_path.write_text(
+            json.dumps(updated_target_index, indent=2), encoding="utf-8"
+        )
+
+        validation_issues = _validate_spec_content(
+            source_lib_id, updated_source_spec, updated_source_index
+        ) + _validate_spec_content(target_lib_id, updated_target_spec, updated_target_index)
+
+        if validation_issues:
+            issues_by_lib: dict[str, list[dict[str, Any]]] = {
+                source_lib_id: [],
+                target_lib_id: [],
+            }
+            for issue in validation_issues:
+                issues_by_lib.setdefault(issue.get("lib_id", ""), []).append(issue)
+
+            for lib_id, issues in issues_by_lib.items():
+                if issues:
+                    _repair_split_artifacts(manager, lib_id, issues)
+
+            updated_source_spec = source_spec_path.read_text(encoding="utf-8")
+            updated_target_spec = target_spec_path.read_text(encoding="utf-8")
+            updated_source_index = build_spec_index(updated_source_spec, source_lib_id)
+            for key, value in source_spec_index.items():
+                if key not in updated_source_index:
+                    updated_source_index[key] = value
+            updated_target_index = build_spec_index(updated_target_spec, target_lib_id)
+            for key, value in target_spec_index.items():
+                if key not in updated_target_index:
+                    updated_target_index[key] = value
+            source_spec_index_path.write_text(
+                json.dumps(updated_source_index, indent=2), encoding="utf-8"
+            )
+            target_spec_index_path.write_text(
+                json.dumps(updated_target_index, indent=2), encoding="utf-8"
+            )
+            validation_issues = _validate_spec_content(
+                source_lib_id, updated_source_spec, updated_source_index
+            ) + _validate_spec_content(target_lib_id, updated_target_spec, updated_target_index)
+
+        if validation_issues:
+            raise RuntimeError("Move validation failed.")
+
+        moved_validation_issues = _validate_moved_elements(
+            updated_source_spec, updated_target_spec, filtered_ids, target_lib_id
+        )
+        if moved_validation_issues:
+            raise RuntimeError("Moved element validation failed.")
+
+        existing_target_ids = {
+            element.get("element_id")
+            for element in target_spec_index.get("elements", []) or []
+            if isinstance(element, dict)
+        }
+        new_element_ids = [
+            element.get("element_id")
+            for element in updated_target_index.get("elements", []) or []
+            if isinstance(element, dict)
+            and element.get("element_id")
+            and element.get("element_id") not in existing_target_ids
+            and f"-{target_lib_id}-" in element.get("element_id")
+        ]
+        source_events = _read_library_events(source_dir)
+        target_events = _read_library_events(target_dir)
+        source_events.append(
+            LibraryEvent(
+                event_type=LibraryEventType.BOUNDARY_CHANGED,
+                timestamp=datetime.now().isoformat(),
+                lib_id=source_lib_id,
+                metadata={
+                    "action": "elements_moved_out",
+                    "target_lib": target_lib_id,
+                    "element_ids": filtered_ids,
+                    "element_count": len(filtered_ids),
+                    "reason": action.summary,
+                },
+                previous_state=None,
+            )
+        )
+        target_events.append(
+            LibraryEvent(
+                event_type=LibraryEventType.BOUNDARY_CHANGED,
+                timestamp=datetime.now().isoformat(),
+                lib_id=target_lib_id,
+                metadata={
+                    "action": "elements_moved_in",
+                    "source_lib": source_lib_id,
+                    "element_ids": new_element_ids,
+                    "element_count": len(new_element_ids),
+                    "reason": action.summary,
+                },
+                previous_state=None,
+            )
+        )
+        _rewrite_library_events(source_dir, source_events)
+        _rewrite_library_events(target_dir, target_events)
+    except Exception as exc:
+        source_spec_path.write_text(source_spec_backup, encoding="utf-8")
+        target_spec_path.write_text(target_spec_backup, encoding="utf-8")
+        source_evidence_path.write_text(
+            json.dumps(source_evidence_backup, indent=2), encoding="utf-8"
+        )
+        target_evidence_path.write_text(
+            json.dumps(target_evidence_backup, indent=2), encoding="utf-8"
+        )
+        source_spec_index_path.write_text(source_spec_index_backup, encoding="utf-8")
+        target_spec_index_path.write_text(target_spec_index_backup, encoding="utf-8")
+        _rewrite_library_events(source_dir, source_events_backup)
+        _rewrite_library_events(target_dir, target_events_backup)
+        logger.exception(
+            "Move action %s failed for %s -> %s",
+            action.action_id,
+            source_lib_id,
+            target_lib_id,
+        )
+        result["errors"].append(
+            {
+                "type": "move_failed",
+                "error": str(exc),
+            }
+        )
+        return result
+
+    result["elements_moved"] = len(filtered_ids)
+    manager.save_state()
+    return result
+
+
 def apply_split_actions(
     manager: WorkspaceManager,
     review_actions_path: Path,
@@ -1939,6 +2883,43 @@ def apply_split_actions(
     return summary
 
 
+def apply_move_actions(
+    manager: WorkspaceManager,
+    actions: list[ReviewAction],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply proposed move_elements actions from a review actions list."""
+    summary: dict[str, Any] = {
+        "applied": 0,
+        "failed": 0,
+        "results": [],
+    }
+
+    move_actions = [
+        action
+        for action in actions
+        if action.type == "move_elements" and action.status == "proposed"
+    ]
+
+    if dry_run:
+        summary["applied"] = len(move_actions)
+        summary["results"] = [
+            {"action_id": action.action_id, "dry_run": True} for action in move_actions
+        ]
+        return summary
+
+    for action in move_actions:
+        logger.info("Applying move action %s", action.action_id)
+        result = _apply_single_move(manager, action)
+        summary["results"].append(result)
+        if result.get("errors"):
+            summary["failed"] += 1
+        else:
+            summary["applied"] += 1
+
+    return summary
+
+
 def review_library_structure(
     run_id: str,
     apply_splits: bool = False,
@@ -1982,13 +2963,17 @@ def review_library_structure(
     report_paths = results.get("report_paths", {})
     errors = results.get("errors", [])
     split_application: dict[str, Any] | None = None
+    move_application: dict[str, Any] | None = None
 
-    if apply_splits:
+    review_actions_path: Path | None = None
+    if apply_splits or apply_moves:
         report_path_value = report_paths.get("json") or (
             manager.structure.reports_dir / "review_actions.json"
         )
         review_actions_path = Path(report_path_value)
-        if not review_actions_path.exists():
+
+    if apply_splits:
+        if not review_actions_path or not review_actions_path.exists():
             errors.append(
                 {
                     "type": "review_actions_missing",
@@ -2007,7 +2992,25 @@ def review_library_structure(
                 )
 
     if apply_moves:
-        logger.warning("apply_moves requested but not implemented yet.")
+        if not review_actions_path or not review_actions_path.exists():
+            logger.warning(
+                "Review actions report missing for move application at %s.",
+                review_actions_path,
+            )
+        else:
+            try:
+                move_report = read_review_actions_json(review_actions_path)
+            except Exception as exc:
+                logger.warning("Failed to read review actions for moves: %s", exc)
+            else:
+                move_application = apply_move_actions(manager, move_report.actions, dry_run=False)
+                logger.info(
+                    "Applied %s move actions, %s failed",
+                    move_application.get("applied", 0),
+                    move_application.get("failed", 0),
+                )
+                if move_application.get("failed"):
+                    logger.warning("Move action failures detected; moves are optional.")
     success = not errors
 
     outputs = {
@@ -2017,6 +3020,8 @@ def review_library_structure(
     }
     if split_application is not None:
         outputs["split_application"] = split_application
+    if move_application is not None:
+        outputs["move_application"] = move_application
     if success:
         manager.complete_phase(Phase.LIBRARY_STRUCTURE_REVIEW, outputs=outputs)
     else:
@@ -2031,5 +3036,6 @@ def review_library_structure(
         "split_candidates_count": len(split_candidates),
         "report_paths": report_paths,
         "split_application": split_application,
+        "move_application": move_application,
         "errors": errors,
     }
