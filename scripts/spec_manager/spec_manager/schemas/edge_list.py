@@ -28,7 +28,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -524,9 +524,7 @@ def build_interface_index(
         edges_by_consumer.setdefault(edge.consumer_lib, []).append(edge.edge_id)
         edges_by_provider.setdefault(edge.provider_lib, []).append(edge.edge_id)
 
-        contract_rel = (
-            Path("libraries") / edge.consumer_lib / "interfaces" / edge.edge_id
-        )
+        contract_rel = Path("libraries") / edge.consumer_lib / "interfaces" / edge.edge_id
         contract_files[edge.edge_id] = {
             "markdown": str((contract_base_path / contract_rel).with_suffix(".md")),
             "json": str((contract_base_path / contract_rel).with_suffix(".json")),
