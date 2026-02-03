@@ -69,7 +69,19 @@ Notes:
 
 ## Rules
 
+### ID Preservation (CRITICAL)
+
+- **NEVER remove or modify existing element IDs** (REQ-LIB-####-####, FLOW-LIB-####-##, INV-LIB-####-####, DEC-LIB-####-####).
+- If a bullet already has an ID prefix, treat it as an **immutable label**.
+- When editing a bullet with an ID, provide only the content **after the ID prefix**.
+- Example:
+  - Existing: `- REQ-LIB-0001-0001: Must support X [F0001::INTRO]`
+  - Patch content: `Must support X and Y [F0001::INTRO] [F0002::CORE]`
+  - Result: `- REQ-LIB-0001-0001: Must support X and Y [F0001::INTRO] [F0002::CORE]`
+- Do NOT include the ID in your patch content field.
+
 - Allowed ops: `add`, `edit`, `move`. `delete` is FORBIDDEN.
+- Preserve existing element IDs (REQ-/FLOW-/INV-/DEC-) when editing bullets; never remove or renumber them.
 - Only cite SOURCE files using `[spec_snapshot/<relpath>::SEC-F####-####]` (preferred) or `[F####::SECTION]` (legacy accepted).
 - Do NOT cite derived artifacts such as `charter`, `libraries/...`, `runs/...`.
 - Every bullet in `Boundaries`, `Requirements`, `Constraints`, and `Dependencies` MUST have at least one valid citation.

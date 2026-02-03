@@ -1,4 +1,7 @@
-"""Patch operation parsing, validation, and application for spec building."""
+"""Patch operation parsing, validation, and application for spec building.
+
+Supports stable element ID preservation when specs have been stabilized.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +19,8 @@ from spec_manager.refinement.validation_utils import (
     build_section_alias_map,
     resolve_section_reference,
 )
+
+from .spec_stabilization import extract_existing_id
 
 VALID_SPEC_SECTIONS = [
     "Intent",
@@ -192,6 +197,8 @@ def parse_patch_json(json_str: str, evidence: list[dict[str, Any]] | None = None
 def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
     """Apply a patch operation to a spec document.
 
+    Preserves existing element IDs (REQ-/FLOW-/INV-/DEC-) when editing or moving bullets.
+
     Args:
         spec_doc: The spec document to modify.
         operation: The patch operation to apply.
@@ -201,7 +208,7 @@ def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
     """
     if operation.op == "add":
         lines = list(spec_doc.get_lines(operation.section))
-        _append_bullet_line(lines, _compose_bullet_line(operation))
+        _append_bullet_line(lines, _compose_bullet_line(operation, original_line=None))
         spec_doc.section_lines[operation.section] = lines
         if operation.section not in spec_doc.section_order:
             spec_doc.section_order.append(operation.section)
@@ -210,7 +217,8 @@ def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
     if operation.op == "edit":
         lines = list(spec_doc.get_lines(operation.section))
         line_index = _resolve_bullet_line_index(lines, operation.bullet_index)
-        lines[line_index] = _compose_bullet_line(operation)
+        original_line = lines[line_index]
+        lines[line_index] = _compose_bullet_line(operation, original_line=original_line)
         spec_doc.section_lines[operation.section] = lines
         if operation.section not in spec_doc.section_order:
             spec_doc.section_order.append(operation.section)
@@ -223,7 +231,10 @@ def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
         dest_lines = list(spec_doc.get_lines(operation.section))
         line_index = _resolve_bullet_line_index(source_lines, operation.bullet_index)
         moved_line = source_lines.pop(line_index)
-        bullet_line = _compose_bullet_line(operation) if operation.content.strip() else moved_line
+        if operation.content.strip():
+            bullet_line = _compose_bullet_line(operation, original_line=moved_line)
+        else:
+            bullet_line = moved_line
         _append_bullet_line(dest_lines, bullet_line)
         spec_doc.section_lines[operation.source_section] = source_lines
         spec_doc.section_lines[operation.section] = dest_lines
@@ -438,6 +449,40 @@ def _is_bullet_line(line: str) -> bool:
     return stripped.startswith("-") or stripped.startswith("*")
 
 
+def _extract_id_prefix(line: str) -> str | None:
+    """Extract element ID prefix from a bullet line if present.
+
+    Args:
+        line: Bullet line to check.
+
+    Returns:
+        Element ID string (e.g., "REQ-LIB-0001-0001") or None.
+    """
+    existing_id = extract_existing_id(line)
+    return existing_id
+
+
+def _is_stabilization_enabled(spec_doc: SpecDocument) -> bool:
+    """Check if spec stabilization has been run (IDs should be preserved).
+
+    This is a heuristic check - if any bullet in Requirements/Constraints/Dependencies
+    sections has an element ID, we assume stabilization has run.
+
+    Args:
+        spec_doc: The spec document to check.
+
+    Returns:
+        True if stabilization appears to have run, False otherwise.
+    """
+    id_managed_sections = ["Requirements", "Constraints", "Dependencies", "Flows"]
+    for section in id_managed_sections:
+        lines = spec_doc.get_lines(section)
+        for line in lines:
+            if _is_bullet_line(line) and extract_existing_id(line):
+                return True
+    return False
+
+
 def _resolve_bullet_line_index(lines: list[str], bullet_index: int | None) -> int:
     if bullet_index is None:
         raise ValueError("bullet_index is required for this operation.")
@@ -447,14 +492,40 @@ def _resolve_bullet_line_index(lines: list[str], bullet_index: int | None) -> in
     return bullet_lines[bullet_index]
 
 
-def _compose_bullet_line(operation: PatchOperation) -> str:
+def _compose_bullet_line(operation: PatchOperation, original_line: str | None = None) -> str:
+    """Compose a bullet line from patch operation, preserving existing IDs.
+
+    Args:
+        operation: The patch operation containing new content.
+        original_line: The original bullet line (for edit/move ops) to extract ID from.
+
+    Returns:
+        Formatted bullet line with ID preserved if present.
+    """
     content = operation.content.strip()
+
+    # Extract existing ID from original line if provided
+    existing_id = None
+    if original_line:
+        existing_id = _extract_id_prefix(original_line)
+
+    # Add citations that aren't already in content
     citations = [citation.strip() for citation in operation.citations if citation.strip()]
     for citation in citations:
         if citation not in content:
             content = f"{content} {citation}" if content else citation
+
     if not content:
         raise ValueError("Bullet content cannot be empty.")
+
+    # Prepend existing ID if found
+    if existing_id:
+        # Remove ID from content if agent accidentally included it
+        content_without_id = content
+        if content.startswith(f"{existing_id}:"):
+            content_without_id = content[len(existing_id) + 1 :].strip()
+        return f"- {existing_id}: {content_without_id}".rstrip()
+
     return f"- {content}".rstrip()
 
 

@@ -11,6 +11,7 @@ Migration Notes (Phase 1 Sectionization):
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,7 @@ VALID_GAP_SEVERITIES = {"must", "should", "nice-to-have"}
 SEVERITY_MAP = {"must": "error", "should": "warning", "nice-to-have": "info"}
 MAX_RELEVANT_LINES_PER_SECTION = 12
 GAP_AUDIT_FILE_ID = "evidence_union"
+logger = logging.getLogger(__name__)
 
 
 def _extract_sections(content: str, level: int) -> dict[str, str]:
@@ -774,6 +776,26 @@ def _gap_signature(gaps: list[Gap]) -> tuple[str, ...]:
     return tuple(sorted(gap.id for gap in gaps if gap.status == "open"))
 
 
+def _check_stabilization_status(manager: WorkspaceManager) -> bool:
+    """Check if spec stabilization has been run for this workspace.
+
+    Args:
+        manager: Workspace manager instance.
+
+    Returns:
+        True if stabilization has completed, False otherwise.
+    """
+    phase_result = manager.state.phases.get(Phase.SPEC_BUILDING.value)
+    if not phase_result:
+        return False
+
+    outputs = phase_result.outputs
+    if not isinstance(outputs, dict):
+        return False
+
+    return outputs.get("specs_stabilized", False) is True
+
+
 def _log_history_event(manager: WorkspaceManager, event: str, payload: dict[str, Any]) -> None:
     manager.state.history.append(
         {
@@ -854,6 +876,11 @@ def _build_library_spec(
 
     charter_content = charter_path.read_text(encoding="utf-8")
     spec_path = _initialize_spec(lib_dir, charter_content, lib_id)
+
+    # Check if stabilization has run (for logging purposes)
+    stabilization_enabled = _check_stabilization_status(manager)
+    if stabilization_enabled:
+        logger.info("Spec stabilization detected for %s - IDs will be preserved", lib_id)
 
     sources = _read_evidence_sources(lib_dir)
     evidence_map = _normalize_evidence_sources(sources)
