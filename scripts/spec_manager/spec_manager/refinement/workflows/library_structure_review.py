@@ -1284,6 +1284,11 @@ def review_library_structure(
     }
     if success:
         manager.complete_phase(Phase.LIBRARY_STRUCTURE_REVIEW, outputs=outputs)
+    else:
+        manager.fail_phase(
+            Phase.LIBRARY_STRUCTURE_REVIEW,
+            error="; ".join(e.get("error", str(e)) for e in errors),
+        )
 
     return {
         "success": success,
