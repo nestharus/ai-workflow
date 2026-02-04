@@ -13,7 +13,10 @@ pytestmark = [pytest.mark.tasks, pytest.mark.unit]
 
 
 def _patch_graph_to_dependency_graph(patch_graph) -> dict[str, object]:
-    nodes = {node: {"id": node, "name": node, "keywords": [], "sources": []} for node in patch_graph.nodes}
+    nodes = {
+        node: {"id": node, "name": node, "keywords": [], "sources": []}
+        for node in patch_graph.nodes
+    }
     adjacency = {node: {"incoming": [], "outgoing": []} for node in patch_graph.nodes}
     for task_id, dependency_id in patch_graph.edges:
         adjacency[dependency_id]["outgoing"].append(
