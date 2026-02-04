@@ -18,6 +18,7 @@ uv run spec spec build-specs my_run_001
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,13 @@ from typing import Literal
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, format_gap_table
 from spec_manager.refinement.qa.contract_lint import run_contract_lint
+from spec_manager.refinement.trace import (
+    format_atom_trace,
+    format_element_trace,
+    format_section_trace,
+    format_task_trace,
+    load_trace_indexes,
+)
 from spec_manager.refinement.workflows import summarize_all, synthesize_libraries
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -1053,6 +1061,118 @@ def cmd_finalize_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trace_atom(args: argparse.Namespace) -> int:
+    """Trace an atom through the provenance chain."""
+    run_id = args.run_id
+    atom_id = args.atom_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    try:
+        indexes = load_trace_indexes(manager)
+    except FileNotFoundError:
+        print("Trace indexes not found. Run 'spec finalize-run' first.")
+        return 1
+    except json.JSONDecodeError:
+        print("Trace indexes are malformed.")
+        return 1
+
+    report = format_atom_trace(atom_id, indexes, manager)
+    if report is None:
+        print(f"Atom not found: {atom_id}")
+        return 2
+
+    print(report)
+    return 0
+
+
+def cmd_trace_section(args: argparse.Namespace) -> int:
+    """Trace a section through the provenance chain."""
+    run_id = args.run_id
+    section_id = args.section_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    try:
+        indexes = load_trace_indexes(manager)
+    except FileNotFoundError:
+        print("Trace indexes not found. Run 'spec finalize-run' first.")
+        return 1
+    except json.JSONDecodeError:
+        print("Trace indexes are malformed.")
+        return 1
+
+    report = format_section_trace(section_id, indexes, manager)
+    if report is None:
+        print(f"Section not found: {section_id}")
+        return 2
+
+    print(report)
+    return 0
+
+
+def cmd_trace_element(args: argparse.Namespace) -> int:
+    """Trace a spec element through the provenance chain."""
+    run_id = args.run_id
+    element_id = args.element_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    try:
+        indexes = load_trace_indexes(manager)
+    except FileNotFoundError:
+        print("Trace indexes not found. Run 'spec finalize-run' first.")
+        return 1
+    except json.JSONDecodeError:
+        print("Trace indexes are malformed.")
+        return 1
+
+    report = format_element_trace(element_id, indexes, manager)
+    if report is None:
+        print(f"Element not found: {element_id}")
+        return 2
+
+    print(report)
+    return 0
+
+
+def cmd_trace_task(args: argparse.Namespace) -> int:
+    """Trace a task back to source sections and elements."""
+    run_id = args.run_id
+    task_id = args.task_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    try:
+        indexes = load_trace_indexes(manager)
+    except FileNotFoundError:
+        print("Trace indexes not found. Run 'spec finalize-run' first.")
+        return 1
+    except json.JSONDecodeError:
+        print("Trace indexes are malformed.")
+        return 1
+
+    report = format_task_trace(task_id, indexes, manager)
+    if report is None:
+        print(f"Task not found: {task_id}")
+        return 2
+
+    print(report)
+    return 0
+
+
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
     from spec_manager.refinement.qa import QA_CASES
@@ -1161,6 +1281,10 @@ def main(argv: list[str] | None = None) -> int:
             "    --repo-root, --tasks, --run-tests, --max-iterations)\n"
             "  spec run-tasks (Phase 10: alias for implement)\n"
             "  spec finalize-run (Phase 11: reports and traceability)\n"
+            "  trace atom <run_id> <atom_id>\n"
+            "  trace section <run_id> <section_id>\n"
+            "  trace element <run_id> <element_id>\n"
+            "  trace task <run_id> <task_id>\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1254,6 +1378,50 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional run identifier for storing reports under runs/<run_id>/reports/",
     )
     p_qa_lint_contracts.set_defaults(func=cmd_qa_lint_contracts)
+
+    p_trace = subparsers.add_parser(
+        "trace",
+        help="Trace provenance from atoms to patches",
+    )
+    trace_subparsers = p_trace.add_subparsers(dest="trace_command", required=True)
+
+    p_trace_atom = trace_subparsers.add_parser(
+        "atom",
+        help="Trace an atom through the provenance chain",
+    )
+    p_trace_atom.add_argument("run_id", help="Run identifier")
+    p_trace_atom.add_argument("atom_id", help="Atom ID (e.g., ATOM-F0001-L0042)")
+    p_trace_atom.set_defaults(func=cmd_trace_atom)
+
+    p_trace_section = trace_subparsers.add_parser(
+        "section",
+        help="Trace a section through the provenance chain",
+    )
+    p_trace_section.add_argument("run_id", help="Run identifier")
+    p_trace_section.add_argument("section_id", help="Section ID (e.g., SEC-F0001-0001)")
+    p_trace_section.set_defaults(func=cmd_trace_section)
+
+    p_trace_element = trace_subparsers.add_parser(
+        "element",
+        help="Trace a spec element through the provenance chain",
+    )
+    p_trace_element.add_argument(
+        "run_id",
+        help="Run identifier",
+    )
+    p_trace_element.add_argument(
+        "element_id",
+        help="Element ID (e.g., REQ-LIB-0001-0001)",
+    )
+    p_trace_element.set_defaults(func=cmd_trace_element)
+
+    p_trace_task = trace_subparsers.add_parser(
+        "task",
+        help="Trace a task back to source sections and elements",
+    )
+    p_trace_task.add_argument("run_id", help="Run identifier")
+    p_trace_task.add_argument("task_id", help="Task ID (e.g., TASK-0001)")
+    p_trace_task.set_defaults(func=cmd_trace_task)
 
     p_spec = subparsers.add_parser(
         "spec",
