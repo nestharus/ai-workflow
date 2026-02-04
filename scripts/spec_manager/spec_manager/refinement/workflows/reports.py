@@ -17,13 +17,17 @@ from spec_manager.refinement.validation_utils import (
     build_section_alias_map,
     resolve_section_reference,
 )
-from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.refinement.workflows.trace_indexes import (
     build_atom_to_section_index,
     build_section_to_spec_elements_index,
     build_spec_element_to_tasks_index,
+    build_task_to_patches_index,
 )
+from spec_manager.refinement.workspace import WorkspaceManager
+from spec_manager.schemas.edge_list import EdgeListSchema, EdgeSchema, read_edge_list_json
 from spec_manager.schemas.spec_indexes import DecisionsIndex, SpecIndex
+from spec_manager.schemas.task_status import read_task_implementation_status_json
+from spec_manager.schemas.tasks import read_task_index_json, read_task_json
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,7 @@ _TRACE_INDEX_BUILDERS: dict[str, Any] = {
     "atom_to_section": build_atom_to_section_index,
     "section_to_spec_elements": build_section_to_spec_elements_index,
     "spec_element_to_tasks": build_spec_element_to_tasks_index,
+    "task_to_patches": build_task_to_patches_index,
 }
 
 
@@ -42,7 +47,7 @@ def generate_coverage_report(manager: WorkspaceManager) -> str:
 
     total_sections = _count_total_sections(manager)
     referenced_sections = (
-        len({str(section_id) for section_id in section_to_spec_elements.keys()})
+        len({str(section_id) for section_id in section_to_spec_elements})
         if isinstance(section_to_spec_elements, dict)
         else 0
     )
@@ -111,7 +116,9 @@ def generate_coverage_report(manager: WorkspaceManager) -> str:
                         )
                         if not resolved:
                             logger.warning(
-                                "Unresolved section reference %r for %s", section_ref, element.element_id
+                                "Unresolved section reference %r for %s",
+                                section_ref,
+                                element.element_id,
                             )
                             continue
                         section_id = resolved
@@ -130,7 +137,9 @@ def generate_coverage_report(manager: WorkspaceManager) -> str:
 
     total_atoms = len(atom_to_section) if isinstance(atom_to_section, dict) else 0
     referenced_section_ids = (
-        set(section_to_spec_elements.keys()) if isinstance(section_to_spec_elements, dict) else set()
+        set(section_to_spec_elements.keys())
+        if isinstance(section_to_spec_elements, dict)
+        else set()
     )
     referenced_atoms = 0
     if isinstance(atom_to_section, dict):
@@ -151,7 +160,13 @@ def generate_coverage_report(manager: WorkspaceManager) -> str:
         "## Section Coverage",
         _format_coverage_table(
             ["Total Sections", "Referenced Sections", "Coverage Ratio"],
-            [[total_sections, referenced_sections, format_ratio(referenced_sections, total_sections)]],
+            [
+                [
+                    total_sections,
+                    referenced_sections,
+                    format_ratio(referenced_sections, total_sections),
+                ]
+            ],
         ),
         "",
         "## Library Coverage",
@@ -288,9 +303,7 @@ def generate_compliance_report(manager: WorkspaceManager, *, run_qa: bool = True
     qa_pass_rate = (
         cases_passed / cases_total if isinstance(cases_passed, int) and cases_total else None
     )
-    bad_signature_density = (
-        total_bad_signatures / libraries_scanned if libraries_scanned else None
-    )
+    bad_signature_density = total_bad_signatures / libraries_scanned if libraries_scanned else None
 
     sorted_signatures = sorted(
         signature_counts.items(),
@@ -402,10 +415,10 @@ def generate_compliance_report(manager: WorkspaceManager, *, run_qa: bool = True
         elif cases_failed:
             lines.append("- Review failed QA case reports and address their findings.")
         if total_bad_signatures:
-            lines.append(
-                "- Remove known bad signature patterns from library specs and decisions."
-            )
-        if not total_bad_signatures and (qa_error is not None or qa_results is None or cases_failed):
+            lines.append("- Remove known bad signature patterns from library specs and decisions.")
+        if not total_bad_signatures and (
+            qa_error is not None or qa_results is None or cases_failed
+        ):
             lines.append("- Re-run QA after updates to confirm improvements.")
 
     lines.append("")
@@ -416,6 +429,497 @@ def generate_compliance_report(manager: WorkspaceManager, *, run_qa: bool = True
     report_path = reports_dir / "compliance.md"
     report_path.write_text(content, encoding="utf-8")
     logger.info("Wrote compliance report to %s", report_path)
+    return content
+
+
+def _aggregate_task_status(tasks_dir: Path) -> dict[str, int]:
+    counts: dict[str, int] = {
+        "planned": 0,
+        "in_progress": 0,
+        "done": 0,
+        "blocked": 0,
+        "failed": 0,
+    }
+    if not tasks_dir.exists():
+        logger.warning("Tasks directory missing: %s", tasks_dir)
+        return counts
+
+    for task_dir in sorted(tasks_dir.iterdir(), key=lambda path: path.name):
+        if not task_dir.is_dir():
+            continue
+        status_path = task_dir / "status.json"
+        if not status_path.exists():
+            counts["planned"] += 1
+            continue
+        try:
+            status = read_task_implementation_status_json(status_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read task status %s: %s", status_path, exc)
+            counts["planned"] += 1
+            continue
+        except Exception as exc:
+            logger.warning("Task status validation failed for %s: %s", status_path, exc)
+            counts["planned"] += 1
+            continue
+        counts[status.status] = counts.get(status.status, 0) + 1
+
+    return counts
+
+
+def _find_uncovered_edges(
+    edge_list: EdgeListSchema,
+    element_to_tasks: dict[str, list[str]],
+) -> list[EdgeSchema]:
+    covered_elements = set(element_to_tasks.keys())
+    uncovered: list[EdgeSchema] = []
+    for edge in edge_list.edges:
+        elements = [*edge.consumer_elements, *edge.provider_elements]
+        if any(element_id in covered_elements for element_id in elements):
+            continue
+        uncovered.append(edge)
+    return uncovered
+
+
+def generate_drift_report(manager: WorkspaceManager) -> str:
+    """Generate drift report markdown and write to reports/drift.md."""
+    element_to_tasks = _load_trace_index(manager, "spec_element_to_tasks")
+    task_to_patches = _load_trace_index(manager, "task_to_patches")
+
+    if not isinstance(element_to_tasks, dict):
+        logger.warning("Spec element-to-tasks index has unexpected payload.")
+        element_to_tasks = {}
+    if not isinstance(task_to_patches, dict):
+        logger.warning("Task-to-patches index has unexpected payload.")
+        task_to_patches = {}
+
+    libraries_dir = manager.structure.libraries_dir
+    spec_elements: list[dict[str, str]] = []
+    if libraries_dir.exists():
+        for lib_dir in sorted(libraries_dir.iterdir(), key=lambda path: path.name):
+            if not lib_dir.is_dir():
+                continue
+            spec_index_path = lib_dir / "spec_index.json"
+            if not spec_index_path.exists():
+                logger.warning("Missing spec index for library: %s", spec_index_path)
+                continue
+            try:
+                payload = json.loads(spec_index_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read spec index %s: %s", spec_index_path, exc)
+                continue
+            try:
+                spec_index = SpecIndex.model_validate(payload)
+            except Exception as exc:
+                logger.warning("Spec index validation failed for %s: %s", spec_index_path, exc)
+                continue
+            for element in spec_index.elements:
+                spec_elements.append(
+                    {
+                        "element_id": element.element_id,
+                        "lib_id": spec_index.lib_id,
+                        "kind": element.kind,
+                    }
+                )
+    else:
+        logger.warning("Libraries directory missing: %s", libraries_dir)
+
+    tasks_dir = manager.structure.tasks_dir
+    covered_elements = set(element_to_tasks.keys())
+    if tasks_dir.exists():
+        for task_dir in sorted(tasks_dir.iterdir(), key=lambda path: path.name):
+            if not task_dir.is_dir():
+                continue
+            task_path = task_dir / "task.json"
+            if not task_path.exists():
+                continue
+            try:
+                task_detail = read_task_json(task_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read task file %s: %s", task_path, exc)
+                continue
+            except Exception as exc:
+                logger.warning("Task schema validation failed for %s: %s", task_path, exc)
+                continue
+            for element_id in task_detail.covers.elements:
+                covered_elements.add(element_id)
+                if isinstance(element_to_tasks, dict):
+                    element_to_tasks.setdefault(element_id, [])
+                    if task_detail.task_id not in element_to_tasks[element_id]:
+                        element_to_tasks[element_id].append(task_detail.task_id)
+    else:
+        logger.warning("Tasks directory missing: %s", tasks_dir)
+
+    uncovered_elements = [
+        element for element in spec_elements if element["element_id"] not in covered_elements
+    ]
+    uncovered_rows = [
+        [element["element_id"], element["lib_id"], element["kind"]]
+        for element in sorted(
+            uncovered_elements,
+            key=lambda item: (item["lib_id"], item["element_id"], item["kind"]),
+        )
+    ]
+    if not uncovered_rows:
+        uncovered_rows = [["(none)", "-", "-"]]
+
+    task_status_counts = _aggregate_task_status(tasks_dir)
+    status_order = ["planned", "in_progress", "done", "blocked", "failed"]
+    task_status_rows = [[status, task_status_counts.get(status, 0)] for status in status_order]
+
+    failed_rows: list[list[str]] = []
+    if tasks_dir.exists():
+        for task_dir in sorted(tasks_dir.iterdir(), key=lambda path: path.name):
+            if not task_dir.is_dir():
+                continue
+            status_path = task_dir / "status.json"
+            if not status_path.exists():
+                continue
+            try:
+                raw_payload = json.loads(status_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read task status payload %s: %s", status_path, exc)
+                continue
+            try:
+                status = read_task_implementation_status_json(status_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read task status %s: %s", status_path, exc)
+                continue
+            except Exception as exc:
+                logger.warning("Task status validation failed for %s: %s", status_path, exc)
+                continue
+            if status.status not in {"failed", "blocked"}:
+                continue
+
+            detail = ""
+            if isinstance(raw_payload, dict):
+                for key in ("error", "notes", "message", "reason"):
+                    value = raw_payload.get(key)
+                    if isinstance(value, str) and value.strip():
+                        detail = value.strip()
+                        break
+            if not detail and status.tests is not None:
+                detail = f"tests exit_code={status.tests.exit_code}"
+            if not detail and status.audit is not None:
+                detail = f"audit {status.audit.verdict} (issues={status.audit.issues})"
+            if not detail:
+                detail = "No details available."
+
+            failed_rows.append([status.task_id, status.status, detail])
+    if not failed_rows:
+        failed_rows = [["(none)", "-", "No failed or blocked tasks found."]]
+
+    edge_list_path = manager.structure.indexes_dir / "edge_list.json"
+    edge_list: EdgeListSchema | None = None
+    if edge_list_path.exists():
+        try:
+            edge_list = read_edge_list_json(edge_list_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read edge list %s: %s", edge_list_path, exc)
+        except Exception as exc:
+            logger.warning("Edge list validation failed for %s: %s", edge_list_path, exc)
+    else:
+        logger.warning("Edge list missing: %s", edge_list_path)
+
+    uncovered_edge_rows: list[list[str]] = []
+    uncovered_edges: list[EdgeSchema] = []
+    if edge_list is not None:
+        uncovered_edges = _find_uncovered_edges(edge_list, element_to_tasks)
+        uncovered_edge_rows = [
+            [
+                edge.edge_id,
+                edge.consumer_lib,
+                edge.provider_lib,
+                edge.kind,
+            ]
+            for edge in uncovered_edges
+        ]
+        if not uncovered_edge_rows:
+            uncovered_edge_rows = [["(none)", "-", "-", "-"]]
+
+    failed_or_blocked_count = sum(1 for row in failed_rows if row[0] != "(none)")
+    uncovered_edge_count = len(uncovered_edges) if edge_list is not None else 0
+    uncovered_element_count = sum(1 for row in uncovered_rows if row[0] != "(none)")
+
+    overall_status = "NEEDS ATTENTION"
+    if not uncovered_element_count and not failed_or_blocked_count and not uncovered_edge_count:
+        overall_status = "OK"
+
+    lines = [
+        "# Drift Report",
+        "",
+        f"- run_id: {manager.run_id}",
+        f"- generated_at: {_format_timestamp()}",
+        "",
+        "## Uncovered Spec Elements",
+        _format_coverage_table(["Element ID", "Library", "Kind"], uncovered_rows),
+        "",
+        "## Task Status Summary",
+        _format_coverage_table(["Status", "Count"], task_status_rows),
+        "",
+        "## Failed/Blocked Tasks",
+        _format_coverage_table(["Task ID", "Status", "Details"], failed_rows),
+        "",
+    ]
+
+    if edge_list is not None:
+        lines.extend(
+            [
+                "## Uncovered Interface Edges",
+                _format_coverage_table(
+                    ["Edge ID", "Consumer Library", "Provider Library", "Kind"],
+                    uncovered_edge_rows,
+                ),
+                "",
+            ]
+        )
+
+    artifacts: list[str] = [
+        "../reports/coverage.md",
+        "../reports/compliance.md",
+        "../workspace/indexes/trace_index.json",
+    ]
+
+    if edge_list_path.exists():
+        artifacts.append("../workspace/indexes/edge_list.json")
+
+    task_index_path = tasks_dir / "task_index.json"
+    if task_index_path.exists():
+        artifacts.append("../tasks/task_index.json")
+
+    lines.append("## Artifacts")
+    for artifact in artifacts:
+        lines.append(f"- {artifact}")
+    lines.append("")
+
+    lines.extend(
+        [
+            "## Drift Summary",
+            f"- overall_status: {overall_status}",
+            f"- uncovered_elements: {uncovered_element_count}",
+            f"- failed_or_blocked_tasks: {failed_or_blocked_count}",
+            f"- uncovered_edges: {uncovered_edge_count if edge_list is not None else 'n/a'}",
+            f"- tasks_with_patches: {len(task_to_patches)}",
+            "",
+            "### Recommendations",
+        ]
+    )
+
+    if overall_status == "OK":
+        lines.append("- No immediate remediation required.")
+    else:
+        if uncovered_element_count:
+            lines.append("- Create tasks to cover uncovered spec elements.")
+        if failed_or_blocked_count:
+            lines.append("- Resolve failed or blocked tasks and re-run implementation checks.")
+        if edge_list is not None and uncovered_edge_count:
+            lines.append("- Define tasks that cover uncovered interface edges.")
+        if not (uncovered_element_count or failed_or_blocked_count or uncovered_edge_count):
+            lines.append("- Review drift inputs and rerun reporting.")
+
+    lines.append("")
+
+    content = "\n".join(lines)
+    reports_dir = manager.structure.reports_dir
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "drift.md"
+    report_path.write_text(content, encoding="utf-8")
+    logger.info("Wrote drift report to %s", report_path)
+    return content
+
+
+def generate_run_audit(manager: WorkspaceManager) -> str:
+    """Generate run audit markdown and write to audits/run_audit.md."""
+    phase_rows: list[list[str]] = []
+
+    def format_duration(started_at: str | None, completed_at: str | None) -> str:
+        if not started_at or not completed_at:
+            return "n/a"
+        try:
+            started = datetime.fromisoformat(started_at)
+            completed = datetime.fromisoformat(completed_at)
+        except ValueError:
+            return "n/a"
+        duration = (completed - started).total_seconds()
+        if duration < 0:
+            return "n/a"
+        if duration >= 3600:
+            hours = duration / 3600
+            return f"{hours:.2f}h"
+        if duration >= 60:
+            minutes = duration / 60
+            return f"{minutes:.2f}m"
+        return f"{duration:.0f}s"
+
+    for phase_name, result in manager.state.phases.items():
+        status = result.status.value if hasattr(result.status, "value") else str(result.status)
+        started_at = result.started_at or "n/a"
+        completed_at = result.completed_at or "n/a"
+        duration = format_duration(result.started_at, result.completed_at)
+        phase_rows.append([phase_name, status, started_at, completed_at, duration])
+
+    libraries_dir = manager.structure.libraries_dir
+    library_rows: list[list[Any]] = []
+    if libraries_dir.exists():
+        for lib_dir in sorted(libraries_dir.iterdir(), key=lambda path: path.name):
+            if not lib_dir.is_dir():
+                continue
+            spec_index_path = lib_dir / "spec_index.json"
+            decisions_index_path = lib_dir / "decisions_index.json"
+
+            lib_id = lib_dir.name
+            element_count = 0
+            open_decisions = 0
+
+            if spec_index_path.exists():
+                try:
+                    payload = json.loads(spec_index_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning("Failed to read spec index %s: %s", spec_index_path, exc)
+                    payload = None
+                if payload is not None:
+                    try:
+                        spec_index = SpecIndex.model_validate(payload)
+                    except Exception as exc:
+                        logger.warning(
+                            "Spec index validation failed for %s: %s", spec_index_path, exc
+                        )
+                    else:
+                        lib_id = spec_index.lib_id
+                        element_count = len(spec_index.elements)
+            else:
+                logger.warning("Missing spec index for library: %s", spec_index_path)
+
+            if decisions_index_path.exists():
+                try:
+                    payload = json.loads(decisions_index_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "Failed to read decisions index %s: %s", decisions_index_path, exc
+                    )
+                    payload = None
+                if payload is not None:
+                    try:
+                        decisions_index = DecisionsIndex.model_validate(payload)
+                    except Exception as exc:
+                        logger.warning(
+                            "Decisions index validation failed for %s: %s",
+                            decisions_index_path,
+                            exc,
+                        )
+                    else:
+                        open_decisions = sum(
+                            1
+                            for decision in decisions_index.decisions
+                            if decision.status == "open" or not decision.default
+                        )
+
+            library_rows.append([lib_id, element_count, open_decisions])
+    else:
+        logger.warning("Libraries directory missing: %s", libraries_dir)
+
+    task_status_counts = {
+        "planned": 0,
+        "in_progress": 0,
+        "done": 0,
+        "blocked": 0,
+        "failed": 0,
+    }
+    task_index_path = manager.structure.tasks_dir / "task_index.json"
+    task_ids: list[str] = []
+    if task_index_path.exists():
+        try:
+            task_index = read_task_index_json(task_index_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read task index %s: %s", task_index_path, exc)
+        except Exception as exc:
+            logger.warning("Task index validation failed for %s: %s", task_index_path, exc)
+        else:
+            task_ids = [entry.task_id for entry in task_index.tasks]
+    else:
+        logger.warning("Task index missing: %s", task_index_path)
+
+    if task_ids:
+        for task_id in task_ids:
+            status_path = manager.structure.tasks_dir / task_id / "status.json"
+            if not status_path.exists():
+                task_status_counts["planned"] += 1
+                continue
+            try:
+                status = read_task_implementation_status_json(status_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read task status %s: %s", status_path, exc)
+                task_status_counts["planned"] += 1
+                continue
+            except Exception as exc:
+                logger.warning("Task status validation failed for %s: %s", status_path, exc)
+                task_status_counts["planned"] += 1
+                continue
+            task_status_counts[status.status] = task_status_counts.get(status.status, 0) + 1
+    else:
+        task_status_counts = _aggregate_task_status(manager.structure.tasks_dir)
+
+    task_status_rows = [
+        [status, task_status_counts.get(status, 0)]
+        for status in ["planned", "in_progress", "done", "blocked", "failed"]
+    ]
+
+    current_phase = (
+        manager.state.current_phase.value
+        if hasattr(manager.state.current_phase, "value")
+        else str(manager.state.current_phase)
+    )
+
+    lines = [
+        "# Run Audit",
+        "",
+        f"- run_id: {manager.run_id}",
+        f"- generated_at: {_format_timestamp()}",
+        f"- current_phase: {current_phase}",
+        f"- mode: {manager.state.mode}",
+        "",
+        "## Phase Status",
+        _format_coverage_table(
+            ["Phase", "Status", "Started At", "Completed At", "Duration"],
+            phase_rows,
+        ),
+        "",
+        "## Library Summary",
+        _format_coverage_table(
+            ["Library", "Elements", "Open Decisions"],
+            library_rows if library_rows else [["(none)", 0, 0]],
+        ),
+        "",
+        "## Task Summary",
+        _format_coverage_table(["Status", "Count"], task_status_rows),
+        "",
+        "## Artifacts",
+    ]
+
+    artifacts: list[str] = [
+        "../reports/coverage.md",
+        "../reports/compliance.md",
+        "../reports/drift.md",
+        "../workspace/indexes/trace_index.json",
+    ]
+
+    edge_list_path = manager.structure.indexes_dir / "edge_list.json"
+    if edge_list_path.exists():
+        artifacts.append("../workspace/indexes/edge_list.json")
+
+    if task_index_path.exists():
+        artifacts.append("../tasks/task_index.json")
+
+    for artifact in artifacts:
+        lines.append(f"- {artifact}")
+
+    lines.append("")
+
+    content = "\n".join(lines)
+    audits_dir = manager.structure.audits_dir
+    audits_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = audits_dir / "run_audit.md"
+    audit_path.write_text(content, encoding="utf-8")
+    logger.info("Wrote run audit to %s", audit_path)
     return content
 
 
@@ -518,6 +1022,8 @@ def _extract_case_summary(result: dict[str, Any]) -> str:
 
 
 __all__ = [
-    "generate_coverage_report",
     "generate_compliance_report",
+    "generate_coverage_report",
+    "generate_drift_report",
+    "generate_run_audit",
 ]
