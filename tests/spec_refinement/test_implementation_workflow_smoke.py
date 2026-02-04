@@ -367,12 +367,8 @@ class TestExecuteTaskSmoke:
 
         tasks = [
             _make_task("TASK-0001", suggested_files=["app/main.py"]),
-            _make_task(
-                "TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]
-            ),
-            _make_task(
-                "TASK-0003", suggested_files=["lib/worker.py"], depends_on=["TASK-0002"]
-            ),
+            _make_task("TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]),
+            _make_task("TASK-0003", suggested_files=["lib/worker.py"], depends_on=["TASK-0002"]),
         ]
         _create_task_planning_output(manager.run_root, tasks)
         _complete_task_planning_prerequisites(manager, len(tasks))
@@ -417,13 +413,9 @@ class TestExecuteTaskSmoke:
 
         tasks = [
             _make_task("TASK-0001", suggested_files=["app/main.py"]),
-            _make_task(
-                "TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]
-            ),
+            _make_task("TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]),
             _make_task("TASK-0003", suggested_files=["lib/worker.py"]),
-            _make_task(
-                "TASK-0004", suggested_files=["app/main.py"], depends_on=["TASK-0002"]
-            ),
+            _make_task("TASK-0004", suggested_files=["app/main.py"], depends_on=["TASK-0002"]),
             _make_task("TASK-0005", suggested_files=["app/utils.py"]),
         ]
         _create_task_planning_output(manager.run_root, tasks)
@@ -543,7 +535,8 @@ class TestRepairLoops:
         )
 
         audit_calls = [
-            call for call in controller.call_log
+            call
+            for call in controller.call_log
             if call["agent_name"] == "chatgpt-patch-audit-judge"
         ]
         repair_calls = [
@@ -872,12 +865,8 @@ class TestTaskOrdering:
 
         tasks = [
             _make_task("TASK-0001", suggested_files=["app/main.py"]),
-            _make_task(
-                "TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]
-            ),
-            _make_task(
-                "TASK-0003", suggested_files=["lib/worker.py"], depends_on=["TASK-0002"]
-            ),
+            _make_task("TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]),
+            _make_task("TASK-0003", suggested_files=["lib/worker.py"], depends_on=["TASK-0002"]),
         ]
         _create_task_planning_output(manager.run_root, tasks)
         _complete_task_planning_prerequisites(manager, len(tasks))
@@ -1089,12 +1078,8 @@ class TestFullWorkflow:
 
         tasks = [
             _make_task("TASK-0001", suggested_files=["app/main.py"]),
-            _make_task(
-                "TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]
-            ),
-            _make_task(
-                "TASK-0003", suggested_files=["lib/worker.py"], depends_on=["TASK-0002"]
-            ),
+            _make_task("TASK-0002", suggested_files=["app/utils.py"], depends_on=["TASK-0001"]),
+            _make_task("TASK-0003", suggested_files=["lib/worker.py"], depends_on=["TASK-0002"]),
         ]
         _create_task_planning_output(manager.run_root, tasks)
         _complete_task_planning_prerequisites(manager, len(tasks))

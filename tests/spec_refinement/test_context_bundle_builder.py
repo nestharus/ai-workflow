@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from spec_manager.refinement.workflows.implementation import build_context_bundle, write_context_bundle
+from spec_manager.refinement.workflows.implementation import (
+    build_context_bundle,
+    write_context_bundle,
+)
 from spec_manager.schemas.tasks import TaskCoversSchema, TaskSchema, write_task_json
 
 from tests.spec_refinement.fixtures.test_corpus import create_task_planning_prerequisites
@@ -46,7 +49,7 @@ def _seed_spec_snapshot(
 
 
 def test_build_context_bundle_includes_task_requirements(interface_workspace, fs) -> None:
-    manager, manifest = interface_workspace(run_id="run_context_requirements")
+    manager, _manifest = interface_workspace(run_id="run_context_requirements")
     repo_root = manager.input_folder
     fs.create_dir(repo_root / "app")
     (repo_root / "app" / "main.py").write_text("print('hello')\n", encoding="utf-8")
