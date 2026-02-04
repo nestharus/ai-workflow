@@ -18,12 +18,12 @@ def _patch_graph_to_dependency_graph(patch_graph) -> dict[str, object]:
         for node in patch_graph.nodes
     }
     adjacency = {node: {"incoming": [], "outgoing": []} for node in patch_graph.nodes}
-    for task_id, dependency_id in patch_graph.edges:
-        adjacency[dependency_id]["outgoing"].append(
-            {"target": task_id, "type": "depends_on", "relation_id": "task"}
+    for source, target in patch_graph.edges:
+        adjacency[source]["outgoing"].append(
+            {"target": target, "type": "depends_on", "relation_id": "task"}
         )
-        adjacency[task_id]["incoming"].append(
-            {"source": dependency_id, "type": "depends_on", "relation_id": "task"}
+        adjacency[target]["incoming"].append(
+            {"source": source, "type": "depends_on", "relation_id": "task"}
         )
     return {"nodes": nodes, "edges": [], "adjacency": adjacency}
 
@@ -75,8 +75,8 @@ def test_build_patch_graph_valid_dag() -> None:
     patch_graph = build_patch_graph(tasks, run_id="run_graph")
 
     assert set(patch_graph.nodes) == {"TASK-0001", "TASK-0002", "TASK-0003"}
-    assert ("TASK-0002", "TASK-0001") in patch_graph.edges
-    assert ("TASK-0003", "TASK-0002") in patch_graph.edges
+    assert ("TASK-0001", "TASK-0002") in patch_graph.edges
+    assert ("TASK-0002", "TASK-0003") in patch_graph.edges
     is_valid, errors = validate_patch_graph_acyclic(patch_graph)
     assert is_valid
     assert errors == []
@@ -114,5 +114,5 @@ def test_topological_sort_ordering() -> None:
     order = get_topological_order(graph)
     position = {task_id: idx for idx, task_id in enumerate(order)}
 
-    for task_id, dependency_id in patch_graph.edges:
-        assert position[dependency_id] < position[task_id]
+    for source, target in patch_graph.edges:
+        assert position[source] < position[target]

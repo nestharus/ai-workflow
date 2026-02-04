@@ -1,18 +1,37 @@
-# This module will be extended in subsequent phases with:
-# - execute_task() - main task execution orchestrator
-# - run_implementation_phase() - phase entrypoint
-# - run_tests() - test execution and capture
-# Current phase: context bundle building only
+"""Task implementation workflow utilities.
+
+This module provides utilities for executing tasks in the implementation phase,
+including building context bundles, generating patches, applying patches, and
+auditing results.
+"""
 
 import json
 import logging
 import re
+import shutil
+import time
+from collections import deque
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
+from spec_manager.refinement.workflows.patch_utils import (
+    IMMUTABLE_PATH_PATTERNS,
+    apply_patch,
+    validate_patch,
+)
+from spec_manager.refinement.workspace import Phase, WorkspaceManager
 from spec_manager.schemas import (
     DecisionsIndex,
+    PatchGraphSchema,
+    PatchOutputSchema,
     SpecIndex,
+    TaskImplementationStatusSchema,
     TaskSchema,
+    read_patch_graph_json,
+    write_task_implementation_status_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -343,6 +362,16 @@ def _truncate_section(content: str, max_chars: int, section_name: str) -> str:
 
 
 def build_context_bundle(run_root: Path, task_id: str, repo_root: Path) -> str:
+    """Build context bundle for a task.
+
+    Args:
+        run_root: Root directory for the run.
+        task_id: Task identifier.
+        repo_root: Repository root directory.
+
+    Returns:
+        Context bundle content as a string.
+    """
     task_path = run_root / "tasks" / task_id / "task.json"
     task = TaskSchema.model_validate_json(task_path.read_text(encoding="utf-8"))
 
@@ -475,6 +504,16 @@ def build_context_bundle(run_root: Path, task_id: str, repo_root: Path) -> str:
 
 
 def write_context_bundle(run_root: Path, task_id: str, content: str) -> Path:
+    """Write context bundle content to file.
+
+    Args:
+        run_root: Root directory for the run.
+        task_id: Task identifier.
+        content: Context bundle content to write.
+
+    Returns:
+        Path to the written context bundle file.
+    """
     output_path = run_root / "tasks" / task_id / "context_bundle.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(content, encoding="utf-8")
@@ -482,7 +521,676 @@ def write_context_bundle(run_root: Path, task_id: str, content: str) -> Path:
     return output_path
 
 
+def _topological_sort_tasks(graph: PatchGraphSchema) -> list[str]:
+    nodes = list(graph.nodes)
+    adjacency: dict[str, list[str]] = {node: [] for node in nodes}
+    in_degree: dict[str, int] = {node: 0 for node in nodes}
+
+    for source, target in graph.edges:
+        adjacency.setdefault(source, []).append(target)
+        in_degree.setdefault(source, 0)
+        in_degree[target] = in_degree.get(target, 0) + 1
+
+    queue = deque([node for node in nodes if in_degree.get(node, 0) == 0])
+    ordered: list[str] = []
+
+    while queue:
+        node = queue.popleft()
+        ordered.append(node)
+        for target in adjacency.get(node, []):
+            in_degree[target] -= 1
+            if in_degree[target] == 0:
+                queue.append(target)
+
+    if len(ordered) != len(in_degree):
+        raise ValueError("Cycle detected in patch graph.")
+
+    return ordered
+
+
+def _filter_tasks_with_prerequisites(
+    task_ids: list[str],
+    graph: PatchGraphSchema,
+) -> list[str]:
+    prerequisites: dict[str, set[str]] = {node: set() for node in graph.nodes}
+    for source, target in graph.edges:
+        prerequisites.setdefault(target, set()).add(source)
+        prerequisites.setdefault(source, set())
+
+    required: set[str] = set()
+
+    def _visit(task_id: str) -> None:
+        if task_id in required:
+            return
+        if task_id not in prerequisites:
+            logger.warning("Task %s not found in patch graph nodes.", task_id)
+            return
+        required.add(task_id)
+        for dep in prerequisites.get(task_id, set()):
+            _visit(dep)
+
+    for task_id in task_ids:
+        _visit(task_id)
+
+    ordered = _topological_sort_tasks(graph)
+    return [task_id for task_id in ordered if task_id in required]
+
+
+def _generate_patch(
+    run_root: Path,
+    task_id: str,
+    context_bundle: str,
+    max_iterations: int,
+    manager: WorkspaceManager,
+) -> tuple[str, list[dict[str, Any]]]:
+    logger.info("Generating patch for %s.", task_id)
+    logger.debug("Run root for %s: %s", task_id, run_root)
+    start = time.perf_counter()
+    output = run_agent(
+        agent_name="glm-task-implementer",
+        prompt=context_bundle,
+        workspace=manager.workspace_path,
+    )
+    logger.debug("Received patch output for %s (chars=%d).", task_id, len(output))
+    try:
+        parsed = PatchOutputSchema.model_validate_json(output)
+    except Exception:
+        logger.exception("Failed to parse patch output for %s", task_id)
+        raise
+
+    patch_text = parsed.patch
+    evidence_records: list[dict[str, Any]] = []
+    attempts = 0
+    repo_root = manager.input_folder
+
+    while True:
+        is_valid, errors = validate_patch(
+            patch_text,
+            repo_root,
+            immutable_paths=IMMUTABLE_PATH_PATTERNS,
+        )
+        if is_valid:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.info(
+                "Patch validation succeeded for %s (latency_ms=%.2f).",
+                task_id,
+                elapsed_ms,
+            )
+            return patch_text, evidence_records
+
+        logger.warning(
+            "Patch validation failed for %s (errors=%d).",
+            task_id,
+            len(errors),
+        )
+        if attempts >= max_iterations:
+            error_payload = json.dumps(errors, indent=2, sort_keys=True)
+            raise RuntimeError(
+                f"Patch validation failed for {task_id} after {max_iterations} repair attempts: "
+                f"{error_payload}"
+            )
+
+        attempts += 1
+        patch_text, repair_evidence = repair_artifact(
+            output=patch_text,
+            errors=errors,
+            allowlists={},
+            artifact_type=ArtifactType.PATCH_OUTPUT,
+            model_override=get_repair_model(),
+            manager=manager,
+        )
+        evidence_records.extend(repair_evidence)
+        logger.info(
+            "Repair iteration %d/%d completed for %s.",
+            attempts,
+            max_iterations,
+            task_id,
+        )
+
+
+def _build_audit_prompt(task: TaskSchema, patch_text: str) -> str:
+    acceptance_criteria = (
+        "\n".join(
+            f"{index + 1}. {criterion}" for index, criterion in enumerate(task.acceptance_criteria)
+        )
+        if task.acceptance_criteria
+        else "None"
+    )
+
+    lines = [
+        "Task Requirements",
+        f"- Task ID: {task.task_id}",
+        f"- Title: {task.title}",
+        "",
+        "Description:",
+        task.description,
+        "",
+        "Acceptance Criteria:",
+        acceptance_criteria,
+        "",
+        "Patch Content:",
+        "```diff",
+        patch_text,
+        "```",
+        "",
+        "Instructions:",
+        "1. Verify each acceptance criterion against the patch content.",
+        "2. Identify any spec/interface violations using pointer format",
+        "   [LIB-####::spec.md::ELEMENT_ID].",
+        "3. Output a verdict of pass or fail and a list of issues.",
+        "",
+        "Output Format (JSON):",
+        "{",
+        '  "verdict": "pass" | "fail",',
+        '  "issues": ["issue 1", "issue 2"]',
+        "}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_audit_md_content(
+    verdict: str,
+    issues: list[str],
+    acceptance_criteria: list[str],
+) -> str:
+    normalized_verdict = verdict.lower()
+    status_symbol = "✓" if normalized_verdict == "pass" else "✗"
+    notes = "Meets criterion." if normalized_verdict == "pass" else "See issues list."
+
+    table_lines = [
+        "| Criterion | Status | Notes |",
+        "| --- | --- | --- |",
+    ]
+    if acceptance_criteria:
+        for criterion in acceptance_criteria:
+            escaped = criterion.replace("|", "\\|")
+            table_lines.append(f"| {escaped} | {status_symbol} | {notes} |")
+    else:
+        table_lines.append("| None | - | No acceptance criteria provided. |")
+
+    issue_lines = [f"{index + 1}. {issue}" for index, issue in enumerate(issues)]
+    if not issue_lines:
+        issue_lines = ["None"]
+
+    summary = f"Verdict: {normalized_verdict}. Issues reported: {len(issues)}."
+
+    return "\n".join(
+        [
+            "# Patch Audit Report",
+            "",
+            "## Verdict",
+            normalized_verdict,
+            "",
+            "## Acceptance Criteria Assessment",
+            "\n".join(table_lines),
+            "",
+            "## Issues",
+            "\n".join(issue_lines),
+            "",
+            "## Summary",
+            summary,
+            "",
+        ]
+    )
+
+
+def _write_audit_md(
+    task_dir: Path,
+    verdict: str,
+    issues: list[str],
+    acceptance_criteria: list[str],
+) -> None:
+    content = _format_audit_md_content(verdict, issues, acceptance_criteria)
+    task_dir.mkdir(parents=True, exist_ok=True)
+    output_path = task_dir / "audit.md"
+    output_path.write_text(content, encoding="utf-8")
+    logger.info("Wrote audit report: %s", output_path)
+
+
+def _parse_audit_output(output: str) -> tuple[str, list[str]]:
+    content = output.strip()
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        payload = None
+
+    if isinstance(payload, dict):
+        verdict_raw = str(payload.get("verdict", "")).strip().lower()
+        issues_raw = payload.get("issues", [])
+        if verdict_raw in {"pass", "fail"}:
+            issues: list[str] = []
+            if isinstance(issues_raw, list):
+                issues = [str(issue).strip() for issue in issues_raw if str(issue).strip()]
+            elif isinstance(issues_raw, str):
+                issues = [line.strip() for line in issues_raw.splitlines() if line.strip()]
+            return verdict_raw, issues
+
+    verdict: str | None = None
+    issues: list[str] = []
+    for line in content.splitlines():
+        lower = line.strip().lower()
+        if verdict is None and "verdict" in lower:
+            parts = re.split(r"[:\-]\s*", line, maxsplit=1)
+            if len(parts) > 1:
+                candidate = parts[1].strip().lower()
+                if candidate in {"pass", "fail"}:
+                    verdict = candidate
+        if re.match(r"^\s*[-*]\s+", line) or re.match(r"^\s*\d+[\).]\s+", line):
+            issue = re.sub(r"^\s*([-*]|\d+[\).])\s*", "", line).strip()
+            if issue:
+                issues.append(issue)
+
+    if verdict is None:
+        raise ValueError("Unable to parse audit verdict.")
+
+    return verdict, issues
+
+
+def _restore_from_backup(backup_dir: Path, repo_root: Path) -> None:
+    """Restore repository files from backup before re-applying a repaired patch.
+
+    Reads the apply_log.json from the backup directory, copies backed-up files
+    to their original locations, and removes new files that were created by the
+    previous patch application.
+
+    Args:
+        backup_dir: Directory containing backup files and apply_log.json.
+        repo_root: Repository root directory.
+    """
+    log_path = backup_dir / "apply_log.json"
+    if not log_path.exists():
+        logger.warning("No apply_log.json found in %s, skipping restore.", backup_dir)
+        return
+
+    try:
+        apply_log = json.loads(log_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to read apply_log.json for restore: %s", exc)
+        return
+
+    restored_paths: set[str] = set()
+    for record in apply_log.get("backup_records", []):
+        backup_path = Path(record["backup_path"])
+        original_path = Path(record["path"])
+        if backup_path.exists():
+            original_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup_path, original_path)
+            restored_paths.add(str(original_path))
+
+    removed = 0
+    for rel_path in apply_log.get("applied_files", []):
+        abs_path = repo_root / rel_path
+        if str(abs_path) not in restored_paths and abs_path.exists():
+            abs_path.unlink()
+            removed += 1
+
+    logger.info(
+        "Backup restore completed (restored=%d, removed=%d).",
+        len(restored_paths),
+        removed,
+    )
+
+
+def _audit_patch(
+    run_root: Path,
+    task_id: str,
+    patch_text: str,
+    max_iterations: int,
+    manager: WorkspaceManager,
+) -> tuple[str, str, int, str]:
+    task_path = run_root / "tasks" / task_id / "task.json"
+    task = TaskSchema.model_validate_json(task_path.read_text(encoding="utf-8"))
+    task_dir = run_root / "tasks" / task_id
+
+    attempts = 0
+    current_patch = patch_text
+
+    while True:
+        prompt = _build_audit_prompt(task, current_patch)
+        logger.info(
+            "Running patch audit for %s (attempt %d/%d).", task_id, attempts + 1, max_iterations + 1
+        )
+        output = run_agent(
+            agent_name="chatgpt-patch-audit-judge",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+        try:
+            verdict, issues = _parse_audit_output(output)
+        except Exception:
+            logger.exception("Failed to parse audit output for %s", task_id)
+            raise
+
+        logger.info(
+            "Audit completed for %s (verdict=%s, issues=%d).",
+            task_id,
+            verdict,
+            len(issues),
+        )
+
+        if verdict == "pass":
+            audit_md_content = _format_audit_md_content(
+                verdict,
+                issues,
+                task.acceptance_criteria,
+            )
+            _write_audit_md(task_dir, verdict, issues, task.acceptance_criteria)
+            return audit_md_content, verdict, len(issues), current_patch
+
+        if attempts >= max_iterations:
+            audit_md_content = _format_audit_md_content(
+                verdict,
+                issues,
+                task.acceptance_criteria,
+            )
+            _write_audit_md(task_dir, verdict, issues, task.acceptance_criteria)
+            return audit_md_content, verdict, len(issues), current_patch
+
+        attempts += 1
+        audit_errors = [
+            {
+                "type": "audit_issue",
+                "message": issue,
+                "task_id": task_id,
+            }
+            for issue in issues
+        ]
+        if not audit_errors:
+            audit_errors = [
+                {
+                    "type": "audit_failure",
+                    "message": "Audit failed without issue details.",
+                    "task_id": task_id,
+                }
+            ]
+
+        current_patch, _ = repair_artifact(
+            output=current_patch,
+            errors=audit_errors,
+            allowlists={},
+            artifact_type=ArtifactType.PATCH_OUTPUT,
+            model_override=get_repair_model(),
+            manager=manager,
+        )
+
+        repo_root = manager.input_folder
+        is_valid, validation_errors = validate_patch(
+            current_patch,
+            repo_root,
+            immutable_paths=IMMUTABLE_PATH_PATTERNS,
+        )
+        if is_valid:
+            _restore_from_backup(task_dir / "backup", repo_root)
+            repair_apply_log = apply_patch(
+                patch_text=current_patch,
+                repo_root=repo_root,
+                backup_dir=task_dir / "backup",
+                immutable_paths=IMMUTABLE_PATH_PATTERNS,
+            )
+            logger.info(
+                "Repaired patch re-applied for %s (success=%s, files=%d).",
+                task_id,
+                repair_apply_log.get("success"),
+                len(repair_apply_log.get("applied_files", [])),
+            )
+        else:
+            logger.warning(
+                "Repaired patch validation failed for %s (errors=%d), skipping re-apply.",
+                task_id,
+                len(validation_errors),
+            )
+
+        logger.info(
+            "Audit repair iteration %d/%d completed for %s.",
+            attempts,
+            max_iterations,
+            task_id,
+        )
+
+
+def execute_task(
+    run_root: Path,
+    task_id: str,
+    repo_root: Path,
+    max_iterations: int,
+    manager: WorkspaceManager,
+) -> dict[str, Any]:
+    """Execute a single implementation task.
+
+    Args:
+        run_root: Root directory for the run.
+        task_id: Task identifier.
+        repo_root: Repository root directory.
+        max_iterations: Maximum number of repair iterations.
+        manager: Workspace manager instance.
+
+    Returns:
+        Task execution summary dictionary.
+    """
+    task_dir = run_root / "tasks" / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    status_path = task_dir / "status.json"
+
+    started_at = datetime.now().isoformat()
+    status = TaskImplementationStatusSchema(
+        task_id=task_id,
+        status="in_progress",
+        started_at=started_at,
+        repo_root=str(repo_root),
+    )
+    write_task_implementation_status_json(status, status_path)
+    logger.info("Started task %s.", task_id)
+
+    patch_sha256 = ""
+    applied_files: list[str] = []
+    audit_verdict: str | None = None
+    issue_count = 0
+
+    start = time.perf_counter()
+    try:
+        context_bundle = build_context_bundle(run_root, task_id, repo_root)
+        write_context_bundle(run_root, task_id, context_bundle)
+
+        patch_text, _ = _generate_patch(
+            run_root,
+            task_id,
+            context_bundle,
+            max_iterations,
+            manager,
+        )
+
+        apply_log = apply_patch(
+            patch_text=patch_text,
+            repo_root=repo_root,
+            backup_dir=task_dir / "backup",
+            immutable_paths=IMMUTABLE_PATH_PATTERNS,
+        )
+
+        patch_sha256 = str(apply_log.get("patch_sha256", ""))
+        applied_files = list(apply_log.get("applied_files", []))
+        logger.info(
+            "Patch applied for %s (success=%s, files=%d).",
+            task_id,
+            apply_log.get("success"),
+            len(applied_files),
+        )
+
+        audit_md_content, audit_verdict, issue_count, final_patch_text = _audit_patch(
+            run_root,
+            task_id,
+            patch_text,
+            max_iterations,
+            manager,
+        )
+        logger.debug("Audit content size for %s: %d chars.", task_id, len(audit_md_content))
+
+        if final_patch_text != patch_text:
+            patch_text = final_patch_text
+            backup_log_path = task_dir / "backup" / "apply_log.json"
+            apply_log = json.loads(backup_log_path.read_text(encoding="utf-8"))
+            patch_sha256 = str(apply_log.get("patch_sha256", ""))
+            applied_files = list(apply_log.get("applied_files", []))
+            logger.info(
+                "Updated artifacts from repaired patch for %s (files=%d).",
+                task_id,
+                len(applied_files),
+            )
+
+        patch_path = task_dir / "patch.diff"
+        patch_path.write_text(patch_text, encoding="utf-8")
+        logger.info("Wrote patch diff for %s: %s", task_id, patch_path)
+
+        apply_log_path = task_dir / "apply_log.json"
+        apply_log_path.write_text(
+            json.dumps(apply_log, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        logger.info("Wrote apply log for %s: %s", task_id, apply_log_path)
+
+        apply_success = bool(apply_log.get("success"))
+        final_status = "done" if apply_success and audit_verdict == "pass" else "failed"
+        finished_at = datetime.now().isoformat()
+        audit_result = {"verdict": audit_verdict, "issues": issue_count} if audit_verdict else None
+        status = TaskImplementationStatusSchema(
+            task_id=task_id,
+            status=final_status,
+            started_at=started_at,
+            finished_at=finished_at,
+            repo_root=str(repo_root),
+            patch_sha256=patch_sha256,
+            applied_files=applied_files,
+            audit=audit_result,
+        )
+        write_task_implementation_status_json(status, status_path)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "Completed task %s (status=%s, latency_ms=%.2f).",
+            task_id,
+            final_status,
+            elapsed_ms,
+        )
+
+        return {
+            "task_id": task_id,
+            "status": final_status,
+            "patch_sha256": patch_sha256,
+            "applied_files": len(applied_files),
+            "audit_verdict": audit_verdict,
+        }
+    except Exception as exc:
+        finished_at = datetime.now().isoformat()
+        logger.exception("Task %s failed", task_id)
+        status = TaskImplementationStatusSchema(
+            task_id=task_id,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            repo_root=str(repo_root),
+            patch_sha256=patch_sha256,
+            applied_files=applied_files,
+            audit={"verdict": audit_verdict or "fail", "issues": issue_count}
+            if audit_verdict is not None
+            else None,
+        )
+        write_task_implementation_status_json(status, status_path)
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "patch_sha256": patch_sha256,
+            "applied_files": len(applied_files),
+            "audit_verdict": audit_verdict,
+            "error": str(exc),
+        }
+
+
+def run_implementation_phase(
+    run_root: Path,
+    repo_root: Path,
+    task_filter: list[str] | None,
+    max_iterations: int,
+) -> dict[str, Any]:
+    """Run the implementation phase for tasks.
+
+    Args:
+        run_root: Root directory for the run.
+        repo_root: Repository root directory.
+        task_filter: Optional list of task IDs to filter.
+        max_iterations: Maximum number of repair iterations.
+
+    Returns:
+        Summary dictionary of implementation phase results.
+    """
+    manager = WorkspaceManager(run_id=run_root.name, input_folder=repo_root)
+    manager.start_phase(Phase.IMPLEMENTATION)
+
+    patch_graph_path = run_root / "tasks" / "patch_graph.json"
+    graph = read_patch_graph_json(patch_graph_path)
+    ordered_tasks = _topological_sort_tasks(graph)
+
+    if task_filter:
+        selected_with_prereqs = _filter_tasks_with_prerequisites(task_filter, graph)
+        selected_set = set(selected_with_prereqs)
+        selected_tasks = [task_id for task_id in ordered_tasks if task_id in selected_set]
+    else:
+        selected_tasks = ordered_tasks
+
+    total = len(selected_tasks)
+    logger.info("Executing %d task(s) for implementation phase.", total)
+
+    summaries: list[dict[str, Any]] = []
+    for index, task_id in enumerate(selected_tasks):
+        logger.info("Executing task %s (%d/%d).", task_id, index + 1, total)
+        try:
+            summary = execute_task(run_root, task_id, repo_root, max_iterations, manager)
+        except Exception as exc:
+            logger.exception("Unhandled exception while executing %s", task_id)
+            task_dir = run_root / "tasks" / task_id
+            task_dir.mkdir(parents=True, exist_ok=True)
+            now = datetime.now().isoformat()
+            fallback_status = TaskImplementationStatusSchema(
+                task_id=task_id,
+                status="failed",
+                started_at=now,
+                finished_at=now,
+                repo_root=str(repo_root),
+            )
+            write_task_implementation_status_json(fallback_status, task_dir / "status.json")
+            summary = {
+                "task_id": task_id,
+                "status": "failed",
+                "patch_sha256": "",
+                "applied_files": 0,
+                "audit_verdict": None,
+                "error": str(exc),
+            }
+        summaries.append(summary)
+
+    done_count = sum(1 for summary in summaries if summary.get("status") == "done")
+    failed_count = sum(1 for summary in summaries if summary.get("status") == "failed")
+    blocked_count = sum(1 for summary in summaries if summary.get("status") == "blocked")
+
+    manager.complete_phase(
+        Phase.IMPLEMENTATION,
+        outputs={
+            "tasks_executed": len(selected_tasks),
+            "tasks_done": done_count,
+            "tasks_failed": failed_count,
+        },
+    )
+
+    return {
+        "tasks_executed": len(selected_tasks),
+        "tasks_done": done_count,
+        "tasks_failed": failed_count,
+        "tasks_blocked": blocked_count,
+        "task_summaries": summaries,
+    }
+
+
 __all__ = [
     "build_context_bundle",
+    "execute_task",
+    "run_implementation_phase",
     "write_context_bundle",
 ]

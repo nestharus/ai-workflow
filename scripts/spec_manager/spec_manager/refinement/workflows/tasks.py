@@ -442,7 +442,7 @@ def build_patch_graph(tasks: list[dict[str, Any]], run_id: str) -> PatchGraphSch
     for task in tasks:
         task_id = str(task.get("task_id", "")).strip()
         for dep_id in task.get("depends_on") or []:
-            edges.append((task_id, str(dep_id)))
+            edges.append((str(dep_id), task_id))
     generated_at = datetime.now().isoformat()
     raw_graph = PatchGraphSchema.model_construct(
         run_id=run_id,

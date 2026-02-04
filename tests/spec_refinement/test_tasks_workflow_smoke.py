@@ -107,7 +107,7 @@ def test_plan_tasks_creates_patch_graph(interface_workspace, mock_task_agents, f
 
     task_index = read_task_index_json(manager.structure.tasks_dir / "task_index.json")
     expected_edges = {
-        (task.task_id, dependency) for task in task_index.tasks for dependency in task.depends_on
+        (dependency, task.task_id) for task in task_index.tasks for dependency in task.depends_on
     }
     assert set(patch_graph.edges) == expected_edges
 
