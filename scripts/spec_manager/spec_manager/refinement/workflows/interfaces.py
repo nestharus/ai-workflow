@@ -139,6 +139,8 @@ def _scan_spec_indexes_for_lib_mentions(
         for element in spec_index.elements:
             mentions = LIB_ID_RE.findall(element.text or "")
             for provider_lib in mentions:
+                if provider_lib == lib_id:
+                    continue
                 edge_key = (lib_id, provider_lib)
                 evidence_pointer = f"[{lib_id}::spec.md::{element.element_id}]"
 
@@ -433,7 +435,11 @@ def _extract_edges_via_llm(
                         )
                         if edge.get("summary"):
                             existing["summary"] = edge["summary"]
-                        if edge.get("kind") and edge.get("kind") != "other":
+                        if (
+                            edge.get("kind")
+                            and edge.get("kind") != "other"
+                            and existing.get("kind", "other") == "other"
+                        ):
                             existing["kind"] = edge["kind"]
                     else:
                         llm_edges[edge_key] = edge
@@ -472,7 +478,11 @@ def _merge_and_deduplicate_edges(
             existing["evidence"] = list(
                 dict.fromkeys(existing["evidence"] + edge.get("evidence", []))
             )
-            if edge.get("kind") and edge.get("kind") != "other":
+            if (
+                edge.get("kind")
+                and edge.get("kind") != "other"
+                and existing.get("kind", "other") == "other"
+            ):
                 existing["kind"] = edge["kind"]
             if edge.get("summary") and not existing.get("summary"):
                 existing["summary"] = edge["summary"]
@@ -824,9 +834,14 @@ def validate_and_repair_contracts(
     allocated_library_ids: set[str],
     element_lookup: dict[str, set[str]],
     manager: WorkspaceManager,
-) -> dict[str, InterfaceContractSchema]:
-    """Validate contracts and repair when schema validation fails."""
+) -> tuple[dict[str, InterfaceContractSchema], dict[str, int]]:
+    """Validate contracts and repair when schema validation fails.
+
+    Returns the validated contracts plus repair attempt statistics.
+    """
     validated: dict[str, InterfaceContractSchema] = {}
+    repairs_attempted = 0
+    repairs_succeeded = 0
 
     for edge_id, (_markdown, payload) in contracts.items():
         if not isinstance(payload, dict):
@@ -848,6 +863,7 @@ def validate_and_repair_contracts(
                     "edge_id": edge_id,
                 }
             ]
+            repairs_attempted += 1
             try:
                 repaired_output, _ = repair_artifact(
                     output=json.dumps(payload, indent=2),
@@ -886,6 +902,7 @@ def validate_and_repair_contracts(
                     edge_id=edge_id,
                 )
                 continue
+            repairs_succeeded += 1
 
         if contract.edge_id != edge_id:
             _record_issue(
@@ -911,7 +928,10 @@ def validate_and_repair_contracts(
 
         validated[edge_id] = contract
 
-    return validated
+    return validated, {
+        "repairs_attempted": repairs_attempted,
+        "repairs_succeeded": repairs_succeeded,
+    }
 
 
 def write_interface_outputs(
@@ -1084,7 +1104,7 @@ def build_interface_graph(run_id: str) -> dict[str, Any]:
         contract_markdown = {
             edge_id: markdown for edge_id, (markdown, _payload) in drafted_contracts.items()
         }
-        validated_contracts = validate_and_repair_contracts(
+        validated_contracts, repair_stats = validate_and_repair_contracts(
             drafted_contracts,
             allocated_library_ids,
             element_lookup,
@@ -1107,6 +1127,7 @@ def build_interface_graph(run_id: str) -> dict[str, Any]:
             "contract_validation_errors": len(contract_validation_errors),
             "contracts_drafted": len(drafted_contracts),
             "contracts_validated": len(validated_contracts),
+            **repair_stats,
         }
 
         phase_outputs = {

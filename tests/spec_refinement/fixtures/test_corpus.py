@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -212,5 +213,356 @@ def create_test_corpus(
             "expected_libraries": expected_libraries,
             "expected_evidence_count": len(labels),
         }
+
+    return manifest
+
+
+INTERFACE_TEST_LIBRARIES = {
+    "LIB-0001": {
+        "spec": """# Library Spec: LIB-0001
+
+## Requirements
+- REQ-LIB-0001-0001: Consume the LIB-0002 provider API for order lookups. [LIB-0001::spec.md::REQ-LIB-0001-0001]
+- REQ-LIB-0001-0002: Subscribe to LIB-0003 event streams for status updates. [LIB-0001::spec.md::REQ-LIB-0001-0002]
+
+## Flows
+- FLOW-LIB-0001-01: Sync updates from providers. [LIB-0001::spec.md::FLOW-LIB-0001-01]
+
+## Constraints
+- INV-LIB-0001-0001: Maintain reliability during peak traffic. [LIB-0001::spec.md::INV-LIB-0001-0001]
+""",
+        "charter": """# Library Charter: LIB-0001
+
+## Intent
+Coordinate consumer workflows and dependencies.
+
+## Boundaries
+Orchestrates cross-library consumption.
+
+## Responsibilities
+- Maintain consumer integrations
+
+## Evidence
+- [LIB-0001::spec.md::REQ-LIB-0001-0001]
+- [LIB-0001::spec.md::REQ-LIB-0001-0002]
+
+## Overlap Resolutions
+- None
+""",
+        "decisions": """# Decisions: LIB-0001
+
+- DEC-LIB-0001-0001: Confirm API SLA with LIB-0002.
+- DEC-LIB-0001-0002: Decide on event retention from LIB-0003.
+""",
+        "spec_index": {
+            "lib_id": "LIB-0001",
+            "generated_at": "2024-01-01T00:00:00",
+            "spec_path": "libraries/LIB-0001/spec.md",
+            "elements": [
+                {
+                    "element_id": "REQ-LIB-0001-0001",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Consume the LIB-0002 provider API for order lookups.",
+                    "raw_line": "- REQ-LIB-0001-0001: Consume the LIB-0002 provider API for order lookups.",
+                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "mentions_libs": ["LIB-0002"],
+                },
+                {
+                    "element_id": "REQ-LIB-0001-0002",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Subscribe to LIB-0003 event streams for status updates.",
+                    "raw_line": "- REQ-LIB-0001-0002: Subscribe to LIB-0003 event streams for status updates.",
+                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+                    "mentions_libs": ["LIB-0003"],
+                },
+                {
+                    "element_id": "FLOW-LIB-0001-01",
+                    "kind": "flow",
+                    "section": "Flows",
+                    "text": "Sync updates from providers.",
+                    "raw_line": "- FLOW-LIB-0001-01: Sync updates from providers.",
+                    "citations": ["[LIB-0001::spec.md::FLOW-LIB-0001-01]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "INV-LIB-0001-0001",
+                    "kind": "invariant",
+                    "section": "Constraints",
+                    "text": "Maintain reliability during peak traffic.",
+                    "raw_line": "- INV-LIB-0001-0001: Maintain reliability during peak traffic.",
+                    "citations": ["[LIB-0001::spec.md::INV-LIB-0001-0001]"],
+                    "mentions_libs": [],
+                },
+            ],
+        },
+        "decisions_index": {
+            "lib_id": "LIB-0001",
+            "generated_at": "2024-01-01T00:00:00",
+            "decisions_path": "libraries/LIB-0001/decisions.md",
+            "decisions": [
+                {
+                    "decision_id": "DEC-LIB-0001-0001",
+                    "status": "open",
+                    "question": "Confirm API SLA with LIB-0002.",
+                    "context": "Interface reliability requirements.",
+                    "options": ["24x7", "business-hours"],
+                    "default": None,
+                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                },
+                {
+                    "decision_id": "DEC-LIB-0001-0002",
+                    "status": "open",
+                    "question": "Decide on event retention from LIB-0003.",
+                    "context": "Event replay expectations.",
+                    "options": ["7 days", "30 days"],
+                    "default": None,
+                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+                },
+            ],
+        },
+    },
+    "LIB-0002": {
+        "spec": """# Library Spec: LIB-0002
+
+## Requirements
+- REQ-LIB-0002-0001: Provide lookup API for consumers. [LIB-0002::spec.md::REQ-LIB-0002-0001]
+- REQ-LIB-0002-0002: Maintain stable request/response contracts. [LIB-0002::spec.md::REQ-LIB-0002-0002]
+
+## Flows
+- FLOW-LIB-0002-01: Handle lookup requests. [LIB-0002::spec.md::FLOW-LIB-0002-01]
+
+## Constraints
+- INV-LIB-0002-0001: Keep latency under 200ms. [LIB-0002::spec.md::INV-LIB-0002-0001]
+""",
+        "charter": """# Library Charter: LIB-0002
+
+## Intent
+Provide API surfaces for consumer libraries.
+
+## Boundaries
+API-focused responsibilities.
+
+## Responsibilities
+- Serve provider APIs
+
+## Evidence
+- [LIB-0002::spec.md::REQ-LIB-0002-0001]
+
+## Overlap Resolutions
+- None
+""",
+        "decisions": """# Decisions: LIB-0002
+
+- DEC-LIB-0002-0001: Decide on API versioning cadence.
+""",
+        "spec_index": {
+            "lib_id": "LIB-0002",
+            "generated_at": "2024-01-01T00:00:00",
+            "spec_path": "libraries/LIB-0002/spec.md",
+            "elements": [
+                {
+                    "element_id": "REQ-LIB-0002-0001",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Provide lookup API for consumers.",
+                    "raw_line": "- REQ-LIB-0002-0001: Provide lookup API for consumers.",
+                    "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "REQ-LIB-0002-0002",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Maintain stable request/response contracts.",
+                    "raw_line": "- REQ-LIB-0002-0002: Maintain stable request/response contracts.",
+                    "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0002]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "FLOW-LIB-0002-01",
+                    "kind": "flow",
+                    "section": "Flows",
+                    "text": "Handle lookup requests.",
+                    "raw_line": "- FLOW-LIB-0002-01: Handle lookup requests.",
+                    "citations": ["[LIB-0002::spec.md::FLOW-LIB-0002-01]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "INV-LIB-0002-0001",
+                    "kind": "invariant",
+                    "section": "Constraints",
+                    "text": "Keep latency under 200ms.",
+                    "raw_line": "- INV-LIB-0002-0001: Keep latency under 200ms.",
+                    "citations": ["[LIB-0002::spec.md::INV-LIB-0002-0001]"],
+                    "mentions_libs": [],
+                },
+            ],
+        },
+        "decisions_index": {
+            "lib_id": "LIB-0002",
+            "generated_at": "2024-01-01T00:00:00",
+            "decisions_path": "libraries/LIB-0002/decisions.md",
+            "decisions": [
+                {
+                    "decision_id": "DEC-LIB-0002-0001",
+                    "status": "open",
+                    "question": "Decide on API versioning cadence.",
+                    "context": "Release planning for consumers.",
+                    "options": ["monthly", "quarterly"],
+                    "default": None,
+                    "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                }
+            ],
+        },
+    },
+    "LIB-0003": {
+        "spec": """# Library Spec: LIB-0003
+
+## Requirements
+- REQ-LIB-0003-0001: Emit status events for consumers. [LIB-0003::spec.md::REQ-LIB-0003-0001]
+- REQ-LIB-0003-0002: Publish event schema updates. [LIB-0003::spec.md::REQ-LIB-0003-0002]
+
+## Flows
+- FLOW-LIB-0003-01: Emit lifecycle events. [LIB-0003::spec.md::FLOW-LIB-0003-01]
+
+## Constraints
+- INV-LIB-0003-0001: Deliver events within 1 minute. [LIB-0003::spec.md::INV-LIB-0003-0001]
+""",
+        "charter": """# Library Charter: LIB-0003
+
+## Intent
+Provide event streams to consumer libraries.
+
+## Boundaries
+Event-focused responsibilities.
+
+## Responsibilities
+- Emit provider events
+
+## Evidence
+- [LIB-0003::spec.md::REQ-LIB-0003-0001]
+
+## Overlap Resolutions
+- None
+""",
+        "decisions": """# Decisions: LIB-0003
+
+- DEC-LIB-0003-0001: Define event retention policy.
+""",
+        "spec_index": {
+            "lib_id": "LIB-0003",
+            "generated_at": "2024-01-01T00:00:00",
+            "spec_path": "libraries/LIB-0003/spec.md",
+            "elements": [
+                {
+                    "element_id": "REQ-LIB-0003-0001",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Emit status events for consumers.",
+                    "raw_line": "- REQ-LIB-0003-0001: Emit status events for consumers.",
+                    "citations": ["[LIB-0003::spec.md::REQ-LIB-0003-0001]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "REQ-LIB-0003-0002",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Publish event schema updates.",
+                    "raw_line": "- REQ-LIB-0003-0002: Publish event schema updates.",
+                    "citations": ["[LIB-0003::spec.md::REQ-LIB-0003-0002]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "FLOW-LIB-0003-01",
+                    "kind": "flow",
+                    "section": "Flows",
+                    "text": "Emit lifecycle events.",
+                    "raw_line": "- FLOW-LIB-0003-01: Emit lifecycle events.",
+                    "citations": ["[LIB-0003::spec.md::FLOW-LIB-0003-01]"],
+                    "mentions_libs": [],
+                },
+                {
+                    "element_id": "INV-LIB-0003-0001",
+                    "kind": "invariant",
+                    "section": "Constraints",
+                    "text": "Deliver events within 1 minute.",
+                    "raw_line": "- INV-LIB-0003-0001: Deliver events within 1 minute.",
+                    "citations": ["[LIB-0003::spec.md::INV-LIB-0003-0001]"],
+                    "mentions_libs": [],
+                },
+            ],
+        },
+        "decisions_index": {
+            "lib_id": "LIB-0003",
+            "generated_at": "2024-01-01T00:00:00",
+            "decisions_path": "libraries/LIB-0003/decisions.md",
+            "decisions": [
+                {
+                    "decision_id": "DEC-LIB-0003-0001",
+                    "status": "open",
+                    "question": "Define event retention policy.",
+                    "context": "Downstream replay expectations.",
+                    "options": ["24 hours", "7 days"],
+                    "default": None,
+                    "citations": ["[LIB-0003::spec.md::REQ-LIB-0003-0001]"],
+                }
+            ],
+        },
+    },
+}
+
+
+def create_interface_test_libraries(fs, run_id: str = "run_001") -> dict[str, Any]:
+    """Create interface-focused libraries under runs/<run_id>/libraries."""
+    libraries_dir = Path("runs") / run_id / "libraries"
+    if not libraries_dir.exists():
+        fs.create_dir(libraries_dir)
+
+    manifest: dict[str, Any] = {
+        "library_ids": [],
+        "element_ids": {},
+        "decision_ids": {},
+        "expected_edges": [
+            {
+                "edge_id": "EDGE-LIB-0001-LIB-0002",
+                "consumer_lib": "LIB-0001",
+                "provider_lib": "LIB-0002",
+                "consumer_elements": ["REQ-LIB-0001-0001"],
+                "kind": "api",
+            },
+            {
+                "edge_id": "EDGE-LIB-0001-LIB-0003",
+                "consumer_lib": "LIB-0001",
+                "provider_lib": "LIB-0003",
+                "consumer_elements": ["REQ-LIB-0001-0002"],
+                "kind": "events",
+            },
+        ],
+    }
+
+    for lib_id, payload in INTERFACE_TEST_LIBRARIES.items():
+        lib_dir = libraries_dir / lib_id
+        if not lib_dir.exists():
+            fs.create_dir(lib_dir)
+
+        (lib_dir / "spec.md").write_text(payload["spec"], encoding="utf-8")
+        (lib_dir / "spec_index.json").write_text(
+            json.dumps(payload["spec_index"], indent=2), encoding="utf-8"
+        )
+        (lib_dir / "charter.md").write_text(payload["charter"], encoding="utf-8")
+        (lib_dir / "decisions.md").write_text(payload["decisions"], encoding="utf-8")
+        (lib_dir / "decisions_index.json").write_text(
+            json.dumps(payload["decisions_index"], indent=2), encoding="utf-8"
+        )
+
+        manifest["library_ids"].append(lib_id)
+        manifest["element_ids"][lib_id] = [
+            element["element_id"] for element in payload["spec_index"]["elements"]
+        ]
+        manifest["decision_ids"][lib_id] = [
+            decision["decision_id"] for decision in payload["decisions_index"]["decisions"]
+        ]
 
     return manifest

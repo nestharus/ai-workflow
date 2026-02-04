@@ -222,6 +222,8 @@ class EdgeSchema(BaseModel):
             )
         """
         for pointer in value:
+            if "," in pointer:
+                raise ValueError("evidence pointers must not contain compound references")
             if parse_evidence_pointer(pointer, allow_multi_hop=True) is None:
                 raise ValueError("evidence pointers must be valid evidence pointers")
         return value

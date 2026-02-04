@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.formats import _extract_json_payload
+
 LABEL_BY_LIB = {
     "LIB-0001": "Core Workflow",
     "LIB-0002": "Integration Ops",
@@ -478,6 +480,253 @@ def mock_architecture_mapper_agent(
     return json.dumps(payload)
 
 
+def _extract_interface_bundle(prompt: str) -> dict[str, Any]:
+    if not prompt:
+        return {}
+    try:
+        payload = _extract_json_payload(prompt)
+    except Exception:
+        payload = ""
+    if not payload:
+        return {}
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _build_interface_contract_payload(bundle: dict[str, Any]) -> dict[str, Any]:
+    edge = bundle.get("edge", {}) if isinstance(bundle, dict) else {}
+    consumer = bundle.get("consumer", {}) if isinstance(bundle, dict) else {}
+    provider = bundle.get("provider", {}) if isinstance(bundle, dict) else {}
+    architecture = bundle.get("architecture", {}) if isinstance(bundle, dict) else {}
+
+    edge_id = edge.get("edge_id", "EDGE-LIB-0001-LIB-0002")
+    consumer_lib = edge.get("consumer_lib") or consumer.get("lib_id") or "LIB-0001"
+    provider_lib = edge.get("provider_lib") or provider.get("lib_id") or "LIB-0002"
+
+    consumer_elements = [
+        elem.get("element_id") for elem in consumer.get("elements", []) if isinstance(elem, dict)
+    ]
+    provider_elements = [
+        elem.get("element_id") for elem in provider.get("elements", []) if isinstance(elem, dict)
+    ]
+
+    consumer_requirement = consumer_elements[0] if consumer_elements else "REQ-LIB-0001-0001"
+    provider_requirement = provider_elements[0] if provider_elements else "REQ-LIB-0002-0001"
+
+    consumer_component = architecture.get("consumer_component") or {}
+    provider_component = architecture.get("provider_component") or {}
+    provider_component_name = (
+        provider_component.get("name") if isinstance(provider_component, dict) else None
+    )
+    provider_component_desc = (
+        provider_component.get("description") if isinstance(provider_component, dict) else None
+    )
+    consumer_component_name = (
+        consumer_component.get("name") if isinstance(consumer_component, dict) else None
+    )
+
+    details = "Provides the primary interface."
+    if provider_component_name:
+        details = f"{details} Runs in {provider_component_name}."
+        if provider_component_desc:
+            details = f"{details} {provider_component_desc}"
+
+    expectations = ["Availability 99.9%"]
+    if consumer_component_name:
+        expectations.append(f"Aligned with {consumer_component_name} responsibilities.")
+
+    decisions: list[str] = []
+    for source in (consumer, provider):
+        for decision in source.get("decisions", []) if isinstance(source, dict) else []:
+            decision_id = decision.get("decision_id") if isinstance(decision, dict) else None
+            if isinstance(decision_id, str):
+                decisions.append(decision_id)
+
+    seen_decisions: set[str] = set()
+    open_questions: list[str] = []
+    for item in decisions:
+        if item in seen_decisions:
+            continue
+        seen_decisions.add(item)
+        open_questions.append(item)
+
+    return {
+        "edge_id": edge_id,
+        "consumer_lib": consumer_lib,
+        "provider_lib": provider_lib,
+        "contract_version": "v1",
+        "provided": [
+            {
+                "name": "Primary Interface",
+                "type": "http",
+                "requirements": [provider_requirement],
+                "details": details,
+                "acceptance": ["Returns expected payload"],
+                "citations": [f"[{provider_lib}::spec.md::{provider_requirement}]"],
+            }
+        ],
+        "consumed_by": [
+            {
+                "consumer_requirement": consumer_requirement,
+                "expectations": expectations,
+                "citations": [f"[{consumer_lib}::spec.md::{consumer_requirement}]"],
+            }
+        ],
+        "data_contract": {
+            "schemas": ["schemas/interface.json"],
+            "compatibility": "Backward compatible",
+        },
+        "operational": {
+            "performance": "p95 < 200ms",
+            "failure_modes": "Graceful degradation",
+            "security": "OAuth2",
+        },
+        "open_questions": open_questions,
+    }
+
+
+def _format_interface_contract_markdown(contract: dict[str, Any]) -> str:
+    edge_id = contract.get("edge_id", "")
+    consumer_lib = contract.get("consumer_lib", "")
+    provider_lib = contract.get("provider_lib", "")
+    lines = [
+        "# Interface Contract",
+        "",
+        "## Purpose",
+        f"- Edge ID: {edge_id}",
+        f"- Consumer: {consumer_lib}",
+        f"- Provider: {provider_lib}",
+        "",
+        "## Provided",
+        "- Primary Interface",
+        "",
+        "## Consumed",
+        "- Consumer Expectations",
+        "",
+        "## Data Contract",
+        "- Schemas: interface.json",
+        "",
+        "## Operational",
+        "- Performance: p95 < 200ms",
+        "",
+        "## Open Questions",
+        "- None",
+        "",
+        "## Evidence",
+        "- See citations in JSON",
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def mock_interface_edge_extractor_agent(
+    prompt: str,
+    *,
+    violation_rate: float,
+    violation_mode: str | None = None,
+    edges_by_lib: dict[str, list[dict[str, Any]]] | None = None,
+) -> str:
+    lib_id = _extract_lib_id(prompt) or "LIB-0001"
+
+    edges = []
+    if edges_by_lib and lib_id in edges_by_lib:
+        edges = edges_by_lib[lib_id]
+    elif lib_id == "LIB-0001":
+        edges = [
+            {
+                "provider_lib": "LIB-0002",
+                "consumer_elements": ["REQ-LIB-0001-0001"],
+                "kind": "api",
+                "summary": "Consumes provider API for lookups.",
+                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            },
+            {
+                "provider_lib": "LIB-0003",
+                "consumer_elements": ["REQ-LIB-0001-0002"],
+                "kind": "events",
+                "summary": "Subscribes to provider events.",
+                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+            },
+        ]
+
+    violation_modes = [
+        "invalid_provider_lib",
+        "missing_consumer_elements",
+        "invalid_kind",
+    ]
+    key = f"interface_edge:{lib_id}"
+    mode = violation_mode
+    if mode is None and _should_violate(key, violation_rate):
+        mode = violation_modes[
+            int(_stable_bucket(key) * len(violation_modes)) % len(violation_modes)
+        ]
+
+    if mode and edges:
+        if mode == "invalid_provider_lib":
+            edges[0]["provider_lib"] = "LIB-9999"
+        elif mode == "missing_consumer_elements":
+            edges[0]["consumer_elements"] = ["REQ-LIB-0001-9999"]
+        elif mode == "invalid_kind":
+            edges[0]["kind"] = "unknown"
+
+    return json.dumps({"edges": edges})
+
+
+def mock_interface_contract_writer_agent(
+    prompt: str,
+    *,
+    violation_rate: float,
+    violation_mode: str | None = None,
+) -> str:
+    bundle = _extract_interface_bundle(prompt)
+    contract = _build_interface_contract_payload(bundle)
+
+    key = f"interface_contract:{contract.get('edge_id', 'EDGE')}"
+    mode = violation_mode
+    if mode is None and _should_violate(key, violation_rate):
+        modes = ["invalid_citation", "missing_sections", "invalid_element_ids"]
+        mode = modes[int(_stable_bucket(key) * len(modes)) % len(modes)]
+
+    if mode == "invalid_citation":
+        contract["provided"][0]["citations"] = ["[F0999::INTRO]"]
+    elif mode == "missing_sections":
+        contract.pop("consumed_by", None)
+    elif mode == "invalid_element_ids":
+        contract["provided"][0]["requirements"] = ["REQ-INVALID"]
+
+    markdown = _format_interface_contract_markdown(contract)
+    payload = json.dumps(contract, indent=2)
+    return "\n".join([markdown, "```json", payload, "```"])
+
+
+def mock_interface_contract_judge_agent(
+    prompt: str,
+    *,
+    violation_rate: float,
+) -> str:
+    key = "interface_contract_judge"
+    if _should_violate(key, violation_rate):
+        return json.dumps({"valid": False, "errors": ["Schema mismatch"]})
+    return json.dumps({"valid": True, "errors": []})
+
+
+def mock_interface_contract_repairer_agent(
+    prompt: str,
+    *,
+    violation_rate: float,
+) -> str:
+    key = "interface_contract_repair"
+    if _should_violate(key, violation_rate):
+        return "not-json"
+    bundle = _extract_interface_bundle(prompt)
+    contract = _build_interface_contract_payload(bundle)
+    markdown = _format_interface_contract_markdown(contract)
+    payload = json.dumps(contract, indent=2)
+    return "\n".join([markdown, "```json", payload, "```"])
+
+
 def mock_repair_agent(
     artifact_type: str,
     file_id: str | None,
@@ -585,11 +834,16 @@ class MockAgentController:
     mapping_violation_mode: str = "invalid_citation"
     gap_mode: str = "empty"
     repair_success_rate: float = 0.9
+    interface_edge_violation_mode: str | None = None
+    interface_contract_violation_mode: str | None = None
+    interface_edges_by_lib: dict[str, list[dict[str, Any]]] | None = None
+    interface_contract_overrides: dict[str, str] = field(default_factory=dict)
     call_log: list[dict[str, Any]] = field(default_factory=list)
     repair_calls: list[dict[str, Any]] = field(default_factory=list)
 
     def _file_ids(self) -> list[str]:
-        return sorted(self.manifest.keys())
+        file_ids = [key for key in self.manifest if re.fullmatch(r"F\d{4}", key)]
+        return sorted(file_ids)
 
     def _sections(self, file_id: str) -> list[str]:
         entry = self.manifest.get(file_id, {})
@@ -597,6 +851,15 @@ class MockAgentController:
         return [section for section in sections if isinstance(section, str)]
 
     def _libraries(self) -> list[str]:
+        if "library_ids" in self.manifest:
+            library_ids = self.manifest.get("library_ids")
+            if isinstance(library_ids, list) and library_ids:
+                return sorted([lib_id for lib_id in library_ids if isinstance(lib_id, str)])
+        if "libraries" in self.manifest:
+            libraries = self.manifest.get("libraries")
+            if isinstance(libraries, dict) and libraries:
+                return sorted([lib_id for lib_id in libraries if isinstance(lib_id, str)])
+
         libs: set[str] = set()
         for entry in self.manifest.values():
             for lib_id in entry.get("expected_libraries", []):
@@ -623,7 +886,7 @@ class MockAgentController:
         _ = structured_schema
         _ = extra_env
 
-        self.call_log.append({"agent_name": agent_name})
+        self.call_log.append({"agent_name": agent_name, "prompt": prompt})
         effective_rate = self.violation_overrides.get(agent_name, self.violation_rate)
 
         if agent_name == "glm-file-what-summarizer":
@@ -732,6 +995,47 @@ class MockAgentController:
                 component,
                 violation_rate=effective_rate,
                 violation_mode=self.mapping_violation_mode,
+            )
+
+        if agent_name == "glm-interface-edge-extractor":
+            return mock_interface_edge_extractor_agent(
+                prompt,
+                violation_rate=effective_rate,
+                violation_mode=self.interface_edge_violation_mode,
+                edges_by_lib=self.interface_edges_by_lib,
+            )
+
+        if agent_name == "opus-interface-contract-writer":
+            bundle = _extract_interface_bundle(prompt)
+            edge_id = ""
+            if isinstance(bundle, dict):
+                edge = bundle.get("edge", {})
+                if isinstance(edge, dict):
+                    edge_id = (
+                        edge.get("edge_id", "") if isinstance(edge.get("edge_id"), str) else ""
+                    )
+            violation_mode = self.interface_contract_violation_mode
+            if edge_id and edge_id in self.interface_contract_overrides:
+                violation_mode = self.interface_contract_overrides[edge_id]
+            return mock_interface_contract_writer_agent(
+                prompt,
+                violation_rate=effective_rate,
+                violation_mode=violation_mode,
+            )
+
+        if agent_name == "chatgpt-interface-contract-judge":
+            return mock_interface_contract_judge_agent(
+                prompt,
+                violation_rate=effective_rate,
+            )
+
+        if agent_name == "chatgpt-interface-contract-repairer":
+            self.repair_calls.append(
+                {"artifact_type": "interface_contract", "file_id": None, "lib_id": None}
+            )
+            return mock_interface_contract_repairer_agent(
+                prompt,
+                violation_rate=effective_rate,
             )
 
         if agent_name.startswith("repair-"):

@@ -20,6 +20,19 @@ uv run pytest tests/spec_refinement/test_full_workflow.py -m "not slow"
 uv run pytest tests/spec_refinement/test_full_workflow.py --benchmark-only
 ```
 
+## Interface Tests
+Interface tests validate the Phase 8 workflow: edge discovery, contract drafting, and validation/repair.
+
+### Fixture Structure
+- `create_interface_test_libraries` builds cross-referenced libraries under `runs/<run_id>/libraries/`.
+- `interface_workspace` fixture initializes a workspace with interface libraries.
+- `mock_interface_agents` provides interface-specific agent mocks with configurable violation modes.
+
+### Running Interface Suites
+```bash
+uv run pytest tests/spec_refinement/test_interface_*.py -v
+```
+
 ## Test Coverage
 - Phase 1: Summarization (5 tests)
 - Phase 2: Library Synthesis (6 tests)

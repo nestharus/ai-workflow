@@ -351,6 +351,10 @@ markers = [
     "cold_start_gate: Mandatory cold-start performance gate (requires CI_COLD_START_GATE=true)",
     "integration: Marks integration tests",
     "slow: Marks tests as slow (deselect with '-m \"not slow\"')",
+    "interfaces: Interface graph and contract tests",
+    "edge_extraction: Edge extraction tests",
+    "contract_validation: Contract validation tests",
+    "workflow_smoke: End-to-end workflow tests",
 ]
 
 [tool.coverage.run]
