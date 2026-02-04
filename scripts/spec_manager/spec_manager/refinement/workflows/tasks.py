@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,10 @@ from spec_manager.schemas.tasks import (
     TaskSchema,
     TaskStatusSchema,
     _find_patch_graph_cycles,
+    validate_acceptance_criteria,
+    validate_decision_gap_coverage,
+    validate_edge_coverage,
+    validate_element_coverage,
     validate_patch_graph_acyclic,
 )
 
@@ -46,6 +51,11 @@ _SCHEMA_TYPES = (
     Gap,
 )
 _NOW = datetime.now
+_ELEMENT_ID_RE = re.compile(r"(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4})")
+_EDGE_ID_RE = re.compile(r"EDGE-LIB-\d{4}-LIB-\d{4}")
+_DECISION_ID_RE = re.compile(r"DEC-LIB-\d{4}-\d{4}")
+_GAP_ID_RE = re.compile(r"GAP-[A-Z_]+")
+_TASK_ID_FRAGMENT_RE = re.compile(r"TASK-\d{4}")
 
 
 def _set_issue_sink(issues: list[dict[str, Any]] | None) -> None:
@@ -310,6 +320,25 @@ def _load_library_charter(lib_dir: Path) -> str:
         return ""
 
 
+def _parse_coverage_error(error_message: str, error_type: str) -> dict[str, Any]:
+    context: dict[str, str] = {}
+    patterns: dict[str, tuple[str, re.Pattern[str]]] = {
+        "missing_element_coverage": ("element_id", _ELEMENT_ID_RE),
+        "missing_edge_coverage": ("edge_id", _EDGE_ID_RE),
+        "missing_decision_coverage": ("decision_id", _DECISION_ID_RE),
+        "missing_gap_coverage": ("gap_id", _GAP_ID_RE),
+        "weak_acceptance_criteria": ("task_id", _TASK_ID_FRAGMENT_RE),
+        "missing_acceptance_criteria": ("task_id", _TASK_ID_FRAGMENT_RE),
+    }
+    pattern_entry = patterns.get(error_type)
+    if pattern_entry is not None:
+        context_key, pattern = pattern_entry
+        match = pattern.search(error_message)
+        if match:
+            context[context_key] = match.group(0)
+    return {"error_type": error_type, "message": error_message, "context": context}
+
+
 def assign_task_ids(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Assign deterministic TASK-#### identifiers to tasks."""
     if not tasks:
@@ -537,6 +566,156 @@ def build_task_planning_context(manager: WorkspaceManager) -> dict[str, Any]:
         _set_issue_sink(None)
 
 
+def validate_task_element_coverage(
+    tasks: list[dict[str, Any]],
+    planning_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate that tasks cover all required spec elements."""
+    coverage_type = "element"
+    logger.debug("Validating %s coverage for %d tasks", coverage_type, len(tasks))
+    required_elements: set[str] = set()
+    coverage_targets = planning_context.get("coverage_targets") or {}
+    for element_ids in coverage_targets.values():
+        if element_ids is None:
+            continue
+        for element_id in element_ids:
+            required_elements.add(str(element_id))
+
+    excluded = planning_context.get("coverage_targets_excluded") or []
+    required_elements -= {str(eid) for eid in excluded}
+
+    task_schemas = [TaskSchema.model_validate(task) for task in tasks]
+    _, messages = validate_element_coverage(task_schemas, required_elements)
+    errors = [_parse_coverage_error(message, "missing_element_coverage") for message in messages]
+
+    logger.info("%s validation: %d errors", coverage_type, len(errors))
+    for error in errors:
+        element_id = error["context"].get("element_id")
+        if element_id:
+            logger.debug("Missing %s: %s", "element", element_id)
+    return errors
+
+
+def validate_task_edge_coverage(
+    tasks: list[dict[str, Any]],
+    planning_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate that tasks cover all required edges."""
+    coverage_type = "edge"
+    logger.debug("Validating %s coverage for %d tasks", coverage_type, len(tasks))
+    required_edges: set[str] = set()
+    edges = planning_context.get("edges") or []
+    for edge in edges:
+        edge_id = edge.get("edge_id")
+        if edge_id:
+            required_edges.add(str(edge_id))
+
+    task_schemas = [TaskSchema.model_validate(task) for task in tasks]
+    _, messages = validate_edge_coverage(task_schemas, required_edges)
+    errors = [_parse_coverage_error(message, "missing_edge_coverage") for message in messages]
+
+    logger.info("%s validation: %d errors", coverage_type, len(errors))
+    for error in errors:
+        edge_id = error["context"].get("edge_id")
+        if edge_id:
+            logger.debug("Missing %s: %s", "edge", edge_id)
+    return errors
+
+
+def validate_task_decision_gap_coverage(
+    tasks: list[dict[str, Any]],
+    planning_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate that tasks cover open decisions and gaps."""
+    coverage_type = "decision/gap"
+    logger.debug("Validating %s coverage for %d tasks", coverage_type, len(tasks))
+    required_decisions: set[str] = set()
+    required_gaps: set[str] = set()
+
+    open_decisions = planning_context.get("open_decisions") or []
+    for decision in open_decisions:
+        if decision.get("requires_external_input"):
+            continue
+        decision_id = decision.get("decision_id")
+        if decision_id:
+            required_decisions.add(str(decision_id))
+
+    open_gaps = planning_context.get("open_gaps") or []
+    for gap in open_gaps:
+        if gap.get("requires_external_input"):
+            continue
+        gap_id = gap.get("gap_id")
+        if gap_id:
+            required_gaps.add(str(gap_id))
+
+    task_schemas = [TaskSchema.model_validate(task) for task in tasks]
+    _, messages = validate_decision_gap_coverage(task_schemas, required_decisions, required_gaps)
+
+    errors: list[dict[str, Any]] = []
+    for message in messages:
+        if _DECISION_ID_RE.search(message):
+            error_type = "missing_decision_coverage"
+        elif _GAP_ID_RE.search(message):
+            error_type = "missing_gap_coverage"
+        else:
+            error_type = "missing_decision_coverage"
+        errors.append(_parse_coverage_error(message, error_type))
+
+    logger.info("%s validation: %d errors", coverage_type, len(errors))
+    for error in errors:
+        if error["error_type"] == "missing_decision_coverage":
+            decision_id = error["context"].get("decision_id")
+            if decision_id:
+                logger.debug("Missing %s: %s", "decision", decision_id)
+        elif error["error_type"] == "missing_gap_coverage":
+            gap_id = error["context"].get("gap_id")
+            if gap_id:
+                logger.debug("Missing %s: %s", "gap", gap_id)
+    return errors
+
+
+def validate_task_acceptance_criteria(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate that tasks include verifiable acceptance criteria."""
+    coverage_type = "acceptance criteria"
+    logger.debug("Validating %s coverage for %d tasks", coverage_type, len(tasks))
+    task_schemas = [TaskSchema.model_validate(task) for task in tasks]
+    _, messages = validate_acceptance_criteria(task_schemas)
+
+    errors: list[dict[str, Any]] = []
+    for message in messages:
+        if "missing acceptance criteria" in message.lower():
+            error_type = "missing_acceptance_criteria"
+        else:
+            error_type = "weak_acceptance_criteria"
+        errors.append(_parse_coverage_error(message, error_type))
+
+    logger.info("%s validation: %d errors", coverage_type, len(errors))
+    for error in errors:
+        task_id = error["context"].get("task_id")
+        if not task_id:
+            continue
+        if error["error_type"] == "missing_acceptance_criteria":
+            item_type = "acceptance criteria"
+        else:
+            item_type = "acceptance criteria signal"
+        logger.debug("Missing %s: %s", item_type, task_id)
+    return errors
+
+
+def validate_task_plan_completeness(
+    tasks: list[dict[str, Any]],
+    planning_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate task plans against coverage and acceptance criteria."""
+    errors: list[dict[str, Any]] = []
+    errors.extend(validate_task_element_coverage(tasks, planning_context))
+    errors.extend(validate_task_edge_coverage(tasks, planning_context))
+    errors.extend(validate_task_decision_gap_coverage(tasks, planning_context))
+    errors.extend(validate_task_acceptance_criteria(tasks))
+    logger.info("Task plan validation: %d errors found", len(errors))
+    return errors
+
+
 __all__ = [
     "assign_task_ids",
     "assign_task_ids_and_build_graph",
@@ -544,5 +723,10 @@ __all__ = [
     "build_task_planning_context",
     "resolve_task_dependencies",
     "validate_dependency_references",
+    "validate_task_acceptance_criteria",
+    "validate_task_decision_gap_coverage",
+    "validate_task_edge_coverage",
+    "validate_task_element_coverage",
     "validate_task_graph",
+    "validate_task_plan_completeness",
 ]
