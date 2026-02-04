@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, parse_gaps_markdown
 from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 from spec_manager.schemas.edge_list import (
     LIB_ID_RE,
@@ -27,6 +30,7 @@ from spec_manager.schemas.spec_indexes import (
 from spec_manager.schemas.tasks import (
     TASK_ID_RE,
     PatchGraphSchema,
+    TaskIndexEntrySchema,
     TaskIndexSchema,
     TaskSchema,
     TaskStatusSchema,
@@ -36,6 +40,12 @@ from spec_manager.schemas.tasks import (
     validate_edge_coverage,
     validate_element_coverage,
     validate_patch_graph_acyclic,
+    write_patch_graph_json,
+    write_task_index_json,
+    write_task_index_markdown,
+    write_task_json,
+    write_task_markdown,
+    write_task_status_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -716,11 +726,568 @@ def validate_task_plan_completeness(
     return errors
 
 
+def _parse_task_plan_output(output: str) -> dict[str, Any] | None:
+    """Parse task plan output, handling raw JSON and fenced JSON blocks."""
+    if not output or not output.strip():
+        return None
+
+    cleaned = output.strip()
+    candidates = [cleaned]
+    for match in re.findall(r"```(?:json)?\s*(.+?)```", cleaned, flags=re.DOTALL):
+        candidate = match.strip()
+        if candidate:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+    match = re.search(r"(\{.*\}|\[.*\])", cleaned, flags=re.DOTALL)
+    if match:
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _build_task_plan_prompt(planning_context: dict[str, Any]) -> str:
+    """Build the task planning prompt for the planner agent."""
+    context_payload = json.dumps(planning_context, indent=2)
+    lines = [
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "REQUIRED SCHEMA:",
+        '{"tasks": [{"title": "...", "description": "...", "priority": "p0|p1|p2", '
+        '"component": "...", "libraries": ["LIB-####"], '
+        '"covers": {"elements": ["REQ-LIB-####-####"], "edges": ["EDGE-LIB-####-LIB-####"], '
+        '"decisions": ["DEC-LIB-####-####"], "gaps": ["GAP-..."]}, '
+        '"acceptance_criteria": ["..."], "suggested_files": ["..."], '
+        '"risk_notes": "...", "validation_notes": "...", "citations": ["[LIB-####::spec.md::REQ-LIB-####-####]"], '  # noqa: E501
+        '"depends_on": ["Task title"]}]}',
+        "",
+        "REQUIRED RULES:",
+        "- Do NOT include task_id (it will be assigned later).",
+        "- Task titles must be unique.",
+        "- Acceptance criteria must be verifiable (tests, logs, outputs, files, returns).",
+        "- Coverage must include all required elements, edges, open gaps, and open decisions.",
+        "- Use component names and library IDs from the planning context.",
+        "- depends_on should reference other task titles when possible.",
+        "",
+        "## PLANNING CONTEXT",
+        context_payload,
+        "",
+        "## INSTRUCTIONS",
+        "Generate a complete, minimal task plan that covers all targets.",
+        "Ensure tasks are actionable, scoped, and have clear acceptance criteria.",
+    ]
+    return "\n".join(lines)
+
+
+def _build_task_plan_judge_prompt(
+    tasks: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    planning_context: dict[str, Any],
+) -> str:
+    """Build the validation/repair prompt for the task plan judge."""
+    error_payload = json.dumps(errors, indent=2)
+    tasks_payload = json.dumps({"tasks": tasks}, indent=2)
+    coverage_requirements = {
+        "coverage_targets": planning_context.get("coverage_targets") or {},
+        "edges": [
+            edge.get("edge_id")
+            for edge in (planning_context.get("edges") or [])
+            if edge.get("edge_id")
+        ],
+        "open_gaps": planning_context.get("open_gaps") or [],
+        "open_decisions": planning_context.get("open_decisions") or [],
+    }
+    coverage_payload = json.dumps(coverage_requirements, indent=2)
+    existing_ids = sorted(
+        {
+            str(task.get("task_id", "")).strip()
+            for task in tasks
+            if isinstance(task, dict) and task.get("task_id")
+        }
+    )
+    id_list = ", ".join(existing_ids) if existing_ids else "None"
+
+    lines = [
+        "## OUTPUT CONTRACT (REQUIRED)",
+        "",
+        "Return ONLY valid JSON. No preamble, no code fences.",
+        "",
+        "Choose ONE output format:",
+        "",
+        "Option A (full repaired plan):",
+        '{"tasks": [{"task_id": "TASK-0001", "title": "...", "description": "...", '
+        '"priority": "p0|p1|p2", "component": "...", "libraries": ["LIB-####"], '
+        '"covers": {"elements": ["REQ-LIB-####-####"], "edges": ["EDGE-LIB-####-LIB-####"], '
+        '"decisions": ["DEC-LIB-####-####"], "gaps": ["GAP-..."]}, '
+        '"acceptance_criteria": ["..."], "suggested_files": ["..."], '
+        '"risk_notes": "...", "validation_notes": "...", "citations": ["[LIB-####::spec.md::REQ-LIB-####-####]"], '  # noqa: E501
+        '"depends_on": ["TASK-####"]}]}',
+        "",
+        "Option B (delta plan):",
+        '{"delta": {"add": [{"task_id": "TASK-####", "...": "..."}], '
+        '"update": [{"task_id": "TASK-####", "fields": {"covers": {"elements": [], "edges": [], '
+        '"decisions": [], "gaps": []}, "acceptance_criteria": ["..."]}}]}}',
+        "",
+        "RULES:",
+        "- Keep existing task_id values unchanged; use new unique TASK-#### for added tasks.",
+        "- For updates, include full replacement values for any fields you change.",
+        "- If updating covers, include all covers fields (elements, edges, decisions, gaps).",
+        "",
+        "## EXISTING TASK IDS",
+        id_list,
+        "",
+        "## VALIDATION ERRORS",
+        error_payload,
+        "",
+        "## COVERAGE REQUIREMENTS",
+        coverage_payload,
+        "",
+        "## CURRENT TASK PLAN",
+        tasks_payload,
+        "",
+        "## INSTRUCTIONS",
+        "Fix the validation errors while preserving task quality and coverage.",
+    ]
+    return "\n".join(lines)
+
+
+def _draft_task_plan(
+    planning_context: dict[str, Any],
+    manager: WorkspaceManager,
+) -> list[dict[str, Any]]:
+    """Draft an initial task plan via the planner agent."""
+    prompt = _build_task_plan_prompt(planning_context)
+    logger.info("Drafting task plan with opus-task-planner.")
+    started_at = _NOW().isoformat()
+    logger.debug("Task planner started at %s.", started_at)
+    start_time = time.perf_counter()
+    try:
+        output = run_agent(
+            agent_name="opus-task-planner",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+    except RuntimeError as exc:
+        logger.exception("Task planner agent failed: %s")
+        raise RuntimeError(f"Task planner agent failed: {exc}") from exc
+    latency = time.perf_counter() - start_time
+    logger.info("Task planner completed in %.2fs.", latency)
+
+    payload = _parse_task_plan_output(output)
+    if not isinstance(payload, dict):
+        raise TypeError("Task planner output is not valid JSON.")
+
+    tasks_payload = payload.get("tasks")
+    if not isinstance(tasks_payload, list):
+        raise TypeError("Task planner output missing 'tasks' list.")
+    if not all(isinstance(task, dict) for task in tasks_payload):
+        raise RuntimeError("Task planner output contains non-object tasks.")
+
+    logger.debug("Task planner produced %d tasks.", len(tasks_payload))
+    return list(tasks_payload)
+
+
+def _validate_and_repair_task_plan(
+    tasks: list[dict[str, Any]],
+    planning_context: dict[str, Any],
+    manager: WorkspaceManager,
+    max_attempts: int = 3,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    """Validate and repair task plans via the judge agent."""
+    repairs_attempted = 0
+    repairs_succeeded = 0
+    judge_attempts: list[dict[str, Any]] = []
+
+    def _apply_delta(
+        current_tasks: list[dict[str, Any]],
+        delta: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        updated = [dict(task) for task in current_tasks]
+        task_index = {
+            str(task.get("task_id", "")).strip(): idx
+            for idx, task in enumerate(updated)
+            if isinstance(task, dict)
+        }
+        title_index = {
+            str(task.get("title", "")).strip().casefold(): idx
+            for idx, task in enumerate(updated)
+            if isinstance(task, dict) and task.get("title")
+        }
+
+        additions = delta.get("add") or []
+        updates = delta.get("update") or []
+
+        if not isinstance(additions, list) or not isinstance(updates, list):
+            raise TypeError("Delta payload must include list values for add/update.")
+
+        for patch in updates:
+            if not isinstance(patch, dict):
+                continue
+            task_id = str(patch.get("task_id", "")).strip()
+            title = str(patch.get("title", "")).strip()
+            target_idx = task_index.get(task_id)
+            if target_idx is None and title:
+                target_idx = title_index.get(title.casefold())
+            if target_idx is None:
+                logger.warning(
+                    "Delta update references unknown task_id/title: %s/%s", task_id, title
+                )
+                continue
+            fields = patch.get("fields")
+            if not isinstance(fields, dict):
+                logger.warning("Delta update for %s missing fields object.", task_id or title)
+                continue
+            target = dict(updated[target_idx])
+            for key, value in fields.items():
+                target[key] = value
+            updated[target_idx] = target
+
+        for task in additions:
+            if not isinstance(task, dict):
+                continue
+            updated.append(task)
+
+        return updated
+
+    last_errors: list[dict[str, Any]] = []
+    for attempt in range(1, max_attempts + 1):
+        try:
+            last_errors = validate_task_plan_completeness(tasks, planning_context)
+        except Exception as exc:
+            logger.warning("Task plan validation failed due to schema error: %s", exc)
+            last_errors = [
+                {
+                    "error_type": "task_schema_error",
+                    "message": str(exc),
+                    "context": {},
+                }
+            ]
+
+        if not last_errors:
+            return (
+                tasks,
+                {
+                    "repairs_attempted": repairs_attempted,
+                    "repairs_succeeded": repairs_succeeded,
+                    "judge_attempts": judge_attempts,
+                },
+                [],
+            )
+
+        logger.warning(
+            "Task plan validation failed (attempt %d/%d): %d errors",
+            attempt,
+            max_attempts,
+            len(last_errors),
+        )
+
+        repairs_attempted += 1
+        prompt = _build_task_plan_judge_prompt(tasks, last_errors, planning_context)
+        started_at = _NOW().isoformat()
+        logger.debug("Task plan judge attempt %d started at %s.", attempt, started_at)
+        start_time = time.perf_counter()
+        try:
+            output = run_agent(
+                agent_name="chatgpt-task-plan-judge",
+                prompt=prompt,
+                workspace=manager.workspace_path,
+            )
+        except RuntimeError as exc:
+            latency = time.perf_counter() - start_time
+            logger.warning("Task plan judge failed on attempt %d: %s", attempt, exc)
+            judge_attempts.append(
+                {
+                    "attempt": attempt,
+                    "error_count": len(last_errors),
+                    "started_at": started_at,
+                    "latency_seconds": latency,
+                    "status": "failed",
+                    "message": str(exc),
+                }
+            )
+            continue
+
+        latency = time.perf_counter() - start_time
+        payload = _parse_task_plan_output(output)
+        if not isinstance(payload, dict):
+            logger.warning("Task plan judge returned invalid JSON on attempt %d.", attempt)
+            judge_attempts.append(
+                {
+                    "attempt": attempt,
+                    "error_count": len(last_errors),
+                    "started_at": started_at,
+                    "latency_seconds": latency,
+                    "status": "invalid_json",
+                }
+            )
+            continue
+
+        updated = False
+        if "tasks" in payload:
+            candidate = payload.get("tasks")
+            if isinstance(candidate, list) and all(isinstance(task, dict) for task in candidate):
+                tasks = list(candidate)
+                updated = True
+            else:
+                logger.warning(
+                    "Task plan judge returned invalid tasks list on attempt %d.", attempt
+                )
+        elif "delta" in payload:
+            delta = payload.get("delta")
+            if isinstance(delta, dict):
+                try:
+                    tasks = _apply_delta(tasks, delta)
+                    updated = True
+                except Exception as exc:
+                    logger.warning("Failed to apply task plan delta: %s", exc)
+            else:
+                logger.warning(
+                    "Task plan judge returned invalid delta payload on attempt %d.", attempt
+                )
+        else:
+            logger.warning("Task plan judge output missing tasks or delta on attempt %d.", attempt)
+
+        if updated:
+            repairs_succeeded += 1
+            status = "applied"
+        else:
+            status = "ignored"
+
+        judge_attempts.append(
+            {
+                "attempt": attempt,
+                "error_count": len(last_errors),
+                "started_at": started_at,
+                "latency_seconds": latency,
+                "status": status,
+            }
+        )
+
+    try:
+        last_errors = validate_task_plan_completeness(tasks, planning_context)
+    except Exception as exc:
+        last_errors = [
+            {
+                "error_type": "task_schema_error",
+                "message": str(exc),
+                "context": {},
+            }
+        ]
+
+    return (
+        tasks,
+        {
+            "repairs_attempted": repairs_attempted,
+            "repairs_succeeded": repairs_succeeded,
+            "judge_attempts": judge_attempts,
+        },
+        last_errors,
+    )
+
+
+def _write_task_artifacts(
+    tasks: list[dict[str, Any]],
+    patch_graph: PatchGraphSchema,
+    manager: WorkspaceManager,
+    run_id: str,
+) -> dict[str, Any]:
+    """Write task plan artifacts (index, per-task files, patch graph)."""
+    tasks_dir = manager.structure.tasks_dir
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    generated_at = _NOW().isoformat()
+
+    task_schemas: list[TaskSchema] = []
+    for task in tasks:
+        task_schemas.append(TaskSchema.model_validate(task))
+
+    index_entries: list[TaskIndexEntrySchema] = []
+    for task in sorted(task_schemas, key=lambda item: item.task_id):
+        index_entries.append(
+            TaskIndexEntrySchema(
+                task_id=task.task_id,
+                title=task.title,
+                status="planned",
+                priority=task.priority,
+                component=task.component,
+                libraries=task.libraries,
+                covers=task.covers,
+                depends_on=task.depends_on,
+            )
+        )
+
+    task_index = TaskIndexSchema(
+        run_id=run_id,
+        generated_at=generated_at,
+        tasks=index_entries,
+    )
+
+    task_index_path = tasks_dir / "task_index.json"
+    task_index_md_path = tasks_dir / "task_index.md"
+    patch_graph_path = tasks_dir / "patch_graph.json"
+
+    write_task_index_json(task_index, task_index_path)
+    write_task_index_markdown(task_index, task_index_md_path)
+    write_patch_graph_json(patch_graph, patch_graph_path)
+
+    tracker = None
+    if task_schemas:
+        tracker = ProgressTracker(
+            total=len(task_schemas),
+            description="Writing task artifacts",
+            manager=manager,
+        )
+
+    for task in task_schemas:
+        task_dir = tasks_dir / task.task_id
+        write_task_json(task, task_dir / "task.json")
+        write_task_markdown(task, task_dir / "task.md")
+        status = TaskStatusSchema(
+            task_id=task.task_id,
+            status="planned",
+            created_at=generated_at,
+            updated_at=generated_at,
+        )
+        write_task_status_json(status, task_dir / "status.json")
+        if tracker is not None:
+            tracker.update(status=task.task_id)
+
+    if tracker is not None:
+        tracker.finish()
+
+    return {
+        "tasks_dir": str(tasks_dir),
+        "task_index_path": str(task_index_path),
+        "task_index_md_path": str(task_index_md_path),
+        "patch_graph_path": str(patch_graph_path),
+        "tasks_written": len(task_schemas),
+    }
+
+
+def plan_tasks(run_id: str) -> dict[str, Any]:
+    """Plan tasks for the current run using LLM planning and validation."""
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        raise RuntimeError("Workspace not initialized.")
+
+    logger.info("Starting task planning for run %s.", run_id)
+    evidence: list[dict[str, Any]] = []
+
+    try:
+        planning_context = build_task_planning_context(manager)
+        logger.info(
+            "Planning context built: %d components, %d edges, %d gaps, %d decisions.",
+            len(planning_context.get("components") or {}),
+            len(planning_context.get("edges") or []),
+            len(planning_context.get("open_gaps") or []),
+            len(planning_context.get("open_decisions") or []),
+        )
+
+        planner_started_at = _NOW().isoformat()
+        planner_start = time.perf_counter()
+        tasks = _draft_task_plan(planning_context, manager)
+        planner_latency = time.perf_counter() - planner_start
+        planner_completed_at = _NOW().isoformat()
+        evidence.append(
+            {
+                "event": "task_planner_invocation",
+                "agent_name": "opus-task-planner",
+                "model": "opus-task-planner",
+                "started_at": planner_started_at,
+                "completed_at": planner_completed_at,
+                "latency_seconds": planner_latency,
+                "task_count": len(tasks),
+            }
+        )
+
+        tasks, patch_graph = assign_task_ids_and_build_graph(tasks, run_id)
+
+        tasks, repair_stats, validation_errors = _validate_and_repair_task_plan(
+            tasks, planning_context, manager
+        )
+
+        judge_attempts = repair_stats.get("judge_attempts") or []
+        for attempt in judge_attempts:
+            evidence.append(
+                {
+                    "event": "task_plan_judge",
+                    "agent_name": "chatgpt-task-plan-judge",
+                    "model": "chatgpt-task-plan-judge",
+                    **attempt,
+                }
+            )
+
+        if validation_errors:
+            error_details = json.dumps(validation_errors, indent=2)
+            raise ValueError(f"Task plan validation failed after repairs: {error_details}")
+
+        if repair_stats.get("repairs_succeeded", 0) > 0:
+            logger.info("Reassigning task IDs and rebuilding patch graph after repairs.")
+            tasks, patch_graph = assign_task_ids_and_build_graph(tasks, run_id)
+
+        outputs = _write_task_artifacts(tasks, patch_graph, manager, run_id)
+
+        error_type_counts: dict[str, int] = {}
+        for error in validation_errors:
+            error_type = error.get("error_type", "unknown")
+            error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
+
+        coverage_stats = {
+            "coverage_targets": sum(
+                len(value or [])
+                for value in (planning_context.get("coverage_targets") or {}).values()
+            ),
+            "edges_required": len(planning_context.get("edges") or []),
+            "open_gaps_required": len(planning_context.get("open_gaps") or []),
+            "open_decisions_required": len(planning_context.get("open_decisions") or []),
+            "error_types": error_type_counts,
+        }
+
+        validation_stats = {
+            **{k: v for k, v in repair_stats.items() if k != "judge_attempts"},
+            "coverage": coverage_stats,
+        }
+
+        evidence.append(
+            {
+                "event": "task_plan_repair_summary",
+                "repairs_attempted": repair_stats.get("repairs_attempted", 0),
+                "repairs_succeeded": repair_stats.get("repairs_succeeded", 0),
+            }
+        )
+
+        return {
+            "success": True,
+            "tasks_count": len(tasks),
+            "validation_errors": [],
+            "task_index_path": outputs.get("task_index_path"),
+            "patch_graph_path": outputs.get("patch_graph_path"),
+            "validation_stats": validation_stats,
+            "evidence": evidence,
+        }
+    except Exception as exc:
+        logger.exception("Task planning failed for run %s.", run_id)
+        raise RuntimeError(f"Task planning failed for run {run_id}: {exc}") from exc
+
+
 __all__ = [
     "assign_task_ids",
     "assign_task_ids_and_build_graph",
     "build_patch_graph",
     "build_task_planning_context",
+    "plan_tasks",
     "resolve_task_dependencies",
     "validate_dependency_references",
     "validate_task_acceptance_criteria",
