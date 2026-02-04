@@ -25,13 +25,19 @@ logger = logging.getLogger(__name__)
 
 ATOM_ID_RE = re.compile(r"^ATOM-[A-Za-z0-9_.-]+-L\d{4}$")
 SECTION_ID_RE = re.compile(r"^SEC-F\d{4}-\d{4}$")
-ELEMENT_ID_RE = re.compile(
-    r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4})$"
-)
+ELEMENT_ID_RE = re.compile(r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4})$")
 TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
 
 
 def build_atom_to_section_index(manager: WorkspaceManager) -> dict[str, dict[str, str]]:
+    """Build an index mapping atom IDs to their containing sections.
+
+    Args:
+        manager: Workspace manager providing access to atoms directory.
+
+    Returns:
+        Dictionary mapping atom IDs to dicts with file_id, section_id, and sha256.
+    """
     atom_to_section: dict[str, dict[str, str]] = {}
     issues: list[str] = []
     atoms_dir = manager.structure.manifest_atoms_dir
@@ -41,7 +47,9 @@ def build_atom_to_section_index(manager: WorkspaceManager) -> dict[str, dict[str
 
     for atoms_file in sorted(atoms_dir.glob("*.atoms.jsonl")):
         filename = atoms_file.name
-        file_id = filename[:-len(".atoms.jsonl")] if filename.endswith(".atoms.jsonl") else filename
+        file_id = (
+            filename[: -len(".atoms.jsonl")] if filename.endswith(".atoms.jsonl") else filename
+        )
         try:
             with atoms_file.open("r", encoding="utf-8") as handle:
                 for line_no, line in enumerate(handle, start=1):
@@ -82,7 +90,9 @@ def build_atom_to_section_index(manager: WorkspaceManager) -> dict[str, dict[str
             issues.append(issue)
             logger.warning(issue)
 
-    sorted_atom_to_section = {atom_id: atom_to_section[atom_id] for atom_id in sorted(atom_to_section)}
+    sorted_atom_to_section = {
+        atom_id: atom_to_section[atom_id] for atom_id in sorted(atom_to_section)
+    }
     if issues:
         logger.info("Collected %s atom index issues", len(issues))
     return sorted_atom_to_section
@@ -91,6 +101,14 @@ def build_atom_to_section_index(manager: WorkspaceManager) -> dict[str, dict[str
 def build_section_to_spec_elements_index(
     manager: WorkspaceManager,
 ) -> dict[str, list[dict[str, str]]]:
+    """Build an index mapping section IDs to their spec element citations.
+
+    Args:
+        manager: Workspace manager providing access to libraries and metadata.
+
+    Returns:
+        Dictionary mapping section IDs to lists of dicts with lib_id, element_id, and kind.
+    """
     section_to_elements: dict[str, list[dict[str, str]]] = defaultdict(list)
     issues: list[str] = []
     libraries_dir = manager.structure.libraries_dir
@@ -132,9 +150,7 @@ def build_section_to_spec_elements_index(
             for citation in element.citations:
                 parsed = parse_evidence_pointer(citation)
                 if not parsed:
-                    issue = (
-                        f"Unable to parse citation {citation!r} for {element_id} in {lib_id}"
-                    )
+                    issue = f"Unable to parse citation {citation!r} for {element_id} in {lib_id}"
                     issues.append(issue)
                     logger.warning(issue)
                     continue
@@ -144,9 +160,7 @@ def build_section_to_spec_elements_index(
                 if not SECTION_ID_RE.fullmatch(section_ref):
                     file_id = file_id_lookup.get(file_ref)
                     if not file_id:
-                        issue = (
-                            f"Unresolved file reference {file_ref!r} for citation {citation!r}"
-                        )
+                        issue = f"Unresolved file reference {file_ref!r} for citation {citation!r}"
                         issues.append(issue)
                         logger.warning(issue)
                         continue
@@ -195,6 +209,14 @@ def build_section_to_spec_elements_index(
 
 
 def build_spec_element_to_tasks_index(manager: WorkspaceManager) -> dict[str, list[str]]:
+    """Build an index mapping spec element IDs to covering tasks.
+
+    Args:
+        manager: Workspace manager providing access to tasks directory.
+
+    Returns:
+        Dictionary mapping element IDs to sorted lists of task IDs.
+    """
     element_to_tasks: dict[str, list[str]] = defaultdict(list)
     issues: list[str] = []
     task_index_path = manager.structure.tasks_dir / "task_index.json"
@@ -243,6 +265,14 @@ def build_spec_element_to_tasks_index(manager: WorkspaceManager) -> dict[str, li
 
 
 def build_task_to_patches_index(manager: WorkspaceManager) -> dict[str, dict[str, Any]]:
+    """Build an index mapping task IDs to their patch information.
+
+    Args:
+        manager: Workspace manager providing access to tasks directory.
+
+    Returns:
+        Dictionary mapping task IDs to dicts with patch_path, patch_sha256, status, and task_hash.
+    """
     task_to_patches: dict[str, dict[str, Any]] = {}
     issues: list[str] = []
     task_index_path = manager.structure.tasks_dir / "task_index.json"
@@ -312,6 +342,14 @@ def build_task_to_patches_index(manager: WorkspaceManager) -> dict[str, dict[str
 
 
 def build_trace_indexes(run_id: str) -> dict[str, Any]:
+    """Build all trace indexes for the spec refinement workflow.
+
+    Args:
+        run_id: Identifier for the spec refinement run.
+
+    Returns:
+        Dictionary with counts of indexed atoms, sections, elements, and tasks.
+    """
     manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
 
     atom_to_section = build_atom_to_section_index(manager)
@@ -374,6 +412,14 @@ def build_trace_indexes(run_id: str) -> dict[str, Any]:
 
 
 def validate_trace_indexes(manager: WorkspaceManager) -> list[str]:
+    """Validate all trace indexes for structural consistency.
+
+    Args:
+        manager: Workspace manager providing access to index files and metadata.
+
+    Returns:
+        List of validation error messages.
+    """
     errors: list[str] = []
     indexes_dir = manager.structure.indexes_dir
     trace_paths = {
