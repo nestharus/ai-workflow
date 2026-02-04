@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -534,7 +533,9 @@ class TaskIndexSchema(BaseModel):
 
     @field_validator("tasks")
     @classmethod
-    def validate_task_ids_unique(cls, value: list[TaskIndexEntrySchema]) -> list[TaskIndexEntrySchema]:
+    def validate_task_ids_unique(
+        cls, value: list[TaskIndexEntrySchema]
+    ) -> list[TaskIndexEntrySchema]:
         """Ensure task IDs are unique within the index.
 
         Args:
@@ -695,9 +696,7 @@ class PatchGraphSchema(BaseModel):
                 undeclared.append(target)
         if undeclared:
             unique = sorted(set(undeclared))
-            raise ValueError(
-                f"edges reference undeclared nodes: {', '.join(unique)}"
-            )
+            raise ValueError(f"edges reference undeclared nodes: {', '.join(unique)}")
         return self
 
     @model_validator(mode="after")
@@ -1110,9 +1109,7 @@ def write_task_index_markdown(index: TaskIndexSchema, output_path: Path) -> None
         priority_counts[task.priority] += 1
 
     status_summary = ", ".join(f"{key}={value}" for key, value in status_counts.items())
-    priority_summary = ", ".join(
-        f"{key}={value}" for key, value in priority_counts.items()
-    )
+    priority_summary = ", ".join(f"{key}={value}" for key, value in priority_counts.items())
 
     lines: list[str] = [
         "# Task Index",
@@ -1223,10 +1220,9 @@ def _find_patch_graph_cycles(adjacency: dict[str, list[str]]) -> list[list[str]]
         for target in adjacency.get(node, []):
             if target not in visited:
                 dfs(target, [*path, target])
-            elif target in rec_stack:
-                if target in path:
-                    cycle_start = path.index(target)
-                    cycles.append([*path[cycle_start:], target])
+            elif target in rec_stack and target in path:
+                cycle_start = path.index(target)
+                cycles.append([*path[cycle_start:], target])
 
         rec_stack.remove(node)
 
