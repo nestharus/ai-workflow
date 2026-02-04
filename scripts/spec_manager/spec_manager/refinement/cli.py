@@ -1018,6 +1018,41 @@ def cmd_spec_run_tasks(args: argparse.Namespace) -> int:
     return cmd_spec_implement(args)
 
 
+def cmd_finalize_run(args: argparse.Namespace) -> int:
+    """Finalize run with trace indexes and reports for Phase 11."""
+    run_id = args.run_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    from spec_manager.refinement.workflows.finalize import finalize_run
+
+    try:
+        result = finalize_run(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print("Trace indexes built:")
+    trace_stats = result.get("trace_stats", {})
+    print(f"  - Atoms indexed: {trace_stats.get('atoms', 0)}")
+    print(f"  - Sections indexed: {trace_stats.get('sections', 0)}")
+    print(f"  - Elements indexed: {trace_stats.get('elements', 0)}")
+    print(f"  - Tasks indexed: {trace_stats.get('tasks', 0)}")
+
+    validation_errors = result.get("validation_errors", [])
+    if validation_errors:
+        print(f"Validation warnings: {len(validation_errors)}")
+
+    print(f"Reports generated: {result.get('reports_generated', 0)}")
+    print("Run finalization complete.")
+
+    if result.get("success") is False:
+        return 1
+    return 0
+
+
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
     from spec_manager.refinement.qa import QA_CASES
@@ -1125,6 +1160,7 @@ def main(argv: list[str] | None = None) -> int:
             "  spec implement (Phase 10: execute tasks with\n"
             "    --repo-root, --tasks, --run-tests, --max-iterations)\n"
             "  spec run-tasks (Phase 10: alias for implement)\n"
+            "  spec finalize-run (Phase 11: reports and traceability)\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1575,6 +1611,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Allow patch repair iterations on test failures (default: true)",
     )
     p_spec_run_tasks.set_defaults(func=cmd_spec_run_tasks)
+
+    p_spec_finalize = spec_subparsers.add_parser(
+        "finalize-run",
+        help="Finalize run with reports and traceability for Phase 11",
+        description=(
+            "Run Phase 11 finalization to build trace indexes and generate reports.\n"
+            "Requires Phase 10 implementation to be completed (recommended).\n"
+            "Outputs: workspace/indexes/trace_index.json, reports/coverage.md, "
+            "reports/compliance.md, reports/drift.md, audits/run_audit.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_finalize.add_argument("run_id", help="Run identifier")
+    p_spec_finalize.set_defaults(func=cmd_finalize_run)
 
     if argv is None:
         argv = sys.argv[1:]
