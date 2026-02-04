@@ -8,12 +8,20 @@ auditing results.
 import json
 import logging
 import re
+import shlex
 import shutil
+import subprocess
 import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
@@ -30,11 +38,227 @@ from spec_manager.schemas import (
     SpecIndex,
     TaskImplementationStatusSchema,
     TaskSchema,
+    TestResultSchema,
     read_patch_graph_json,
     write_task_implementation_status_json,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ImplementationConfig:
+    """Configuration for task implementation execution."""
+
+    run_tests: bool = True
+    test_command: str | None = None
+    run_lint: bool = False
+    lint_command: str | None = None
+    allow_test_repair: bool = True
+
+
+def _read_test_command_from_pyproject(repo_root: Path) -> str | None:
+    pyproject_path = repo_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return None
+    try:
+        payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        logger.warning("Failed to read pyproject.toml for test command: %s", exc)
+        return None
+    except tomllib.TOMLDecodeError as exc:  # type: ignore[attr-defined]
+        logger.warning("Failed to parse pyproject.toml for test command: %s", exc)
+        return None
+
+    tool_config = payload.get("tool")
+    if not isinstance(tool_config, dict):
+        return None
+    spec_config = tool_config.get("spec_manager")
+    if not isinstance(spec_config, dict):
+        return None
+    command = spec_config.get("test_command")
+    if isinstance(command, str) and command.strip():
+        return command.strip()
+    return None
+
+
+def _format_command_output(
+    *,
+    started_at: datetime,
+    command: str,
+    stdout: str,
+    stderr: str,
+    exit_code: int | None = None,
+    duration_s: float | None = None,
+) -> str:
+    lines = [
+        f"timestamp: {started_at.isoformat()}",
+        f"command: {command}",
+    ]
+    if exit_code is not None:
+        lines.append(f"exit_code: {exit_code}")
+    if duration_s is not None:
+        lines.append(f"duration_s: {duration_s:.3f}")
+    lines.append("")
+    lines.append("stdout:")
+    lines.append(stdout)
+    lines.append("")
+    lines.append("stderr:")
+    lines.append(stderr)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def run_tests(
+    task_dir: Path,
+    repo_root: Path,
+    test_command: str | None = None,
+    run_tests_flag: bool = True,
+) -> TestResultSchema | None:
+    if not run_tests_flag:
+        return None
+
+    effective_command = (
+        test_command or _read_test_command_from_pyproject(repo_root) or "uv run pytest"
+    )
+    cmd = shlex.split(effective_command)
+    output_path = task_dir / "test_output.txt"
+    started_at = datetime.now()
+
+    logger.info("Running tests (command=%s).", effective_command)
+    start = time.perf_counter()
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        duration_s = time.perf_counter() - start
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        output_path.write_text(
+            _format_command_output(
+                started_at=started_at,
+                command=effective_command,
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=result.returncode,
+                duration_s=duration_s,
+            ),
+            encoding="utf-8",
+        )
+        finished_at = datetime.now()
+        logger.info(
+            "Tests completed (exit_code=%d, duration_s=%.2f).",
+            result.returncode,
+            duration_s,
+        )
+        return TestResultSchema(
+            ran=True,
+            command=effective_command,
+            exit_code=result.returncode,
+            started_at=started_at.isoformat(),
+            finished_at=finished_at.isoformat(),
+            duration_s=round(duration_s, 3),
+        )
+    except OSError as exc:
+        duration_s = time.perf_counter() - start
+        error_text = f"Test command failed to execute: {exc}"
+        output_path.write_text(
+            _format_command_output(
+                started_at=started_at,
+                command=effective_command,
+                stdout="",
+                stderr=error_text,
+                exit_code=-1,
+                duration_s=duration_s,
+            ),
+            encoding="utf-8",
+        )
+        finished_at = datetime.now()
+        logger.exception("Test execution failed (command=%s).", effective_command)
+        return TestResultSchema(
+            ran=True,
+            command=f"{effective_command} (error: {exc})",
+            exit_code=-1,
+            started_at=started_at.isoformat(),
+            finished_at=finished_at.isoformat(),
+            duration_s=round(duration_s, 3),
+        )
+
+
+def run_lint(
+    task_dir: Path,
+    repo_root: Path,
+    lint_command: str | None = None,
+    run_lint_flag: bool = False,
+) -> dict[str, Any] | None:
+    if not run_lint_flag:
+        return None
+
+    effective_command = lint_command or "uv run lint"
+    cmd = shlex.split(effective_command)
+    output_path = task_dir / "lint_output.txt"
+    started_at = datetime.now()
+
+    logger.info("Running lint (command=%s).", effective_command)
+    start = time.perf_counter()
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        duration_s = time.perf_counter() - start
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        output_path.write_text(
+            _format_command_output(
+                started_at=started_at,
+                command=effective_command,
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=result.returncode,
+                duration_s=duration_s,
+            ),
+            encoding="utf-8",
+        )
+        logger.info(
+            "Lint completed (exit_code=%d, duration_s=%.2f).",
+            result.returncode,
+            duration_s,
+        )
+        return {
+            "ran": True,
+            "command": effective_command,
+            "exit_code": result.returncode,
+            "passed": result.returncode == 0,
+        }
+    except OSError as exc:
+        duration_s = time.perf_counter() - start
+        error_text = f"Lint command failed to execute: {exc}"
+        output_path.write_text(
+            _format_command_output(
+                started_at=started_at,
+                command=effective_command,
+                stdout="",
+                stderr=error_text,
+                exit_code=-1,
+                duration_s=duration_s,
+            ),
+            encoding="utf-8",
+        )
+        logger.exception("Lint execution failed (command=%s).", effective_command)
+        return {
+            "ran": True,
+            "command": f"{effective_command} (error: {exc})",
+            "exit_code": -1,
+            "passed": False,
+        }
 
 
 def _load_spec_index_for_lib(run_root: Path, lib_id: str) -> SpecIndex | None:
@@ -786,6 +1010,89 @@ def _parse_audit_output(output: str) -> tuple[str, list[str]]:
     return verdict, issues
 
 
+def _read_test_output(task_dir: Path) -> str:
+    output_path = task_dir / "test_output.txt"
+    if not output_path.exists():
+        return ""
+    try:
+        return output_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to read test output: %s", exc)
+        return ""
+
+
+def _extract_pytest_failures(test_output: str) -> list[str]:
+    failures: list[str] = []
+    for line in test_output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("FAILED ") or stripped.startswith("ERROR "):
+            failures.append(stripped)
+    return failures
+
+
+def _build_test_repair_prompt(
+    task: TaskSchema,
+    patch_text: str,
+    test_result: TestResultSchema,
+    test_output: str,
+    failures: list[str],
+    validation_errors: list[dict[str, Any]] | None = None,
+    apply_error: str | None = None,
+) -> str:
+    acceptance_criteria = (
+        "\n".join(
+            f"{index + 1}. {criterion}" for index, criterion in enumerate(task.acceptance_criteria)
+        )
+        if task.acceptance_criteria
+        else "None"
+    )
+    failure_lines = "\n".join(f"- {item}" for item in failures) if failures else "None"
+    validation_block = (
+        json.dumps(validation_errors, indent=2, sort_keys=True) if validation_errors else "None"
+    )
+    apply_error_text = apply_error or "None"
+
+    lines = [
+        "Task Requirements",
+        f"- Task ID: {task.task_id}",
+        f"- Title: {task.title}",
+        "",
+        "Description:",
+        task.description,
+        "",
+        "Acceptance Criteria:",
+        acceptance_criteria,
+        "",
+        "Test Command:",
+        test_result.command,
+        f"Exit Code: {test_result.exit_code}",
+        "",
+        "Parsed Test Failures:",
+        failure_lines,
+        "",
+        "Patch Validation Errors:",
+        validation_block,
+        "",
+        "Patch Apply Error:",
+        apply_error_text,
+        "",
+        "Test Output (verbatim):",
+        "<BEGIN_TEST_OUTPUT>",
+        test_output.strip(),
+        "<END_TEST_OUTPUT>",
+        "",
+        "Current Patch:",
+        "```diff",
+        patch_text,
+        "```",
+        "",
+        "Instructions:",
+        "Fix the patch so tests pass and requirements remain satisfied.",
+        "Return ONLY a unified diff patch. No explanations or code fences.",
+    ]
+    return "\n".join(lines)
+
+
 def _restore_from_backup(backup_dir: Path, repo_root: Path) -> None:
     """Restore repository files from backup before re-applying a repaired patch.
 
@@ -829,6 +1136,111 @@ def _restore_from_backup(backup_dir: Path, repo_root: Path) -> None:
         len(restored_paths),
         removed,
     )
+
+
+def _repair_patch_for_tests(
+    *,
+    run_root: Path,
+    task_id: str,
+    task_dir: Path,
+    repo_root: Path,
+    patch_text: str,
+    apply_log: dict[str, Any],
+    test_result: TestResultSchema,
+    max_iterations: int,
+    manager: WorkspaceManager,
+    test_command: str | None,
+) -> tuple[str, dict[str, Any], TestResultSchema]:
+    task_path = run_root / "tasks" / task_id / "task.json"
+    task = TaskSchema.model_validate_json(task_path.read_text(encoding="utf-8"))
+
+    attempts = 0
+    current_patch = patch_text
+    current_test_result = test_result
+    current_apply_log = dict(apply_log)
+    validation_errors: list[dict[str, Any]] | None = None
+    apply_error: str | None = None
+
+    while current_test_result.exit_code != 0 and attempts < max_iterations:
+        attempts += 1
+        test_output = _read_test_output(task_dir)
+        failures = _extract_pytest_failures(test_output)
+        prompt = _build_test_repair_prompt(
+            task,
+            current_patch,
+            current_test_result,
+            test_output,
+            failures,
+            validation_errors=validation_errors,
+            apply_error=apply_error,
+        )
+        logger.info(
+            "Running test repair iteration %d/%d for %s.",
+            attempts,
+            max_iterations,
+            task_id,
+        )
+        repaired_patch = run_agent(
+            agent_name="chatgpt-patch-repairer",
+            prompt=prompt,
+            workspace=manager.workspace_path,
+        )
+        if not isinstance(repaired_patch, str):
+            raise TypeError(
+                f"Expected patch repair output to be str, got {type(repaired_patch).__name__}"
+            )
+        current_patch = repaired_patch
+        validation_errors = None
+        apply_error = None
+
+        is_valid, errors = validate_patch(
+            current_patch,
+            repo_root,
+            immutable_paths=IMMUTABLE_PATH_PATTERNS,
+        )
+        if not is_valid:
+            validation_errors = errors
+            logger.warning(
+                "Repaired patch validation failed for %s (errors=%d).",
+                task_id,
+                len(errors),
+            )
+            continue
+
+        _restore_from_backup(task_dir / "backup", repo_root)
+        current_apply_log = apply_patch(
+            patch_text=current_patch,
+            repo_root=repo_root,
+            backup_dir=task_dir / "backup",
+            immutable_paths=IMMUTABLE_PATH_PATTERNS,
+        )
+        if not current_apply_log.get("success"):
+            apply_error = str(current_apply_log.get("error") or "Patch apply failed")
+            logger.warning(
+                "Repaired patch apply failed for %s (error=%s).",
+                task_id,
+                apply_error,
+            )
+            continue
+
+        current_test_result = (
+            run_tests(
+                task_dir=task_dir,
+                repo_root=repo_root,
+                test_command=test_command,
+                run_tests_flag=True,
+            )
+            or current_test_result
+        )
+        logger.info(
+            "Test repair iteration %d/%d completed for %s (exit_code=%d).",
+            attempts,
+            max_iterations,
+            task_id,
+            current_test_result.exit_code,
+        )
+
+    return current_patch, current_apply_log, current_test_result
 
 
 def _audit_patch(
@@ -954,6 +1366,7 @@ def execute_task(
     repo_root: Path,
     max_iterations: int,
     manager: WorkspaceManager,
+    config: ImplementationConfig,
 ) -> dict[str, Any]:
     """Execute a single implementation task.
 
@@ -963,6 +1376,7 @@ def execute_task(
         repo_root: Repository root directory.
         max_iterations: Maximum number of repair iterations.
         manager: Workspace manager instance.
+        config: Implementation execution configuration.
 
     Returns:
         Task execution summary dictionary.
@@ -985,6 +1399,8 @@ def execute_task(
     applied_files: list[str] = []
     audit_verdict: str | None = None
     issue_count = 0
+    test_result: TestResultSchema | None = None
+    lint_result: dict[str, Any] | None = None
 
     start = time.perf_counter()
     try:
@@ -1013,6 +1429,96 @@ def execute_task(
             task_id,
             apply_log.get("success"),
             len(applied_files),
+        )
+
+        test_result = run_tests(
+            task_dir=task_dir,
+            repo_root=repo_root,
+            test_command=config.test_command,
+            run_tests_flag=config.run_tests,
+        )
+        if test_result is not None:
+            status = TaskImplementationStatusSchema(
+                task_id=task_id,
+                status="in_progress",
+                started_at=started_at,
+                repo_root=str(repo_root),
+                patch_sha256=patch_sha256,
+                applied_files=applied_files,
+                tests=test_result,
+            )
+            write_task_implementation_status_json(status, status_path)
+
+            if test_result.exit_code != 0:
+                if config.allow_test_repair:
+                    logger.info(
+                        "Tests failed for %s (exit_code=%d). Starting repair loop.",
+                        task_id,
+                        test_result.exit_code,
+                    )
+                    patch_text, apply_log, test_result = _repair_patch_for_tests(
+                        run_root=run_root,
+                        task_id=task_id,
+                        task_dir=task_dir,
+                        repo_root=repo_root,
+                        patch_text=patch_text,
+                        apply_log=apply_log,
+                        test_result=test_result,
+                        max_iterations=max_iterations,
+                        manager=manager,
+                        test_command=config.test_command,
+                    )
+                    patch_sha256 = str(apply_log.get("patch_sha256", ""))
+                    applied_files = list(apply_log.get("applied_files", []))
+                    status = TaskImplementationStatusSchema(
+                        task_id=task_id,
+                        status="in_progress",
+                        started_at=started_at,
+                        repo_root=str(repo_root),
+                        patch_sha256=patch_sha256,
+                        applied_files=applied_files,
+                        tests=test_result,
+                    )
+                    write_task_implementation_status_json(status, status_path)
+
+                if test_result.exit_code != 0:
+                    logger.info(
+                        "Tests still failing for %s after repair attempts.",
+                        task_id,
+                    )
+                    finished_at = datetime.now().isoformat()
+                    status = TaskImplementationStatusSchema(
+                        task_id=task_id,
+                        status="failed",
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        repo_root=str(repo_root),
+                        patch_sha256=patch_sha256,
+                        applied_files=applied_files,
+                        tests=test_result,
+                    )
+                    write_task_implementation_status_json(status, status_path)
+                    elapsed_ms = (time.perf_counter() - start) * 1000
+                    logger.info(
+                        "Completed task %s (status=failed, latency_ms=%.2f).",
+                        task_id,
+                        elapsed_ms,
+                    )
+                    return {
+                        "task_id": task_id,
+                        "status": "failed",
+                        "patch_sha256": patch_sha256,
+                        "applied_files": len(applied_files),
+                        "audit_verdict": None,
+                        "tests": test_result.model_dump(),
+                        "lint": lint_result,
+                    }
+
+        lint_result = run_lint(
+            task_dir=task_dir,
+            repo_root=repo_root,
+            lint_command=config.lint_command,
+            run_lint_flag=config.run_lint,
         )
 
         audit_md_content, audit_verdict, issue_count, final_patch_text = _audit_patch(
@@ -1048,7 +1554,10 @@ def execute_task(
         logger.info("Wrote apply log for %s: %s", task_id, apply_log_path)
 
         apply_success = bool(apply_log.get("success"))
-        final_status = "done" if apply_success and audit_verdict == "pass" else "failed"
+        tests_passed = test_result is None or test_result.exit_code == 0
+        final_status = (
+            "done" if apply_success and audit_verdict == "pass" and tests_passed else "failed"
+        )
         finished_at = datetime.now().isoformat()
         audit_result = {"verdict": audit_verdict, "issues": issue_count} if audit_verdict else None
         status = TaskImplementationStatusSchema(
@@ -1059,6 +1568,7 @@ def execute_task(
             repo_root=str(repo_root),
             patch_sha256=patch_sha256,
             applied_files=applied_files,
+            tests=test_result,
             audit=audit_result,
         )
         write_task_implementation_status_json(status, status_path)
@@ -1077,6 +1587,8 @@ def execute_task(
             "patch_sha256": patch_sha256,
             "applied_files": len(applied_files),
             "audit_verdict": audit_verdict,
+            "tests": test_result.model_dump() if test_result else None,
+            "lint": lint_result,
         }
     except Exception as exc:
         finished_at = datetime.now().isoformat()
@@ -1089,6 +1601,7 @@ def execute_task(
             repo_root=str(repo_root),
             patch_sha256=patch_sha256,
             applied_files=applied_files,
+            tests=test_result,
             audit={"verdict": audit_verdict or "fail", "issues": issue_count}
             if audit_verdict is not None
             else None,
@@ -1101,6 +1614,8 @@ def execute_task(
             "applied_files": len(applied_files),
             "audit_verdict": audit_verdict,
             "error": str(exc),
+            "tests": test_result.model_dump() if test_result else None,
+            "lint": lint_result,
         }
 
 
@@ -1109,6 +1624,7 @@ def run_implementation_phase(
     repo_root: Path,
     task_filter: list[str] | None,
     max_iterations: int,
+    config: ImplementationConfig,
 ) -> dict[str, Any]:
     """Run the implementation phase for tasks.
 
@@ -1117,6 +1633,7 @@ def run_implementation_phase(
         repo_root: Repository root directory.
         task_filter: Optional list of task IDs to filter.
         max_iterations: Maximum number of repair iterations.
+        config: Implementation execution configuration.
 
     Returns:
         Summary dictionary of implementation phase results.
@@ -1142,7 +1659,7 @@ def run_implementation_phase(
     for index, task_id in enumerate(selected_tasks):
         logger.info("Executing task %s (%d/%d).", task_id, index + 1, total)
         try:
-            summary = execute_task(run_root, task_id, repo_root, max_iterations, manager)
+            summary = execute_task(run_root, task_id, repo_root, max_iterations, manager, config)
         except Exception as exc:
             logger.exception("Unhandled exception while executing %s", task_id)
             task_dir = run_root / "tasks" / task_id

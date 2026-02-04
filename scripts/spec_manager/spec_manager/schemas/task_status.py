@@ -26,6 +26,9 @@ class TestResultSchema(BaseModel):
     ran: bool
     command: str
     exit_code: int
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_s: float | None = None
 
 
 class AuditResultSchema(BaseModel):

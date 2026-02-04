@@ -34,6 +34,15 @@ def _phase_completed(manager: WorkspaceManager, phase: Phase) -> bool:
     return manager.state.phases[phase.value].status == PhaseStatus.COMPLETED
 
 
+def _parse_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value!r}")
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     """Initialize run-scoped workspace."""
     run_id = args.run_id
@@ -934,6 +943,54 @@ def cmd_spec_plan_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_implement(args: argparse.Namespace) -> int:
+    """Execute tasks for Phase 10."""
+    run_id = args.run_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+    if not _phase_completed(manager, Phase.TASKS):
+        print("Tasks must be planned before implementation.")
+        return 1
+
+    from spec_manager.refinement.workflows.implementation import (
+        ImplementationConfig,
+        run_implementation_phase,
+    )
+
+    config = ImplementationConfig(
+        run_tests=args.run_tests,
+        test_command=args.test_command,
+        run_lint=args.run_lint,
+        lint_command=args.lint_command,
+        allow_test_repair=args.allow_test_repair,
+    )
+
+    try:
+        result = run_implementation_phase(
+            run_root=manager.workspace_path,
+            repo_root=manager.input_folder,
+            task_filter=None,
+            max_iterations=args.max_iterations,
+            config=config,
+        )
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Tasks executed: {result.get('tasks_executed', 0)}")
+    print(f"Tasks done: {result.get('tasks_done', 0)}")
+    print(f"Tasks failed: {result.get('tasks_failed', 0)}")
+    if result.get("tasks_blocked"):
+        print(f"Tasks blocked: {result.get('tasks_blocked', 0)}")
+
+    if result.get("tasks_failed", 0) > 0:
+        return 1
+    return 0
+
+
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
     from spec_manager.refinement.qa import QA_CASES
@@ -1038,6 +1095,7 @@ def main(argv: list[str] | None = None) -> int:
             "  spec review-structure (Phase 7: library boundary review)\n"
             "  spec build-interfaces (Phase 8: interface graph and contracts)\n"
             "  spec plan-tasks (Phase 9: task planning from specs and interfaces)\n"
+            "  spec implement (Phase 10: execute implementation tasks)\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1363,6 +1421,55 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spec_plan_tasks.add_argument("run_id", help="Run identifier")
     p_spec_plan_tasks.set_defaults(func=cmd_spec_plan_tasks)
+
+    p_spec_implement = spec_subparsers.add_parser(
+        "implement",
+        help="Execute implementation tasks for Phase 10",
+        description=(
+            "Run Phase 10 implementation to apply task patches, run tests, and audit results.\n"
+            "Requires Phase 9 task planning to be completed.\n"
+            "Outputs: tasks/TASK-####/patch.diff, apply_log.json, test_output.txt, audit.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_implement.add_argument("run_id", help="Run identifier")
+    p_spec_implement.add_argument(
+        "--max-iterations", type=int, default=5, help="Max repair iterations"
+    )
+    tests_group = p_spec_implement.add_mutually_exclusive_group()
+    tests_group.add_argument(
+        "--run-tests",
+        dest="run_tests",
+        action="store_true",
+        default=True,
+        help="Run tests after applying patches (default)",
+    )
+    tests_group.add_argument(
+        "--no-tests",
+        dest="run_tests",
+        action="store_false",
+        help="Skip test execution",
+    )
+    p_spec_implement.add_argument(
+        "--test-command",
+        help="Override test command (default: from pyproject or 'uv run pytest')",
+    )
+    p_spec_implement.add_argument(
+        "--run-lint",
+        action="store_true",
+        help="Run lint after tests (non-blocking)",
+    )
+    p_spec_implement.add_argument(
+        "--lint-command",
+        help="Override lint command (default: 'uv run lint')",
+    )
+    p_spec_implement.add_argument(
+        "--allow-test-repair",
+        type=_parse_bool,
+        default=True,
+        help="Allow patch repair iterations on test failures (default: true)",
+    )
+    p_spec_implement.set_defaults(func=cmd_spec_implement)
 
     if argv is None:
         argv = sys.argv[1:]
