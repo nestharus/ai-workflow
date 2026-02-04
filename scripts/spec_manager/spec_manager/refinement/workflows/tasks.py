@@ -24,10 +24,13 @@ from spec_manager.schemas.spec_indexes import (
     SpecIndex,
 )
 from spec_manager.schemas.tasks import (
+    TASK_ID_RE,
     PatchGraphSchema,
     TaskIndexSchema,
     TaskSchema,
     TaskStatusSchema,
+    _find_patch_graph_cycles,
+    validate_patch_graph_acyclic,
 )
 
 logger = logging.getLogger(__name__)
@@ -307,6 +310,132 @@ def _load_library_charter(lib_dir: Path) -> str:
         return ""
 
 
+def assign_task_ids(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assign deterministic TASK-#### identifiers to tasks."""
+    if not tasks:
+        return []
+
+    def _sort_key(task: dict[str, Any]) -> tuple[str, list[str], str]:
+        component = task.get("component") or ""
+        libraries = task.get("libraries") or []
+        title = task.get("title") or ""
+        return (component, sorted(libraries), title)
+
+    sorted_tasks = sorted(tasks, key=_sort_key)
+    assigned: list[dict[str, Any]] = []
+    for index, task in enumerate(sorted_tasks, start=1):
+        payload = dict(task)
+        payload["task_id"] = f"TASK-{index:04d}"
+        assigned.append(payload)
+    return assigned
+
+
+def resolve_task_dependencies(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Resolve dependency references from titles to TASK-#### identifiers."""
+    title_entries: dict[str, list[tuple[str, str]]] = {}
+    for task in tasks:
+        title = str(task.get("title", "")).strip()
+        task_id = str(task.get("task_id", "")).strip()
+        key = title.casefold()
+        title_entries.setdefault(key, []).append((title, task_id))
+
+    for entries in title_entries.values():
+        if len(entries) > 1:
+            title = entries[0][0]
+            task_ids = [task_id for _, task_id in entries]
+            raise ValueError(f"Duplicate task title '{title}' found in tasks {task_ids}")
+
+    title_to_id = {key: entries[0][1] for key, entries in title_entries.items()}
+    resolved: list[dict[str, Any]] = []
+    for task in tasks:
+        payload = dict(task)
+        depends_on = list(payload.get("depends_on") or [])
+        resolved_deps: list[str] = []
+        for ref in depends_on:
+            ref_str = str(ref)
+            if TASK_ID_RE.fullmatch(ref_str):
+                resolved_deps.append(ref_str)
+                continue
+            resolved_id = title_to_id.get(ref_str.strip().casefold())
+            if resolved_id is None:
+                raise ValueError(
+                    f"Unknown dependency reference '{ref}' in task '{payload.get('task_id')}'"
+                )
+            resolved_deps.append(resolved_id)
+        payload["depends_on"] = resolved_deps
+        resolved.append(payload)
+    return resolved
+
+
+def validate_dependency_references(tasks: list[dict[str, Any]]) -> None:
+    """Ensure all dependency references point to known task IDs."""
+    valid_ids = {str(task.get("task_id", "")).strip() for task in tasks}
+    errors: list[str] = []
+    for task in tasks:
+        task_id = str(task.get("task_id", "")).strip()
+        for dep_id in task.get("depends_on") or []:
+            dep_str = str(dep_id)
+            if dep_str not in valid_ids:
+                errors.append(f"Task '{task_id}' depends on non-existent task '{dep_str}'")
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
+def build_patch_graph(tasks: list[dict[str, Any]], run_id: str) -> PatchGraphSchema:
+    """Build a validated patch graph from resolved tasks."""
+    nodes = [str(task.get("task_id", "")).strip() for task in tasks]
+    edges: list[tuple[str, str]] = []
+    for task in tasks:
+        task_id = str(task.get("task_id", "")).strip()
+        for dep_id in task.get("depends_on") or []:
+            edges.append((task_id, str(dep_id)))
+    generated_at = datetime.now().isoformat()
+    raw_graph = PatchGraphSchema.model_construct(
+        run_id=run_id,
+        generated_at=generated_at,
+        nodes=nodes,
+        edges=edges,
+    )
+    validate_task_graph(raw_graph)
+    return PatchGraphSchema.model_validate(raw_graph.model_dump())
+
+
+def validate_task_graph(graph: PatchGraphSchema) -> None:
+    """Validate that the patch graph is acyclic with clear cycle details."""
+    is_valid, errors = validate_patch_graph_acyclic(graph)
+    if is_valid:
+        return
+
+    adjacency: dict[str, list[str]] = {node: [] for node in graph.nodes}
+    for source, target in graph.edges:
+        adjacency.setdefault(source, []).append(target)
+
+    cycles = _find_patch_graph_cycles(adjacency)
+    cycle_chain = "; ".join(" -> ".join(cycle) for cycle in cycles) if cycles else "; ".join(errors)
+    raise ValueError(f"Circular dependency detected: {cycle_chain}. Tasks must form a DAG.")
+
+
+def assign_task_ids_and_build_graph(
+    tasks: list[dict[str, Any]],
+    run_id: str,
+) -> tuple[list[dict[str, Any]], PatchGraphSchema]:
+    """Assign task IDs, resolve dependencies, and build a patch graph."""
+    logger.info("Assigning task IDs for %d tasks.", len(tasks))
+    tasks_with_ids = assign_task_ids(tasks)
+    logger.info("Resolving task dependencies for %d tasks.", len(tasks_with_ids))
+    resolved_tasks = resolve_task_dependencies(tasks_with_ids)
+    logger.info("Validating dependency references.")
+    validate_dependency_references(resolved_tasks)
+    logger.info("Building patch graph.")
+    try:
+        patch_graph = build_patch_graph(resolved_tasks, run_id)
+    except ValueError as exc:
+        if str(exc).startswith("Circular dependency detected:"):
+            raise
+        raise ValueError(f"Patch graph validation failed: {exc}") from exc
+    return resolved_tasks, patch_graph
+
+
 def build_task_planning_context(manager: WorkspaceManager) -> dict[str, Any]:
     """Build deterministic context for task planning."""
     issues: list[dict[str, Any]] = []
@@ -409,5 +538,11 @@ def build_task_planning_context(manager: WorkspaceManager) -> dict[str, Any]:
 
 
 __all__ = [
+    "assign_task_ids",
+    "assign_task_ids_and_build_graph",
+    "build_patch_graph",
     "build_task_planning_context",
+    "resolve_task_dependencies",
+    "validate_dependency_references",
+    "validate_task_graph",
 ]
