@@ -19,9 +19,9 @@ from spec_manager.schemas.edge_list import (
     read_interface_index_json,
 )
 from spec_manager.schemas.spec_indexes import (
+    _SPEC_ELEMENT_ID_RE,
     DecisionsIndex,
     SpecIndex,
-    _SPEC_ELEMENT_ID_RE,
 )
 from spec_manager.schemas.tasks import (
     PatchGraphSchema,
