@@ -213,7 +213,9 @@ def test_compute_pairwise_similarity_matrix_symmetry() -> None:
     }
     vectors, _vectorizer = _build_tfidf_vectors(spec_indexes)
     similarities_a = _compute_pairwise_similarity(vectors)
-    similarities_b = _compute_pairwise_similarity({"LIB-0002": vectors["LIB-0002"], "LIB-0001": vectors["LIB-0001"]})
+    similarities_b = _compute_pairwise_similarity(
+        {"LIB-0002": vectors["LIB-0002"], "LIB-0001": vectors["LIB-0001"]}
+    )
 
     assert similarities_a[("LIB-0001", "LIB-0002")] == pytest.approx(
         similarities_b[("LIB-0001", "LIB-0002")]
@@ -241,7 +243,7 @@ def test_compute_shared_element_count() -> None:
             ],
         )
     )
-    vectors, vectorizer = _build_tfidf_vectors({"LIB-0001": spec_a, "LIB-0002": spec_b})
+    _, vectorizer = _build_tfidf_vectors({"LIB-0001": spec_a, "LIB-0002": spec_b})
     assert _compute_shared_element_count(spec_a, spec_b, vectorizer) == 3
 
 
@@ -372,12 +374,8 @@ def test_matched_pairs_include_all_element_types() -> None:
 
 def test_detect_overlap_candidates_above_threshold(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="shared alpha") for idx in range(1, 7)
-    ]
-    elements_b = [
-        _element_dict("LIB-0002", idx, text="shared alpha") for idx in range(1, 7)
-    ]
+    elements = [_element_dict("LIB-0001", idx, text="shared alpha") for idx in range(1, 7)]
+    elements_b = [_element_dict("LIB-0002", idx, text="shared alpha") for idx in range(1, 7)]
     _create_spec_index(manager, "LIB-0001", elements)
     _create_spec_index(manager, "LIB-0002", elements_b)
 
@@ -406,14 +404,12 @@ def test_detect_overlap_candidates_below_similarity_threshold(spec_refinement_wo
     assert candidates == []
 
 
-def test_detect_overlap_candidates_below_shared_elements_threshold(spec_refinement_workspace) -> None:
+def test_detect_overlap_candidates_below_shared_elements_threshold(
+    spec_refinement_workspace,
+) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="shared alpha") for idx in range(1, 4)
-    ]
-    elements_b = [
-        _element_dict("LIB-0002", idx, text="shared alpha") for idx in range(1, 4)
-    ]
+    elements = [_element_dict("LIB-0001", idx, text="shared alpha") for idx in range(1, 4)]
+    elements_b = [_element_dict("LIB-0002", idx, text="shared alpha") for idx in range(1, 4)]
     _create_spec_index(manager, "LIB-0001", elements)
     _create_spec_index(manager, "LIB-0002", elements_b)
 
@@ -424,12 +420,8 @@ def test_detect_overlap_candidates_below_shared_elements_threshold(spec_refineme
 
 def test_detect_overlap_candidates_returns_evidence(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text=f"shared alpha {idx}") for idx in range(1, 7)
-    ]
-    elements_b = [
-        _element_dict("LIB-0002", idx, text=f"shared alpha {idx}") for idx in range(1, 7)
-    ]
+    elements = [_element_dict("LIB-0001", idx, text=f"shared alpha {idx}") for idx in range(1, 7)]
+    elements_b = [_element_dict("LIB-0002", idx, text=f"shared alpha {idx}") for idx in range(1, 7)]
     _create_spec_index(manager, "LIB-0001", elements)
     _create_spec_index(manager, "LIB-0002", elements_b)
 
@@ -443,12 +435,8 @@ def test_detect_overlap_candidates_returns_evidence(spec_refinement_workspace) -
 
 def test_detect_overlap_candidates_deterministic_ordering(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="shared alpha") for idx in range(1, 7)
-    ]
-    elements_b = [
-        _element_dict("LIB-0002", idx, text="shared alpha") for idx in range(1, 7)
-    ]
+    elements = [_element_dict("LIB-0001", idx, text="shared alpha") for idx in range(1, 7)]
+    elements_b = [_element_dict("LIB-0002", idx, text="shared alpha") for idx in range(1, 7)]
     _create_spec_index(manager, "LIB-0001", elements)
     _create_spec_index(manager, "LIB-0002", elements_b)
 
@@ -460,9 +448,7 @@ def test_detect_overlap_candidates_deterministic_ordering(spec_refinement_worksp
 
 def test_kmeans_clustering_basic(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _element_dict("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_spec_index(manager, "LIB-0001", elements)
@@ -475,9 +461,7 @@ def test_kmeans_clustering_basic(spec_refinement_workspace) -> None:
 
 def test_compute_silhouette_score(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _element_dict("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_spec_index(manager, "LIB-0001", elements)
@@ -499,9 +483,7 @@ def test_clustering_with_insufficient_elements(spec_refinement_workspace) -> Non
 
 def test_clustering_deterministic_with_random_state(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _element_dict("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_spec_index(manager, "LIB-0001", elements)
@@ -514,9 +496,7 @@ def test_clustering_deterministic_with_random_state(spec_refinement_workspace) -
 
 def test_detect_split_candidates_high_silhouette(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _element_dict("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_spec_index(manager, "LIB-0001", elements)
@@ -563,9 +543,7 @@ def test_detect_split_candidates_tries_multiple_k(spec_refinement_workspace, mon
 
 def test_detect_split_candidates_includes_cluster_assignments(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_element_dict("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _element_dict("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_spec_index(manager, "LIB-0001", elements)

@@ -10,7 +10,6 @@ import pytest
 from pyfakefs.fake_filesystem import FakeFilesystem
 from spec_manager.refinement.workspace import WorkspaceManager
 
-
 _DEF_GENERATED_AT = "2026-02-03T00:00:00"
 
 

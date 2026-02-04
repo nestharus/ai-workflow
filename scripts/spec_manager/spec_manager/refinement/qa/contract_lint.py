@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -173,7 +173,10 @@ def lint_workflow_agent_references(workflows_dir: Path, agents_dir: Path) -> lis
                             file=rel_path,
                             line=line_no,
                             message=f"Agent prompt file not found: {agent_name}.md",
-                            hint=f"Create .agents/agents/{agent_name}.md or fix agent name reference.",
+                            hint=(
+                                f"Create .agents/agents/{agent_name}.md "
+                                f"or fix agent name reference."
+                            ),
                         )
                     )
 
@@ -355,15 +358,12 @@ def _relative_path(path: Path) -> str:
 
 
 def _required_format_missing(content: str) -> bool:
-    if not FILE_ID_RE.search(content):
-        return True
-    if not LIB_ID_RE.search(content):
-        return True
-    if not SECTION_ID_REQUIRED_RE.search(content):
-        return True
-    if not PREFERRED_POINTER_RE.search(content):
-        return True
-    return False
+    return bool(
+        not FILE_ID_RE.search(content)
+        or not LIB_ID_RE.search(content)
+        or not SECTION_ID_REQUIRED_RE.search(content)
+        or not PREFERRED_POINTER_RE.search(content)
+    )
 
 
 def _has_json_only_contract(lines: list[str]) -> bool:
@@ -424,7 +424,7 @@ def _sort_issues(issues: list[LintIssue]) -> list[LintIssue]:
 
 
 def _iso_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _report_timestamp() -> str:

@@ -91,9 +91,7 @@ def test_build_spec_index_sets_correct_element_kinds(sample_spec_for_indexing) -
 
 def test_build_spec_index_extracts_citations(sample_spec_for_indexing) -> None:
     index = build_spec_index(sample_spec_for_indexing, "LIB-0001")
-    element = next(
-        item for item in index["elements"] if item["element_id"] == "REQ-LIB-0001-0001"
-    )
+    element = next(item for item in index["elements"] if item["element_id"] == "REQ-LIB-0001-0001")
 
     assert "[spec_snapshot/specs/alpha.md::SEC-F0001-0001]" in element["citations"]
 
@@ -124,14 +122,9 @@ def test_build_spec_index_removes_id_prefix_from_text() -> None:
 
 def test_build_spec_index_preserves_raw_line(sample_spec_for_indexing) -> None:
     index = build_spec_index(sample_spec_for_indexing, "LIB-0001")
-    element = next(
-        item for item in index["elements"] if item["element_id"] == "REQ-LIB-0001-0002"
-    )
+    element = next(item for item in index["elements"] if item["element_id"] == "REQ-LIB-0001-0002")
 
-    assert (
-        element["raw_line"]
-        == "- REQ-LIB-0001-0002: Must log errors referencing LIB-0002"
-    )
+    assert element["raw_line"] == "- REQ-LIB-0001-0002: Must log errors referencing LIB-0002"
 
 
 def test_build_decisions_index_extracts_all_decisions() -> None:

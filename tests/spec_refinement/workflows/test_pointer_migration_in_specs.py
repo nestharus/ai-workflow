@@ -133,10 +133,7 @@ def test_normalize_pointers_handles_invalid_file_refs(
     setup_pointer_migration_workspace,
 ) -> None:
     manager, _ = setup_pointer_migration_workspace()
-    content = (
-        "Evidence: [F9999::MISSING] and "
-        "[LIB-0001::spec.md::REQ-LIB-0001-0001]"
-    )
+    content = "Evidence: [F9999::MISSING] and [LIB-0001::spec.md::REQ-LIB-0001-0001]"
 
     cleaned = strip_invalid_file_pointers(
         content, manager.state.file_manifest, allow_multi_hop=False

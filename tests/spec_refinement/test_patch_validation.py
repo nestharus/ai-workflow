@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 from spec_manager.refinement.workflows import patch_utils
 
 
@@ -18,8 +17,8 @@ def sample_patch() -> str:
         "+++ b/test.py\n"
         "@@ -1,3 +1,3 @@\n"
         " def hello():\n"
-        "-    print(\"old\")\n"
-        "+    print(\"new\")\n"
+        '-    print("old")\n'
+        '+    print("new")\n'
         "     return True\n"
     )
 
@@ -185,8 +184,7 @@ def test_validate_rejects_immutable_paths() -> None:
 
 def test_validate_rejects_binary_patch() -> None:
     patch_text = (
-        "diff --git a/image.png b/image.png\n"
-        "Binary files a/image.png and b/image.png differ\n"
+        "diff --git a/image.png b/image.png\nBinary files a/image.png and b/image.png differ\n"
     )
     valid, errors = patch_utils.validate_patch(
         patch_text, Path("/repo"), patch_utils.IMMUTABLE_PATH_PATTERNS
@@ -264,7 +262,7 @@ def test_manual_apply_simple_change(sample_patch: str, repo_with_files: Path) ->
     assert success is True
     assert error == ""
     updated = (repo_with_files / "test.py").read_text(encoding="utf-8")
-    assert "print(\"new\")" in updated
+    assert 'print("new")' in updated
 
 
 def test_manual_apply_new_file(fs) -> None:
@@ -307,9 +305,7 @@ def test_manual_apply_delete_file(fs) -> None:
 def test_manual_apply_multiple_hunks(fs) -> None:
     repo_root = Path("/repo")
     fs.create_dir(repo_root)
-    (repo_root / "test.txt").write_text(
-        "line1\nline2\nline3\nline4\nline5\n", encoding="utf-8"
-    )
+    (repo_root / "test.txt").write_text("line1\nline2\nline3\nline4\nline5\n", encoding="utf-8")
     patch_text = (
         "diff --git a/test.txt b/test.txt\n"
         "--- a/test.txt\n"

@@ -55,8 +55,7 @@ def test_linter_detects_missing_required_formats(tmp_path: Path) -> None:
     issues = lint_agent_prompts(agents_dir)
 
     assert any(
-        issue.severity == "error"
-        and issue.message == "Prompt missing required ID format examples."
+        issue.severity == "error" and issue.message == "Prompt missing required ID format examples."
         for issue in issues
     )
 
@@ -96,8 +95,7 @@ def test_workflow_agent_reference_validation(tmp_path: Path) -> None:
     issues = lint_workflow_agent_references(workflows_dir, agents_dir)
 
     assert any(
-        issue.severity == "error"
-        and issue.message == "Agent prompt file not found: test-agent.md"
+        issue.severity == "error" and issue.message == "Agent prompt file not found: test-agent.md"
         for issue in issues
     )
 

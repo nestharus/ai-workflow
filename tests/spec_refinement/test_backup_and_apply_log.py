@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
-
 from spec_manager.refinement.workflows import patch_utils
 
 
@@ -19,8 +18,8 @@ def sample_patch() -> str:
         "+++ b/test.py\n"
         "@@ -1,3 +1,3 @@\n"
         " def hello():\n"
-        "-    print(\"old\")\n"
-        "+    print(\"new\")\n"
+        '-    print("old")\n'
+        '+    print("new")\n'
         "     return True\n"
     )
 
@@ -205,7 +204,9 @@ def test_apply_falls_back_to_manual(sample_patch: str, fs, monkeypatch) -> None:
     )
     backup_dir = repo_root / "backup"
 
-    monkeypatch.setattr(patch_utils, "apply_patch_with_git", lambda *args, **kwargs: (False, "git error"))
+    monkeypatch.setattr(
+        patch_utils, "apply_patch_with_git", lambda *args, **kwargs: (False, "git error")
+    )
     monkeypatch.setattr(patch_utils, "apply_patch_manual", lambda *args, **kwargs: (True, ""))
 
     result = patch_utils.apply_patch(

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 from spec_manager.refinement.formats import LibraryEventType
-from spec_manager.refinement.workflows.library_synthesis import _read_library_events
 from spec_manager.refinement.workflows.library_structure_review import (
     apply_move_actions,
     apply_split_actions,
@@ -13,6 +12,7 @@ from spec_manager.refinement.workflows.library_structure_review import (
     detect_structure_issues,
     review_library_structure,
 )
+from spec_manager.refinement.workflows.library_synthesis import _read_library_events
 from spec_manager.refinement.workflows.spec_stabilization import build_spec_index
 from spec_manager.refinement.workspace import Phase
 from spec_manager.schemas.review_actions import (
@@ -124,9 +124,7 @@ def _create_library_with_elements(
     if evidence_sources is None:
         evidence_sources = [{"file_id": file_id, "sections": [section_id]}]
     evidence_payload = {"sources": evidence_sources}
-    (lib_dir / "evidence.json").write_text(
-        json.dumps(evidence_payload, indent=2), encoding="utf-8"
-    )
+    (lib_dir / "evidence.json").write_text(json.dumps(evidence_payload, indent=2), encoding="utf-8")
 
     spec_index = build_spec_index(spec_content, lib_id)
     (lib_dir / "spec_index.json").write_text(json.dumps(spec_index, indent=2), encoding="utf-8")
@@ -173,6 +171,7 @@ def _write_review_actions_report(
 
 # Detection workflow tests
 
+
 def test_detect_structure_issues_finds_overlaps(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
     elements_a = [_make_element("LIB-0001", idx, text="shared alpha") for idx in range(1, 7)]
@@ -188,9 +187,7 @@ def test_detect_structure_issues_finds_overlaps(spec_refinement_workspace) -> No
 def test_detect_structure_issues_finds_splits(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
     elements = [_make_element("LIB-0001", idx, text="alpha group") for idx in range(1, 6)]
-    elements += [
-        _make_element("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
-    ]
+    elements += [_make_element("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)]
     _create_library_with_elements(manager, "LIB-0001", elements)
 
     results = detect_structure_issues(manager)
@@ -247,6 +244,7 @@ def test_detect_structure_issues_loads_architecture_context(
 
 
 # Agent integration tests
+
 
 def test_boundary_judge_merge_decision(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
@@ -436,6 +434,7 @@ def test_split_planner_empty_output_no_action(spec_refinement_workspace, monkeyp
 
 # Proposal consolidation tests
 
+
 def test_consolidate_proposals_assigns_stable_ids(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
     _create_library_with_elements(manager, "LIB-0001", [_make_element("LIB-0001", 1)])
@@ -507,7 +506,9 @@ def test_consolidate_proposals_validates_pointers(spec_refinement_workspace, mon
     assert "Pointer validation failed" in (report.actions[0].notes or "")
 
 
-def test_consolidate_proposals_merges_boundary_and_split(spec_refinement_workspace, monkeypatch) -> None:
+def test_consolidate_proposals_merges_boundary_and_split(
+    spec_refinement_workspace, monkeypatch
+) -> None:
     manager, _manifest = spec_refinement_workspace()
     _create_library_with_elements(manager, "LIB-0001", [_make_element("LIB-0001", 1)])
     _create_library_with_elements(manager, "LIB-0002", [_make_element("LIB-0002", 1)])
@@ -563,7 +564,9 @@ def test_consolidate_proposals_merges_boundary_and_split(spec_refinement_workspa
         _run_agent,
     )
 
-    report = consolidate_proposals(manager, overlap_candidates, split_candidates, {"overlap_similarity": 0.35})
+    report = consolidate_proposals(
+        manager, overlap_candidates, split_candidates, {"overlap_similarity": 0.35}
+    )
 
     assert {action.type for action in report.actions} == {"merge", "split"}
 
@@ -618,6 +621,7 @@ def test_consolidate_proposals_sorts_actions_deterministically(
 
 
 # Report generation tests
+
 
 def test_review_library_structure_writes_json(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
@@ -698,6 +702,7 @@ def test_review_actions_json_contains_actions(spec_refinement_workspace, monkeyp
 
 
 # Split application tests
+
 
 def test_apply_single_split_creates_new_libraries(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
@@ -877,9 +882,7 @@ def test_apply_single_split_validates_artifacts(spec_refinement_workspace) -> No
 
 def test_apply_split_actions_with_flag(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _make_element("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_make_element("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _make_element("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_library_with_elements(manager, "LIB-0001", elements)
@@ -925,6 +928,7 @@ def test_apply_split_actions_with_flag(spec_refinement_workspace, monkeypatch) -
 
 
 # Move application tests
+
 
 def test_apply_single_move_inserts_tombstones(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
@@ -987,7 +991,9 @@ def test_apply_single_move_updates_evidence(spec_refinement_workspace) -> None:
     manager, _manifest = spec_refinement_workspace()
     elements = [_make_element("LIB-0001", idx, text=f"alpha {idx}") for idx in range(1, 4)]
     _create_library_with_elements(manager, "LIB-0001", elements)
-    _create_library_with_elements(manager, "LIB-0002", [_make_element("LIB-0002", 1)], evidence_sources=[])
+    _create_library_with_elements(
+        manager, "LIB-0002", [_make_element("LIB-0002", 1)], evidence_sources=[]
+    )
 
     action = ReviewAction.model_validate(
         {
@@ -1006,9 +1012,7 @@ def test_apply_single_move_updates_evidence(spec_refinement_workspace) -> None:
     apply_move_actions(manager, [action])
 
     target_evidence = json.loads(
-        (manager.structure.libraries_dir / "LIB-0002" / "evidence.json").read_text(
-            encoding="utf-8"
-        )
+        (manager.structure.libraries_dir / "LIB-0002" / "evidence.json").read_text(encoding="utf-8")
     )
     assert target_evidence["sources"]
 
@@ -1137,9 +1141,8 @@ def test_apply_move_actions_with_flag(spec_refinement_workspace, monkeypatch) ->
 
 # Error handling tests
 
-def test_apply_split_rollback_on_validation_failure(
-    spec_refinement_workspace, monkeypatch
-) -> None:
+
+def test_apply_split_rollback_on_validation_failure(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
     elements = [_make_element("LIB-0001", idx, text=f"alpha {idx}") for idx in range(1, 7)]
     _create_library_with_elements(manager, "LIB-0001", elements)
@@ -1176,14 +1179,12 @@ def test_apply_split_rollback_on_validation_failure(
 
     assert summary["rejected_actions"]
     assert summary["new_library_ids"] == []
-    assert (
-        manager.structure.libraries_dir / "LIB-0001" / "spec.md"
-    ).read_text(encoding="utf-8") == source_spec
+    assert (manager.structure.libraries_dir / "LIB-0001" / "spec.md").read_text(
+        encoding="utf-8"
+    ) == source_spec
 
 
-def test_apply_move_rollback_on_validation_failure(
-    spec_refinement_workspace, monkeypatch
-) -> None:
+def test_apply_move_rollback_on_validation_failure(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
     elements = [_make_element("LIB-0001", idx, text=f"alpha {idx}") for idx in range(1, 4)]
     _create_library_with_elements(manager, "LIB-0001", elements)
@@ -1218,12 +1219,12 @@ def test_apply_move_rollback_on_validation_failure(
     summary = apply_move_actions(manager, [action])
 
     assert summary["failed"] == 1
-    assert (
-        manager.structure.libraries_dir / "LIB-0001" / "spec.md"
-    ).read_text(encoding="utf-8") == source_spec
-    assert (
-        manager.structure.libraries_dir / "LIB-0002" / "spec.md"
-    ).read_text(encoding="utf-8") == target_spec
+    assert (manager.structure.libraries_dir / "LIB-0001" / "spec.md").read_text(
+        encoding="utf-8"
+    ) == source_spec
+    assert (manager.structure.libraries_dir / "LIB-0002" / "spec.md").read_text(
+        encoding="utf-8"
+    ) == target_spec
 
 
 def test_agent_failure_continues_workflow(spec_refinement_workspace, monkeypatch) -> None:
@@ -1297,6 +1298,7 @@ def test_invalid_action_skipped_during_application(spec_refinement_workspace) ->
 
 # End-to-end tests
 
+
 def test_full_workflow_overlap_to_merge(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
     elements_a = [_make_element("LIB-0001", idx, text="shared alpha") for idx in range(1, 7)]
@@ -1324,9 +1326,7 @@ def test_full_workflow_overlap_to_merge(spec_refinement_workspace, monkeypatch) 
 
 def test_full_workflow_split_to_new_libraries(spec_refinement_workspace, monkeypatch) -> None:
     manager, _manifest = spec_refinement_workspace()
-    elements = [
-        _make_element("LIB-0001", idx, text="alpha group") for idx in range(1, 6)
-    ] + [
+    elements = [_make_element("LIB-0001", idx, text="alpha group") for idx in range(1, 6)] + [
         _make_element("LIB-0001", idx + 5, text="beta group") for idx in range(1, 6)
     ]
     _create_library_with_elements(manager, "LIB-0001", elements)

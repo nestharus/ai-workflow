@@ -108,13 +108,13 @@ def test_nonzero_exit_raises_after_retries(fs: object) -> None:
         ),
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"Agent failed.*exit=1"),
     ):
-        with pytest.raises(RuntimeError, match=rf"Agent failed.*exit=1"):
-            run_agent(
-                agent_name="fail-agent",
-                prompt="go",
-                workspace=workspace,
-            )
+        run_agent(
+            agent_name="fail-agent",
+            prompt="go",
+            workspace=workspace,
+        )
 
 
 def test_nonzero_exit_error_includes_stderr(fs: object) -> None:
@@ -131,13 +131,13 @@ def test_nonzero_exit_error_includes_stderr(fs: object) -> None:
         ),
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"stderr=detailed error"),
     ):
-        with pytest.raises(RuntimeError, match=rf"stderr=detailed error"):
-            run_agent(
-                agent_name="err-agent",
-                prompt="go",
-                workspace=workspace,
-            )
+        run_agent(
+            agent_name="err-agent",
+            prompt="go",
+            workspace=workspace,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +159,13 @@ def test_empty_stdout_raises_after_retries(fs: object) -> None:
         ),
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"empty output"),
     ):
-        with pytest.raises(RuntimeError, match=rf"empty output"):
-            run_agent(
-                agent_name="empty-agent",
-                prompt="go",
-                workspace=workspace,
-            )
+        run_agent(
+            agent_name="empty-agent",
+            prompt="go",
+            workspace=workspace,
+        )
 
 
 def test_whitespace_only_stdout_counts_as_empty(fs: object) -> None:
@@ -182,13 +182,13 @@ def test_whitespace_only_stdout_counts_as_empty(fs: object) -> None:
         ),
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"empty output"),
     ):
-        with pytest.raises(RuntimeError, match=rf"empty output"):
-            run_agent(
-                agent_name="ws-agent",
-                prompt="go",
-                workspace=workspace,
-            )
+        run_agent(
+            agent_name="ws-agent",
+            prompt="go",
+            workspace=workspace,
+        )
 
 
 def test_none_stdout_counts_as_empty(fs: object) -> None:
@@ -206,13 +206,13 @@ def test_none_stdout_counts_as_empty(fs: object) -> None:
         ),
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"empty output"),
     ):
-        with pytest.raises(RuntimeError, match=rf"empty output"):
-            run_agent(
-                agent_name="none-agent",
-                prompt="go",
-                workspace=workspace,
-            )
+        run_agent(
+            agent_name="none-agent",
+            prompt="go",
+            workspace=workspace,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -234,14 +234,14 @@ def test_retries_up_to_max_retries_on_failure(fs: object) -> None:
         ) as mock_run,
         patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError),
     ):
-        with pytest.raises(RuntimeError):
-            run_agent(
-                agent_name="retry-agent",
-                prompt="go",
-                workspace=workspace,
-                max_retries=3,
-            )
+        run_agent(
+            agent_name="retry-agent",
+            prompt="go",
+            workspace=workspace,
+            max_retries=3,
+        )
 
     assert mock_run.call_count == 3
     # Exponential back-off: 2**0, 2**1, 2**2
@@ -262,14 +262,14 @@ def test_retries_with_empty_output(fs: object) -> None:
         ) as mock_run,
         patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError),
     ):
-        with pytest.raises(RuntimeError):
-            run_agent(
-                agent_name="retry-agent",
-                prompt="go",
-                workspace=workspace,
-                max_retries=2,
-            )
+        run_agent(
+            agent_name="retry-agent",
+            prompt="go",
+            workspace=workspace,
+            max_retries=2,
+        )
 
     assert mock_run.call_count == 2
     # Exponential back-off: 2**0, 2**1
@@ -504,14 +504,14 @@ def test_max_retries_one_no_retry_on_failure(fs: object) -> None:
         ) as mock_run,
         patch("spec_manager.refinement.agent_utils.time.sleep") as mock_sleep,
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"Agent failed"),
     ):
-        with pytest.raises(RuntimeError, match=rf"Agent failed"):
-            run_agent(
-                agent_name="once-agent",
-                prompt="try once",
-                workspace=workspace,
-                max_retries=1,
-            )
+        run_agent(
+            agent_name="once-agent",
+            prompt="try once",
+            workspace=workspace,
+            max_retries=1,
+        )
 
     assert mock_run.call_count == 1
     # Single attempt with exponential back-off: sleep(2**0) = sleep(1)
@@ -559,14 +559,14 @@ def test_max_retries_one_empty_output_raises(fs: object) -> None:
         ) as mock_run,
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"empty output"),
     ):
-        with pytest.raises(RuntimeError, match=rf"empty output"):
-            run_agent(
-                agent_name="empty-once",
-                prompt="try",
-                workspace=workspace,
-                max_retries=1,
-            )
+        run_agent(
+            agent_name="empty-once",
+            prompt="try",
+            workspace=workspace,
+            max_retries=1,
+        )
 
     assert mock_run.call_count == 1
 
@@ -590,14 +590,14 @@ def test_default_max_retries_is_two(fs: object) -> None:
         ) as mock_run,
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError),
     ):
-        with pytest.raises(RuntimeError):
-            run_agent(
-                agent_name="default-agent",
-                prompt="go",
-                workspace=workspace,
-                # max_retries not specified -- should default to 2
-            )
+        run_agent(
+            agent_name="default-agent",
+            prompt="go",
+            workspace=workspace,
+            # max_retries not specified -- should default to 2
+        )
 
     assert mock_run.call_count == 2
 
@@ -646,11 +646,11 @@ def test_fallback_error_when_last_error_is_none(fs: object) -> None:
         patch("spec_manager.refinement.agent_utils.subprocess.run"),
         patch("spec_manager.refinement.agent_utils.time.sleep"),
         patch("spec_manager.refinement.agent_utils.time.time", return_value=0.0),
+        pytest.raises(RuntimeError, match=r"Agent failed"),
     ):
-        with pytest.raises(RuntimeError, match=rf"Agent failed"):
-            run_agent(
-                agent_name="zero-agent",
-                prompt="no tries",
-                workspace=workspace,
-                max_retries=0,
-            )
+        run_agent(
+            agent_name="zero-agent",
+            prompt="no tries",
+            workspace=workspace,
+            max_retries=0,
+        )

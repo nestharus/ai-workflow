@@ -1,4 +1,4 @@
-"""Patch validation and application utilities for task implementation.
+r"""Patch validation and application utilities for task implementation.
 
 Provides deterministic patch parsing, validation, backup, and application
 for Phase 10 task execution. Supports unified diff format with git apply
@@ -33,8 +33,9 @@ import shutil
 import subprocess
 import tempfile
 import time
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -57,6 +58,7 @@ class PatchValidationError(Exception):
     """Error raised when a patch fails validation or parsing."""
 
     def __init__(self, error_type: str, details: dict[str, Any]) -> None:
+        """Initialize the validation error."""
         self.error_type = error_type
         self.details = details
         message = details.get("message") or error_type
@@ -295,10 +297,8 @@ def apply_patch_with_git(
             return False, message
         return True, ""
     finally:
-        try:
+        with suppress(OSError):
             temp_path.unlink()
-        except OSError:
-            pass
 
 
 def apply_patch_manual(patch_text: str, repo_root: Path) -> tuple[bool, str]:
@@ -395,7 +395,7 @@ def apply_patch(
         Dictionary containing apply log data and success status.
     """
     patch_hash = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
 
     try:
         parsed = parse_unified_diff(patch_text)
@@ -642,17 +642,14 @@ def _resolve_target_path(
 ) -> tuple[Path, bool, bool]:
     is_new = patch_file.old_path == "/dev/null"
     is_delete = patch_file.new_path == "/dev/null"
-    if is_delete:
-        target = patch_file.old_path
-    else:
-        target = patch_file.new_path
+    target = patch_file.old_path if is_delete else patch_file.new_path
     return repo_root / target, is_new, is_delete
 
 
 def _read_file_for_patch(path: Path) -> tuple[str, str, bool]:
     if not path.exists():
         return "", "\n", False
-    with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
+    with open(path, encoding="utf-8", errors="replace", newline="") as handle:
         content = handle.read()
     line_ending = "\n"
     if "\r\n" in content:
@@ -747,18 +744,18 @@ def _dedupe_path_list(items: list[Path]) -> list[Path]:
 
 
 __all__ = [
-    "PatchValidationError",
+    "ApplyLogEntry",
+    "BackupRecord",
     "ParsedPatch",
     "PatchFile",
     "PatchHunk",
-    "BackupRecord",
-    "ApplyLogEntry",
+    "PatchValidationError",
+    "apply_patch",
+    "apply_patch_manual",
+    "apply_patch_with_git",
+    "backup_files",
+    "compute_file_hash",
+    "extract_touched_paths",
     "parse_unified_diff",
     "validate_patch",
-    "apply_patch_with_git",
-    "apply_patch_manual",
-    "backup_files",
-    "apply_patch",
-    "extract_touched_paths",
-    "compute_file_hash",
 ]

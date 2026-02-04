@@ -317,9 +317,7 @@ def test_stabilize_specs_full_pipeline_idempotent(spec_refinement_workspace) -> 
     for lib_id in ["LIB-0001", "LIB-0002"]:
         lib_dir = manager.structure.libraries_dir / lib_id
         first_run[f"{lib_id}/spec.md"] = (lib_dir / "spec.md").read_text(encoding="utf-8")
-        first_run[f"{lib_id}/decisions.md"] = (lib_dir / "decisions.md").read_text(
-            encoding="utf-8"
-        )
+        first_run[f"{lib_id}/decisions.md"] = (lib_dir / "decisions.md").read_text(encoding="utf-8")
         first_run[f"{lib_id}/id_counters.json"] = json.loads(
             (lib_dir / "id_counters.json").read_text(encoding="utf-8")
         )
@@ -345,32 +343,24 @@ def test_stabilize_specs_full_pipeline_idempotent(spec_refinement_workspace) -> 
         lib_dir = manager.structure.libraries_dir / lib_id
 
         # spec.md and decisions.md must be byte-identical.
-        assert (lib_dir / "spec.md").read_text(encoding="utf-8") == first_run[
-            f"{lib_id}/spec.md"
-        ]
+        assert (lib_dir / "spec.md").read_text(encoding="utf-8") == first_run[f"{lib_id}/spec.md"]
         assert (lib_dir / "decisions.md").read_text(encoding="utf-8") == first_run[
             f"{lib_id}/decisions.md"
         ]
 
         # id_counters.json must preserve counter values across runs.
-        counters_2 = json.loads(
-            (lib_dir / "id_counters.json").read_text(encoding="utf-8")
-        )
+        counters_2 = json.loads((lib_dir / "id_counters.json").read_text(encoding="utf-8"))
         assert counters_2 == first_run[f"{lib_id}/id_counters.json"]
 
         # Index content must match (generated_at timestamps may differ).
         spec_idx_1 = first_run[f"{lib_id}/spec_index.json"]
-        spec_idx_2 = json.loads(
-            (lib_dir / "spec_index.json").read_text(encoding="utf-8")
-        )
+        spec_idx_2 = json.loads((lib_dir / "spec_index.json").read_text(encoding="utf-8"))
         assert spec_idx_2["lib_id"] == spec_idx_1["lib_id"]
         assert spec_idx_2["spec_path"] == spec_idx_1["spec_path"]
         assert spec_idx_2["elements"] == spec_idx_1["elements"]
 
         dec_idx_1 = first_run[f"{lib_id}/decisions_index.json"]
-        dec_idx_2 = json.loads(
-            (lib_dir / "decisions_index.json").read_text(encoding="utf-8")
-        )
+        dec_idx_2 = json.loads((lib_dir / "decisions_index.json").read_text(encoding="utf-8"))
         assert dec_idx_2["lib_id"] == dec_idx_1["lib_id"]
         assert dec_idx_2["decisions_path"] == dec_idx_1["decisions_path"]
         assert dec_idx_2["decisions"] == dec_idx_1["decisions"]
@@ -378,6 +368,8 @@ def test_stabilize_specs_full_pipeline_idempotent(spec_refinement_workspace) -> 
     # Run-level aggregate index must match.
     run_index_2 = json.loads(run_index_path.read_text(encoding="utf-8"))
     assert len(run_index_2["libraries"]) == len(first_run_index["libraries"])
-    for entry_1, entry_2 in zip(first_run_index["libraries"], run_index_2["libraries"]):
+    for entry_1, entry_2 in zip(
+        first_run_index["libraries"], run_index_2["libraries"], strict=True
+    ):
         assert entry_1["lib_id"] == entry_2["lib_id"]
         assert entry_1["elements"] == entry_2["elements"]
