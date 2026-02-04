@@ -848,6 +848,92 @@ def cmd_spec_build_interfaces(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_plan_tasks(args: argparse.Namespace) -> int:
+    """Plan tasks for Phase 9."""
+    run_id = args.run_id
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+    if not _phase_completed(manager, Phase.INTERFACES):
+        print("Interfaces must be completed before planning tasks.")
+        return 1
+    if not _phase_completed(manager, Phase.ARCHITECTURE_MAPPING):
+        print("Architecture mapping must be completed before planning tasks.")
+        return 1
+
+    required_artifacts = {
+        manager.structure.architecture_dir / "mapping.md": "architecture/mapping.md",
+        manager.structure.architecture_dir / "selected.md": "architecture/selected.md",
+        manager.structure.indexes_dir / "edge_list.json": "indexes/edge_list.json",
+        manager.structure.indexes_dir / "interface_index.json": "indexes/interface_index.json",
+    }
+    missing = [label for path, label in required_artifacts.items() if not path.exists()]
+    if missing:
+        print("Missing prerequisite artifacts for task planning:")
+        for label in missing:
+            print(f"  - {label}")
+        return 1
+
+    manager.start_phase(Phase.TASKS)
+
+    from spec_manager.refinement.workflows.tasks import plan_tasks
+
+    try:
+        result = plan_tasks(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        manager.fail_phase(Phase.TASKS, str(exc))
+        return 1
+
+    tasks_count = result.get("tasks_count", 0)
+    validation_errors = result.get("validation_errors", [])
+    validation_stats = result.get("validation_stats", {})
+    task_index_path = result.get("task_index_path")
+    patch_graph_path = result.get("patch_graph_path")
+
+    print(f"Tasks planned: {tasks_count}")
+    print(f"Validation errors: {len(validation_errors)}")
+
+    coverage = validation_stats.get("coverage", {})
+    if coverage:
+        print("Coverage metrics:")
+        coverage_targets = coverage.get("coverage_targets")
+        if coverage_targets is not None:
+            print(f"  - Coverage targets: {coverage_targets}")
+        edges_required = coverage.get("edges_required")
+        if edges_required is not None:
+            print(f"  - Edges required: {edges_required}")
+        open_gaps_required = coverage.get("open_gaps_required")
+        if open_gaps_required is not None:
+            print(f"  - Open gaps required: {open_gaps_required}")
+        open_decisions_required = coverage.get("open_decisions_required")
+        if open_decisions_required is not None:
+            print(f"  - Open decisions required: {open_decisions_required}")
+        error_types = coverage.get("error_types") or {}
+        if error_types:
+            print("  - Error types:")
+            for error_type, count in sorted(error_types.items()):
+                print(f"    - {error_type}: {count}")
+
+    if task_index_path:
+        print(f"Task index: {task_index_path}")
+    if patch_graph_path:
+        print(f"Patch graph: {patch_graph_path}")
+
+    if not result.get("success", True) or result.get("validation_errors"):
+        manager.fail_phase(Phase.TASKS, "Task planning failed")
+        return 1
+
+    manager.complete_phase(Phase.TASKS, outputs=result)
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not _phase_completed(manager, Phase.TASKS):
+        return 1
+    return 0
+
+
 def cmd_qa_list(_: argparse.Namespace) -> int:
     """List available manual QA cases."""
     from spec_manager.refinement.qa import QA_CASES
@@ -951,6 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
             "  spec map-libraries (agent: glm-architecture-mapper)\n"
             "  spec review-structure (Phase 7: library boundary review)\n"
             "  spec build-interfaces (Phase 8: interface graph and contracts)\n"
+            "  spec plan-tasks (Phase 9: task planning from specs and interfaces)\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1261,6 +1348,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spec_build_interfaces.add_argument("run_id", help="Run identifier")
     p_spec_build_interfaces.set_defaults(func=cmd_spec_build_interfaces)
+
+    p_spec_plan_tasks = spec_subparsers.add_parser(
+        "plan-tasks",
+        help="Plan tasks for Phase 9",
+        description=(
+            "Run Phase 9 task planning to convert stabilized specs, interface contracts, and "
+            "architecture mapping into an executable task plan.\n"
+            "Requires Phase 8 interfaces and Phase 6 architecture mapping to be completed.\n"
+            "Outputs: tasks/task_index.json, tasks/task_index.md, tasks/TASK-####/task.json, "
+            "tasks/TASK-####/task.md, workspace/indexes/patch_graph.json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_plan_tasks.add_argument("run_id", help="Run identifier")
+    p_spec_plan_tasks.set_defaults(func=cmd_spec_plan_tasks)
 
     if argv is None:
         argv = sys.argv[1:]
