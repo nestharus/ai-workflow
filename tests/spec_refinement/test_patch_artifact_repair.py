@@ -52,7 +52,7 @@ def test_repair_artifact_patch_audit(fs, monkeypatch) -> None:
     def _fake_run_agent(*, agent_name: str, prompt: str, workspace: Path, **_kwargs: object) -> str:
         captured["agent_name"] = agent_name
         assert workspace == manager.workspace_path
-        return "{\"verdict\": \"pass\", \"issues\": 0}"
+        return '{"verdict": "pass", "issues": 0}'
 
     monkeypatch.setattr("spec_manager.refinement.repair.run_agent", _fake_run_agent)
 

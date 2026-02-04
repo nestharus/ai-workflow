@@ -99,7 +99,7 @@ class TaskImplementationStatusSchema(BaseModel):
         return _validate_iso8601(value)
 
     @model_validator(mode="after")
-    def validate_status_requirements(self) -> "TaskImplementationStatusSchema":
+    def validate_status_requirements(self) -> TaskImplementationStatusSchema:
         """Enforce required fields based on status transitions.
 
         Returns:
@@ -120,9 +120,10 @@ class TaskImplementationStatusSchema(BaseModel):
         """
         if self.status == "in_progress" and self.started_at is None:
             raise ValueError("started_at is required when status is in_progress")
-        if self.status in {"done", "failed"}:
-            if self.started_at is None or self.finished_at is None:
-                raise ValueError("started_at and finished_at are required when status is done/failed")
+        if self.status in {"done", "failed"} and (
+            self.started_at is None or self.finished_at is None
+        ):
+            raise ValueError("started_at and finished_at are required when status is done/failed")
         if self.status == "done" and not self.patch_sha256:
             raise ValueError("patch_sha256 is required when status is done")
         return self
