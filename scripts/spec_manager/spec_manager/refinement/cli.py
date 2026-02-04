@@ -946,7 +946,13 @@ def cmd_spec_plan_tasks(args: argparse.Namespace) -> int:
 def cmd_spec_implement(args: argparse.Namespace) -> int:
     """Execute tasks for Phase 10."""
     run_id = args.run_id
-    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    repo_root = args.repo_root or Path(".")
+    task_filter = None
+    if args.tasks:
+        task_filter = [task_id.strip() for task_id in args.tasks.split(",") if task_id.strip()]
+        if not task_filter:
+            task_filter = None
+    manager = WorkspaceManager(run_id=run_id, input_folder=repo_root)
 
     if not manager.is_initialized:
         print("Workspace not initialized. Run 'init' first.")
@@ -972,7 +978,7 @@ def cmd_spec_implement(args: argparse.Namespace) -> int:
         result = run_implementation_phase(
             run_root=manager.workspace_path,
             repo_root=manager.input_folder,
-            task_filter=None,
+            task_filter=task_filter,
             max_iterations=args.max_iterations,
             config=config,
         )
@@ -986,9 +992,30 @@ def cmd_spec_implement(args: argparse.Namespace) -> int:
     if result.get("tasks_blocked"):
         print(f"Tasks blocked: {result.get('tasks_blocked', 0)}")
 
-    if result.get("tasks_failed", 0) > 0:
+    task_summaries = result.get("task_summaries", [])
+    total_patches_applied = sum(s.get("applied_files", 0) for s in task_summaries)
+    tests_passed = 0
+    tests_failed = 0
+    for summary in task_summaries:
+        tests = summary.get("tests")
+        if tests and tests.get("ran"):
+            if tests.get("exit_code", -1) == 0:
+                tests_passed += 1
+            else:
+                tests_failed += 1
+
+    print(f"Total patches applied: {total_patches_applied}")
+    print(f"Tasks with tests passed: {tests_passed}")
+    print(f"Tasks with tests failed: {tests_failed}")
+
+    if result.get("tasks_failed", 0) > 0 or tests_failed > 0:
         return 1
     return 0
+
+
+def cmd_spec_run_tasks(args: argparse.Namespace) -> int:
+    """Execute tasks for Phase 10 (alias for implement)."""
+    return cmd_spec_implement(args)
 
 
 def cmd_qa_list(_: argparse.Namespace) -> int:
@@ -1095,7 +1122,9 @@ def main(argv: list[str] | None = None) -> int:
             "  spec review-structure (Phase 7: library boundary review)\n"
             "  spec build-interfaces (Phase 8: interface graph and contracts)\n"
             "  spec plan-tasks (Phase 9: task planning from specs and interfaces)\n"
-            "  spec implement (Phase 10: execute implementation tasks)\n"
+            "  spec implement (Phase 10: execute tasks with\n"
+            "    --repo-root, --tasks, --run-tests, --max-iterations)\n"
+            "  spec run-tasks (Phase 10: alias for implement)\n"
             "  qa list\n"
             "  qa run\n"
             "  qa run-all\n"
@@ -1434,6 +1463,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spec_implement.add_argument("run_id", help="Run identifier")
     p_spec_implement.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root directory (default: current directory)",
+    )
+    p_spec_implement.add_argument(
+        "--tasks",
+        help=(
+            "Comma-separated task IDs to execute (e.g., TASK-0001,TASK-0002). "
+            "If omitted, all tasks are executed in dependency order."
+        ),
+    )
+    p_spec_implement.add_argument(
         "--max-iterations", type=int, default=5, help="Max repair iterations"
     )
     tests_group = p_spec_implement.add_mutually_exclusive_group()
@@ -1470,6 +1512,69 @@ def main(argv: list[str] | None = None) -> int:
         help="Allow patch repair iterations on test failures (default: true)",
     )
     p_spec_implement.set_defaults(func=cmd_spec_implement)
+
+    p_spec_run_tasks = spec_subparsers.add_parser(
+        "run-tasks",
+        help="Execute implementation tasks for Phase 10 (alias for implement)",
+        description=(
+            "Run Phase 10 implementation to apply task patches, run tests, and audit results.\n"
+            "This is an alias for 'spec implement'.\n"
+            "Requires Phase 9 task planning to be completed.\n"
+            "Outputs: tasks/TASK-####/patch.diff, apply_log.json, test_output.txt, audit.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_run_tasks.add_argument("run_id", help="Run identifier")
+    p_spec_run_tasks.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root directory (default: current directory)",
+    )
+    p_spec_run_tasks.add_argument(
+        "--tasks",
+        help=(
+            "Comma-separated task IDs to execute (e.g., TASK-0001,TASK-0002). "
+            "If omitted, all tasks are executed in dependency order."
+        ),
+    )
+    p_spec_run_tasks.add_argument(
+        "--max-iterations", type=int, default=5, help="Max repair iterations"
+    )
+    run_tasks_tests_group = p_spec_run_tasks.add_mutually_exclusive_group()
+    run_tasks_tests_group.add_argument(
+        "--run-tests",
+        dest="run_tests",
+        action="store_true",
+        default=True,
+        help="Run tests after applying patches (default)",
+    )
+    run_tasks_tests_group.add_argument(
+        "--no-tests",
+        dest="run_tests",
+        action="store_false",
+        help="Skip test execution",
+    )
+    p_spec_run_tasks.add_argument(
+        "--test-command",
+        help="Override test command (default: from pyproject or 'uv run pytest')",
+    )
+    p_spec_run_tasks.add_argument(
+        "--run-lint",
+        action="store_true",
+        help="Run lint after tests (non-blocking)",
+    )
+    p_spec_run_tasks.add_argument(
+        "--lint-command",
+        help="Override lint command (default: 'uv run lint')",
+    )
+    p_spec_run_tasks.add_argument(
+        "--allow-test-repair",
+        type=_parse_bool,
+        default=True,
+        help="Allow patch repair iterations on test failures (default: true)",
+    )
+    p_spec_run_tasks.set_defaults(func=cmd_spec_run_tasks)
 
     if argv is None:
         argv = sys.argv[1:]

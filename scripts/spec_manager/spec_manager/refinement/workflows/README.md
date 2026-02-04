@@ -335,3 +335,61 @@ sequenceDiagram
     Sectionize->>Manager: Complete phase
     Sectionize-->>User: Sectionization complete
 ```
+
+## Phase 10: Task Implementation
+
+### Commands
+
+- `uv run spec spec run-tasks <run_id>`: Execute all planned tasks
+- `uv run spec spec run-tasks <run_id> --tasks TASK-0001,TASK-0002`: Execute specific tasks
+- `uv run spec spec run-tasks <run_id> --repo-root /path/to/repo`: Execute tasks in a specific repository
+- `uv run spec spec run-tasks <run_id> --no-tests`: Skip test execution
+- `uv run spec spec run-tasks <run_id> --test-command "pytest -v"`: Override test command
+- `uv run spec spec run-tasks <run_id> --run-lint`: Run linting after tests
+- `uv run spec spec run-tasks <run_id> --max-iterations 3`: Limit repair iterations
+
+`spec implement` is an alias for `spec run-tasks` and accepts the same options.
+
+### Agents
+
+- **glm-task-implementer**: Generates unified diff patches from task requirements
+- **chatgpt-patch-audit-judge**: Audits patches against acceptance criteria
+- **chatgpt-patch-repairer**: Repairs invalid or failing patches
+
+### Outputs
+
+- `tasks/TASK-####/context_bundle.md`: Aggregated context for task implementation
+- `tasks/TASK-####/patch.diff`: Unified diff patch
+- `tasks/TASK-####/backup/`: Pre-patch file backups
+- `tasks/TASK-####/apply_log.json`: Patch application log with file hashes
+- `tasks/TASK-####/audit.md`: Audit report with verdict
+- `tasks/TASK-####/status.json`: Task execution status
+- `tasks/TASK-####/test_output.txt`: Test execution output (if --run-tests)
+- `tasks/TASK-####/lint_output.txt`: Lint output (if --run-lint)
+
+### Validation
+
+- Patches must be valid unified diffs
+- All paths must be relative and inside repo-root
+- Immutable paths (spec_snapshot/, manifest/) are protected
+- Tests must pass for status "done" (if --run-tests)
+- Audit verdict must be "pass" for status "done"
+
+### Example Workflow
+
+```bash
+# Execute all tasks with tests
+uv run spec spec run-tasks my_run_001
+
+# Execute specific tasks only
+uv run spec spec run-tasks my_run_001 --tasks TASK-0001,TASK-0003
+
+# Execute in a different repository
+uv run spec spec run-tasks my_run_001 --repo-root ../my-project
+
+# Skip tests for faster iteration
+uv run spec spec run-tasks my_run_001 --no-tests
+
+# Custom test command with linting
+uv run spec spec run-tasks my_run_001 --test-command "pytest -xvs" --run-lint
+```
