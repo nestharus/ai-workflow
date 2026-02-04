@@ -327,9 +327,7 @@ class TestCoverageReport:
         assert lib_rows[0][1] == "2"
         assert lib_rows[0][2] == "2"
 
-    def test_generate_coverage_report_zero_coverage(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_coverage_report_zero_coverage(self, interface_workspace, fs) -> None:
         manager, _ = interface_workspace(run_id="run_coverage_zero")
         file_id = _get_primary_file_id(manager)
         _write_sections(manager, file_id)
@@ -346,9 +344,7 @@ class TestCoverageReport:
         assert "| Total Sections | Referenced Sections | Coverage Ratio |" in content
         assert "0.00%" in content
 
-    def test_generate_coverage_report_markdown_format(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_coverage_report_markdown_format(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
 
         content = generate_coverage_report(manager)
@@ -379,9 +375,7 @@ class TestComplianceReport:
         assert "## QA Validation Results" in content
         assert "## Bad Signature Detection" in content
 
-    def test_generate_compliance_report_qa_integration(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_compliance_report_qa_integration(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
         _write_qa_summary(
             manager,
@@ -404,9 +398,7 @@ class TestComplianceReport:
         assert "QA-001: Failure detail" in content
         assert "50.00%" in content
 
-    def test_generate_compliance_report_signature_detection(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_compliance_report_signature_detection(self, interface_workspace, fs) -> None:
         manager, _ = interface_workspace(run_id="run_compliance_signatures")
         create_interface_test_libraries(fs, run_id=manager.run_id)
 
@@ -430,9 +422,7 @@ class TestComplianceReport:
 
         assert "legacy_pointer_format" in content
 
-    def test_generate_compliance_report_no_qa_results(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_compliance_report_no_qa_results(self, interface_workspace, fs) -> None:
         manager, _ = interface_workspace(run_id="run_compliance_no_qa")
         create_interface_test_libraries(fs, run_id=manager.run_id)
 
@@ -440,9 +430,7 @@ class TestComplianceReport:
 
         assert "## QA Validation Results" not in content
 
-    def test_generate_compliance_report_markdown_format(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_compliance_report_markdown_format(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
         _write_qa_summary(
             manager,
@@ -478,9 +466,7 @@ class TestDriftReport:
         assert "## Failed/Blocked Tasks" in content
         assert "### Recommendations" in content
 
-    def test_generate_drift_report_uncovered_elements(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_drift_report_uncovered_elements(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
 
         content = generate_drift_report(manager)
@@ -495,9 +481,7 @@ class TestDriftReport:
         assert "TASK-0002" in content
         assert "Tests failed." in content
 
-    def test_generate_drift_report_uncovered_edges(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_drift_report_uncovered_edges(self, interface_workspace, fs) -> None:
         manager, manifest = interface_workspace(run_id="run_drift_uncovered_edges")
         create_interface_test_libraries(fs, run_id=manager.run_id)
         create_task_planning_prerequisites(fs, manager.run_id, manifest)
@@ -520,9 +504,7 @@ class TestDriftReport:
 
         assert "EDGE-LIB-0001-LIB-0002" in content
 
-    def test_generate_drift_report_task_status_aggregation(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_drift_report_task_status_aggregation(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
 
         content = generate_drift_report(manager)
@@ -576,9 +558,7 @@ class TestDriftReport:
         assert "- overall_status: OK" in content
         assert "No immediate remediation required." in content
 
-    def test_generate_drift_report_markdown_format(
-        self, interface_workspace, fs
-    ) -> None:
+    def test_generate_drift_report_markdown_format(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
 
         content = generate_drift_report(manager)
@@ -725,9 +705,7 @@ class TestReportsIntegration:
                 line for line in content.splitlines() if not line.startswith("- generated_at:")
             )
 
-        assert {
-            key: strip_timestamps(value) for key, value in first.items()
-        } == {
+        assert {key: strip_timestamps(value) for key, value in first.items()} == {
             key: strip_timestamps(value) for key, value in second.items()
         }
 
@@ -759,7 +737,9 @@ class TestReportsIntegration:
         audit = (manager.structure.audits_dir / "run_audit.md").read_text(encoding="utf-8")
 
         assert "## Section Coverage" in coverage
-        assert "## QA Validation Results" in compliance or "## Bad Signature Detection" in compliance
+        assert (
+            "## QA Validation Results" in compliance or "## Bad Signature Detection" in compliance
+        )
         assert "## Uncovered Spec Elements" in drift
         assert "## Phase Status" in audit
         assert _validate_json_index(

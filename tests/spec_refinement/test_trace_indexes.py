@@ -119,9 +119,7 @@ def _create_minimal_spec_index(
             }
         )
     SpecIndex.model_validate(payload)
-    (lib_dir / "spec_index.json").write_text(
-        json.dumps(payload, indent=2), encoding="utf-8"
-    )
+    (lib_dir / "spec_index.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
 
 
@@ -244,9 +242,7 @@ class TestAtomToSectionIndex:
         assert index == {}
         assert any("Atoms directory missing" in record.message for record in caplog.records)
 
-    def test_build_atom_to_section_index_invalid_json(
-        self, interface_workspace, caplog
-    ) -> None:
+    def test_build_atom_to_section_index_invalid_json(self, interface_workspace, caplog) -> None:
         manager, _ = interface_workspace(run_id="run_atoms_invalid")
         atoms_dir = manager.structure.manifest_atoms_dir
         atoms_dir.mkdir(parents=True, exist_ok=True)
@@ -259,9 +255,7 @@ class TestAtomToSectionIndex:
         assert index == {}
         assert any("Invalid JSON" in record.message for record in caplog.records)
 
-    def test_build_atom_to_section_index_duplicate_atoms(
-        self, interface_workspace, caplog
-    ) -> None:
+    def test_build_atom_to_section_index_duplicate_atoms(self, interface_workspace, caplog) -> None:
         manager, _ = interface_workspace(run_id="run_atoms_duplicate")
         atoms_dir = manager.structure.manifest_atoms_dir
         atoms_dir.mkdir(parents=True, exist_ok=True)
@@ -372,9 +366,7 @@ class TestSectionToElementsIndex:
         entries = index[section_ids[0]]
         assert {entry["lib_id"] for entry in entries} == {"LIB-0001", "LIB-0002", "LIB-0003"}
 
-    def test_build_section_to_spec_elements_index_deduplication(
-        self, interface_workspace
-    ) -> None:
+    def test_build_section_to_spec_elements_index_deduplication(self, interface_workspace) -> None:
         manager, _ = interface_workspace(run_id="run_sections_dedupe")
         file_id = sorted(manager.state.file_manifest.keys())[0]
         section_ids = _write_sections(manager, file_id)
@@ -438,9 +430,7 @@ class TestElementToTasksIndex:
         assert index["REQ-LIB-0001-0001"] == ["TASK-0001"]
         assert index["FLOW-LIB-0001-01"] == ["TASK-0002"]
 
-    def test_build_spec_element_to_tasks_index_multiple_tasks(
-        self, interface_workspace
-    ) -> None:
+    def test_build_spec_element_to_tasks_index_multiple_tasks(self, interface_workspace) -> None:
         manager, _ = interface_workspace(run_id="run_elements_multi")
         _create_minimal_task_index(
             manager,
@@ -553,9 +543,7 @@ class TestTaskToPatchesIndex:
         assert index["TASK-0001"]["status"] == "done"
         assert index["TASK-0001"]["task_hash"] == "hash-0001"
 
-    def test_build_task_to_patches_index_missing_patches(
-        self, interface_workspace
-    ) -> None:
+    def test_build_task_to_patches_index_missing_patches(self, interface_workspace) -> None:
         manager, _ = interface_workspace(run_id="run_patches_missing")
         _create_minimal_task_index(
             manager,
@@ -571,9 +559,7 @@ class TestTaskToPatchesIndex:
 
         assert index == {}
 
-    def test_build_task_to_patches_index_relative_paths(
-        self, interface_workspace
-    ) -> None:
+    def test_build_task_to_patches_index_relative_paths(self, interface_workspace) -> None:
         manager, _ = interface_workspace(run_id="run_patches_relative")
         _create_minimal_task_index(
             manager,
