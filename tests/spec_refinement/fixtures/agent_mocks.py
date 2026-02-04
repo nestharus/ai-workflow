@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.formats import _extract_json_payload
+from spec_manager.schemas.tasks import TASK_ID_RE
 
 LABEL_BY_LIB = {
     "LIB-0001": "Core Workflow",
@@ -727,6 +728,445 @@ def mock_interface_contract_repairer_agent(
     return "\n".join([markdown, "```json", payload, "```"])
 
 
+def _extract_json_section(prompt: str, header: str) -> Any:
+    if header not in prompt:
+        return None
+    section = prompt.split(header, 1)[1]
+    payload = _extract_json_payload(section)
+    if not payload:
+        return None
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_task_planning_context(prompt: str) -> dict[str, Any]:
+    payload = _extract_json_section(prompt, "## PLANNING CONTEXT")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_task_plan_errors(prompt: str) -> list[dict[str, Any]]:
+    payload = _extract_json_section(prompt, "## VALIDATION ERRORS")
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def _extract_task_plan_requirements(prompt: str) -> dict[str, Any]:
+    payload = _extract_json_section(prompt, "## COVERAGE REQUIREMENTS")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_task_plan(prompt: str) -> list[dict[str, Any]]:
+    payload = _extract_json_section(prompt, "## CURRENT TASK PLAN")
+    if isinstance(payload, dict):
+        tasks = payload.get("tasks")
+        if isinstance(tasks, list):
+            return [task for task in tasks if isinstance(task, dict)]
+    return []
+
+
+def _build_lib_component_map(components: dict[str, Any]) -> dict[str, str]:
+    lib_to_component: dict[str, str] = {}
+    if not isinstance(components, dict):
+        return lib_to_component
+    for component_name, payload in components.items():
+        if not isinstance(component_name, str) or not isinstance(payload, dict):
+            continue
+        libraries = payload.get("libraries") or []
+        for lib_id in libraries:
+            if isinstance(lib_id, str) and lib_id not in lib_to_component:
+                lib_to_component[lib_id] = component_name
+    return lib_to_component
+
+
+def _default_acceptance_criteria(title: str) -> list[str]:
+    return [f"Tests validate {title} output."]
+
+
+def _make_task_payload(
+    *,
+    title: str,
+    description: str,
+    component: str,
+    libraries: list[str],
+    covers: dict[str, list[str]],
+    acceptance_criteria: list[str] | None = None,
+    depends_on: list[str] | None = None,
+    priority: str = "p1",
+    temp_id: str | None = None,
+    citations: list[str] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "title": title,
+        "description": description,
+        "priority": priority,
+        "component": component,
+        "libraries": libraries,
+        "covers": {
+            "elements": list(covers.get("elements") or []),
+            "edges": list(covers.get("edges") or []),
+            "decisions": list(covers.get("decisions") or []),
+            "gaps": list(covers.get("gaps") or []),
+        },
+        "acceptance_criteria": acceptance_criteria or _default_acceptance_criteria(title),
+        "suggested_files": [],
+        "risk_notes": "",
+        "validation_notes": "",
+        "citations": citations or [],
+        "depends_on": depends_on or [],
+    }
+    if temp_id:
+        payload["temp_id"] = temp_id
+    return payload
+
+
+def _build_task_plan_from_context(
+    planning_context: dict[str, Any],
+    *,
+    violation_mode: str | None = None,
+    task_overrides: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    components = planning_context.get("components") or {}
+    lib_to_component = _build_lib_component_map(components)
+    coverage_targets = planning_context.get("coverage_targets") or {}
+    edges = planning_context.get("edges") or []
+    open_decisions = planning_context.get("open_decisions") or []
+    open_gaps = planning_context.get("open_gaps") or []
+
+    task_overrides = task_overrides or {}
+    override_lookup = {key.casefold(): value for key, value in task_overrides.items()}
+
+    tasks: list[dict[str, Any]] = []
+    temp_counter = 1
+
+    element_task_by_lib: dict[str, dict[str, Any]] = {}
+    for lib_id, element_ids in sorted(coverage_targets.items()):
+        elements = [str(elem) for elem in element_ids or []]
+        component = lib_to_component.get(lib_id, "Core")
+        title = f"Cover {lib_id} elements"
+        temp_id = f"TEMP-{temp_counter:03d}"
+        temp_counter += 1
+        task = _make_task_payload(
+            title=title,
+            description=f"Ensure tasks cover all spec elements for {lib_id}.",
+            component=component,
+            libraries=[lib_id],
+            covers={"elements": elements, "edges": [], "decisions": [], "gaps": []},
+            acceptance_criteria=_default_acceptance_criteria(title),
+            depends_on=[],
+            temp_id=temp_id,
+        )
+        tasks.append(task)
+        element_task_by_lib[lib_id] = task
+
+    for edge in sorted(edges, key=lambda item: item.get("edge_id", "")):
+        edge_id = str(edge.get("edge_id", "EDGE-UNKNOWN"))
+        consumer_lib = str(edge.get("consumer_lib", "LIB-0001"))
+        provider_lib = str(edge.get("provider_lib", "LIB-0002"))
+        component = lib_to_component.get(consumer_lib, lib_to_component.get(provider_lib, "Core"))
+        title = f"Implement {edge_id}"
+        temp_id = f"TEMP-{temp_counter:03d}"
+        temp_counter += 1
+        dependencies: list[str] = []
+        for lib_id in (consumer_lib, provider_lib):
+            task = element_task_by_lib.get(lib_id)
+            if task and task.get("temp_id"):
+                dependencies.append(str(task["temp_id"]))
+        task = _make_task_payload(
+            title=title,
+            description=f"Deliver interface responsibilities for {edge_id}.",
+            component=component,
+            libraries=[consumer_lib, provider_lib],
+            covers={"elements": [], "edges": [edge_id], "decisions": [], "gaps": []},
+            acceptance_criteria=_default_acceptance_criteria(title),
+            depends_on=dependencies,
+            temp_id=temp_id,
+        )
+        tasks.append(task)
+
+    for decision in sorted(open_decisions, key=lambda item: item.get("decision_id", "")):
+        decision_id = decision.get("decision_id")
+        if not decision_id:
+            continue
+        lib_id = str(decision.get("lib_id", "LIB-0001"))
+        component = lib_to_component.get(lib_id, "Core")
+        title = f"Resolve {decision_id}"
+        temp_id = f"TEMP-{temp_counter:03d}"
+        temp_counter += 1
+        task = _make_task_payload(
+            title=title,
+            description=f"Resolve decision {decision_id} and document outcome.",
+            component=component,
+            libraries=[lib_id],
+            covers={"elements": [], "edges": [], "decisions": [str(decision_id)], "gaps": []},
+            acceptance_criteria=[f"Decision output recorded for {decision_id}."],
+            depends_on=[],
+            temp_id=temp_id,
+        )
+        tasks.append(task)
+
+    for gap in sorted(open_gaps, key=lambda item: item.get("gap_id", "")):
+        gap_id = gap.get("gap_id")
+        if not gap_id:
+            continue
+        lib_id = str(gap.get("lib_id", "LIB-0001"))
+        component = lib_to_component.get(lib_id, "Core")
+        title = f"Address {gap_id}"
+        temp_id = f"TEMP-{temp_counter:03d}"
+        temp_counter += 1
+        task = _make_task_payload(
+            title=title,
+            description=f"Close gap {gap_id} with validated updates.",
+            component=component,
+            libraries=[lib_id],
+            covers={"elements": [], "edges": [], "decisions": [], "gaps": [str(gap_id)]},
+            acceptance_criteria=[f"Updated file created for {gap_id}."],
+            depends_on=[],
+            temp_id=temp_id,
+        )
+        tasks.append(task)
+
+    if violation_mode:
+        if violation_mode == "missing_element_coverage":
+            for task in tasks:
+                elements = task.get("covers", {}).get("elements")
+                if elements:
+                    task["covers"]["elements"] = elements[:-1]
+                    break
+        elif violation_mode == "missing_edge_coverage":
+            for task in tasks:
+                edges = task.get("covers", {}).get("edges")
+                if edges:
+                    task["covers"]["edges"] = edges[:-1]
+                    break
+        elif violation_mode == "missing_decision_coverage":
+            for task in tasks:
+                decisions = task.get("covers", {}).get("decisions")
+                if decisions:
+                    task["covers"]["decisions"] = decisions[:-1]
+                    break
+        elif violation_mode == "weak_acceptance_criteria" and tasks:
+            tasks[0]["acceptance_criteria"] = ["Implement the task."]
+        elif violation_mode == "circular_dependencies" and len(tasks) >= 2:
+            tasks[0]["depends_on"] = [tasks[1].get("temp_id") or tasks[1]["title"]]
+            tasks[1]["depends_on"] = [tasks[0].get("temp_id") or tasks[0]["title"]]
+
+    if override_lookup:
+        for task in tasks:
+            title_key = str(task.get("title", "")).casefold()
+            override_mode = override_lookup.get(title_key)
+            if not override_mode:
+                continue
+            if override_mode == "weak_acceptance_criteria":
+                task["acceptance_criteria"] = ["Update implementation."]
+            elif override_mode == "missing_element_coverage":
+                task["covers"]["elements"] = []
+            elif override_mode == "missing_edge_coverage":
+                task["covers"]["edges"] = []
+            elif override_mode == "missing_decision_coverage":
+                task["covers"]["decisions"] = []
+            elif override_mode == "missing_gap_coverage":
+                task["covers"]["gaps"] = []
+
+    order_override = override_lookup.get("__order__")
+    if order_override == "reverse":
+        tasks = list(reversed(tasks))
+    elif order_override == "shuffle":
+        tasks = tasks[1:] + tasks[:1] if len(tasks) > 1 else tasks
+
+    return tasks
+
+
+def _ensure_task_id(task: dict[str, Any], counter: int) -> str:
+    existing = str(task.get("task_id", "")).strip()
+    if TASK_ID_RE.fullmatch(existing):
+        return existing
+    return f"TASK-{counter:04d}"
+
+
+def _apply_task_plan_repairs(
+    tasks: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    requirements: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    updated = [dict(task) for task in tasks]
+    task_lookup = {str(task.get("task_id", "")).strip(): idx for idx, task in enumerate(updated)}
+    next_id = len(updated) + 1
+
+    def _add_task_for_coverage(item_id: str, item_type: str) -> None:
+        nonlocal next_id
+        title = f"Repair coverage for {item_id}"
+        new_task = _make_task_payload(
+            title=title,
+            description=f"Add coverage for {item_id}.",
+            component="Core",
+            libraries=[_infer_lib_id(item_id)],
+            covers={
+                "elements": [item_id] if item_type == "elements" else [],
+                "edges": [item_id] if item_type == "edges" else [],
+                "decisions": [item_id] if item_type == "decisions" else [],
+                "gaps": [item_id] if item_type == "gaps" else [],
+            },
+            acceptance_criteria=_default_acceptance_criteria(title),
+            depends_on=[],
+            priority="p1",
+        )
+        new_task["task_id"] = f"TASK-{next_id:04d}"
+        next_id += 1
+        updated.append(new_task)
+
+    for error in errors:
+        error_type = error.get("error_type")
+        context = error.get("context") if isinstance(error.get("context"), dict) else {}
+        task_id = context.get("task_id")
+        if error_type == "missing_element_coverage":
+            element_id = context.get("element_id")
+            if element_id:
+                _add_task_for_coverage(str(element_id), "elements")
+        elif error_type == "missing_edge_coverage":
+            edge_id = context.get("edge_id")
+            if edge_id:
+                _add_task_for_coverage(str(edge_id), "edges")
+        elif error_type == "missing_decision_coverage":
+            decision_id = context.get("decision_id")
+            if decision_id:
+                _add_task_for_coverage(str(decision_id), "decisions")
+        elif error_type == "missing_gap_coverage":
+            gap_id = context.get("gap_id")
+            if gap_id:
+                _add_task_for_coverage(str(gap_id), "gaps")
+        elif error_type in {"weak_acceptance_criteria", "missing_acceptance_criteria"}:
+            if task_id and task_id in task_lookup:
+                idx = task_lookup[task_id]
+                patched = dict(updated[idx])
+                patched["acceptance_criteria"] = ["Tests validate repair output."]
+                updated[idx] = patched
+
+    if requirements:
+        required_edges = requirements.get("edges") or []
+        required_decisions = [
+            item.get("decision_id")
+            for item in requirements.get("open_decisions") or []
+            if isinstance(item, dict)
+        ]
+        required_gaps = [
+            item.get("gap_id")
+            for item in requirements.get("open_gaps") or []
+            if isinstance(item, dict)
+        ]
+        required_elements: list[str] = []
+        targets = requirements.get("coverage_targets") or {}
+        for element_ids in targets.values():
+            if element_ids is None:
+                continue
+            for element_id in element_ids:
+                required_elements.append(str(element_id))
+
+        covered = {
+            "elements": {
+                eid for task in updated for eid in task.get("covers", {}).get("elements", [])
+            },
+            "edges": {eid for task in updated for eid in task.get("covers", {}).get("edges", [])},
+            "decisions": {
+                eid for task in updated for eid in task.get("covers", {}).get("decisions", [])
+            },
+            "gaps": {eid for task in updated for eid in task.get("covers", {}).get("gaps", [])},
+        }
+
+        for item_id in required_elements:
+            if item_id not in covered["elements"]:
+                _add_task_for_coverage(item_id, "elements")
+        for item_id in required_edges:
+            if item_id and item_id not in covered["edges"]:
+                _add_task_for_coverage(str(item_id), "edges")
+        for item_id in required_decisions:
+            if item_id and item_id not in covered["decisions"]:
+                _add_task_for_coverage(str(item_id), "decisions")
+        for item_id in required_gaps:
+            if item_id and item_id not in covered["gaps"]:
+                _add_task_for_coverage(str(item_id), "gaps")
+
+    for idx, task in enumerate(updated, start=1):
+        task["task_id"] = _ensure_task_id(task, idx)
+
+    return updated
+
+
+def _infer_lib_id(identifier: str) -> str:
+    match = re.search(r"(LIB-\d{4})", identifier)
+    if match:
+        return match.group(1)
+    return "LIB-0001"
+
+
+def mock_task_planner_agent(
+    prompt: str,
+    *,
+    violation_mode: str | None,
+    task_overrides: dict[str, str],
+) -> str:
+    planning_context = _extract_task_planning_context(prompt)
+    tasks = _build_task_plan_from_context(
+        planning_context,
+        violation_mode=violation_mode,
+        task_overrides=task_overrides,
+    )
+    return json.dumps({"tasks": tasks})
+
+
+def mock_task_plan_judge_agent(
+    prompt: str,
+    *,
+    controller: MockAgentController,
+) -> str:
+    errors = _extract_task_plan_errors(prompt)
+    tasks = _extract_task_plan(prompt)
+    requirements = _extract_task_plan_requirements(prompt)
+
+    controller.task_plan_repair_attempts += 1
+
+    if errors:
+        controller.call_log.append({"agent_name": "chatgpt-task-plan-repairer", "prompt": prompt})
+
+    repairer_override = controller.violation_overrides.get("chatgpt-task-plan-repairer", 0.0)
+    if repairer_override >= 1.0:
+        return json.dumps({"tasks": tasks})
+
+    if controller.task_plan_violation_mode and controller.task_plan_repair_attempts == 1:
+        return json.dumps({"tasks": tasks})
+
+    repaired = _apply_task_plan_repairs(tasks, errors, requirements)
+
+    if controller.task_plan_violation_mode == "delta":
+        delta_add: list[dict[str, Any]] = []
+        delta_update: list[dict[str, Any]] = []
+        existing_ids = {str(task.get("task_id", "")).strip() for task in tasks}
+        for task in repaired:
+            task_id = str(task.get("task_id", "")).strip()
+            if task_id not in existing_ids:
+                delta_add.append(task)
+            else:
+                delta_update.append({"task_id": task_id, "fields": task})
+        return json.dumps({"delta": {"add": delta_add, "update": delta_update}})
+
+    return json.dumps({"tasks": repaired})
+
+
+def mock_task_plan_repairer_agent(
+    prompt: str,
+    *,
+    controller: MockAgentController,
+) -> str:
+    errors = _extract_task_plan_errors(prompt)
+    tasks = _extract_task_plan(prompt)
+    requirements = _extract_task_plan_requirements(prompt)
+    controller.task_plan_repair_attempts += 1
+    repaired = _apply_task_plan_repairs(tasks, errors, requirements)
+    return json.dumps({"tasks": repaired})
+
+
 def mock_repair_agent(
     artifact_type: str,
     file_id: str | None,
@@ -838,6 +1278,9 @@ class MockAgentController:
     interface_contract_violation_mode: str | None = None
     interface_edges_by_lib: dict[str, list[dict[str, Any]]] | None = None
     interface_contract_overrides: dict[str, str] = field(default_factory=dict)
+    task_plan_violation_mode: str | None = None
+    task_plan_overrides: dict[str, str] = field(default_factory=dict)
+    task_plan_repair_attempts: int = 0
     call_log: list[dict[str, Any]] = field(default_factory=list)
     repair_calls: list[dict[str, Any]] = field(default_factory=list)
 
@@ -1004,6 +1447,19 @@ class MockAgentController:
                 violation_mode=self.interface_edge_violation_mode,
                 edges_by_lib=self.interface_edges_by_lib,
             )
+
+        if agent_name == "opus-task-planner":
+            return mock_task_planner_agent(
+                prompt,
+                violation_mode=self.task_plan_violation_mode,
+                task_overrides=self.task_plan_overrides,
+            )
+
+        if agent_name == "chatgpt-task-plan-judge":
+            return mock_task_plan_judge_agent(prompt, controller=self)
+
+        if agent_name == "chatgpt-task-plan-repairer":
+            return mock_task_plan_repairer_agent(prompt, controller=self)
 
         if agent_name == "opus-interface-contract-writer":
             bundle = _extract_interface_bundle(prompt)

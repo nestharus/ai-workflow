@@ -14,7 +14,7 @@ from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, parse_gaps_markdown
 from spec_manager.refinement.core.gap_queue import GapQueue
 from spec_manager.refinement.progress import ProgressTracker
-from spec_manager.refinement.workspace.manager import WorkspaceManager
+from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from spec_manager.schemas.edge_list import (
     LIB_ID_RE,
     EdgeListSchema,
@@ -372,11 +372,15 @@ def assign_task_ids(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def resolve_task_dependencies(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Resolve dependency references from titles to TASK-#### identifiers."""
     title_entries: dict[str, list[tuple[str, str]]] = {}
+    temp_entries: dict[str, list[tuple[str, str]]] = {}
     for task in tasks:
         title = str(task.get("title", "")).strip()
         task_id = str(task.get("task_id", "")).strip()
         key = title.casefold()
         title_entries.setdefault(key, []).append((title, task_id))
+        temp_id = str(task.get("temp_id", "")).strip()
+        if temp_id:
+            temp_entries.setdefault(temp_id.casefold(), []).append((temp_id, task_id))
 
     for entries in title_entries.values():
         if len(entries) > 1:
@@ -384,7 +388,14 @@ def resolve_task_dependencies(tasks: list[dict[str, Any]]) -> list[dict[str, Any
             task_ids = [task_id for _, task_id in entries]
             raise ValueError(f"Duplicate task title '{title}' found in tasks {task_ids}")
 
+    for entries in temp_entries.values():
+        if len(entries) > 1:
+            temp_id = entries[0][0]
+            task_ids = [task_id for _, task_id in entries]
+            raise ValueError(f"Duplicate temp_id '{temp_id}' found in tasks {task_ids}")
+
     title_to_id = {key: entries[0][1] for key, entries in title_entries.items()}
+    temp_to_id = {key: entries[0][1] for key, entries in temp_entries.items()}
     resolved: list[dict[str, Any]] = []
     for task in tasks:
         payload = dict(task)
@@ -394,6 +405,10 @@ def resolve_task_dependencies(tasks: list[dict[str, Any]]) -> list[dict[str, Any
             ref_str = str(ref)
             if TASK_ID_RE.fullmatch(ref_str):
                 resolved_deps.append(ref_str)
+                continue
+            resolved_temp = temp_to_id.get(ref_str.strip().casefold())
+            if resolved_temp is not None:
+                resolved_deps.append(resolved_temp)
                 continue
             resolved_id = title_to_id.get(ref_str.strip().casefold())
             if resolved_id is None:
@@ -1061,8 +1076,22 @@ def _validate_and_repair_task_plan(
             logger.warning("Task plan judge output missing tasks or delta on attempt %d.", attempt)
 
         if updated:
-            repairs_succeeded += 1
-            status = "applied"
+            previous_error_count = len(last_errors)
+            try:
+                post_repair_errors = validate_task_plan_completeness(tasks, planning_context)
+            except Exception as exc:
+                post_repair_errors = [
+                    {
+                        "error_type": "task_schema_error",
+                        "message": str(exc),
+                        "context": {},
+                    }
+                ]
+            if len(post_repair_errors) < previous_error_count:
+                repairs_succeeded += 1
+                status = "applied"
+            else:
+                status = "no_improvement"
         else:
             status = "ignored"
 
@@ -1182,11 +1211,36 @@ def plan_tasks(run_id: str) -> dict[str, Any]:
     if not manager.is_initialized:
         raise RuntimeError("Workspace not initialized.")
 
+    interfaces_status = manager.state.phases[Phase.INTERFACES.value].status
+    if interfaces_status != PhaseStatus.COMPLETED:
+        raise RuntimeError("Interfaces phase must be completed before task planning.")
+
+    mapping_status = manager.state.phases[Phase.ARCHITECTURE_MAPPING.value].status
+    if mapping_status != PhaseStatus.COMPLETED:
+        raise RuntimeError("Architecture mapping must be completed before task planning.")
+
+    required_artifacts = {
+        manager.structure.architecture_dir / "mapping.md": "architecture/mapping.md",
+        manager.structure.architecture_dir / "selected.md": "architecture/selected.md",
+        manager.structure.indexes_dir / "edge_list.json": "indexes/edge_list.json",
+        manager.structure.indexes_dir / "interface_index.json": "indexes/interface_index.json",
+    }
+    missing = [label for path, label in required_artifacts.items() if not path.exists()]
+    if missing:
+        missing_details = ", ".join(missing)
+        raise RuntimeError(f"Missing prerequisite artifacts for task planning: {missing_details}")
+
+    manager.start_phase(Phase.TASKS)
+    phase_result = manager.state.phases[Phase.TASKS.value]
+    issues: list[dict[str, Any]] = []
+    phase_result.issues = issues
+
     logger.info("Starting task planning for run %s.", run_id)
     evidence: list[dict[str, Any]] = []
 
     try:
         planning_context = build_task_planning_context(manager)
+        issues.extend(planning_context.get("issues") or [])
         logger.info(
             "Planning context built: %d components, %d edges, %d gaps, %d decisions.",
             len(planning_context.get("components") or {}),
@@ -1268,6 +1322,15 @@ def plan_tasks(run_id: str) -> dict[str, Any]:
             }
         )
 
+        phase_outputs = {
+            "task_index_path": outputs.get("task_index_path"),
+            "patch_graph_path": outputs.get("patch_graph_path"),
+            "task_count": len(tasks),
+            "coverage_stats": coverage_stats,
+            "validation_stats": validation_stats,
+        }
+        manager.complete_phase(Phase.TASKS, outputs=phase_outputs)
+
         return {
             "success": True,
             "tasks_count": len(tasks),
@@ -1278,6 +1341,7 @@ def plan_tasks(run_id: str) -> dict[str, Any]:
             "evidence": evidence,
         }
     except Exception as exc:
+        manager.fail_phase(Phase.TASKS, error=str(exc))
         logger.exception("Task planning failed for run %s.", run_id)
         raise RuntimeError(f"Task planning failed for run {run_id}: {exc}") from exc
 

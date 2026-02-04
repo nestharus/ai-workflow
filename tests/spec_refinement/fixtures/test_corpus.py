@@ -5,6 +5,19 @@ import re
 from pathlib import Path
 from typing import Any
 
+from spec_manager.schemas.edge_list import (
+    EdgeListSchema,
+    EdgeSchema,
+    build_interface_index,
+    write_edge_list_json,
+    write_interface_index_json,
+)
+from spec_manager.schemas.interface_contract import (
+    ConsumedInterface,
+    InterfaceContractSchema,
+    ProvidedInterface,
+)
+
 CORPUS_CONTENT = {
     "alpha.md": """# Alpha Workflow
 
@@ -566,3 +579,146 @@ def create_interface_test_libraries(fs, run_id: str = "run_001") -> dict[str, An
         ]
 
     return manifest
+
+
+def create_task_planning_prerequisites(fs, run_id: str, manifest: dict) -> None:
+    """Create architecture mapping and interface indexes for task planning tests."""
+    run_dir = Path("runs") / run_id
+    arch_dir = run_dir / "architecture"
+    if not arch_dir.exists():
+        fs.create_dir(arch_dir)
+
+    selected = """# Selected Architecture
+
+## Components
+- API Layer: Handles API requests
+- Event Layer: Handles event processing
+"""
+    mapping_lines = [
+        "# Architecture Mapping",
+        "",
+        "## Architecture",
+        "arch_001",
+        "",
+        "## Component Mappings",
+        "",
+        "### Component: API Layer",
+    ]
+
+    library_ids = sorted(manifest.get("library_ids", []))
+    api_libs = library_ids[:2]
+    event_libs = library_ids[2:]
+    for lib_id in api_libs:
+        mapping_lines.append(f"{lib_id}")
+
+    if event_libs:
+        mapping_lines.extend(["", "### Component: Event Layer"])
+        for lib_id in event_libs:
+            mapping_lines.append(f"{lib_id}")
+
+    (arch_dir / "selected.md").write_text(selected, encoding="utf-8")
+    (arch_dir / "mapping.md").write_text("\n".join(mapping_lines).rstrip() + "\n", encoding="utf-8")
+
+    indexes_dir = run_dir / "workspace" / "indexes"
+    if not indexes_dir.exists():
+        fs.create_dir(indexes_dir)
+
+    edges: list[EdgeSchema] = []
+    for edge in manifest.get("expected_edges", []):
+        consumer_lib = edge.get("consumer_lib")
+        provider_lib = edge.get("provider_lib")
+        consumer_elements = edge.get("consumer_elements") or []
+        provider_elements = (
+            manifest.get("element_ids", {}).get(provider_lib) if provider_lib else None
+        ) or []
+        provider_requirement = provider_elements[0] if provider_elements else "REQ-LIB-0001-0001"
+        consumer_requirement = consumer_elements[0] if consumer_elements else "REQ-LIB-0001-0001"
+        edges.append(
+            EdgeSchema.model_validate(
+                {
+                    "edge_id": edge.get("edge_id"),
+                    "consumer_lib": consumer_lib,
+                    "provider_lib": provider_lib,
+                    "kind": edge.get("kind", "api"),
+                    "consumer_elements": consumer_elements,
+                    "provider_elements": [provider_requirement],
+                    "summary": "Test edge for task planning.",
+                    "evidence": [f"[{consumer_lib}::spec.md::{consumer_requirement}]"],
+                }
+            )
+        )
+
+        consumer_interfaces_dir = run_dir / "libraries" / consumer_lib / "interfaces"
+        if not consumer_interfaces_dir.exists():
+            fs.create_dir(consumer_interfaces_dir)
+
+        contract = InterfaceContractSchema(
+            edge_id=edge.get("edge_id"),
+            consumer_lib=consumer_lib,
+            provider_lib=provider_lib,
+            provided=[
+                ProvidedInterface(
+                    name="Primary Interface",
+                    type="http",
+                    requirements=[provider_requirement],
+                    details="Test contract payload.",
+                    acceptance=["Returns expected payload"],
+                    citations=[f"[{provider_lib}::spec.md::{provider_requirement}]"],
+                )
+            ],
+            consumed_by=[
+                ConsumedInterface(
+                    consumer_requirement=consumer_requirement,
+                    expectations=["Aligned expectations"],
+                    citations=[f"[{consumer_lib}::spec.md::{consumer_requirement}]"],
+                )
+            ],
+            open_questions=[],
+        )
+        contract_json_path = consumer_interfaces_dir / f"{edge.get('edge_id')}.json"
+        contract_md_path = consumer_interfaces_dir / f"{edge.get('edge_id')}.md"
+        contract_json_path.write_text(json.dumps(contract.model_dump(), indent=2), encoding="utf-8")
+        contract_md_path.write_text(
+            "\n".join(
+                [
+                    "# Interface Contract",
+                    "",
+                    "## Purpose",
+                    f"- Edge ID: {edge.get('edge_id')}",
+                    "",
+                    "## Provided Interfaces",
+                    "- Primary Interface",
+                    "",
+                    "## Consumed By",
+                    "- Consumer expectations",
+                    "",
+                    "## Data Contract",
+                    "- Schemas: interface.json",
+                    "",
+                    "## Operational Concerns",
+                    "- Performance: p95 < 200ms",
+                    "",
+                    "## Open Questions",
+                    "- None",
+                    "",
+                    "## Evidence",
+                    "- See citations in JSON",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    edge_list = EdgeListSchema(
+        run_id=run_id,
+        generated_at="2024-01-01T00:00:00",
+        edges=edges,
+    )
+    write_edge_list_json(edge_list, indexes_dir / "edge_list.json")
+
+    interface_index = build_interface_index(
+        edges,
+        run_id=run_id,
+        contract_base_path=run_dir,
+    )
+    write_interface_index_json(interface_index, indexes_dir / "interface_index.json")

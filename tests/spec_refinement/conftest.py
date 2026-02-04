@@ -67,3 +67,28 @@ def mock_interface_agents(monkeypatch):
         return controller
 
     return _apply
+
+
+@pytest.fixture
+def mock_task_agents(monkeypatch):
+    def _apply(
+        manifest: dict[str, dict[str, object]],
+        *,
+        violation_mode: str | None = None,
+        overrides: dict[str, float] | None = None,
+        task_overrides: dict[str, str] | None = None,
+    ) -> MockAgentController:
+        controller = MockAgentController(manifest=manifest)
+        controller.task_plan_violation_mode = violation_mode
+        if task_overrides:
+            controller.task_plan_overrides.update(task_overrides)
+        if overrides:
+            controller.violation_overrides.update(overrides)
+
+        monkeypatch.setattr(
+            "spec_manager.refinement.workflows.tasks.run_agent",
+            controller.dispatch,
+        )
+        return controller
+
+    return _apply
