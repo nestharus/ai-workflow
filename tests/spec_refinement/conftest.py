@@ -16,7 +16,9 @@ def interface_workspace(fs, monkeypatch):
         fs.create_dir(base)
         input_dir = base / "specs"
         fs.create_dir(input_dir)
-        (input_dir / "input.md").write_text("# Input\n\n## Intro\nSeed content.\n", encoding="utf-8")
+        (input_dir / "input.md").write_text(
+            "# Input\n\n## Intro\nSeed content.\n", encoding="utf-8"
+        )
 
         monkeypatch.chdir(base)
         manager = WorkspaceManager(run_id=run_id, input_folder=input_dir)

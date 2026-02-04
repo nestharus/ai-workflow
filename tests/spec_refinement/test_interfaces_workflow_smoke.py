@@ -15,6 +15,7 @@ from spec_manager.schemas.edge_list import (
     validate_edge_list_completeness,
 )
 from spec_manager.schemas.interface_contract import (
+    InterfaceContractSchema,
     read_interface_contract_json,
 )
 
@@ -99,7 +100,9 @@ def test_build_interfaces_creates_edge_list(interface_workspace, mock_interface_
     assert len({edge.edge_id for edge in edge_list.edges}) == len(edge_list.edges)
 
 
-def test_build_interfaces_creates_interface_index(interface_workspace, mock_interface_agents) -> None:
+def test_build_interfaces_creates_interface_index(
+    interface_workspace, mock_interface_agents
+) -> None:
     manager, _manifest = interface_workspace(run_id="run_index")
     _complete_prerequisites(manager)
     mock_interface_agents(_manifest)
@@ -115,7 +118,9 @@ def test_build_interfaces_creates_interface_index(interface_workspace, mock_inte
     assert interface_index.contract_files
 
 
-def test_build_interfaces_creates_contract_files(interface_workspace, mock_interface_agents) -> None:
+def test_build_interfaces_creates_contract_files(
+    interface_workspace, mock_interface_agents
+) -> None:
     manager, manifest = interface_workspace(run_id="run_contracts")
     _complete_prerequisites(manager)
     mock_interface_agents(manifest)
@@ -135,8 +140,7 @@ def test_build_interfaces_validates_contracts(interface_workspace, mock_interfac
     result = build_interface_graph(manager.run_id)
 
     assert any(
-        call["agent_name"] == "chatgpt-interface-contract-repairer"
-        for call in controller.call_log
+        call["agent_name"] == "chatgpt-interface-contract-repairer" for call in controller.call_log
     )
     assert result["validation_stats"]["contracts_validated"] > 0
 
@@ -154,7 +158,9 @@ def test_build_interfaces_repair_loop_succeeds(interface_workspace, mock_interfa
     result = build_interface_graph(manager.run_id)
 
     repair_calls = [
-        call for call in controller.call_log if call["agent_name"] == "chatgpt-interface-contract-repairer"
+        call
+        for call in controller.call_log
+        if call["agent_name"] == "chatgpt-interface-contract-repairer"
     ]
     assert len(repair_calls) == 1
     assert result["validation_stats"]["repairs_attempted"] == 1
@@ -181,8 +187,7 @@ def test_build_interfaces_repair_loop_fails_after_max_retries(
     assert interface_index.contract_files == {}
     assert result["validation_errors"]
     assert any(
-        call["agent_name"] == "chatgpt-interface-contract-repairer"
-        for call in controller.call_log
+        call["agent_name"] == "chatgpt-interface-contract-repairer" for call in controller.call_log
     )
 
 
@@ -238,7 +243,9 @@ def test_build_interfaces_prerequisite_validation(interface_workspace) -> None:
         build_interface_graph(manager.run_id)
 
 
-def test_build_interfaces_uses_architecture_mapping(interface_workspace, mock_interface_agents) -> None:
+def test_build_interfaces_uses_architecture_mapping(
+    interface_workspace, mock_interface_agents
+) -> None:
     manager, manifest = interface_workspace(run_id="run_arch")
     _create_architecture_mapping(manager)
     _complete_prerequisites(manager)
@@ -329,8 +336,7 @@ def test_interface_index_omits_failed_contracts(interface_workspace, mock_interf
     assert failing_edge not in interface_index.contract_files
     assert interface_index.contract_files
     assert any(
-        call["agent_name"] == "chatgpt-interface-contract-repairer"
-        for call in controller.call_log
+        call["agent_name"] == "chatgpt-interface-contract-repairer" for call in controller.call_log
     )
 
 

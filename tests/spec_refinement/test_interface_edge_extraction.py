@@ -72,9 +72,7 @@ def _create_library_with_cross_refs(
     for index, provider in enumerate(provider_libs, start=1):
         element_id = f"REQ-LIB-{lib_suffix}-{index:04d}"
         text = f"Depends on {provider} for integration."
-        line = (
-            f"- {element_id}: {text} [{lib_id}::spec.md::{element_id}]"
-        )
+        line = f"- {element_id}: {text} [{lib_id}::spec.md::{element_id}]"
         spec_lines.append(line)
         elements.append(
             {
@@ -88,7 +86,7 @@ def _create_library_with_cross_refs(
             }
         )
     if not provider_libs:
-        spec_lines.append("- REQ-LIB-{suffix}-0001: Standalone requirement.".format(suffix=lib_suffix))
+        spec_lines.append(f"- REQ-LIB-{lib_suffix}-0001: Standalone requirement.")
         elements.append(
             {
                 "element_id": f"REQ-LIB-{lib_suffix}-0001",
@@ -127,9 +125,7 @@ def _create_library_with_cross_refs(
             if not index_path.exists():
                 fs.create_file(str(index_path), contents=spec_index_payload)
     else:
-        (absolute_lib_dir / "spec_index.json").write_text(
-            spec_index_payload, encoding="utf-8"
-        )
+        (absolute_lib_dir / "spec_index.json").write_text(spec_index_payload, encoding="utf-8")
 
     manager.save_state()
     return [element["element_id"] for element in elements]
@@ -157,7 +153,7 @@ def test_deterministic_edge_scanning_finds_explicit_mentions(fs, monkeypatch) ->
     assert ("LIB-0001", "LIB-0002") in edges
     assert ("LIB-0001", "LIB-0003") in edges
 
-    edge_ids = [allocate_edge_id(*edge_key) for edge_key in edges.keys()]
+    edge_ids = [allocate_edge_id(*edge_key) for edge_key in edges]
     assert all(edge_id.startswith("EDGE-LIB-") for edge_id in edge_ids)
 
     consumer_elements = edges[("LIB-0001", "LIB-0002")]["consumer_elements"]

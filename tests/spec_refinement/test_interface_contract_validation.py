@@ -8,7 +8,10 @@ from spec_manager.schemas.edge_list import (
     validate_contract_completeness,
     validate_edge_references,
 )
-from spec_manager.schemas.interface_contract import InterfaceContractSchema, validate_contract_references
+from spec_manager.schemas.interface_contract import (
+    InterfaceContractSchema,
+    validate_contract_references,
+)
 
 pytestmark = [pytest.mark.interfaces, pytest.mark.contract_validation]
 
