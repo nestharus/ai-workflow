@@ -906,6 +906,10 @@ def generate_run_audit(manager: WorkspaceManager) -> str:
     if edge_list_path.exists():
         artifacts.append("../workspace/indexes/edge_list.json")
 
+    interface_index_path = manager.structure.indexes_dir / "interface_index.json"
+    if interface_index_path.exists():
+        artifacts.append("../workspace/indexes/interface_index.json")
+
     if task_index_path.exists():
         artifacts.append("../tasks/task_index.json")
 
