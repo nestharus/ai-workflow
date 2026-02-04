@@ -36,6 +36,7 @@ from .interface_contract import (
     write_interface_contract_markdown,
 )
 from .library_labels import LibraryLabel, LibraryLabelerOutput
+from .patch_output import PatchOutputSchema, read_patch_output_json, write_patch_output_json
 from .qa_judge import QaCriterionResult, QaJudgeOutput
 from .review_actions import (
     ReviewAction,
@@ -51,6 +52,14 @@ from .review_actions import (
 from .sections import FileSections, SectionSpan
 from .spec_indexes import Decision, DecisionsIndex, SpecElement, SpecIndex
 from .spec_patches import SpecPatchOp, SpecPatchOutput
+from .task_status import (
+    AuditResultSchema,
+    TaskImplementationStatusSchema,
+    TestResultSchema,
+    read_task_implementation_status_json,
+    validate_status_transition,
+    write_task_implementation_status_json,
+)
 from .tasks import (
     GAP_ID_RE,
     TASK_ID_RE,
@@ -87,6 +96,7 @@ __all__ = [
     "ArchitectureProposal",
     "ArchitectureSelection",
     "ArchitectureTradeoffs",
+    "AuditResultSchema",
     "ConsumedInterface",
     "DataContract",
     "Decision",
@@ -107,6 +117,7 @@ __all__ = [
     "LineAtom",
     "OperationalContract",
     "PatchGraphSchema",
+    "PatchOutputSchema",
     "ProvidedInterface",
     "QaCriterionResult",
     "QaJudgeOutput",
@@ -119,10 +130,12 @@ __all__ = [
     "SpecPatchOp",
     "SpecPatchOutput",
     "TaskCoversSchema",
+    "TaskImplementationStatusSchema",
     "TaskIndexEntrySchema",
     "TaskIndexSchema",
     "TaskSchema",
     "TaskStatusSchema",
+    "TestResultSchema",
     "allocate_action_id",
     "allocate_edge_id",
     "build_interface_index",
@@ -131,7 +144,9 @@ __all__ = [
     "read_interface_contract_json",
     "read_interface_index_json",
     "read_patch_graph_json",
+    "read_patch_output_json",
     "read_review_actions_json",
+    "read_task_implementation_status_json",
     "read_task_index_json",
     "read_task_json",
     "read_task_status_json",
@@ -144,13 +159,16 @@ __all__ = [
     "validate_patch_graph_acyclic",
     "validate_pointer_format",
     "validate_pointer_references",
+    "validate_status_transition",
     "write_edge_list_json",
     "write_interface_contract_json",
     "write_interface_contract_markdown",
     "write_interface_index_json",
     "write_patch_graph_json",
+    "write_patch_output_json",
     "write_review_actions_json",
     "write_review_actions_markdown",
+    "write_task_implementation_status_json",
     "write_task_index_json",
     "write_task_index_markdown",
     "write_task_json",

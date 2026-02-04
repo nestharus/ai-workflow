@@ -67,6 +67,8 @@ class ArtifactType(str, Enum):
     ARCHITECTURE_SELECTION = "architecture_selection"
     ARCHITECTURE_MAPPING = "architecture_mapping"
     INTERFACE_CONTRACT = "interface_contract"
+    PATCH_OUTPUT = "patch_output"
+    PATCH_AUDIT = "patch_audit"
 
 
 def repair_artifact(
@@ -191,6 +193,8 @@ def _select_repair_agent(
         ArtifactType.ARCHITECTURE_SELECTION: "repair-architecture-selection",
         ArtifactType.ARCHITECTURE_MAPPING: "repair-architecture-mapping",
         ArtifactType.INTERFACE_CONTRACT: "chatgpt-interface-contract-repairer",
+        ArtifactType.PATCH_OUTPUT: "chatgpt-patch-repairer",
+        ArtifactType.PATCH_AUDIT: "chatgpt-patch-audit-judge",
     }
     if artifact_type not in mapping:
         raise ValueError(f"Unsupported artifact type: {artifact_type}")

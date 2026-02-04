@@ -42,6 +42,7 @@ LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
 ELEMENT_ID_RE = re.compile(
     r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
 )
+TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
 
 
 def _validate_iso8601(value: str) -> str:
