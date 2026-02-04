@@ -767,7 +767,7 @@ def _topological_sort_tasks(graph: PatchGraphSchema) -> list[str]:
                 queue.append(target)
 
     if len(ordered) != len(in_degree):
-        raise ValueError("Cycle detected in patch graph.")
+        raise RuntimeError("cycle detected in patch graph")
 
     return ordered
 
@@ -1686,6 +1686,16 @@ def run_implementation_phase(
     done_count = sum(1 for summary in summaries if summary.get("status") == "done")
     failed_count = sum(1 for summary in summaries if summary.get("status") == "failed")
     blocked_count = sum(1 for summary in summaries if summary.get("status") == "blocked")
+    patches_applied = sum(summary.get("applied_files", 0) for summary in summaries)
+    tests_passed = 0
+    tests_failed = 0
+    for summary in summaries:
+        tests = summary.get("tests")
+        if tests and tests.get("ran"):
+            if tests.get("exit_code", -1) == 0:
+                tests_passed += 1
+            else:
+                tests_failed += 1
 
     manager.complete_phase(
         Phase.IMPLEMENTATION,
@@ -1693,6 +1703,9 @@ def run_implementation_phase(
             "tasks_executed": len(selected_tasks),
             "tasks_done": done_count,
             "tasks_failed": failed_count,
+            "patches_applied": patches_applied,
+            "tests_passed": tests_passed,
+            "tests_failed": tests_failed,
         },
     )
 
@@ -1701,6 +1714,9 @@ def run_implementation_phase(
         "tasks_done": done_count,
         "tasks_failed": failed_count,
         "tasks_blocked": blocked_count,
+        "patches_applied": patches_applied,
+        "tests_passed": tests_passed,
+        "tests_failed": tests_failed,
         "task_summaries": summaries,
     }
 

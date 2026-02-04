@@ -767,6 +767,77 @@ def _extract_task_plan(prompt: str) -> list[dict[str, Any]]:
     return []
 
 
+def _extract_markdown_section(prompt: str, header: str) -> str:
+    pattern = re.compile(rf"{re.escape(header)}\n(.*?)(?=\n## |\n# |\Z)", re.DOTALL)
+    match = pattern.search(prompt)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_task_context(prompt: str) -> dict[str, Any]:
+    def _first_line(value: str) -> str:
+        lines = value.splitlines()
+        return lines[0].strip() if lines else ""
+
+    task_id = _first_line(_extract_markdown_section(prompt, "## Task ID"))
+    description = _first_line(_extract_markdown_section(prompt, "## Description"))
+    acceptance_block = _extract_markdown_section(prompt, "## Acceptance Criteria")
+    acceptance_criteria: list[str] = []
+    for line in acceptance_block.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.lower() == "none":
+            continue
+        stripped = re.sub(r"^\d+\.\s*", "", stripped)
+        stripped = re.sub(r"^-+\s*", "", stripped)
+        acceptance_criteria.append(stripped)
+    return {
+        "task_id": task_id or _extract_first(rf"{TASK_ID_RE.pattern}", prompt) or "TASK-0001",
+        "description": description or "Unknown task description.",
+        "acceptance_criteria": acceptance_criteria,
+    }
+
+
+def _extract_first_file_block(prompt: str) -> tuple[str, str]:
+    lines = prompt.splitlines()
+    for idx, line in enumerate(lines):
+        if not line.startswith("### File: "):
+            continue
+        file_path = line.replace("### File: ", "").strip()
+        fence_start = None
+        for j in range(idx + 1, len(lines)):
+            if lines[j].strip() == "```":
+                fence_start = j + 1
+                break
+        if fence_start is None:
+            return file_path, ""
+        for k in range(fence_start, len(lines)):
+            if lines[k].strip() == "```":
+                content = "\n".join(lines[fence_start:k])
+                return file_path, content
+        return file_path, ""
+    return "app/main.py", ""
+
+
+def _make_simple_patch(file_path: str, content: str | None = None) -> str:
+    lines = [line for line in content.splitlines() if line.strip()] if content else []
+    if lines:
+        old_line = lines[0]
+        new_line = f"{old_line}  # updated"
+        hunk_header = "@@ -1,1 +1,1 @@"
+        hunk_lines = f"-{old_line}\n+{new_line}"
+    else:
+        old_line = "    return True"
+        new_line = "    return False"
+        hunk_header = "@@ -1,1 +1,1 @@"
+        hunk_lines = f"-{old_line}\n+{new_line}"
+    return (
+        f"diff --git a/{file_path} b/{file_path}\n"
+        f"--- a/{file_path}\n"
+        f"+++ b/{file_path}\n"
+        f"{hunk_header}\n"
+        f"{hunk_lines}\n"
+    )
+
+
 def _build_lib_component_map(components: dict[str, Any]) -> dict[str, str]:
     lib_to_component: dict[str, str] = {}
     if not isinstance(components, dict):
@@ -1167,6 +1238,71 @@ def mock_task_plan_repairer_agent(
     return json.dumps({"tasks": repaired})
 
 
+def mock_task_implementer_agent(
+    prompt: str,
+    *,
+    violation_mode: str | None,
+) -> str:
+    context = _extract_task_context(prompt)
+    file_path, file_content = _extract_first_file_block(prompt)
+    patch_text = _make_simple_patch(file_path, file_content)
+
+    if violation_mode == "invalid_patch":
+        patch_text = (
+            f"diff --git a/{file_path} b/{file_path}\n--- a/{file_path}\n+++ b/{file_path}\n"
+        )
+    elif violation_mode == "immutable_path":
+        immutable_path = "runs/run_001/spec_snapshot/libraries/LIB-0001/spec.md"
+        patch_text = _make_simple_patch(immutable_path, None)
+    elif violation_mode == "raise_error":
+        raise RuntimeError(f"Task implementer failure for {context['task_id']}")
+
+    return json.dumps({"patch": patch_text})
+
+
+def _extract_patch_from_prompt(prompt: str) -> str:
+    fenced = re.search(r"```diff\n(.*?)\n```", prompt, re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+    block = re.search(r"<BEGIN_OUTPUT>\n(.*?)\n<END_OUTPUT>", prompt, re.DOTALL)
+    if block:
+        return block.group(1).strip()
+    return ""
+
+
+def mock_patch_audit_judge_agent(
+    prompt: str,
+    *,
+    violation_mode: str | None,
+) -> str:
+    _ = _extract_task_context(prompt)
+    _ = _extract_patch_from_prompt(prompt)
+
+    if violation_mode == "fail_audit":
+        return json.dumps({"verdict": "fail", "issues": ["Acceptance criteria not met."]})
+    return json.dumps({"verdict": "pass", "issues": []})
+
+
+def mock_patch_repairer_agent(
+    prompt: str,
+    *,
+    violation_mode: str | None,
+) -> str:
+    if violation_mode == "persistent_failure":
+        return "diff --git a/app/main.py b/app/main.py\n--- a/app/main.py\n+++ b/app/main.py\n"
+
+    patch_text = _extract_patch_from_prompt(prompt)
+    file_path = "app/main.py"
+    match = re.search(r"^diff --git a/(.*?) b/(.*?)$", patch_text, re.MULTILINE)
+    if match:
+        file_path = match.group(1).strip() or file_path
+
+    if "immutable_path" in prompt or "invalid_format" in prompt:
+        file_path = "app/main.py"
+
+    return _make_simple_patch(file_path, None)
+
+
 def mock_repair_agent(
     artifact_type: str,
     file_id: str | None,
@@ -1281,6 +1417,10 @@ class MockAgentController:
     task_plan_violation_mode: str | None = None
     task_plan_overrides: dict[str, str] = field(default_factory=dict)
     task_plan_repair_attempts: int = 0
+    implementation_violation_mode: str | None = None
+    patch_audit_violation_mode: str | None = None
+    patch_repair_violation_mode: str | None = None
+    patch_audit_attempts: int = 0
     call_log: list[dict[str, Any]] = field(default_factory=list)
     repair_calls: list[dict[str, Any]] = field(default_factory=list)
 
@@ -1446,6 +1586,25 @@ class MockAgentController:
                 violation_rate=effective_rate,
                 violation_mode=self.interface_edge_violation_mode,
                 edges_by_lib=self.interface_edges_by_lib,
+            )
+
+        if agent_name == "glm-task-implementer":
+            return mock_task_implementer_agent(
+                prompt,
+                violation_mode=self.implementation_violation_mode,
+            )
+
+        if agent_name == "chatgpt-patch-audit-judge":
+            self.patch_audit_attempts += 1
+            violation_mode = self.patch_audit_violation_mode
+            if violation_mode == "fail_audit_once":
+                violation_mode = "fail_audit" if self.patch_audit_attempts == 1 else None
+            return mock_patch_audit_judge_agent(prompt, violation_mode=violation_mode)
+
+        if agent_name == "chatgpt-patch-repairer":
+            return mock_patch_repairer_agent(
+                prompt,
+                violation_mode=self.patch_repair_violation_mode,
             )
 
         if agent_name == "opus-task-planner":
