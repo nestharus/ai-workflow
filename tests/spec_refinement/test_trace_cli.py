@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 from spec_manager.refinement.cli import main
-from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.refinement.workflows.trace_indexes import build_trace_indexes
+from spec_manager.refinement.workspace import WorkspaceManager
 
 from tests.spec_refinement.test_trace_indexes import (
     _create_minimal_atoms,

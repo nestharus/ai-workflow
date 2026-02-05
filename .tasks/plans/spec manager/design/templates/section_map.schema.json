@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SectionizationOutput",
+  "type": "object",
+  "required": [
+    "file_uid",
+    "rev_id",
+    "sections",
+    "unassigned_atom_ids"
+  ],
+  "properties": {
+    "file_uid": {
+      "type": "string"
+    },
+    "rev_id": {
+      "type": "string"
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "start_line",
+          "end_line",
+          "atom_ids",
+          "span_type",
+          "confidence"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "atom_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "span_type": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "unassigned_atom_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

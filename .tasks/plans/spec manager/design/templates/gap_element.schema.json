@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GapElementsOutput",
+  "type": "object",
+  "required": [
+    "gaps"
+  ],
+  "properties": {
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "gap_id",
+          "gap_type",
+          "severity",
+          "message",
+          "evidence_atom_ids"
+        ],
+        "properties": {
+          "gap_id": {
+            "type": "string"
+          },
+          "gap_type": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "affects_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_atom_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "detector_id": {
+            "type": "string"
+          },
+          "proposed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
