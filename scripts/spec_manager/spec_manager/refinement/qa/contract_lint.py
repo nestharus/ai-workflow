@@ -9,10 +9,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.compliance.evidence_field_lint import (
+    scan_for_forbidden_output_signatures,
+)
+from spec_manager.compliance.hardcoding_scanner import scan_for_hardcoding_violations
 from spec_manager.refinement.formats import EVIDENCE_POINTER_RE, parse_evidence_pointer
 from spec_manager.refinement.validation_utils import SECTION_ID_RE
+from spec_manager.schemas.evidence_ranges import EVID_CITATION_PATTERN
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
+
+# Per CON-0021: EVID citation pattern for evidence fields
+EVID_FIELD_PATTERN = re.compile(r"^EVID-F\d{4}-R\d{4}-L\d+-L\d+$")
 
 LEGACY_FILE_ID_RE = re.compile(r"\bfile_\d+\b")
 LEGACY_LIB_ID_RE = re.compile(r"\blib_\d+\b")
@@ -265,6 +273,74 @@ def lint_pointer_conventions(agents_dir: Path) -> list[LintIssue]:
     return issues
 
 
+def lint_evid_compliance(agents_dir: Path) -> list[LintIssue]:
+    """Lint agent prompts for EVID-only compliance (CON-0021).
+
+    Evidence-producing agent prompts should:
+    1. Document the EVID citation format
+    2. Show examples of valid EVID citations
+    3. Not include legacy citation examples in evidence contexts
+
+    Args:
+        agents_dir: Directory containing agent prompt files
+
+    Returns:
+        List of lint issues
+    """
+    issues: list[LintIssue] = []
+
+    # Evidence-producing agent prompts that should document EVID format
+    evidence_producing_agents = {
+        "glm-library-evidence-mapper",
+        "glm-library-spec-integrator",
+        "chatgpt-evidence-gap-judge",
+        "chatgpt-concern-assignment-judge",
+        "chatgpt-patch-repairer",
+        "chatgpt-task-plan-judge",
+        "opus-task-planner",
+    }
+
+    for prompt_path in _iter_files(agents_dir, "*.md"):
+        rel_path = _relative_path(prompt_path)
+        agent_name = prompt_path.stem
+
+        try:
+            content = prompt_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        # Check evidence-producing agents for EVID documentation
+        if agent_name in evidence_producing_agents:
+            has_evid_example = bool(EVID_CITATION_PATTERN.search(content))
+            has_evid_format_doc = "EVID-F" in content and "L#-L#" in content
+
+            if not has_evid_example and not has_evid_format_doc:
+                issues.append(
+                    LintIssue(
+                        severity="warning",
+                        file=rel_path,
+                        line=None,
+                        message="Evidence-producing prompt missing EVID format examples.",
+                        hint="Add EVID citation format: [EVID-F####-R####-L#-L#]",
+                    )
+                )
+
+        # Scan for forbidden output signatures in all prompts
+        errors, _warnings = scan_for_forbidden_output_signatures(content, rel_path)
+        for error in errors:
+            issues.append(
+                LintIssue(
+                    severity="warning",  # Downgrade to warning for prompts
+                    file=rel_path,
+                    line=None,
+                    message=f"[CON-0021] {error}",
+                    hint="Use EVID format for evidence citations.",
+                )
+            )
+
+    return issues
+
+
 def generate_json_report(issues: list[LintIssue]) -> dict[str, Any]:
     """Generate a JSON-friendly report payload."""
     summary = _summarize_issues(issues)
@@ -315,13 +391,57 @@ def generate_markdown_report(issues: list[LintIssue]) -> str:
 
 
 def run_contract_lint(
-    agents_dir: Path, workflows_dir: Path, output_dir: Path | None = None
+    agents_dir: Path,
+    workflows_dir: Path,
+    output_dir: Path | None = None,
+    *,
+    scan_source_dirs: list[Path] | None = None,
 ) -> tuple[list[LintIssue], int]:
-    """Run all contract lint checks and optionally write reports."""
+    """Run all contract lint checks and optionally write reports.
+
+    Args:
+        agents_dir: Directory containing agent prompt files.
+        workflows_dir: Directory containing workflow Python files.
+        output_dir: Optional directory to write reports to.
+        scan_source_dirs: Optional list of directories to scan for hardcoding violations.
+            If not provided, scans the spec_manager source directory.
+
+    Returns:
+        Tuple of (list of issues, exit code).
+        Exit code is 1 if any errors found, 0 otherwise.
+        Note: hardcoding scanner findings are warnings only (report-only mode).
+    """
     issues: list[LintIssue] = []
     issues.extend(lint_agent_prompts(agents_dir))
     issues.extend(lint_workflow_agent_references(workflows_dir, agents_dir))
     issues.extend(lint_pointer_conventions(agents_dir))
+    issues.extend(lint_evid_compliance(agents_dir))  # CON-0021 enforcement
+
+    # Add hardcoding scanner (report-only mode - warnings only)
+    if scan_source_dirs is None:
+        # Default: scan spec_manager source directory
+        spec_manager_src = PROJECT_ROOT / "scripts" / "spec_manager" / "spec_manager"
+        scan_source_dirs = [spec_manager_src] if spec_manager_src.exists() else []
+
+    for source_dir in scan_source_dirs:
+        if source_dir.exists() and source_dir.is_dir():
+            source_files = list(source_dir.rglob("*.py"))
+            hardcoding_findings = scan_for_hardcoding_violations(source_files)
+            for finding in hardcoding_findings:
+                # Make path relative for cleaner output
+                try:
+                    rel_path = str(Path(finding.file).relative_to(PROJECT_ROOT))
+                except ValueError:
+                    rel_path = finding.file
+                issues.append(
+                    LintIssue(
+                        severity="warning",  # Report-only: warnings not errors
+                        file=rel_path,
+                        line=finding.line,
+                        message=f"[CON-0003] {finding.message}",
+                        hint="Consider using LLM-driven semantics instead of hardcoded patterns.",
+                    )
+                )
 
     issues = _sort_issues(issues)
     exit_code = 1 if any(issue.severity == "error" for issue in issues) else 0

@@ -62,11 +62,12 @@ _RISK_TO_EVIDENCE: dict[str, str] = {
 
 # Default thresholds per risk category. Strategies whose evidence is at or below
 # this level are skipped (the risk is not present enough to warrant running them).
+# Phase 5: vague_references threshold set to 0 to trigger on any unresolved refs
 _DEFAULT_RISK_THRESHOLDS: dict[str, float] = {
     "compound_loss": 0.1,
     "content_loss": 0.01,
     "information_loss": 0.1,
-    "vague_references": 1.0,
+    "vague_references": 0.0,  # Phase 5: trigger on any unresolved references
     "low_confidence": 1.0,
 }
 

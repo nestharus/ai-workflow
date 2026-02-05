@@ -114,6 +114,9 @@ class CandidateLibrary:
     # Event log for this library
     events: list[LibraryEvent] = field(default_factory=list)
 
+    # Stability key for ALG-CORE-0006 (stable ID allocation)
+    stability_key: str = ""
+
     def rename(self, new_name: str, reason: str = "") -> None:
         """Rename library - stable ID unchanged, display name updated."""
         self.name_history.append(self.name)
@@ -146,7 +149,15 @@ class CandidateIdentifier:
     The main convergence mechanism is multi-labeling + shape aggregation.
     """
 
-    def __init__(self, config_path: Path | None = None, llm_client: LLMClient | None = None):
+    def __init__(
+        self, config_path: Path | None = None, llm_client: LLMClient | None = None
+    ) -> None:
+        """Initialize candidate identifier.
+
+        Args:
+            config_path: Optional path to YAML config with keyword hints.
+            llm_client: Optional LLM client for system summarization.
+        """
         self.candidates: dict[str, CandidateLibrary] = {}  # keyed by internal_id
         self.keyword_config: dict[str, list[str]] = {}
         self._next_lib_id = 1  # Counter for stable internal IDs

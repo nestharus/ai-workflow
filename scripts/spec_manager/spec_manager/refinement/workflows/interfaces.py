@@ -639,15 +639,13 @@ def build_edge_context_bundles(
 
     def _extract_decisions(
         decisions_index: DecisionsIndex | None,
-        element_ids: list[str],
     ) -> list[dict[str, Any]]:
-        if decisions_index is None or not element_ids:
+        """Extract all open decisions from the decisions index."""
+        if decisions_index is None:
             return []
-        decision_lookup = {d.decision_id: d for d in decisions_index.decisions}
         extracted: list[dict[str, Any]] = []
-        for element_id in element_ids:
-            decision = decision_lookup.get(element_id)
-            if not decision:
+        for decision in decisions_index.decisions:
+            if decision.status != "open":
                 continue
             extracted.append(
                 {
@@ -695,8 +693,8 @@ def build_edge_context_bundles(
 
         consumer_elements = _extract_elements(consumer_spec_index, edge.consumer_elements)
         provider_elements = _extract_elements(provider_spec_index, edge.provider_elements)
-        consumer_decisions = _extract_decisions(consumer_decisions_index, edge.consumer_elements)
-        provider_decisions = _extract_decisions(provider_decisions_index, edge.provider_elements)
+        consumer_decisions = _extract_decisions(consumer_decisions_index)
+        provider_decisions = _extract_decisions(provider_decisions_index)
 
         consumer_component = architecture_components.get(edge.consumer_lib)
         provider_component = architecture_components.get(edge.provider_lib)

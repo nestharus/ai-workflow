@@ -1,0 +1,19 @@
+{
+  "description": "Expected structural output for prose fragment detection",
+  "detection_method": "structural_analysis",
+  "expected_signals": [
+    {
+      "type": "structural_low_id_density",
+      "description": "Prose with multiple sentences and no ID references"
+    },
+    {
+      "type": "structural_dense_prose",
+      "description": "Dense prose with high avg words per sentence"
+    },
+    {
+      "type": "structural_uncertainty",
+      "description": "Section with multiple questions"
+    }
+  ],
+  "notes": "Phase 5: All structural findings are non-authoritative (confidence < 0.5)"
+}

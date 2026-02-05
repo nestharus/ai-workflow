@@ -938,3 +938,38 @@ def generate_stamp(
         parts.append(f"@line:{source_line}")
 
     return f"<!-- {' '.join(parts)} -->"
+
+
+def validate_unit_has_atom_ids(unit: TrackedUnit) -> list[str]:
+    """Validate that a unit has source_atom_ids populated (Phase 3 requirement).
+
+    Per INV-ACC-0101, all units must have source_atom_ids populated to enable
+    100% atom accounting.
+
+    Args:
+        unit: The TrackedUnit to validate
+
+    Returns:
+        List of error messages (empty if valid)
+    """
+    errors: list[str] = []
+    if not unit.source_atom_ids:
+        errors.append(f"Unit {unit.id} missing source_atom_ids")
+    return errors
+
+
+def validate_units_have_atom_ids(units: list[TrackedUnit]) -> dict[str, list[str]]:
+    """Validate that all units have source_atom_ids populated.
+
+    Args:
+        units: List of TrackedUnits to validate
+
+    Returns:
+        Dictionary mapping unit_id -> list of errors (only includes units with errors)
+    """
+    errors: dict[str, list[str]] = {}
+    for unit in units:
+        unit_errors = validate_unit_has_atom_ids(unit)
+        if unit_errors:
+            errors[unit.id] = unit_errors
+    return errors

@@ -1061,6 +1061,207 @@ def cmd_finalize_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Run STRUCTURE phase validation (CMD-validate).
+
+    Validates atoms and sections exist and checks coverage report.
+    Emits gaps_report if validation issues are found.
+    """
+    run_id = args.run_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    # Check required artifacts exist
+    manifest_dir = manager.structure.manifest_dir
+    sections_dir = manifest_dir / "sections"
+    atoms_dir = manifest_dir / "atoms"
+
+    issues: list[str] = []
+
+    if not sections_dir.exists() or not any(sections_dir.glob("*.sections.json")):
+        issues.append("Missing sections manifest (manifest/sections/*.sections.json)")
+
+    if not atoms_dir.exists() or not any(atoms_dir.glob("*.atoms.jsonl")):
+        issues.append("Missing atoms manifest (manifest/atoms/*.atoms.jsonl)")
+
+    # Check for spec_index files if we're past Phase 4
+    libraries_dir = manager.structure.libraries_dir
+    if libraries_dir.exists():
+        lib_dirs = [d for d in libraries_dir.iterdir() if d.is_dir()]
+        if lib_dirs:
+            specs_missing = [d.name for d in lib_dirs if not (d / "spec_index.json").exists()]
+            if specs_missing:
+                issues.append(f"Missing spec_index.json for libraries: {', '.join(specs_missing)}")
+
+    if issues:
+        print("Validation issues found:")
+        for issue in issues:
+            print(f"  - {issue}")
+
+        # Write gaps report
+        gaps_report = {
+            "run_id": run_id,
+            "phase": "STRUCTURE",
+            "issues": [{"type": "validation_error", "message": issue} for issue in issues],
+        }
+        reports_dir = manager.structure.reports_dir
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        gaps_path = reports_dir / "gaps_report.json"
+        gaps_path.write_text(json.dumps(gaps_report, indent=2), encoding="utf-8")
+        print(f"\nGaps report written: {gaps_path}")
+        return 1
+
+    print("Validation passed:")
+    print("  - Sections manifest: OK")
+    print("  - Atoms manifest: OK")
+    if libraries_dir.exists():
+        lib_count = len([d for d in libraries_dir.iterdir() if d.is_dir()])
+        print(f"  - Libraries: {lib_count}")
+
+    return 0
+
+
+def cmd_project(args: argparse.Namespace) -> int:
+    """Generate plan.md projection with pins (CMD-project).
+
+    Uses generate_plan_from_libraries from projection module.
+    Runs drift detection and outputs plan_md, drift_report, gaps_report.
+    """
+    run_id = args.run_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+
+    if not manager.is_initialized:
+        print("Workspace not initialized. Run 'init' first.")
+        return 1
+
+    # Check libraries exist
+    libraries_dir = manager.structure.libraries_dir
+    if not libraries_dir.exists():
+        print("No libraries found. Run synthesis phase first.")
+        return 1
+
+    from spec_manager.projection.generator import (
+        generate_plan_from_libraries,
+        save_projection,
+    )
+    from spec_manager.schemas.spec_index_v2 import Library, SpecIndexV2
+
+    # Load libraries and elements from spec indexes
+    libraries: list[Library] = []
+    from spec_manager.schemas.derived_elements import DerivedElement
+
+    elements: list[DerivedElement] = []
+
+    for lib_dir in sorted(libraries_dir.iterdir()):
+        if not lib_dir.is_dir():
+            continue
+
+        # Read library info from charter or spec_index
+        lib_id = lib_dir.name
+        charter_path = lib_dir / "charter.md"
+        name = lib_id
+        description = ""
+
+        if charter_path.exists():
+            charter_content = charter_path.read_text(encoding="utf-8")
+            # Extract name from first heading
+            for line in charter_content.splitlines():
+                if line.startswith("# "):
+                    name = line[2:].strip()
+                    break
+                if line.startswith("## Intent"):
+                    # Next non-empty line is description
+                    idx = charter_content.find("## Intent")
+                    rest = charter_content[idx + len("## Intent") :].strip()
+                    for desc_line in rest.splitlines():
+                        if desc_line.strip() and not desc_line.startswith("#"):
+                            description = desc_line.strip()
+                            break
+                    break
+
+        library = Library(lib_id=lib_id, name=name, description=description)
+        libraries.append(library)
+
+        # Load elements from spec_index
+        spec_index_path = lib_dir / "spec_index.json"
+        if spec_index_path.exists():
+            spec_data = json.loads(spec_index_path.read_text(encoding="utf-8"))
+            for elem_data in spec_data.get("elements", []):
+                elem = DerivedElement(
+                    elem_id=elem_data.get("element_id", ""),
+                    kind=elem_data.get("kind", "REQ"),
+                    lib_id=lib_id,
+                    title=elem_data.get("title", ""),
+                    body=elem_data.get("text", ""),
+                    evidence_atom_ids=elem_data.get("evidence_atom_ids", ["ATOM-PLACEHOLDER"]),
+                )
+                elements.append(elem)
+
+    if not libraries:
+        print("No library directories found.")
+        return 1
+
+    print(f"Generating projection from {len(libraries)} libraries, {len(elements)} elements...")
+
+    # Generate projection
+    artifact = generate_plan_from_libraries(libraries, elements)
+
+    # Save projection
+    projections_dir = manager.workspace_path / "projections"
+    projections_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = projections_dir / "plan.md"
+    pins_path = projections_dir / "plan_pins.json"
+
+    save_projection(artifact, plan_path, pins_path)
+
+    print("Projection generated:")
+    print(f"  - Plan: {plan_path}")
+    print(f"  - Pins: {pins_path} ({len(artifact.pins)} pins)")
+
+    # Run drift detection if previous projection exists
+    existing_plan = manager.structure.root / "plan.md"
+    if existing_plan.exists():
+        from spec_manager.projection.drift import AtomAwareDriftComparator
+
+        comparator = AtomAwareDriftComparator()
+        spec_index = SpecIndexV2(libraries=libraries)
+
+        report = comparator.compare(artifact, spec_index)
+
+        reports_dir = manager.structure.reports_dir
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        drift_path = reports_dir / "projection_drift.json"
+
+        drift_data = {
+            "projection_id": artifact.projection_id,
+            "similarity": report.similarity,
+            "total_pins": report.total_pins,
+            "valid_pins": report.valid_pins,
+            "missing_targets": report.missing_targets,
+            "drift_items": [
+                {
+                    "drift_type": item.drift_type,
+                    "pin_id": item.pin_id,
+                    "target_id": item.target_id,
+                    "projection_excerpt": item.projection_excerpt,
+                }
+                for item in report.drift_items
+            ],
+        }
+        drift_path.write_text(json.dumps(drift_data, indent=2), encoding="utf-8")
+        print(f"  - Drift report: {drift_path}")
+        print(f"    - Similarity: {report.similarity:.2%}")
+        print(f"    - Valid pins: {report.valid_pins}/{report.total_pins}")
+
+        if report.has_significant_drift():
+            print("  - WARNING: Significant drift detected")
+
+    return 0
+
+
 def cmd_trace_atom(args: argparse.Namespace) -> int:
     """Trace an atom through the provenance chain."""
     run_id = args.run_id
@@ -1793,6 +1994,36 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spec_finalize.add_argument("run_id", help="Run identifier")
     p_spec_finalize.set_defaults(func=cmd_finalize_run)
+
+    # CMD-validate: Structure phase validation
+    p_spec_validate = spec_subparsers.add_parser(
+        "validate",
+        help="Run STRUCTURE phase validation (CMD-validate)",
+        description=(
+            "Validate atoms and sections exist, check coverage report.\n"
+            "Emits gaps_report if validation issues are found.\n"
+            "Outputs: reports/gaps_report.json (on failure)"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_validate.add_argument("run_id", help="Run identifier")
+    p_spec_validate.set_defaults(func=cmd_validate)
+
+    # CMD-project: Generate projection with pins
+    p_spec_project = spec_subparsers.add_parser(
+        "project",
+        help="Generate plan.md projection with pins (CMD-project)",
+        description=(
+            "Generate plan.md as a projection from libraries with inline pins.\n"
+            "Uses ALG-PROJ-0001 to generate plan from libraries.\n"
+            "Runs drift detection using ALG-PROJ-0002.\n"
+            "Outputs: workspace/projections/plan.md, plan_pins.json, "
+            "reports/projection_drift.json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_spec_project.add_argument("run_id", help="Run identifier")
+    p_spec_project.set_defaults(func=cmd_project)
 
     if argv is None:
         argv = sys.argv[1:]

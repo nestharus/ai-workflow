@@ -74,14 +74,22 @@ def _create_minimal_atoms(
     manager: WorkspaceManager,
     file_id: str,
     entries: list[tuple[str, str]],
+    *,
+    rev_id: str = "R0001",
 ) -> list[dict[str, str]]:
     atoms: list[dict[str, str]] = []
     for line_no, (section_id, text) in enumerate(entries, start=1):
-        atom_id = f"ATOM-{file_id}-L{line_no:04d}"
+        atom_id = f"ATOM-{file_id}-{rev_id}-L{line_no:04d}"
+        # atom_fingerprint is a hash of content + context for cross-revision matching
+        atom_fingerprint = _hash_text(f"{text}:{line_no}")
         atoms.append(
             {
                 "atom_id": atom_id,
+                "atom_fingerprint": atom_fingerprint,
+                "file_uid": file_id,
+                "rev_id": rev_id,
                 "line_no": line_no,
+                "sequence_index": line_no - 1,
                 "section_id": section_id,
                 "sha256": _hash_text(text),
                 "text": text,
@@ -223,10 +231,11 @@ class TestAtomToSectionIndex:
 
         index = build_atom_to_section_index(manager)
 
-        assert index["ATOM-F0001-L0001"]["section_id"] == "SEC-F0001-0001"
-        assert index["ATOM-F0001-L0001"]["sha256"] == _hash_text("First line")
-        assert index["ATOM-F0002-L0001"]["section_id"] == "SEC-F0002-0001"
-        assert index["ATOM-F0002-L0001"]["file_id"] == "F0002"
+        # Atom IDs now include revision ID: ATOM-{file_uid}-{rev_id}-L{line_no:04d}
+        assert index["ATOM-F0001-R0001-L0001"]["section_id"] == "SEC-F0001-0001"
+        assert index["ATOM-F0001-R0001-L0001"]["sha256"] == _hash_text("First line")
+        assert index["ATOM-F0002-R0001-L0001"]["section_id"] == "SEC-F0002-0001"
+        assert index["ATOM-F0002-R0001-L0001"]["file_id"] == "F0002"
 
     def test_build_atom_to_section_index_empty_directory(
         self, interface_workspace, fs, caplog

@@ -331,6 +331,14 @@ class WorkflowOrchestrator:
     def run(self) -> WorkflowState:
         """Run the full workflow.
 
+        .. deprecated::
+            WorkflowOrchestrator.run() is deprecated since Phase 7.
+            Use the refinement CLI phases instead:
+            - ``uv run spec spec sectionize <run_id>``
+            - ``uv run spec spec summarize <run_id>``
+            - ``uv run spec spec synthesize <run_id>``
+            - etc.
+
         1. INIT       - Load inputs, extract units.
         2. CLEANING   - Iterative clean with compliance gate.
         3. COMPOSITING - Merge + remainder partition.
@@ -339,6 +347,15 @@ class WorkflowOrchestrator:
         6. SYNC       - plan.md <-> libraries synchronization.
         7. FINALIZE   - Stamps removed, gaps.md, relations written.
         """
+        import warnings
+
+        warnings.warn(
+            "WorkflowOrchestrator.run() is deprecated. "
+            "Use the refinement CLI phases (uv run spec spec <phase> <run_id>) instead. "
+            "See 16_CLI_SCRIPTS.md for the canonical command set.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         try:
             self._phase_init()
             self._phase_cleaning()

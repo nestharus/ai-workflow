@@ -5,6 +5,16 @@ from .architecture import (
     propose_architectures,
     select_architecture,
 )
+from .atom_emitter import (
+    AtomEmissionResult,
+    emit_atoms,
+    emit_atoms_with_evidence,
+)
+from .evidence_builder import (
+    build_evidence_graph,
+    build_evidence_ranges_from_spans,
+    create_unknown_span_for_uncovered,
+)
 from .evidence_expansion import expand_evidence, spotcheck_evidence
 from .library_labeling import (
     CharterResults,
@@ -40,15 +50,21 @@ from .summarization import summarize_all
 __all__ = [
     "CITATION_REQUIRED_SECTIONS",
     "VALID_SPEC_SECTIONS",
+    "AtomEmissionResult",
     "CharterResults",
     "PatchOperation",
     "SpecDocument",
     "SpecPatchSet",
     "aggregate_labels",
     "apply_patch",
+    "build_evidence_graph",
+    "build_evidence_ranges_from_spans",
     "build_specs",
+    "create_unknown_span_for_uncovered",
     "detect_overlaps",
     "detect_sublibraries",
+    "emit_atoms",
+    "emit_atoms_with_evidence",
     "expand_evidence",
     "generate_all_charters",
     "generate_library_charter",

@@ -9,6 +9,14 @@ from .architecture import (
 )
 from .architecture_brief import ArchitectureBrief
 from .atoms import LineAtom
+from .derived_elements import (
+    DerivedElement,
+    DerivedElementKind,
+    ElementStatus,
+    RelationEdge,
+    RelationType,
+    allocate_element_id,
+)
 from .edge_list import (
     EdgeListSchema,
     EdgeSchema,
@@ -21,7 +29,36 @@ from .edge_list import (
     write_edge_list_json,
     write_interface_index_json,
 )
+from .entities import (
+    EntitiesArtifact,
+    Entity,
+    EntityKind,
+    EntityMention,
+    EntityTag,
+    allocate_entity_id,
+)
+from .evid_citation import (
+    EvidCitation,
+    build_evid,
+    extract_evid_citations,
+    format_evid_citation,
+    parse_evid_citation,
+    validate_evid_format,
+)
+from .evidence_graph import (
+    EdgeType,
+    EvidenceGraph,
+    EvidenceGraphEdge,
+    EvidenceGraphNode,
+    NodeType,
+)
 from .evidence_mapper import EvidenceMapperOutput
+from .evidence_ranges import (
+    EVID_CITATION_PATTERN,
+    EVIDENCE_ID_PATTERN,
+    EvidenceRange,
+    EvidenceRangesArtifact,
+)
 from .files import FileManifestEntry, FilesManifest
 from .gap_judge import GapFinding, GapJudgeOutput
 from .interface_contract import (
@@ -50,8 +87,19 @@ from .review_actions import (
     write_review_actions_markdown,
 )
 from .sections import FileSections, SectionSpan
+from .spec_index_v2 import (
+    Library,
+    SpecIndexV2,
+    build_spec_index,
+    convert_legacy_spec_index,
+)
 from .spec_indexes import Decision, DecisionsIndex, SpecElement, SpecIndex
 from .spec_patches import SpecPatchOp, SpecPatchOutput
+from .tag_delta import (
+    TagIndexDelta,
+    TagItem,
+    TagRelation,
+)
 from .task_status import (
     AuditResultSchema,
     TaskImplementationStatusSchema,
@@ -61,8 +109,6 @@ from .task_status import (
     write_task_implementation_status_json,
 )
 from .tasks import (
-    GAP_ID_RE,
-    TASK_ID_RE,
     PatchGraphSchema,
     TaskCoversSchema,
     TaskIndexEntrySchema,
@@ -88,8 +134,8 @@ from .tasks import (
 from .terms import FileTerms, SectionTerms
 
 __all__ = [
-    "GAP_ID_RE",
-    "TASK_ID_RE",
+    "EVIDENCE_ID_PATTERN",
+    "EVID_CITATION_PATTERN",
     "ArchitectureBrief",
     "ArchitectureCandidate",
     "ArchitectureComponent",
@@ -101,9 +147,24 @@ __all__ = [
     "DataContract",
     "Decision",
     "DecisionsIndex",
+    "DerivedElement",
+    "DerivedElementKind",
     "EdgeListSchema",
     "EdgeSchema",
+    "EdgeType",
+    "ElementStatus",
+    "EntitiesArtifact",
+    "Entity",
+    "EntityKind",
+    "EntityMention",
+    "EntityTag",
+    "EvidCitation",
+    "EvidenceGraph",
+    "EvidenceGraphEdge",
+    "EvidenceGraphNode",
     "EvidenceMapperOutput",
+    "EvidenceRange",
+    "EvidenceRangesArtifact",
     "FileManifestEntry",
     "FileSections",
     "FileTerms",
@@ -112,23 +173,31 @@ __all__ = [
     "GapJudgeOutput",
     "InterfaceContractSchema",
     "InterfaceIndexSchema",
+    "Library",
     "LibraryLabel",
     "LibraryLabelerOutput",
     "LineAtom",
+    "NodeType",
     "OperationalContract",
     "PatchGraphSchema",
     "PatchOutputSchema",
     "ProvidedInterface",
     "QaCriterionResult",
     "QaJudgeOutput",
+    "RelationEdge",
+    "RelationType",
     "ReviewAction",
     "ReviewActionsReport",
     "SectionSpan",
     "SectionTerms",
     "SpecElement",
     "SpecIndex",
+    "SpecIndexV2",
     "SpecPatchOp",
     "SpecPatchOutput",
+    "TagIndexDelta",
+    "TagItem",
+    "TagRelation",
     "TaskCoversSchema",
     "TaskImplementationStatusSchema",
     "TaskIndexEntrySchema",
@@ -138,8 +207,16 @@ __all__ = [
     "TestResultSchema",
     "allocate_action_id",
     "allocate_edge_id",
+    "allocate_element_id",
+    "allocate_entity_id",
+    "build_evid",
     "build_interface_index",
+    "build_spec_index",
+    "convert_legacy_spec_index",
+    "extract_evid_citations",
+    "format_evid_citation",
     "generate_stable_action_ids",
+    "parse_evid_citation",
     "read_edge_list_json",
     "read_interface_contract_json",
     "read_interface_index_json",
@@ -156,6 +233,7 @@ __all__ = [
     "validate_edge_coverage",
     "validate_edge_references",
     "validate_element_coverage",
+    "validate_evid_format",
     "validate_patch_graph_acyclic",
     "validate_pointer_format",
     "validate_pointer_references",

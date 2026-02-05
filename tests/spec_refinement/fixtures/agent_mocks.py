@@ -514,8 +514,8 @@ def _build_interface_contract_payload(bundle: dict[str, Any]) -> dict[str, Any]:
         elem.get("element_id") for elem in provider.get("elements", []) if isinstance(elem, dict)
     ]
 
-    consumer_requirement = consumer_elements[0] if consumer_elements else "REQ-LIB-0001-0001"
-    provider_requirement = provider_elements[0] if provider_elements else "REQ-LIB-0002-0001"
+    consumer_requirement = consumer_elements[0] if consumer_elements else f"REQ-{consumer_lib}-0001"
+    provider_requirement = provider_elements[0] if provider_elements else f"REQ-{provider_lib}-0001"
 
     consumer_component = architecture.get("consumer_component") or {}
     provider_component = architecture.get("provider_component") or {}

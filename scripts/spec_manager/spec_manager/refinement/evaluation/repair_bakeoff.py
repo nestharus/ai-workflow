@@ -441,6 +441,21 @@ def _build_validation_manager(allowlists: dict[str, Any], root: Path) -> Workspa
         section_manifest.setdefault(file_id, [])
     manager.state.section_manifest = section_manifest
 
+    # Create sections files for validation (read_file_sections reads from disk)
+    sections_dir = structure.manifest_sections_dir
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    for file_id, section_labels in section_manifest.items():
+        sections_payload = {
+            "file_id": file_id,
+            "sections": [
+                {"section_id": label, "start_line": idx + 1, "end_line": idx + 1, "label": label}
+                for idx, label in enumerate(section_labels)
+            ],
+            "total_lines": len(section_labels),
+        }
+        sections_file = sections_dir / f"{file_id}.sections.json"
+        sections_file.write_text(json.dumps(sections_payload, indent=2), encoding="utf-8")
+
     library_files = allowlists.get("library_files", {})
     if isinstance(library_files, dict):
         for lib_id, files in library_files.items():

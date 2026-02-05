@@ -155,7 +155,7 @@ def _create_toy_repo_files(fs, repo_root: Path, files: list[str] | None = None) 
     file_paths = files or ["app/main.py", "app/utils.py", "lib/worker.py"]
     for rel_path in file_paths:
         full_path = repo_root / rel_path
-        fs.create_dir(full_path.parent)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text("def handler():\n    return True\n", encoding="utf-8")
     return file_paths
 

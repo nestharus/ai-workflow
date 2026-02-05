@@ -220,13 +220,19 @@ def test_build_interfaces_handles_no_edges(interface_workspace, mock_interface_a
 
 
 def test_build_interfaces_phase_tracking(interface_workspace, mock_interface_agents) -> None:
+    from pathlib import Path
+
+    from spec_manager.refinement.workspace import WorkspaceManager
+
     manager, manifest = interface_workspace(run_id="run_phase")
     _complete_prerequisites(manager)
     mock_interface_agents(manifest)
 
     build_interface_graph(manager.run_id)
 
-    phase_result = manager.state.phases[Phase.INTERFACES.value]
+    # Reload state from disk since build_interface_graph uses its own manager instance
+    refreshed = WorkspaceManager(run_id=manager.run_id, input_folder=Path("."))
+    phase_result = refreshed.state.phases[Phase.INTERFACES.value]
     assert phase_result.status == PhaseStatus.COMPLETED
     assert phase_result.started_at is not None
     assert phase_result.completed_at is not None

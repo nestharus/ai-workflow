@@ -36,7 +36,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -610,8 +610,9 @@ def _is_absolute_path(path_str: str) -> bool:
 
 
 def _path_matches_immutable(path_str: str, patterns: list[str]) -> bool:
-    pure_path = PurePosixPath(path_str)
-    return any(pure_path.match(pattern) for pattern in patterns)
+    import fnmatch
+
+    return any(fnmatch.fnmatch(path_str, pattern) for pattern in patterns)
 
 
 def _is_within_repo(path: Path, repo_root: Path) -> bool:

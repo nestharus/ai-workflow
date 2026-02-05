@@ -69,14 +69,22 @@ def _write_sections(manager: WorkspaceManager, file_id: str) -> list[str]:
 
 def _write_atoms(manager: WorkspaceManager, file_id: str, section_ids: list[str]) -> None:
     atoms = []
+    rev_id = "R0001"
     for index, section_id in enumerate(section_ids, start=1):
         text = f"Line {index}"
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        # atom_fingerprint is content-based fingerprint for cross-revision matching
+        fingerprint = hashlib.sha256(f"{text}:{index}".encode()).hexdigest()
         atoms.append(
             {
-                "atom_id": f"ATOM-{file_id}-L{index:04d}",
+                "atom_id": f"ATOM-{file_id}-{rev_id}-L{index:04d}",
+                "atom_fingerprint": fingerprint,
+                "file_uid": file_id,
+                "rev_id": rev_id,
                 "line_no": index,
+                "sequence_index": index - 1,
                 "section_id": section_id,
-                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "sha256": text_hash,
                 "text": text,
             }
         )
@@ -533,18 +541,29 @@ class TestDriftReport:
                     "raw_line": "- REQ-LIB-0001-0001: Handle inbound requests.",
                     "citations": ["[spec_snapshot/input.md::SEC-F0001-0001]"],
                     "mentions_libs": [],
-                }
+                },
+                {
+                    "element_id": "REQ-LIB-0001-0002",
+                    "kind": "requirement",
+                    "section": "Requirements",
+                    "text": "Subscribe to events.",
+                    "raw_line": "- REQ-LIB-0001-0002: Subscribe to events.",
+                    "citations": ["[spec_snapshot/input.md::SEC-F0001-0001]"],
+                    "mentions_libs": [],
+                },
             ],
         )
         for lib_id in ["LIB-0002", "LIB-0003"]:
             _write_spec_index(manager, lib_id, [])
 
+        # Cover all elements to make edges considered covered
+        # Edge coverage is determined by whether edge's consumer/provider elements are covered
         _write_tasks(
             manager,
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002"],
                     "status": "done",
                     "with_patch": True,
                     "write_status": True,

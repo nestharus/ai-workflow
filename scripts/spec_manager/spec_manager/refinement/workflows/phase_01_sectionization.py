@@ -325,8 +325,14 @@ def _process_file_sectionization(
             if atoms_path.exists():
                 atoms_path.unlink()
             before_atoms = _count_evidence_lines(evidence_output)
+
+            # Get rev_id from file manifest (defaults to R0001 for legacy compatibility)
+            file_data = manager.state.file_manifest.get(file_id, {})
+            rev_id = file_data.get("rev_id", "R0001") if isinstance(file_data, dict) else "R0001"
+
             atoms_written = emit_atoms(
-                file_id=file_id,
+                file_uid=file_id,
+                rev_id=rev_id,
                 file_path=file_path,
                 sections=sections_model,
                 output_path=atoms_path,

@@ -1,0 +1,7 @@
+{
+  "description": "Expected structural signal for entity resolution gating",
+  "unresolved_references": 1,
+  "declared_ids": ["Algorithm_1"],
+  "unresolved_ids": ["Algorithm_99"],
+  "notes": "Phase 5: Structural gating uses system ID patterns, not keyword scanning"
+}

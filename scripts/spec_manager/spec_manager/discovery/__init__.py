@@ -48,9 +48,19 @@ from spec_manager.discovery.candidate import (
     CandidateLibrary,
     LibraryEvent,
 )
+from spec_manager.discovery.cooccurrence import (
+    CooccurrenceGraph,
+    WeightedEdge,
+    WeightedGraph,
+    WindowPolicy,
+)
 from spec_manager.discovery.labeling import (
     ElementLabels,
     MultiLabeler,
+)
+from spec_manager.discovery.library_proposal import (
+    LibraryCandidate,
+    LibraryProposer,
 )
 from spec_manager.discovery.refinement import (
     LibraryRefiner,
@@ -59,23 +69,32 @@ from spec_manager.discovery.refinement import (
     discover_libraries_keyword_only,
     discover_libraries_sync,
 )
+from spec_manager.discovery.spec_index_builder import (
+    SpecIndexBuilder,
+    read_spec_index_json,
+    write_spec_index_json,
+)
 
 __all__ = [
-    # Candidate identification
-    "CandidateLibrary",
     "CandidateIdentifier",
-    "LibraryEvent",
-    # Multi-labeling
+    "CandidateLibrary",
+    "CooccurrenceGraph",
     "ElementLabels",
-    "MultiLabeler",
-    # Shape aggregation
-    "LibraryShape",
-    "ShapeAggregator",
-    # Refinement
-    "RefinementResult",
+    "LibraryCandidate",
+    "LibraryEvent",
+    "LibraryProposer",
     "LibraryRefiner",
-    # Workflow functions
+    "LibraryShape",
+    "MultiLabeler",
+    "RefinementResult",
+    "ShapeAggregator",
+    "SpecIndexBuilder",
+    "WeightedEdge",
+    "WeightedGraph",
+    "WindowPolicy",
     "discover_libraries",
-    "discover_libraries_sync",
     "discover_libraries_keyword_only",
+    "discover_libraries_sync",
+    "read_spec_index_json",
+    "write_spec_index_json",
 ]

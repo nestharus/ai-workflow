@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from spec_manager.core.gaps import Severity
+from spec_manager.core.id_registry import FileUidRegistry, RevisionRegistry
 from spec_manager.refinement.core.gap import (
     Gap,
     GapEvidence,
@@ -134,6 +135,21 @@ class RunFolderStructure:
     def indexes_dir(self) -> Path:
         """Path to the indexes directory for cross-cutting data."""
         return self.workspace_dir / "indexes"
+
+    @property
+    def registry_dir(self) -> Path:
+        """Path to the workspace-global registry directory."""
+        return Path("runs") / "_registry"
+
+    @property
+    def file_uids_json(self) -> Path:
+        """Path to the file UID registry."""
+        return self.registry_dir / "file_uids.json"
+
+    @property
+    def revisions_json(self) -> Path:
+        """Path to the revision registry."""
+        return self.registry_dir / "revisions.json"
 
     def validate(self) -> list[str]:
         """Validate run folder structure."""
@@ -328,8 +344,28 @@ class WorkspaceManager:
 
     # --- Manifest Management ---
 
+    def _load_file_uid_registry(self) -> FileUidRegistry:
+        """Load file UID registry from persistent storage."""
+        return FileUidRegistry.load(self.structure.file_uids_json)
+
+    def _save_file_uid_registry(self, registry: FileUidRegistry) -> None:
+        """Save file UID registry to persistent storage."""
+        registry.save(self.structure.file_uids_json)
+
+    def _load_revision_registry(self) -> RevisionRegistry:
+        """Load revision registry from persistent storage."""
+        return RevisionRegistry.load(self.structure.revisions_json)
+
+    def _save_revision_registry(self, registry: RevisionRegistry) -> None:
+        """Save revision registry to persistent storage."""
+        registry.save(self.structure.revisions_json)
+
     def _enumerate_files_with_hashes(self) -> tuple[dict[str, dict[str, str]], list[str]]:
-        """Enumerate files in the spec snapshot with stable IDs and hashes."""
+        """Enumerate files in the spec snapshot with stable IDs and hashes.
+
+        Uses persistent FileUidRegistry (ALG-CORE-0001) and RevisionRegistry
+        (ALG-CORE-0002) to ensure IDs are stable across runs.
+        """
         files: dict[str, dict[str, str]] = {}
         issues: list[str] = []
 
@@ -338,14 +374,17 @@ class WorkspaceManager:
             issues.append(f"Spec snapshot directory missing: {snapshot_dir}")
             return files, issues
 
+        # Load registries
+        file_uid_registry = self._load_file_uid_registry()
+        revision_registry = self._load_revision_registry()
+
         rel_paths: list[str] = []
         for path in snapshot_dir.rglob("*"):
             if path.is_symlink() or not path.is_file():
                 continue
             rel_paths.append(path.relative_to(snapshot_dir).as_posix())
 
-        for index, relpath in enumerate(sorted(rel_paths), start=1):
-            file_id = f"F{index:04d}"
+        for relpath in sorted(rel_paths):
             abs_path = snapshot_dir / relpath
             hasher = hashlib.sha256()
             try:
@@ -355,7 +394,25 @@ class WorkspaceManager:
             except OSError as exc:
                 issues.append(f"Failed to hash snapshot file {relpath}: {exc}")
                 continue
-            files[file_id] = {"relpath": relpath, "sha256": hasher.hexdigest()}
+
+            sha256 = hasher.hexdigest()
+
+            # Allocate stable file UID via registry (ALG-CORE-0001)
+            file_uid = file_uid_registry.allocate(relpath, self.run_id)
+
+            # Allocate revision ID via registry (ALG-CORE-0002)
+            rev_id = revision_registry.allocate(file_uid, sha256)
+
+            files[file_uid] = {
+                "file_uid": file_uid,
+                "rev_id": rev_id,
+                "relpath": relpath,
+                "sha256": sha256,
+            }
+
+        # Save registries
+        self._save_file_uid_registry(file_uid_registry)
+        self._save_revision_registry(revision_registry)
 
         return files, issues
 

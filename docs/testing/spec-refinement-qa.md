@@ -317,6 +317,73 @@ for phase, result in state.get('phases', {}).items():
 "
 ```
 
+## Phase 1 Compliance Testing
+
+Phase 1 establishes the design-alignment harness with compliance tests for:
+
+### Contract Validation (CON-0011)
+
+Tests for contract-validated outputs are in `tests/spec_manager/compliance/test_con_0011_contract_validation.py`:
+
+- **ContractValidationResult** (DS-COMP-0001): Data structure for validation results
+- **Schema validation**: Validates artifacts against JSON schemas from design templates
+- **Quarantine behavior**: xfail tests for quarantine routing (not yet implemented)
+
+```bash
+# Run CON-0011 tests
+uv run pytest tests/spec_manager/compliance/test_con_0011_contract_validation.py -v
+```
+
+### Atom Accounting (CON-0002)
+
+Tests for 100% atom accounting are in `tests/spec_manager/compliance/test_con_0002_atom_accounting.py`:
+
+- **CoverageTracker integration**: Uses existing CoverageTracker for fragment accounting
+- **Atom accounting invariant**: Every atom must be mapped, remainder, or excluded
+- **Coverage reports**: Detect silent drops
+
+```bash
+# Run CON-0002 tests
+uv run pytest tests/spec_manager/compliance/test_con_0002_atom_accounting.py -v
+```
+
+### Design Invariants
+
+Tests for fundamental invariants are in `tests/spec_manager/compliance/test_design_invariants.py`:
+
+- **Schema registry**: All 8 design schemas loadable
+- **Coverage preservation**: Split/project operations preserve 100% coverage
+- **Validation function**: Always returns ContractValidationResult
+
+```bash
+# Run invariant tests
+uv run pytest tests/spec_manager/compliance/test_design_invariants.py -v
+```
+
+### Hardcoding Scanner (CON-0003/CON-0004)
+
+The hardcoding scanner detects code that violates the no-hardcoding policy:
+
+- **Prohibited patterns** (CON-0003):
+  - Keyword inference (`"must"`, `"shall"` scanning)
+  - Heading-based parsing (regex on `##` headers)
+  - Semantic lists (hardcoded banned libraries)
+
+- **Allowed patterns** (CON-0004):
+  - System stamps (ATOM-####, LIB-####, SEC-####)
+  - JSON schemas
+  - Test files
+
+```bash
+# Run hardcoding scanner tests
+uv run pytest tests/spec_manager/compliance/test_hardcoding_scanner.py -v
+
+# Run all compliance tests
+uv run pytest tests/spec_manager/compliance/ -v
+```
+
+The scanner is integrated into contract lint in **report-only mode** (warnings, not errors).
+
 ## Test Architecture
 
 Tests are structured to validate pipeline behaviors without LLM calls:

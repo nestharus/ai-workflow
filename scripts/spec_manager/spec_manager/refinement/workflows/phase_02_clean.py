@@ -15,7 +15,7 @@ from spec_manager.compliance.scorer import ComplianceResult, ComplianceScorer
 from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
 from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.refinement.workspace.state import Phase, PhaseStatus
-from spec_manager.schemas.atoms import ATOM_ID_PATTERN, LineAtom
+from spec_manager.schemas.atoms import LineAtom
 from spec_manager.workflow.context import ContextIndex, ContextIndexBuilder
 
 logger = logging.getLogger(__name__)
@@ -103,24 +103,10 @@ def _write_identity_membership(manager: WorkspaceManager, pass_dir: Path) -> Pat
                     if not stripped:
                         continue
                     atom = LineAtom.model_validate_json(stripped)
-                    match = ATOM_ID_PATTERN.fullmatch(atom.atom_id)
-                    if match is None:
-                        raise ValidationError.from_exception_data(
-                            "LineAtom",
-                            [
-                                {
-                                    "loc": ("atom_id",),
-                                    "msg": "atom_id must match ATOM-{file_id}-L####",
-                                    "type": "value_error",
-                                }
-                            ],
-                        )
-                    file_id = match.group("file_id")
-                    line_no = int(match.group("line_no"))
-                    atom_id = f"ATOM-{file_id}-L{line_no:04d}"
+                    # v2 atoms have atom_id directly; use it as-is for identity mapping
                     record = {
-                        "source_unit_id": atom_id,
-                        "target_element_id": atom_id,
+                        "source_unit_id": atom.atom_id,
+                        "target_element_id": atom.atom_id,
                         "rationale": "identity_mapping_phase_02",
                         "confidence": 1.0,
                         "method": "identity",
@@ -147,24 +133,10 @@ def _write_identity_lineage(manager: WorkspaceManager, pass_dir: Path) -> Path:
                     if not stripped:
                         continue
                     atom = LineAtom.model_validate_json(stripped)
-                    match = ATOM_ID_PATTERN.fullmatch(atom.atom_id)
-                    if match is None:
-                        raise ValidationError.from_exception_data(
-                            "LineAtom",
-                            [
-                                {
-                                    "loc": ("atom_id",),
-                                    "msg": "atom_id must match ATOM-{file_id}-L####",
-                                    "type": "value_error",
-                                }
-                            ],
-                        )
-                    file_id = match.group("file_id")
-                    line_no = int(match.group("line_no"))
-                    atom_id = f"ATOM-{file_id}-L{line_no:04d}"
+                    # v2 atoms have atom_id directly; use it as-is for identity mapping
                     record = {
-                        "source_id": atom_id,
-                        "target_id": atom_id,
+                        "source_id": atom.atom_id,
+                        "target_id": atom.atom_id,
                         "edge_type": "identity",
                         "timestamp": timestamp,
                     }

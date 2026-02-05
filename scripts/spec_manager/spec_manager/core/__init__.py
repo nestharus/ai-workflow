@@ -1,6 +1,19 @@
 """Core utilities for spec management."""
 
 from .annotations import AnnotationParser
+from .compat import (
+    DEFAULT_LEGACY_REV_ID,
+    LEGACY_ATOM_PATTERN,
+    NEW_ATOM_PATTERN,
+    ParsedAtomId,
+    extract_file_uid,
+    extract_line_no,
+    extract_rev_id,
+    is_legacy_format,
+    is_new_format,
+    parse_atom_id,
+    upgrade_atom_id,
+)
 from .gaps import (
     ContentVerifier,
     DetectorFinding,
@@ -21,13 +34,31 @@ from .gaps import (
     detect_gaps,
     format_gaps_md,
 )
+from .id_registry import (
+    FileUidEntry,
+    FileUidRegistry,
+    RevisionEntry,
+    RevisionRegistry,
+)
 from .ids import IdValidator
 from .intermediate import (
     FileSnapshot,
     IntermediateManager,
     IntermediateState,
 )
+from .library_registry import (
+    LibraryEntry,
+    LibraryIdAllocator,
+    generate_stability_key,
+)
 from .libs_registry import LibsRegistry
+from .local_id_resolver import (
+    DeterministicIdAllocatorState,
+    LocalIdResolver,
+    ResolvedDelta,
+    ResolvedItem,
+    ResolvedRelation,
+)
 from .provenance import (
     GranularityLevel,
     LineageEdge,
@@ -47,10 +78,14 @@ from .sections import SectionExtractor
 __all__ = [
     "AnnotationParser",
     "ContentVerifier",
+    "DEFAULT_LEGACY_REV_ID",
     "DetectorFinding",
+    "DeterministicIdAllocatorState",
     "DuplicateDetector",
     "EvidenceExtractor",
     "FileSnapshot",
+    "FileUidEntry",
+    "FileUidRegistry",
     "FormatComplianceDetector",
     "GapElement",
     "GapSynthesizer",
@@ -59,13 +94,24 @@ __all__ = [
     "InferredClaimPromotionStrategy",
     "IntermediateManager",
     "IntermediateState",
+    "LEGACY_ATOM_PATTERN",
     "LibsRegistry",
+    "LibraryEntry",
+    "LibraryIdAllocator",
     "LineageEdge",
     "LineageTable",
+    "LocalIdResolver",
     "MembershipEvidence",
+    "NEW_ATOM_PATTERN",
+    "ParsedAtomId",
     "ProofChainDetector",
     "ProseFragmentInferenceDetector",
     "ProvenanceTracker",
+    "ResolvedDelta",
+    "ResolvedItem",
+    "ResolvedRelation",
+    "RevisionEntry",
+    "RevisionRegistry",
     "SectionExtractor",
     "SequenceAnalyzer",
     "Severity",
@@ -79,7 +125,15 @@ __all__ = [
     "UnitStatus",
     "UnitType",
     "detect_gaps",
+    "extract_file_uid",
+    "extract_line_no",
+    "extract_rev_id",
     "format_gaps_md",
     "generate_stamp",
+    "generate_stability_key",
+    "is_legacy_format",
+    "is_new_format",
+    "parse_atom_id",
     "parse_stamp",
+    "upgrade_atom_id",
 ]

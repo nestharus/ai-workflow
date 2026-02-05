@@ -38,6 +38,26 @@ _SIGNATURES: list[tuple[str, re.Pattern[str], str]] = [
         ),
         "Evidence mapper returned summary headings or non-section IDs as identifiers.",
     ),
+    # CON-0021: Legacy pointers in evidence fields (should be EVID-only)
+    (
+        "legacy_pointer_in_evidence",
+        re.compile(
+            r'"(?:evidence|evidence_id|evidence_ids|citations)"[^:]*:\s*'
+            r'(?:\[[^\]]*)?"\[?(?:F\d{4}|LIB-\d{4}|spec_snapshot/)[^"]*"',
+            re.IGNORECASE,
+        ),
+        "Evidence field contains legacy pointer format; should use EVID-F####-R####-L#-L# format.",
+    ),
+    # CON-0021: spec_snapshot in evidence context
+    (
+        "spec_snapshot_in_evidence",
+        re.compile(
+            r'"(?:evidence|evidence_id|evidence_ids|citations)"[^:]*:\s*'
+            r'(?:\[[^\]]*)?"\[?spec_snapshot/[^"]*"',
+            re.IGNORECASE,
+        ),
+        "Evidence field contains spec_snapshot pointer; should use EVID-F####-R####-L#-L# format.",
+    ),
 ]
 
 
