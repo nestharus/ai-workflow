@@ -1,3 +1,0 @@
-# GLM-4.7 via OpenCode using Z.AI endpoint
-command = "glm"
-args = ["-p", "--dangerously-skip-permissions"]

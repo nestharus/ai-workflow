@@ -10,7 +10,10 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from spec_manager.refinement.evals.baselines.results.comparison import ComparisonReport
 
 from spec_manager.refinement.evals.metrics import (
     ConvergenceAnalysis,
@@ -73,9 +76,7 @@ class EvalResult:
     def from_dict(cls, data: dict[str, Any]) -> EvalResult:
         """Deserialize from dictionary."""
         detail_data = data.get("detail_metrics")
-        detail_metrics = (
-            DetailCaptureMetrics.from_dict(detail_data) if detail_data else None
-        )
+        detail_metrics = DetailCaptureMetrics.from_dict(detail_data) if detail_data else None
         conv_data = data.get("convergence_analysis")
         convergence = ConvergenceAnalysis.from_dict(conv_data) if conv_data else None
 
@@ -177,9 +178,7 @@ class EvalReport:
         threshold = max(1, len(self.results) // 2)
         self.common_bottlenecks = [
             bottleneck
-            for bottleneck, count in sorted(
-                bottleneck_counts.items(), key=lambda x: -x[1]
-            )
+            for bottleneck, count in sorted(bottleneck_counts.items(), key=lambda x: -x[1])
             if count >= threshold
         ]
 
@@ -276,7 +275,8 @@ def generate_markdown_report(report: EvalReport) -> str:
         f"- **Specs Evaluated:** {report.specs_evaluated}",
         f"- **Passed:** {report.specs_passed}",
         f"- **Failed:** {report.specs_failed}",
-        f"- **Pass Rate:** {_format_percentage(report.specs_passed / max(1, report.specs_evaluated))}",
+        f"- **Pass Rate:** "
+        f"{_format_percentage(report.specs_passed / max(1, report.specs_evaluated))}",
         "",
     ]
 
@@ -298,13 +298,16 @@ def generate_markdown_report(report: EvalReport) -> str:
         lines.append(f"| Overall Precision | {_format_percentage(precision)} |")
         lines.append(f"| Overall F1 | {_format_percentage(f1)} |")
         lines.append(
-            f"| Total Details Expected | {report.aggregate_metrics.get('total_details_expected', 0)} |"
+            f"| Total Details Expected | "
+            f"{report.aggregate_metrics.get('total_details_expected', 0)} |"
         )
         lines.append(
-            f"| Total Details Captured | {report.aggregate_metrics.get('total_details_captured', 0)} |"
+            f"| Total Details Captured | "
+            f"{report.aggregate_metrics.get('total_details_captured', 0)} |"
         )
         lines.append(
-            f"| Total Spurious Details | {report.aggregate_metrics.get('total_details_spurious', 0)} |"
+            f"| Total Spurious Details | "
+            f"{report.aggregate_metrics.get('total_details_spurious', 0)} |"
         )
         lines.append("")
 
@@ -384,7 +387,63 @@ def _format_percentage(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
-def save_report(report: EvalReport, output_dir: Path, report_name: str = "eval_report") -> dict[str, Path]:
+def generate_labyrinth_report(comparison: ComparisonReport) -> str:
+    """Generate markdown report for labyrinth baseline comparison.
+
+    Args:
+        comparison: ComparisonReport from baselines.results.comparison.
+
+    Returns:
+        Markdown formatted report string.
+    """
+    lines = ["# Labyrinth Evaluation Report", ""]
+
+    model_summaries = comparison.summary.get("by_model", {})
+    level_summaries = comparison.summary.get("by_level", {})
+
+    lines.append(f"**Models:** {len(model_summaries)}")
+    lines.append(f"**Levels:** {len(level_summaries)}")
+    lines.append("")
+
+    # By model
+    lines.append("## Results by Model")
+    lines.append("")
+    lines.append("| Model | Avg Rule Accuracy | Avg Integration | Broken Levels |")
+    lines.append("|-------|-------------------|-----------------|---------------|")
+    for model, summary in sorted(model_summaries.items()):
+        lines.append(
+            f"| {model} | {summary.get('avg_rule_accuracy', 0):.1%} "
+            f"| {summary.get('avg_integration', 0):.1%} "
+            f"| {summary.get('broken_count', 0)} |"
+        )
+    lines.append("")
+
+    # By level - compute averages from results since by_level only has broken/passed lists
+    by_level_results: dict[int, list] = {}
+    for r in comparison.results:
+        by_level_results.setdefault(r.level, []).append(r)
+
+    lines.append("## Results by Level")
+    lines.append("")
+    lines.append("| Level | Avg Rule Accuracy | Avg Integration | Models Broken |")
+    lines.append("|-------|-------------------|-----------------|---------------|")
+    for level in sorted(by_level_results.keys()):
+        results = by_level_results[level]
+        avg_rule = sum(r.rule_accuracy for r in results) / len(results) if results else 0
+        avg_integ = (
+            sum(r.integration_completeness for r in results) / len(results) if results else 0
+        )
+        level_summary = level_summaries.get(str(level), {})
+        broken_count = len(level_summary.get("models_broken", []))
+        lines.append(f"| L{level} | {avg_rule:.1%} | {avg_integ:.1%} | {broken_count} |")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def save_report(
+    report: EvalReport, output_dir: Path, report_name: str = "eval_report"
+) -> dict[str, Path]:
     """Save report in both JSON and markdown formats.
 
     Args:

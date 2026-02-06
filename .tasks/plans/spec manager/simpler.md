@@ -243,3 +243,58 @@ Worktree Hygiene
 You want a dirty root worktree and a sibling clean worktree. As slices of work are completed, they are
 extracted from the commits and pushed on to the clean worktree where tests can run and pass. Then the
 dirty worktree is rebased on to the clean worktree. This avoids final big bang integration.
+
+*edit*
+
+Now I need a baseline score of just raw GLM model being handed a spec (the step 1 spec) and being told to
+  implement it using sub-agents (agent runner using GLM). Compare raw GLM score to the overall workflow score.
+  The general workflow also needs to be able to accept input from a user and request input from a user as it
+  runs into ambiguities. So it shouldn't try to solve those ambiguities on its own. It should allow users to
+  provide answers and then have it patch specs with those answers and update refinements and pass along to
+  agents. Something like that.
+
+  I'd like another test using raw Claude Code opus agent (no agent runner). It would use its normal task system
+  and normal processes and implement using sub-agents.
+
+  How many details were captured? When inputting a number is the output correct?.
+
+  We're not running our evals. We're just running the spec raw as it is to compare our system against a model
+  baselines.
+
+  I'd like another one using ChatGPT 5.3 Codex XHigh on Codex.
+
+  If the score is too high then we need to keep adding new details to the test to complicate the calculation.
+  We need to quadruple the number of details in the calculation each time. The number of rules. We also need to
+  complicate integration. Make it so "algorithms" need to actually be split up and integrated across multiple
+  points of the system in order to properly use the rules. So introduce complex architectures (brownfield
+  existing system). The algorithm needs to have COUNTLESS rules to integrate into a highly complex system where
+  things are decomposed and non-obvious. Use things like event loops so that the code cannot be easily traced.
+  Event loops, multi-threading, message pipelines, etc. Make things as difficult as possible. We only need 1
+  end to end eval test for this and that same system can also be used on our individual eval tests instead of
+  the multitude of systems that currently exist to really stress test them. We also need to introduce
+  "unrelated connections" into the system. Algorithms that run when other algorithms run that don't actually
+  contribute. Things like logging or notifications. So we'll end up with an event log that we need to check as
+  well to make sure that all of our connections were hooked in correctly. These connections should be
+  non-obvious. The architecture of the system should also be heavily obsfucated and dense so that it is
+  difficult to understand. We need to work on this system for evaluation before we get baseline scores and we
+  need to run this system through first raw GLM to break it, then Opus 4.6 to break it, then GPT 5.3 Codex
+  XHigh to break it. Once we break a model we move on to the next model. We continue to increase complexity
+  until we can break the model. We increase integration complexity until the model begins to miss integration
+  points. We increase rule complexity until the model begins to drop rule details.
+
+  The other note, for our SYSTEM evals, is that, as part of the algorithm, our input spec is going to be
+  sparse. The agents WILL need to ask for decisions as they run into ambiguities. Our script needs to provide
+  those decisions to guide the spec to where we eventually want it to go. For our raw evals we are passing in
+  the complete extremely detailed spec in one go as one large file. This means that we likely need to update
+  how we do our evals for our system so that it truly works on a sparse spec. We need a way for users to
+  collect ambiguities (as a report; specified) and return responses to those ambiguities that then get
+  integrated into the overall spec and passed on as answers to agents that asked questions. In --auto mode we
+  run a research algorithm. agent flywheel website shows, as one of its tools, a research algorithm. We can
+  utilize that research algorithm and run it on Opus, GPT, and GLM using firecrawl. GLM can determine if we
+  find any value while Opus can keep things generally aligned while GPT continues to perform synthesis etc.
+  Opus can also be used to extract "signals" for GLM to search for and summarize. Like Opus can say why
+  something is relevant and then GLM can summarize details for further analysis and then GPT can synthesize
+  individual details later.
+
+  *edit*
+  For code ingest with no associated plans, code can be viewed as architecture + algorithms. High density, but noisy due to the architecture. The algorithms would need to be isolated (architecture removed). The goal is to separate it back into clean, constraints, and overview folders. Ideally these folders are maintained and the specs operated upon in parallel to code. This is possible because of the dense algorithms (lack of prose). It's possible to detect which algorithms were transformed by editing the code if the original algorithms are maintained. Another option is to do two versions of the system in parallel. One version of raw algorithms (no architecture) and the other version with architecture. You trace architecture back to algorithms / architecture layer separately. This allows you to test your algorithms. So the "clean" folder can be actual code rather than algorithms and then "actual actual" code can be translations from raw algorithms to architecture.

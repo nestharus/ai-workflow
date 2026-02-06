@@ -117,16 +117,40 @@ def main() -> int:
 
     # Execute based on prompt_mode
     if model.prompt_mode == "arg":
-        print(
-            f"[agent-exec] launching: {model.command} {' '.join(model.args)} <prompt>",
-            file=sys.stderr,
-        )
-        result = subprocess.run(
-            [model.command, *model.args, full_prompt],
-            capture_output=False,
-            text=True,
-            cwd=project_root,
-        )
+        # For large prompts, write to file and pass the path
+        if len(full_prompt) > 100_000:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, dir=project_root
+            ) as tmp:
+                tmp.write(full_prompt)
+                prompt_path = tmp.name
+            print(
+                f"[agent-exec] launching: {model.command} {' '.join(model.args)} "
+                f"(prompt via file: {prompt_path})",
+                file=sys.stderr,
+            )
+            try:
+                result = subprocess.run(
+                    [model.command, *model.args, f"Follow the instructions in {prompt_path}"],
+                    capture_output=False,
+                    text=True,
+                    cwd=project_root,
+                )
+            finally:
+                Path(prompt_path).unlink(missing_ok=True)
+        else:
+            print(
+                f"[agent-exec] launching: {model.command} {' '.join(model.args)} <prompt>",
+                file=sys.stderr,
+            )
+            result = subprocess.run(
+                [model.command, *model.args, full_prompt],
+                capture_output=False,
+                text=True,
+                cwd=project_root,
+            )
     else:
         result = subprocess.run(
             [model.command, *model.args],

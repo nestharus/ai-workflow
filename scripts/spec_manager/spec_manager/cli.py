@@ -711,6 +711,117 @@ def cmd_gaps(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_refine_interactive(args: argparse.Namespace) -> int:
+    """Run interactive spec refinement."""
+    from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
+
+    workspace = Path(args.workspace) if args.workspace else Path.cwd() / "runs" / args.run_id
+    if not workspace.exists():
+        print(f"Workspace not found: {workspace}")
+        return 1
+
+    spec_path = workspace / "spec.md"
+    if not spec_path.exists():
+        print(f"Spec not found: {spec_path}")
+        return 1
+
+    spec_text = spec_path.read_text(encoding="utf-8")
+
+    print(f"Running interactive refinement: run_id={args.run_id}")
+    print(f"  Workspace: {workspace}")
+    print(f"  Max iterations: {args.max_iterations}")
+
+    workflow = InteractiveWorkflow(
+        workspace=workspace,
+        interactive=True,
+        max_iterations=args.max_iterations,
+    )
+
+    refined = workflow.run(spec_text)
+
+    output_path = workspace / "refined_spec.md"
+    output_path.write_text(refined, encoding="utf-8")
+    print(f"Refined spec saved: {output_path}")
+    return 0
+
+
+def cmd_refine_auto(args: argparse.Namespace) -> int:
+    """Run automated spec refinement."""
+    from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
+
+    workspace = Path(args.workspace) if args.workspace else Path.cwd() / "runs" / args.run_id
+    if not workspace.exists():
+        print(f"Workspace not found: {workspace}")
+        return 1
+
+    spec_path = workspace / "spec.md"
+    if not spec_path.exists():
+        print(f"Spec not found: {spec_path}")
+        return 1
+
+    spec_text = spec_path.read_text(encoding="utf-8")
+
+    steering_path = Path(args.steering) if args.steering else None
+
+    print(f"Running automated refinement: run_id={args.run_id}")
+    print(f"  Workspace: {workspace}")
+    print(f"  Steering: {steering_path or 'none'}")
+    print(f"  Research: {args.research}")
+    print(f"  Max iterations: {args.max_iterations}")
+
+    workflow = InteractiveWorkflow(
+        workspace=workspace,
+        interactive=False,
+        steering_path=steering_path,
+        use_research=args.research,
+        max_iterations=args.max_iterations,
+    )
+
+    refined = workflow.run(spec_text)
+
+    output_path = workspace / "refined_spec.md"
+    output_path.write_text(refined, encoding="utf-8")
+    print(f"Refined spec saved: {output_path}")
+    return 0
+
+
+def cmd_ambiguities_list(args: argparse.Namespace) -> int:
+    """List detected ambiguities in a spec."""
+    from spec_manager.refinement.interactive.ambiguity_detector import AmbiguityDetector
+
+    workspace = Path(args.workspace) if args.workspace else Path.cwd() / "runs" / args.run_id
+    if not workspace.exists():
+        print(f"Workspace not found: {workspace}")
+        return 1
+
+    spec_path = workspace / "spec.md"
+    if not spec_path.exists():
+        print(f"Spec not found: {spec_path}")
+        return 1
+
+    spec_text = spec_path.read_text(encoding="utf-8")
+
+    print(f"Detecting ambiguities: run_id={args.run_id}")
+    print(f"  Workspace: {workspace}")
+
+    detector = AmbiguityDetector()
+    ambiguities = detector.detect(spec_text, workspace)
+
+    if not ambiguities:
+        print("\nNo ambiguities detected.")
+        return 0
+
+    print(f"\nFound {len(ambiguities)} ambiguities:\n")
+    for amb in ambiguities:
+        print(f"  [{amb.ambiguity_id}] ({amb.ambiguity_type}, confidence={amb.confidence:.0%})")
+        print(f"    Location: {amb.source_location}")
+        print(f"    Text: {amb.source_text[:120]}{'...' if len(amb.source_text) > 120 else ''}")
+        print(f"    Question: {amb.suggested_question}")
+        print()
+
+    return 0
+
+
 def cmd_phase_02(args: argparse.Namespace) -> int:
     """Run Phase 2 clean/compose/compliance workflow."""
     run_id = args.run_id
@@ -819,6 +930,35 @@ def main() -> int:
     p_discover = subparsers.add_parser("discover", help="Run library discovery")
     p_discover.add_argument("spec_folder", help="Path to spec folder")
 
+    # refine-interactive
+    p_refine_interactive = subparsers.add_parser(
+        "refine-interactive", help="Interactive spec refinement"
+    )
+    p_refine_interactive.add_argument("run_id", help="Run identifier")
+    p_refine_interactive.add_argument("--workspace", help="Workspace directory")
+    p_refine_interactive.add_argument(
+        "--max-iterations", type=int, default=5, help="Max iterations (default: 5)"
+    )
+
+    # refine-auto
+    p_refine_auto = subparsers.add_parser("refine-auto", help="Automated spec refinement")
+    p_refine_auto.add_argument("run_id", help="Run identifier")
+    p_refine_auto.add_argument("--workspace", help="Workspace directory")
+    p_refine_auto.add_argument("--steering", help="Path to steering script JSON")
+    p_refine_auto.add_argument(
+        "--research", action="store_true", help="Use research-based resolution"
+    )
+    p_refine_auto.add_argument(
+        "--max-iterations", type=int, default=5, help="Max iterations (default: 5)"
+    )
+
+    # ambiguities (sub-group with "list" subcommand)
+    p_ambiguities = subparsers.add_parser("ambiguities", help="Ambiguity detection commands")
+    ambiguities_sub = p_ambiguities.add_subparsers(dest="ambiguities_command", required=True)
+    p_amb_list = ambiguities_sub.add_parser("list", help="List detected ambiguities")
+    p_amb_list.add_argument("run_id", help="Run identifier")
+    p_amb_list.add_argument("--workspace", help="Workspace directory")
+
     # eval - add subcommand group for evaluation
     from spec_manager.refinement.evals.cli import setup_eval_parser
 
@@ -841,6 +981,8 @@ def main() -> int:
         "gaps": cmd_gaps,
         "phase-02": cmd_phase_02,
         "discover": cmd_discover,
+        "refine-interactive": cmd_refine_interactive,
+        "refine-auto": cmd_refine_auto,
     }
 
     # Handle eval command separately
@@ -848,6 +990,13 @@ def main() -> int:
         from spec_manager.refinement.evals.cli import handle_eval_command
 
         return handle_eval_command(args)
+
+    # Handle ambiguities sub-group
+    if args.command == "ambiguities":
+        ambiguities_commands = {
+            "list": cmd_ambiguities_list,
+        }
+        return ambiguities_commands[args.ambiguities_command](args)
 
     return commands[args.command](args)
 
