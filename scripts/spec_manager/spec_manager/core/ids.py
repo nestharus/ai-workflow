@@ -6,7 +6,7 @@ Canonical ID formats:
 - Patch invariant: P#I# (e.g., P6I5)
 - Patch claim: P#C# (e.g., P4C3)
 - Library: LIB-#### (e.g., LIB-0001)
-- Requirement: REQ-#### or REQ-LIB-####-#### (e.g., REQ-0001, REQ-LIB-0001-0042)
+- Element: DTL-LIB-####-####, CON-LIB-####-####, ANL-LIB-####-####, OVW-LIB-####-####
 - Algorithm: Algorithm # (1-67+)
 - Invariant: I# (e.g., I1, I5) - replaces Goals
 - Goal (legacy): G# (e.g., G6, G8) - prefer I#
@@ -47,7 +47,7 @@ class IdCategory(Enum):
     NON_FUNCTIONAL_GOAL = "non_functional_goal"
     GAP = "gap"
     LIBRARY = "library"
-    REQUIREMENT = "requirement"
+    ELEMENT = "element"
     UNKNOWN = "unknown"
 
 
@@ -151,14 +151,24 @@ class IdValidator:
             "LIB-#### (e.g., LIB-0001) - library identifier",
         ),
         IdPattern(
-            re.compile(r"^REQ-LIB-\d{4}-\d{4}$"),
-            IdCategory.REQUIREMENT,
-            "REQ-LIB-####-#### (e.g., REQ-LIB-0001-0042) - library-scoped requirement",
+            re.compile(r"^DTL-LIB-\d{4}-\d{4}$"),
+            IdCategory.ELEMENT,
+            "DTL-LIB-####-#### (e.g., DTL-LIB-0001-0042) - detail element",
         ),
         IdPattern(
-            re.compile(r"^REQ-\d{4}$"),
-            IdCategory.REQUIREMENT,
-            "REQ-#### (e.g., REQ-0001) - global requirement",
+            re.compile(r"^CON-LIB-\d{4}-\d{4}$"),
+            IdCategory.ELEMENT,
+            "CON-LIB-####-#### (e.g., CON-LIB-0001-0003) - constraint element",
+        ),
+        IdPattern(
+            re.compile(r"^ANL-LIB-\d{4}-\d{4}$"),
+            IdCategory.ELEMENT,
+            "ANL-LIB-####-#### (e.g., ANL-LIB-0001-0007) - analysis element",
+        ),
+        IdPattern(
+            re.compile(r"^OVW-LIB-\d{4}-\d{4}$"),
+            IdCategory.ELEMENT,
+            "OVW-LIB-####-#### (e.g., OVW-LIB-0001-0001) - overview element",
         ),
         IdPattern(
             re.compile(r"^P\d+$"),
@@ -201,13 +211,10 @@ class IdValidator:
         # LIB-####
         elif match := re.match(r"^LIB-(\d{4})$", id_value):
             result["library"] = int(match.group(1))
-        # REQ-LIB-####-####
-        elif match := re.match(r"^REQ-LIB-(\d{4})-(\d{4})$", id_value):
+        # DTL/CON/ANL/OVW-LIB-####-####
+        elif match := re.match(r"^(?:DTL|CON|ANL|OVW)-LIB-(\d{4})-(\d{4})$", id_value):
             result["library"] = int(match.group(1))
-            result["requirement"] = int(match.group(2))
-        # REQ-####
-        elif match := re.match(r"^REQ-(\d{4})$", id_value):
-            result["requirement"] = int(match.group(1))
+            result["element"] = int(match.group(2))
         # P#I#
         elif match := re.match(r"^P(\d+)I(\d+)$", id_value):
             result["patch"] = int(match.group(1))
@@ -264,7 +271,7 @@ class IdValidator:
             IdCategory.PATCH_CLAIM: 13,
             IdCategory.GAP: 14,
             IdCategory.LIBRARY: 15,
-            IdCategory.REQUIREMENT: 16,
+            IdCategory.ELEMENT: 16,
             IdCategory.UNKNOWN: 99,
         }
 
@@ -278,12 +285,8 @@ class IdValidator:
         if category == IdCategory.LIBRARY:
             primary = numbers.get("library", 0)
             secondary = 0
-        elif category == IdCategory.REQUIREMENT:
-            if "library" in numbers:
-                primary = numbers.get("library", 0)
-                secondary = numbers.get("requirement", 0)
-            else:
-                primary = numbers.get("requirement", 0)
-                secondary = 0
+        elif category == IdCategory.ELEMENT:
+            primary = numbers.get("library", 0)
+            secondary = numbers.get("element", 0)
 
         return (order, prefix, primary, secondary)

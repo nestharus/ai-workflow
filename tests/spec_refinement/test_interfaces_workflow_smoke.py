@@ -287,7 +287,7 @@ def test_build_interfaces_includes_decisions_in_contracts(
     edge_list = read_edge_list_json(manager.structure.indexes_dir / "edge_list.json")
     contract = _assert_contract_files_valid(manager.run_root, edge_list.edges[0].edge_id)
     assert contract.open_questions
-    assert all(question.startswith("DEC-") for question in contract.open_questions)
+    assert all(question.startswith("ANL-") for question in contract.open_questions)
 
 
 def test_edge_list_completeness_validation() -> None:
@@ -297,10 +297,10 @@ def test_edge_list_completeness_validation() -> None:
             "consumer_lib": "LIB-0001",
             "provider_lib": "LIB-0002",
             "kind": "api",
-            "consumer_elements": ["REQ-LIB-0001-9999"],
-            "provider_elements": ["REQ-LIB-0002-0001"],
+            "consumer_elements": ["DTL-LIB-0001-9999"],
+            "provider_elements": ["DTL-LIB-0002-0001"],
             "summary": "",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-9999]"],
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-9999]"],
         }
     )
     edge_list_model = EdgeListSchema(
@@ -309,8 +309,8 @@ def test_edge_list_completeness_validation() -> None:
         edges=[edge],
     )
     spec_indexes = {
-        "LIB-0001": {"elements": [{"element_id": "REQ-LIB-0001-0001"}]},
-        "LIB-0002": {"elements": [{"element_id": "REQ-LIB-0002-0001"}]},
+        "LIB-0001": {"elements": [{"element_id": "DTL-LIB-0001-0001"}]},
+        "LIB-0002": {"elements": [{"element_id": "DTL-LIB-0002-0001"}]},
     }
 
     errors = validate_edge_list_completeness(edge_list_model, set(spec_indexes), spec_indexes)
@@ -354,10 +354,10 @@ def test_deterministic_and_llm_edges_merged(interface_workspace, mock_interface_
         "LIB-0001": [
             {
                 "provider_lib": "LIB-0002",
-                "consumer_elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002"],
+                "consumer_elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002"],
                 "kind": "api",
                 "summary": "LLM edge.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             }
         ]
     }
@@ -367,4 +367,4 @@ def test_deterministic_and_llm_edges_merged(interface_workspace, mock_interface_
 
     edge_list = read_edge_list_json(manager.structure.indexes_dir / "edge_list.json")
     merged_edge = next(edge for edge in edge_list.edges if edge.edge_id == "EDGE-LIB-0001-LIB-0002")
-    assert set(merged_edge.consumer_elements) == {"REQ-LIB-0001-0001", "REQ-LIB-0001-0002"}
+    assert set(merged_edge.consumer_elements) == {"DTL-LIB-0001-0001", "DTL-LIB-0001-0002"}

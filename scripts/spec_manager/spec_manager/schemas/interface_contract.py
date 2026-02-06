@@ -9,17 +9,17 @@ Example:
             ProvidedInterface(
                 name="ListItems",
                 type="http",
-                requirements=["REQ-LIB-0002-0001"],
+                requirements=["DTL-LIB-0002-0001"],
                 details="Lists items from the catalog.",
                 acceptance=["Returns 200 with items"],
-                citations=["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                citations=["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
             )
         ],
         consumed_by=[
             ConsumedInterface(
-                consumer_requirement="REQ-LIB-0001-0001",
+                consumer_requirement="DTL-LIB-0001-0001",
                 expectations=["Latency under 100ms"],
-                citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             )
         ],
     )
@@ -38,20 +38,20 @@ from spec_manager.refinement.formats import parse_evidence_pointer
 
 from .edge_list import EDGE_ID_RE, ELEMENT_ID_RE, LIB_ID_RE
 
-DECISION_ID_RE = re.compile(r"^DEC-LIB-\d{4}-\d{4}$")
+DECISION_ID_RE = re.compile(r"^ANL-LIB-\d{4}-\d{4}$")
 
 
 def _extract_lib_id_from_decision(decision_id: str) -> str | None:
     """Extract the LIB-#### portion from a decision ID.
 
     Args:
-        decision_id: Decision identifier such as "DEC-LIB-0001-0001".
+        decision_id: Decision identifier such as "ANL-LIB-0001-0001".
 
     Returns:
         The library ID ("LIB-####") or None if parsing fails.
 
     Example:
-        _extract_lib_id_from_decision("DEC-LIB-0001-0001")
+        _extract_lib_id_from_decision("ANL-LIB-0001-0001")
     """
     parts = decision_id.split("-")
     if len(parts) < 4:
@@ -74,10 +74,10 @@ class ProvidedInterface(BaseModel):
         ProvidedInterface(
             name="ListItems",
             type="http",
-            requirements=["REQ-LIB-0002-0001"],
+            requirements=["DTL-LIB-0002-0001"],
             details="Lists items from the catalog.",
             acceptance=["Returns 200 with items"],
-            citations=["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+            citations=["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
         )
     """
 
@@ -103,17 +103,17 @@ class ProvidedInterface(BaseModel):
             ProvidedInterface(
                 name="ListItems",
                 type="http",
-                requirements=["REQ-LIB-0002-0001"],
+                requirements=["DTL-LIB-0002-0001"],
                 details="Details",
                 acceptance=[],
-                citations=["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                citations=["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
             )
         """
         for requirement_id in value:
             if not ELEMENT_ID_RE.fullmatch(requirement_id):
                 raise ValueError(
-                    "requirement IDs must match REQ-LIB-####-####, FLOW-LIB-####-##, "
-                    "INV-LIB-####-####, or DEC-LIB-####-####"
+                    "requirement IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+                    "ANL-LIB-####-####, or OVW-LIB-####-####"
                 )
         return value
 
@@ -132,10 +132,10 @@ class ProvidedInterface(BaseModel):
             ProvidedInterface(
                 name="ListItems",
                 type="http",
-                requirements=["REQ-LIB-0002-0001"],
+                requirements=["DTL-LIB-0002-0001"],
                 details="Details",
                 acceptance=[],
-                citations=["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                citations=["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
             )
         """
         for pointer in value:
@@ -154,9 +154,9 @@ class ConsumedInterface(BaseModel):
 
     Example:
         ConsumedInterface(
-            consumer_requirement="REQ-LIB-0001-0001",
+            consumer_requirement="DTL-LIB-0001-0001",
             expectations=["Latency under 100ms"],
-            citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         )
     """
 
@@ -177,15 +177,15 @@ class ConsumedInterface(BaseModel):
 
         Example:
             ConsumedInterface(
-                consumer_requirement="REQ-LIB-0001-0001",
+                consumer_requirement="DTL-LIB-0001-0001",
                 expectations=[],
-                citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             )
         """
         if not ELEMENT_ID_RE.fullmatch(value):
             raise ValueError(
-                "consumer requirement IDs must match REQ-LIB-####-####, FLOW-LIB-####-##, "
-                "INV-LIB-####-####, or DEC-LIB-####-####"
+                "consumer requirement IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+                "ANL-LIB-####-####, or OVW-LIB-####-####"
             )
         return value
 
@@ -202,9 +202,9 @@ class ConsumedInterface(BaseModel):
 
         Example:
             ConsumedInterface(
-                consumer_requirement="REQ-LIB-0001-0001",
+                consumer_requirement="DTL-LIB-0001-0001",
                 expectations=[],
-                citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             )
         """
         for pointer in value:
@@ -261,7 +261,7 @@ class InterfaceContractSchema(BaseModel):
             provider_lib="LIB-0002",
             provided=[],
             consumed_by=[],
-            open_questions=["DEC-LIB-0001-0001"],
+            open_questions=["ANL-LIB-0001-0001"],
         )
     """
 
@@ -326,7 +326,7 @@ class InterfaceContractSchema(BaseModel):
     @field_validator("open_questions")
     @classmethod
     def validate_open_questions(cls, value: list[str]) -> list[str]:
-        """Ensure open questions reference decision IDs (DEC-LIB-####-####).
+        """Ensure open questions reference decision IDs (ANL-LIB-####-####).
 
         Args:
             value: List of decision IDs.
@@ -341,12 +341,12 @@ class InterfaceContractSchema(BaseModel):
                 provider_lib="LIB-0002",
                 provided=[],
                 consumed_by=[],
-                open_questions=["DEC-LIB-0001-0001"],
+                open_questions=["ANL-LIB-0001-0001"],
             )
         """
         for decision_id in value:
             if not DECISION_ID_RE.fullmatch(decision_id):
-                raise ValueError("open_questions must contain DEC-LIB-####-#### IDs")
+                raise ValueError("open_questions must contain ANL-LIB-####-#### IDs")
         return value
 
     @model_validator(mode="after")
@@ -403,7 +403,7 @@ def validate_contract_references(
         is_valid, errors = validate_contract_references(
             contract,
             {"LIB-0001", "LIB-0002"},
-            {"LIB-0001": {"REQ-LIB-0001-0001"}, "LIB-0002": {"REQ-LIB-0002-0001"}},
+            {"LIB-0001": {"DTL-LIB-0001-0001"}, "LIB-0002": {"DTL-LIB-0002-0001"}},
         )
     """
     errors: list[str] = []

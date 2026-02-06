@@ -33,9 +33,11 @@ def _make_agent_stub(
     call_log: list[dict[str, str]],
     *,
     truncate_sections_for: set[str] | None = None,
+    bad_ordinal_for: set[str] | None = None,
     raise_for: dict[str, set[str]] | None = None,
 ) -> callable:
     truncate_sections_for = truncate_sections_for or set()
+    bad_ordinal_for = bad_ordinal_for or set()
     raise_for = raise_for or {}
 
     def _run_agent(
@@ -59,9 +61,10 @@ def _make_agent_stub(
         if agent_name == "glm-section-span-lister":
             total_lines = _extract_total_lines(prompt)
             end_line = max(1, total_lines - 1) if file_id in truncate_sections_for else total_lines
+            ordinal = "0099" if file_id in bad_ordinal_for else "0001"
             sections = [
                 {
-                    "section_id": f"SEC-{file_id}-0001",
+                    "section_id": f"SEC-{file_id}-{ordinal}",
                     "start_line": 1,
                     "end_line": end_line,
                     "label": "SECTION",
@@ -209,11 +212,11 @@ def test_sectionize_all_aggregates_evidence_and_synthesizes_gaps(
     mock_all_agents(manifest, violation_rate=0.0)
 
     call_log: list[dict[str, str]] = []
-    truncate_for = {next(iter(manifest.keys()))}
+    bad_ordinal = {next(iter(manifest.keys()))}
     monkeypatch.setattr(
         phase_one,
         "run_agent",
-        _make_agent_stub(call_log, truncate_sections_for=truncate_for),
+        _make_agent_stub(call_log, bad_ordinal_for=bad_ordinal),
     )
 
     class _Synthesizer:
@@ -269,3 +272,76 @@ def test_sectionize_all_reports_errors_and_failure_threshold(
     phase_result = refreshed.state.phases[Phase.SECTIONIZATION.value]
     assert phase_result.status == PhaseStatus.FAILED
     assert "file failure" in (phase_result.error or "")
+
+
+class TestRepairSectionGaps:
+    """Tests for _repair_section_gaps helper."""
+
+    def test_closes_single_line_gap(self) -> None:
+        sections = [
+            {"section_id": "SEC-F0001-0001", "start_line": 1, "end_line": 1, "label": "A"},
+            {"section_id": "SEC-F0001-0002", "start_line": 3, "end_line": 5, "label": "B"},
+        ]
+        repaired = phase_one._repair_section_gaps(sections, total_lines=5)
+        assert repaired[1]["start_line"] == 2
+
+    def test_extends_last_section_to_total_lines(self) -> None:
+        sections = [
+            {"section_id": "SEC-F0001-0001", "start_line": 1, "end_line": 3, "label": "A"},
+        ]
+        repaired = phase_one._repair_section_gaps(sections, total_lines=10)
+        assert repaired[0]["end_line"] == 10
+
+    def test_preserves_correct_sections(self) -> None:
+        sections = [
+            {"section_id": "SEC-F0001-0001", "start_line": 1, "end_line": 5, "label": "A"},
+            {"section_id": "SEC-F0001-0002", "start_line": 6, "end_line": 10, "label": "B"},
+        ]
+        repaired = phase_one._repair_section_gaps(sections, total_lines=10)
+        assert repaired[0]["start_line"] == 1
+        assert repaired[0]["end_line"] == 5
+        assert repaired[1]["start_line"] == 6
+        assert repaired[1]["end_line"] == 10
+
+    def test_empty_sections_unchanged(self) -> None:
+        assert phase_one._repair_section_gaps([], total_lines=10) == []
+
+    def test_sorts_by_start_line(self) -> None:
+        sections = [
+            {"section_id": "SEC-F0001-0002", "start_line": 10, "end_line": 15, "label": "B"},
+            {"section_id": "SEC-F0001-0001", "start_line": 1, "end_line": 9, "label": "A"},
+        ]
+        repaired = phase_one._repair_section_gaps(sections, total_lines=15)
+        assert repaired[0]["section_id"] == "SEC-F0001-0001"
+        assert repaired[1]["section_id"] == "SEC-F0001-0002"
+        assert repaired[1]["start_line"] == 10
+
+
+class TestFixSingleQuoteJson:
+    """Tests for _fix_single_quote_json helper."""
+
+    def test_fixes_single_quotes(self) -> None:
+        from spec_manager.refinement.formats import _fix_single_quote_json
+
+        result = _fix_single_quote_json("{'key': 'value', 'num': 42}")
+        parsed = json.loads(result)
+        assert parsed == {"key": "value", "num": 42}
+
+    def test_preserves_valid_json(self) -> None:
+        from spec_manager.refinement.formats import _fix_single_quote_json
+
+        original = '{"key": "value"}'
+        assert _fix_single_quote_json(original) == original
+
+    def test_handles_nested_single_quotes(self) -> None:
+        from spec_manager.refinement.formats import _fix_single_quote_json
+
+        result = _fix_single_quote_json("{'a': {'b': 'c'}}")
+        parsed = json.loads(result)
+        assert parsed == {"a": {"b": "c"}}
+
+    def test_returns_original_on_invalid_input(self) -> None:
+        from spec_manager.refinement.formats import _fix_single_quote_json
+
+        original = "not json at all"
+        assert _fix_single_quote_json(original) == original

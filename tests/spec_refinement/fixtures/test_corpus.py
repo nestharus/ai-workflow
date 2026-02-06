@@ -234,38 +234,33 @@ INTERFACE_TEST_LIBRARIES = {
     "LIB-0001": {
         "spec": """# Library Spec: LIB-0001
 
-## Requirements
-- REQ-LIB-0001-0001: Consume the LIB-0002 provider API for order lookups. [LIB-0001::spec.md::REQ-LIB-0001-0001]
-- REQ-LIB-0001-0002: Subscribe to LIB-0003 event streams for status updates. [LIB-0001::spec.md::REQ-LIB-0001-0002]
-
-## Flows
-- FLOW-LIB-0001-01: Sync updates from providers. [LIB-0001::spec.md::FLOW-LIB-0001-01]
+## Details
+- DTL-LIB-0001-0001: Consume the LIB-0002 provider API for order lookups. [LIB-0001::spec.md::DTL-LIB-0001-0001]
+- DTL-LIB-0001-0002: Subscribe to LIB-0003 event streams for status updates. [LIB-0001::spec.md::DTL-LIB-0001-0002]
+- DTL-LIB-0001-0003: Sync updates from providers. [LIB-0001::spec.md::DTL-LIB-0001-0003]
 
 ## Constraints
-- INV-LIB-0001-0001: Maintain reliability during peak traffic. [LIB-0001::spec.md::INV-LIB-0001-0001]
+- CON-LIB-0001-0001: Maintain reliability during peak traffic. [LIB-0001::spec.md::CON-LIB-0001-0001]
 """,
         "charter": """# Library Charter: LIB-0001
 
-## Intent
-Coordinate consumer workflows and dependencies.
-
-## Boundaries
-Orchestrates cross-library consumption.
+## Overview
+Coordinate consumer workflows and dependencies. Orchestrates cross-library consumption.
 
 ## Responsibilities
 - Maintain consumer integrations
 
 ## Evidence
-- [LIB-0001::spec.md::REQ-LIB-0001-0001]
-- [LIB-0001::spec.md::REQ-LIB-0001-0002]
+- [LIB-0001::spec.md::DTL-LIB-0001-0001]
+- [LIB-0001::spec.md::DTL-LIB-0001-0002]
 
 ## Overlap Resolutions
 - None
 """,
         "decisions": """# Decisions: LIB-0001
 
-- DEC-LIB-0001-0001: Confirm API SLA with LIB-0002.
-- DEC-LIB-0001-0002: Decide on event retention from LIB-0003.
+- ANL-LIB-0001-0001: Confirm API SLA with LIB-0002.
+- ANL-LIB-0001-0002: Decide on event retention from LIB-0003.
 """,
         "spec_index": {
             "lib_id": "LIB-0001",
@@ -273,39 +268,39 @@ Orchestrates cross-library consumption.
             "spec_path": "libraries/LIB-0001/spec.md",
             "elements": [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0001-0001",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Consume the LIB-0002 provider API for order lookups.",
-                    "raw_line": "- REQ-LIB-0001-0001: Consume the LIB-0002 provider API for order lookups.",
-                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "raw_line": "- DTL-LIB-0001-0001: Consume the LIB-0002 provider API for order lookups.",
+                    "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                     "mentions_libs": ["LIB-0002"],
                 },
                 {
-                    "element_id": "REQ-LIB-0001-0002",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0001-0002",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Subscribe to LIB-0003 event streams for status updates.",
-                    "raw_line": "- REQ-LIB-0001-0002: Subscribe to LIB-0003 event streams for status updates.",
-                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+                    "raw_line": "- DTL-LIB-0001-0002: Subscribe to LIB-0003 event streams for status updates.",
+                    "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0002]"],
                     "mentions_libs": ["LIB-0003"],
                 },
                 {
-                    "element_id": "FLOW-LIB-0001-01",
-                    "kind": "flow",
-                    "section": "Flows",
+                    "element_id": "DTL-LIB-0001-0003",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Sync updates from providers.",
-                    "raw_line": "- FLOW-LIB-0001-01: Sync updates from providers.",
-                    "citations": ["[LIB-0001::spec.md::FLOW-LIB-0001-01]"],
+                    "raw_line": "- DTL-LIB-0001-0003: Sync updates from providers.",
+                    "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0003]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "INV-LIB-0001-0001",
-                    "kind": "invariant",
+                    "element_id": "CON-LIB-0001-0001",
+                    "kind": "constraint",
                     "section": "Constraints",
                     "text": "Maintain reliability during peak traffic.",
-                    "raw_line": "- INV-LIB-0001-0001: Maintain reliability during peak traffic.",
-                    "citations": ["[LIB-0001::spec.md::INV-LIB-0001-0001]"],
+                    "raw_line": "- CON-LIB-0001-0001: Maintain reliability during peak traffic.",
+                    "citations": ["[LIB-0001::spec.md::CON-LIB-0001-0001]"],
                     "mentions_libs": [],
                 },
             ],
@@ -316,22 +311,22 @@ Orchestrates cross-library consumption.
             "decisions_path": "libraries/LIB-0001/decisions.md",
             "decisions": [
                 {
-                    "decision_id": "DEC-LIB-0001-0001",
+                    "decision_id": "ANL-LIB-0001-0001",
                     "status": "open",
                     "question": "Confirm API SLA with LIB-0002.",
                     "context": "Interface reliability requirements.",
                     "options": ["24x7", "business-hours"],
                     "default": None,
-                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                 },
                 {
-                    "decision_id": "DEC-LIB-0001-0002",
+                    "decision_id": "ANL-LIB-0001-0002",
                     "status": "open",
                     "question": "Decide on event retention from LIB-0003.",
                     "context": "Event replay expectations.",
                     "options": ["7 days", "30 days"],
                     "default": None,
-                    "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+                    "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0002]"],
                 },
             ],
         },
@@ -339,36 +334,31 @@ Orchestrates cross-library consumption.
     "LIB-0002": {
         "spec": """# Library Spec: LIB-0002
 
-## Requirements
-- REQ-LIB-0002-0001: Provide lookup API for consumers. [LIB-0002::spec.md::REQ-LIB-0002-0001]
-- REQ-LIB-0002-0002: Maintain stable request/response contracts. [LIB-0002::spec.md::REQ-LIB-0002-0002]
-
-## Flows
-- FLOW-LIB-0002-01: Handle lookup requests. [LIB-0002::spec.md::FLOW-LIB-0002-01]
+## Details
+- DTL-LIB-0002-0001: Provide lookup API for consumers. [LIB-0002::spec.md::DTL-LIB-0002-0001]
+- DTL-LIB-0002-0002: Maintain stable request/response contracts. [LIB-0002::spec.md::DTL-LIB-0002-0002]
+- DTL-LIB-0002-0003: Handle lookup requests. [LIB-0002::spec.md::DTL-LIB-0002-0003]
 
 ## Constraints
-- INV-LIB-0002-0001: Keep latency under 200ms. [LIB-0002::spec.md::INV-LIB-0002-0001]
+- CON-LIB-0002-0001: Keep latency under 200ms. [LIB-0002::spec.md::CON-LIB-0002-0001]
 """,
         "charter": """# Library Charter: LIB-0002
 
-## Intent
-Provide API surfaces for consumer libraries.
-
-## Boundaries
-API-focused responsibilities.
+## Overview
+Provide API surfaces for consumer libraries. API-focused responsibilities.
 
 ## Responsibilities
 - Serve provider APIs
 
 ## Evidence
-- [LIB-0002::spec.md::REQ-LIB-0002-0001]
+- [LIB-0002::spec.md::DTL-LIB-0002-0001]
 
 ## Overlap Resolutions
 - None
 """,
         "decisions": """# Decisions: LIB-0002
 
-- DEC-LIB-0002-0001: Decide on API versioning cadence.
+- ANL-LIB-0002-0001: Decide on API versioning cadence.
 """,
         "spec_index": {
             "lib_id": "LIB-0002",
@@ -376,39 +366,39 @@ API-focused responsibilities.
             "spec_path": "libraries/LIB-0002/spec.md",
             "elements": [
                 {
-                    "element_id": "REQ-LIB-0002-0001",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0002-0001",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Provide lookup API for consumers.",
-                    "raw_line": "- REQ-LIB-0002-0001: Provide lookup API for consumers.",
-                    "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                    "raw_line": "- DTL-LIB-0002-0001: Provide lookup API for consumers.",
+                    "citations": ["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "REQ-LIB-0002-0002",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0002-0002",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Maintain stable request/response contracts.",
-                    "raw_line": "- REQ-LIB-0002-0002: Maintain stable request/response contracts.",
-                    "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0002]"],
+                    "raw_line": "- DTL-LIB-0002-0002: Maintain stable request/response contracts.",
+                    "citations": ["[LIB-0002::spec.md::DTL-LIB-0002-0002]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "FLOW-LIB-0002-01",
-                    "kind": "flow",
-                    "section": "Flows",
+                    "element_id": "DTL-LIB-0002-0003",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Handle lookup requests.",
-                    "raw_line": "- FLOW-LIB-0002-01: Handle lookup requests.",
-                    "citations": ["[LIB-0002::spec.md::FLOW-LIB-0002-01]"],
+                    "raw_line": "- DTL-LIB-0002-0003: Handle lookup requests.",
+                    "citations": ["[LIB-0002::spec.md::DTL-LIB-0002-0003]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "INV-LIB-0002-0001",
-                    "kind": "invariant",
+                    "element_id": "CON-LIB-0002-0001",
+                    "kind": "constraint",
                     "section": "Constraints",
                     "text": "Keep latency under 200ms.",
-                    "raw_line": "- INV-LIB-0002-0001: Keep latency under 200ms.",
-                    "citations": ["[LIB-0002::spec.md::INV-LIB-0002-0001]"],
+                    "raw_line": "- CON-LIB-0002-0001: Keep latency under 200ms.",
+                    "citations": ["[LIB-0002::spec.md::CON-LIB-0002-0001]"],
                     "mentions_libs": [],
                 },
             ],
@@ -419,13 +409,13 @@ API-focused responsibilities.
             "decisions_path": "libraries/LIB-0002/decisions.md",
             "decisions": [
                 {
-                    "decision_id": "DEC-LIB-0002-0001",
+                    "decision_id": "ANL-LIB-0002-0001",
                     "status": "open",
                     "question": "Decide on API versioning cadence.",
                     "context": "Release planning for consumers.",
                     "options": ["monthly", "quarterly"],
                     "default": None,
-                    "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                    "citations": ["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
                 }
             ],
         },
@@ -433,36 +423,31 @@ API-focused responsibilities.
     "LIB-0003": {
         "spec": """# Library Spec: LIB-0003
 
-## Requirements
-- REQ-LIB-0003-0001: Emit status events for consumers. [LIB-0003::spec.md::REQ-LIB-0003-0001]
-- REQ-LIB-0003-0002: Publish event schema updates. [LIB-0003::spec.md::REQ-LIB-0003-0002]
-
-## Flows
-- FLOW-LIB-0003-01: Emit lifecycle events. [LIB-0003::spec.md::FLOW-LIB-0003-01]
+## Details
+- DTL-LIB-0003-0001: Emit status events for consumers. [LIB-0003::spec.md::DTL-LIB-0003-0001]
+- DTL-LIB-0003-0002: Publish event schema updates. [LIB-0003::spec.md::DTL-LIB-0003-0002]
+- DTL-LIB-0003-0003: Emit lifecycle events. [LIB-0003::spec.md::DTL-LIB-0003-0003]
 
 ## Constraints
-- INV-LIB-0003-0001: Deliver events within 1 minute. [LIB-0003::spec.md::INV-LIB-0003-0001]
+- CON-LIB-0003-0001: Deliver events within 1 minute. [LIB-0003::spec.md::CON-LIB-0003-0001]
 """,
         "charter": """# Library Charter: LIB-0003
 
-## Intent
-Provide event streams to consumer libraries.
-
-## Boundaries
-Event-focused responsibilities.
+## Overview
+Provide event streams to consumer libraries. Event-focused responsibilities.
 
 ## Responsibilities
 - Emit provider events
 
 ## Evidence
-- [LIB-0003::spec.md::REQ-LIB-0003-0001]
+- [LIB-0003::spec.md::DTL-LIB-0003-0001]
 
 ## Overlap Resolutions
 - None
 """,
         "decisions": """# Decisions: LIB-0003
 
-- DEC-LIB-0003-0001: Define event retention policy.
+- ANL-LIB-0003-0001: Define event retention policy.
 """,
         "spec_index": {
             "lib_id": "LIB-0003",
@@ -470,39 +455,39 @@ Event-focused responsibilities.
             "spec_path": "libraries/LIB-0003/spec.md",
             "elements": [
                 {
-                    "element_id": "REQ-LIB-0003-0001",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0003-0001",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Emit status events for consumers.",
-                    "raw_line": "- REQ-LIB-0003-0001: Emit status events for consumers.",
-                    "citations": ["[LIB-0003::spec.md::REQ-LIB-0003-0001]"],
+                    "raw_line": "- DTL-LIB-0003-0001: Emit status events for consumers.",
+                    "citations": ["[LIB-0003::spec.md::DTL-LIB-0003-0001]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "REQ-LIB-0003-0002",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0003-0002",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Publish event schema updates.",
-                    "raw_line": "- REQ-LIB-0003-0002: Publish event schema updates.",
-                    "citations": ["[LIB-0003::spec.md::REQ-LIB-0003-0002]"],
+                    "raw_line": "- DTL-LIB-0003-0002: Publish event schema updates.",
+                    "citations": ["[LIB-0003::spec.md::DTL-LIB-0003-0002]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "FLOW-LIB-0003-01",
-                    "kind": "flow",
-                    "section": "Flows",
+                    "element_id": "DTL-LIB-0003-0003",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Emit lifecycle events.",
-                    "raw_line": "- FLOW-LIB-0003-01: Emit lifecycle events.",
-                    "citations": ["[LIB-0003::spec.md::FLOW-LIB-0003-01]"],
+                    "raw_line": "- DTL-LIB-0003-0003: Emit lifecycle events.",
+                    "citations": ["[LIB-0003::spec.md::DTL-LIB-0003-0003]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "INV-LIB-0003-0001",
-                    "kind": "invariant",
+                    "element_id": "CON-LIB-0003-0001",
+                    "kind": "constraint",
                     "section": "Constraints",
                     "text": "Deliver events within 1 minute.",
-                    "raw_line": "- INV-LIB-0003-0001: Deliver events within 1 minute.",
-                    "citations": ["[LIB-0003::spec.md::INV-LIB-0003-0001]"],
+                    "raw_line": "- CON-LIB-0003-0001: Deliver events within 1 minute.",
+                    "citations": ["[LIB-0003::spec.md::CON-LIB-0003-0001]"],
                     "mentions_libs": [],
                 },
             ],
@@ -513,13 +498,13 @@ Event-focused responsibilities.
             "decisions_path": "libraries/LIB-0003/decisions.md",
             "decisions": [
                 {
-                    "decision_id": "DEC-LIB-0003-0001",
+                    "decision_id": "ANL-LIB-0003-0001",
                     "status": "open",
                     "question": "Define event retention policy.",
                     "context": "Downstream replay expectations.",
                     "options": ["24 hours", "7 days"],
                     "default": None,
-                    "citations": ["[LIB-0003::spec.md::REQ-LIB-0003-0001]"],
+                    "citations": ["[LIB-0003::spec.md::DTL-LIB-0003-0001]"],
                 }
             ],
         },
@@ -542,14 +527,14 @@ def create_interface_test_libraries(fs, run_id: str = "run_001") -> dict[str, An
                 "edge_id": "EDGE-LIB-0001-LIB-0002",
                 "consumer_lib": "LIB-0001",
                 "provider_lib": "LIB-0002",
-                "consumer_elements": ["REQ-LIB-0001-0001"],
+                "consumer_elements": ["DTL-LIB-0001-0001"],
                 "kind": "api",
             },
             {
                 "edge_id": "EDGE-LIB-0001-LIB-0003",
                 "consumer_lib": "LIB-0001",
                 "provider_lib": "LIB-0003",
-                "consumer_elements": ["REQ-LIB-0001-0002"],
+                "consumer_elements": ["DTL-LIB-0001-0002"],
                 "kind": "events",
             },
         ],
@@ -631,8 +616,8 @@ def create_task_planning_prerequisites(fs, run_id: str, manifest: dict) -> None:
         provider_elements = (
             manifest.get("element_ids", {}).get(provider_lib) if provider_lib else None
         ) or []
-        provider_requirement = provider_elements[0] if provider_elements else "REQ-LIB-0001-0001"
-        consumer_requirement = consumer_elements[0] if consumer_elements else "REQ-LIB-0001-0001"
+        provider_requirement = provider_elements[0] if provider_elements else "DTL-LIB-0001-0001"
+        consumer_requirement = consumer_elements[0] if consumer_elements else "DTL-LIB-0001-0001"
         edges.append(
             EdgeSchema.model_validate(
                 {

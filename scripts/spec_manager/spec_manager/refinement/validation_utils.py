@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .formats import EVIDENCE_POINTER_RE
+from .formats import EVIDENCE_POINTER_NEW_RE, EVIDENCE_POINTER_RE
 
 SECTION_ID_RE = re.compile(r"^SEC-[A-Za-z0-9]+-\d{4}$")
+_SECTION_FILE_ID_RE = re.compile(r"^SEC-(F\d{4})-\d{4}$")
+
+logger = logging.getLogger(__name__)
 
 
 def build_file_id_lookup(
@@ -159,3 +164,100 @@ def strip_invalid_file_pointers(
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r" \n", "\n", cleaned)
     return cleaned
+
+
+def strip_invalid_section_pointers(
+    content: str,
+    file_manifest: dict[str, dict[str, str]],
+    section_reader: Callable[[str], dict[str, Any] | None],
+) -> str:
+    """Remove evidence pointers whose section_ref doesn't exist in the resolved file.
+
+    Args:
+        content: Text containing evidence pointers.
+        file_manifest: File manifest mapping file_id -> {relpath, sha256}.
+        section_reader: Callable(file_id) -> dict or None that reads section data.
+    """
+    invalid_pointers: set[str] = set()
+    file_id_lookup = build_file_id_lookup(file_manifest)
+
+    for match in EVIDENCE_POINTER_RE.finditer(content):
+        file_ref = match.group(1).strip()
+        section_ref = match.group(2).strip()
+        resolved_file_id = file_id_lookup.get(file_ref)
+        if resolved_file_id is None:
+            continue
+        sections_data = section_reader(resolved_file_id)
+        if sections_data is None:
+            continue
+        sections_list = sections_data.get("sections") if isinstance(sections_data, dict) else None
+        valid_section_ids: set[str] = set()
+        if isinstance(sections_list, list):
+            for entry in sections_list:
+                if isinstance(entry, dict):
+                    sid = entry.get("section_id")
+                    if isinstance(sid, str) and sid:
+                        valid_section_ids.add(sid)
+        if valid_section_ids and section_ref not in valid_section_ids:
+            invalid_pointers.add(match.group(0))
+            logger.debug("Stripping invalid section pointer: %s", match.group(0))
+
+    cleaned = content
+    for pointer in invalid_pointers:
+        cleaned = cleaned.replace(pointer, "")
+
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" \n", "\n", cleaned)
+    return cleaned
+
+
+def fix_cross_file_section_pointers(
+    content: str,
+    file_manifest: dict[str, dict[str, str]],
+) -> str:
+    """Rewrite evidence pointers whose file_ref mismatches the section's embedded file_id.
+
+    LLMs sometimes emit pointers like ``[spec_snapshot/wrong.md::SEC-F0002-0001]``
+    where the relpath resolves to a different file_id than the one embedded in the
+    section reference.  This function detects such mismatches and rewrites the
+    file_ref to the correct relpath from the manifest.
+    """
+    file_id_lookup = build_file_id_lookup(file_manifest)
+    # Build reverse lookup: file_id -> relpath
+    relpath_by_file_id: dict[str, str] = {}
+    for fid, entry in file_manifest.items():
+        if isinstance(entry, dict) and "relpath" in entry:
+            relpath_by_file_id[fid] = entry["relpath"]
+
+    replacements: list[tuple[str, str]] = []
+
+    for match in EVIDENCE_POINTER_NEW_RE.finditer(content):
+        file_ref = match.group(1).strip()
+        section_ref = match.group(2).strip()
+        resolved_file_id = file_id_lookup.get(f"spec_snapshot/{file_ref}") or file_id_lookup.get(
+            file_ref
+        )
+        section_file_match = _SECTION_FILE_ID_RE.match(section_ref)
+        if not section_file_match:
+            continue
+        section_file_id = section_file_match.group(1)
+        if resolved_file_id == section_file_id:
+            continue
+        # Mismatch: section belongs to a different file than the pointer references
+        correct_relpath = relpath_by_file_id.get(section_file_id)
+        if not correct_relpath:
+            continue
+        old_pointer = match.group(0)
+        new_pointer = f"[spec_snapshot/{correct_relpath}::{section_ref}]"
+        if old_pointer != new_pointer:
+            replacements.append((old_pointer, new_pointer))
+            logger.debug(
+                "Fixed cross-file pointer: %s -> %s",
+                old_pointer,
+                new_pointer,
+            )
+
+    result = content
+    for old, new in replacements:
+        result = result.replace(old, new)
+    return result

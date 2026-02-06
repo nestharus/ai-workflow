@@ -19,18 +19,18 @@ def _create_provided() -> dict[str, object]:
     return {
         "name": "ListItems",
         "type": "http",
-        "requirements": ["REQ-LIB-0002-0001"],
+        "requirements": ["DTL-LIB-0002-0001"],
         "details": "Lists items from the catalog.",
         "acceptance": ["Returns 200 with items"],
-        "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+        "citations": ["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
     }
 
 
 def _create_consumed() -> dict[str, object]:
     return {
-        "consumer_requirement": "REQ-LIB-0001-0001",
+        "consumer_requirement": "DTL-LIB-0001-0001",
         "expectations": ["Latency under 100ms"],
-        "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
     }
 
 
@@ -42,7 +42,7 @@ def _create_contract() -> dict[str, object]:
         "contract_version": "v1",
         "provided": [_create_provided()],
         "consumed_by": [_create_consumed()],
-        "open_questions": ["DEC-LIB-0001-0001"],
+        "open_questions": ["ANL-LIB-0001-0001"],
     }
 
 
@@ -67,7 +67,7 @@ def test_provided_interface_invalid_citation() -> None:
 
 def test_consumed_interface_valid() -> None:
     interface = ConsumedInterface.model_validate(_create_consumed())
-    assert interface.consumer_requirement == "REQ-LIB-0001-0001"
+    assert interface.consumer_requirement == "DTL-LIB-0001-0001"
 
 
 def test_consumed_interface_invalid_requirement() -> None:
@@ -123,8 +123,8 @@ def test_validate_contract_references_valid() -> None:
         contract,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"REQ-LIB-0001-0001", "DEC-LIB-0001-0001"},
-            "LIB-0002": {"REQ-LIB-0002-0001"},
+            "LIB-0001": {"DTL-LIB-0001-0001", "ANL-LIB-0001-0001"},
+            "LIB-0002": {"DTL-LIB-0002-0001"},
         },
     )
     assert is_valid is True
@@ -137,7 +137,7 @@ def test_validate_contract_references_missing_provider_requirements() -> None:
         contract,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"REQ-LIB-0001-0001", "DEC-LIB-0001-0001"},
+            "LIB-0001": {"DTL-LIB-0001-0001", "ANL-LIB-0001-0001"},
             "LIB-0002": set(),
         },
     )
@@ -151,8 +151,8 @@ def test_validate_contract_references_missing_consumer_requirements() -> None:
         contract,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"DEC-LIB-0001-0001"},
-            "LIB-0002": {"REQ-LIB-0002-0001"},
+            "LIB-0001": {"ANL-LIB-0001-0001"},
+            "LIB-0002": {"DTL-LIB-0002-0001"},
         },
     )
     assert is_valid is False

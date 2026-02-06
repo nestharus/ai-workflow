@@ -1,0 +1,150 @@
+# Tribonacci Sequence Specification
+# A generalization of Fibonacci using three terms instead of two.
+
+spec_id: tribonacci
+title: Tribonacci Sequence
+description: |
+  Compute Tribonacci numbers T(n). The Tribonacci sequence generalizes the Fibonacci
+  sequence by summing the three preceding terms instead of two. This creates a sequence
+  that grows faster than Fibonacci and has its own characteristic constant (the
+  tribonacci constant) analogous to the golden ratio.
+
+complexity_score: 5
+tags:
+  - sequence
+  - tribonacci
+  - fibonacci-generalization
+  - recurrence
+  - three-term
+
+sections:
+  OVERVIEW: |
+    The Tribonacci sequence is a natural extension of the Fibonacci sequence where
+    each term is the sum of the three preceding terms. First studied in the 1960s,
+    it demonstrates how Fibonacci-like recurrences can be generalized. The sequence
+    has applications in combinatorics, particularly in counting problems involving
+    three-way choices or ternary structures.
+
+  MATHEMATICAL_DEFINITION: |
+    The Tribonacci sequence T(n) is defined for all non-negative integers n.
+    The characteristic equation is x^3 = x^2 + x + 1, with one real root
+    (the tribonacci constant, approximately 1.83929) and two complex roots.
+    The ratio T(n+1)/T(n) approaches the tribonacci constant as n increases.
+
+  BASE_CASES: |
+    The standard Tribonacci sequence uses three base cases:
+    T(0) = 0
+    T(1) = 0
+    T(2) = 1
+
+    Alternative formulations exist, but this is the most common convention.
+    The sequence begins: 0, 0, 1, 1, 2, 4, 7, 13, 24, 44, 81, 149, ...
+
+  RECURRENCE: |
+    For n >= 3:
+    T(n) = T(n-1) + T(n-2) + T(n-3)
+
+    This three-term recurrence requires three base cases to fully determine
+    the sequence. The computation cost is similar to Fibonacci but with
+    one additional term at each step.
+
+  CLOSED_FORM: |
+    Like Fibonacci, Tribonacci has a closed-form expression using the roots
+    of its characteristic polynomial:
+
+    T(n) = a * r1^n + b * r2^n + c * r3^n
+
+    where r1 is the tribonacci constant (~1.83929) and r2, r3 are complex
+    conjugates with magnitude less than 1. For practical purposes:
+
+    T(n) approximately equals round(a * (1.83929)^n)
+
+    where a approximately equals 0.33635.
+
+rules:
+  - rule_id: RULE-001
+    rule_type: base
+    description: The zeroth Tribonacci number is 0.
+    formal_expression: T(0) = 0
+    dependencies: []
+    examples:
+      - [0, 0]
+
+  - rule_id: RULE-002
+    rule_type: base
+    description: The first Tribonacci number is 0.
+    formal_expression: T(1) = 0
+    dependencies: []
+    examples:
+      - [1, 0]
+
+  - rule_id: RULE-003
+    rule_type: base
+    description: The second Tribonacci number is 1.
+    formal_expression: T(2) = 1
+    dependencies: []
+    examples:
+      - [2, 1]
+
+  - rule_id: RULE-004
+    rule_type: recurrence
+    description: Each Tribonacci number is the sum of the three preceding numbers.
+    formal_expression: T(n) = T(n-1) + T(n-2) + T(n-3) for n >= 3
+    dependencies:
+      - RULE-001
+      - RULE-002
+      - RULE-003
+    examples:
+      - [3, 1]    # 0 + 0 + 1
+      - [4, 2]    # 0 + 1 + 1
+      - [5, 4]    # 1 + 1 + 2
+      - [6, 7]    # 1 + 2 + 4
+      - [7, 13]   # 2 + 4 + 7
+      - [8, 24]   # 4 + 7 + 13
+      - [9, 44]   # 7 + 13 + 24
+      - [10, 81]  # 13 + 24 + 44
+
+  - rule_id: RULE-005
+    rule_type: property
+    description: The ratio of consecutive terms approaches the tribonacci constant.
+    formal_expression: lim(n->inf) T(n+1)/T(n) = 1.83928675...
+    dependencies:
+      - RULE-004
+    examples:
+      - [10, 1.8395]  # T(11)/T(10) = 149/81 approximately 1.8395
+      - [15, 1.8393]  # Converges toward tribonacci constant
+
+ground_truth:
+  sectionization:
+    expected_sections:
+      - OVERVIEW
+      - MATHEMATICAL_DEFINITION
+      - BASE_CASES
+      - RECURRENCE
+      - CLOSED_FORM
+
+  summarization:
+    expected_libraries:
+      - Tribonacci
+
+  library_synthesis:
+    expected_libraries: []
+    expected_requirements:
+      - Base case T(0) = 0
+      - Base case T(1) = 0
+      - Base case T(2) = 1
+      - Recurrence relation T(n) = T(n-1) + T(n-2) + T(n-3)
+      - Relationship to tribonacci constant
+
+  spec_building:
+    expected_requirements:
+      - Base case initialization for T(0) = 0
+      - Base case initialization for T(1) = 0
+      - Base case initialization for T(2) = 1
+      - Three-term recurrence formula implementation
+      - Tribonacci constant approximation property
+    expected_elements: []
+
+  overall_requirements_count: 5
+  overall_elements_count: 5
+  convergence_iterations_max: 5

@@ -1,0 +1,144 @@
+# Fibonacci Modular Sequence Specification
+# A base test case with 5 rules for evaluating the spec refinement system.
+
+spec_id: fibonacci_modular
+title: Fibonacci Modular Sequence
+description: |
+  Compute Fibonacci numbers with modular arithmetic. This sequence computes
+  F(n) mod M where F(n) is the nth Fibonacci number and M is a configurable
+  modulus.
+
+complexity_score: 3
+tags:
+  - sequence
+  - fibonacci
+  - modular-arithmetic
+  - base-case
+
+sections:
+  OVERVIEW: |
+    The Fibonacci modular sequence computes Fibonacci numbers under a modulus.
+    This is useful for avoiding integer overflow in implementations and has
+    applications in cryptography and combinatorics.
+
+  MATHEMATICAL_DEFINITION: |
+    Let M be a positive integer (the modulus).
+    Define F_M(n) as: F_M(n) = F(n) mod M
+    where F(n) is the standard Fibonacci sequence.
+
+  BASE_CASES: |
+    F_M(0) = 0
+    F_M(1) = 1
+
+  RECURRENCE: |
+    For n >= 2:
+    F_M(n) = (F_M(n-1) + F_M(n-2)) mod M
+
+  EXAMPLES: |
+    With M = 10:
+    F_M(0) = 0
+    F_M(1) = 1
+    F_M(2) = 1
+    F_M(3) = 2
+    F_M(4) = 3
+    F_M(5) = 5
+    F_M(6) = 8
+    F_M(7) = 3 (13 mod 10)
+    F_M(8) = 1 (21 mod 10)
+
+rules:
+  - rule_id: RULE-001
+    rule_type: base
+    description: The zeroth Fibonacci number is 0.
+    formal_expression: F(0) = 0
+    dependencies: []
+    examples:
+      - [0, 0]
+
+  - rule_id: RULE-002
+    rule_type: base
+    description: The first Fibonacci number is 1.
+    formal_expression: F(1) = 1
+    dependencies: []
+    examples:
+      - [1, 1]
+
+  - rule_id: RULE-003
+    rule_type: recurrence
+    description: Each Fibonacci number is the sum of the two preceding numbers.
+    formal_expression: F(n) = F(n-1) + F(n-2) for n >= 2
+    dependencies:
+      - RULE-001
+      - RULE-002
+    examples:
+      - [2, 1]
+      - [3, 2]
+      - [4, 3]
+      - [5, 5]
+      - [6, 8]
+
+  - rule_id: RULE-004
+    rule_type: constraint
+    description: The modulus M must be a positive integer.
+    formal_expression: M > 0, M ∈ ℤ
+    dependencies: []
+    examples: []
+
+  - rule_id: RULE-005
+    rule_type: boundary
+    description: The result is computed modulo M to prevent overflow.
+    formal_expression: F_M(n) = F(n) mod M
+    dependencies:
+      - RULE-003
+      - RULE-004
+    examples:
+      - [7, 3]  # With M=10: 13 mod 10 = 3
+      - [8, 1]  # With M=10: 21 mod 10 = 1
+
+ground_truth:
+  sectionization:
+    expected_sections:
+      - OVERVIEW
+      - MATHEMATICAL_DEFINITION
+      - BASE_CASES
+      - RECURRENCE
+      - EXAMPLES
+
+  summarization:
+    # Expected concepts that appear as cleaned bullet phrases in summaries.
+    # The system produces file summaries with sections like Algorithms,
+    # Components, Workflows, Candidate Responsibilities.  Items are matched
+    # via fuzzy matching (threshold 0.6) against extracted bullet key phrases.
+    expected_libraries:
+      - Fibonacci Modular Sequence computation
+      - Compute Fibonacci numbers under modulus
+      - Establish base cases F_M(0)=0 and F_M(1)=1
+      - Apply recurrence with modular reduction
+      - Validate modulus M is positive integer
+
+  library_synthesis:
+    # The system auto-generates LIB-0001, LIB-0002, etc. (not stable IDs).
+    # expected_libraries is left empty; we match via responsibilities only.
+    expected_libraries: []
+    expected_requirements:
+      - Define base cases F_M(0) = 0 and F_M(1) = 1
+      - Apply the recurrence F_M(n) = (F_M(n-1) + F_M(n-2)) mod M for n >= 2
+      - Validate that modulus M is a positive integer
+      - Prevent integer overflow through modular arithmetic
+      - Compute the final result F(n) mod M
+
+  spec_building:
+    # Expected phrases that fuzzy-match against spec bullet items (with
+    # citation pointers stripped).  The system produces verbose requirement
+    # bullets; expected items use core terminology.
+    expected_requirements:
+      - Define base case F(0) = 0
+      - Define base case F(1) = 1
+      - Apply recurrence relation F(n) = F(n-1) + F(n-2) for n >= 2
+      - Modulus M must be a positive integer
+      - Compute final result F_M(n) = F(n) mod M
+    expected_elements: []
+
+  overall_requirements_count: 5
+  overall_elements_count: 5
+  convergence_iterations_max: 5

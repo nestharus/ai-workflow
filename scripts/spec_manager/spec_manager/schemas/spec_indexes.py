@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field, field_validator
 
 _LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
 _SPEC_ELEMENT_ID_RE = re.compile(
-    r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4})$"
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
 )
-_DECISION_ID_RE = re.compile(r"^DEC-LIB-\d{4}-\d{4}$")
+_DECISION_ID_RE = re.compile(r"^ANL-LIB-\d{4}-\d{4}$")
 
 
 def _validate_iso8601(value: str) -> str:
@@ -25,7 +25,9 @@ def _validate_iso8601(value: str) -> str:
 
 class SpecElement(BaseModel):
     element_id: str
-    kind: Literal["requirement", "flow", "invariant"]
+    kind: Literal[
+        "detail", "constraint", "analysis", "overview", "requirement", "flow", "invariant"
+    ]
     section: str
     text: str
     raw_line: str
@@ -36,9 +38,7 @@ class SpecElement(BaseModel):
     @classmethod
     def validate_element_id(cls, value: str) -> str:
         if not _SPEC_ELEMENT_ID_RE.fullmatch(value):
-            raise ValueError(
-                "element_id must match REQ-LIB-####-####, FLOW-LIB-####-##, or INV-LIB-####-####"
-            )
+            raise ValueError("element_id must match DTL/CON/ANL/OVW-LIB-####-####")
         return value
 
 
@@ -74,7 +74,7 @@ class Decision(BaseModel):
     @classmethod
     def validate_decision_id(cls, value: str) -> str:
         if not _DECISION_ID_RE.fullmatch(value):
-            raise ValueError("decision_id must match DEC-LIB-####-####")
+            raise ValueError("decision_id must match ANL-LIB-####-####")
         return value
 
 

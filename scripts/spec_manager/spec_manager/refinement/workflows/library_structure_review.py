@@ -52,7 +52,16 @@ from spec_manager.schemas.spec_indexes import SpecIndex
 logger = logging.getLogger(__name__)
 
 _REVIEW_ACTIONS_REPORT_TYPE = ReviewActionsReport
-_TEXT_KINDS = {"requirement", "invariant", "flow", "decision"}
+_TEXT_KINDS = {
+    "detail",
+    "constraint",
+    "analysis",
+    "overview",
+    "requirement",
+    "invariant",
+    "flow",
+    "decision",
+}
 _DEFAULT_THRESHOLDS = {
     "overlap_similarity": 0.35,
     "min_shared_elements": 5,
@@ -60,14 +69,16 @@ _DEFAULT_THRESHOLDS = {
     "split_min_elements": 10,
 }
 _ELEMENT_ID_RE = re.compile(
-    r"^(?:REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})$"
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4}"
+    r"|REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})$"
 )
 _ELEMENT_ID_INLINE_RE = re.compile(
-    r"(?:REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})"
+    r"(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4}"
+    r"|REQ-LIB-\d{4}-\d{4}|INV-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|DEC-LIB-\d{4}-\d{4})"
 )
 _POINTER_RE = re.compile(r"\[[^\[\]]+::[^\[\]]+\]")
 _CITATION_RE = re.compile(
-    r"\[LIB-\d{4}::spec\.md::(REQ|INV|FLOW|DEC)-LIB-\d{4}-\d{2,4}\]"
+    r"\[LIB-\d{4}::spec\.md::(DTL|CON|ANL|OVW|REQ|INV|FLOW|DEC)-LIB-\d{4}-\d{2,4}\]"
     r"|\[LIB-\d{4}::charter\.md\]"
 )
 
@@ -688,7 +699,7 @@ def _build_boundary_judge_prompt(
         "{",
         '  "action": "merge|keep_separate|move_elements",',
         '  "rationale": "string with [LIB-####::spec.md::ELEMENT_ID] citations",',
-        '  "elements_to_move": ["REQ-LIB-####-####", "..."],',
+        '  "elements_to_move": ["DTL-LIB-####-####", "..."],',
         '  "target_lib": "LIB-####",',
         '  "confidence": 0.0',
         "}",
@@ -696,8 +707,8 @@ def _build_boundary_judge_prompt(
         "Validation rules:",
         "- action must be merge, keep_separate, or move_elements",
         (
-            "- element IDs must match REQ-LIB-####-####, INV-LIB-####-####, "
-            "FLOW-LIB-####-##, DEC-LIB-####-####"
+            "- element IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+            "ANL-LIB-####-####, OVW-LIB-####-####"
         ),
         "- citations must use [LIB-####::spec.md::ELEMENT_ID] or [LIB-####::charter.md]",
         f"- target_lib must be {lib_a_id} or {lib_b_id}",
@@ -784,7 +795,7 @@ def _build_split_planner_prompt(
         '      "group_id": 0,',
         '      "proposed_name": "string",',
         '      "charter_summary": "string",',
-        '      "element_ids": ["REQ-LIB-####-####", "..."],',
+        '      "element_ids": ["DTL-LIB-####-####", "..."],',
         '      "justification": "string with citations"',
         "    }",
         "  ],",
@@ -799,8 +810,8 @@ def _build_split_planner_prompt(
         "Validation rules:",
         "- each split group must include at least 3 element IDs",
         (
-            "- element IDs must match REQ-LIB-####-####, INV-LIB-####-####, "
-            "FLOW-LIB-####-##, DEC-LIB-####-####"
+            "- element IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+            "ANL-LIB-####-####, OVW-LIB-####-####"
         ),
         "- citations must use [LIB-####::spec.md::ELEMENT_ID]",
         "- proposed_name must describe capability, not technical layer",
@@ -1388,7 +1399,7 @@ def _partition_spec_elements(
         return filtered
 
     counters: dict[str, int] = {}
-    ordered_sections = ["Requirements", "Flows", "Constraints", "Dependencies"]
+    ordered_sections = ["Analysis", "Constraints", "Overview", "Details"]
     lines: list[str] = [f"# Library Spec: {new_lib_id}", ""]
 
     for section_title in ordered_sections:
@@ -1525,7 +1536,7 @@ def _extract_elements_from_spec(
     section_map = {title: spec_content[start:end] for title, start, end in sections}
 
     extracted: dict[str, str] = {}
-    ordered_sections = ["Requirements", "Flows", "Constraints", "Dependencies"]
+    ordered_sections = ["Analysis", "Constraints", "Overview", "Details"]
     for section_title in ordered_sections:
         section_content = section_map.get(section_title, "")
         if not section_content:
@@ -1638,19 +1649,14 @@ def _append_elements_to_spec(
     elements_by_section: dict[str, list[list[str]]] = {}
     for old_id, element_text in elements.items():
         prefix = old_id.split("-", 1)[0]
-        if prefix == "REQ":
-            section_title = "Requirements"
-        elif prefix == "FLOW":
-            section_title = "Flows"
-        elif prefix == "INV":
-            if "Constraints" in section_by_title:
-                section_title = "Constraints"
-            elif "Dependencies" in section_by_title:
-                section_title = "Dependencies"
-            else:
-                section_title = "Constraints"
-        elif prefix == "DEC":
-            section_title = "Dependencies"
+        if prefix == "DTL":
+            section_title = "Details"
+        elif prefix == "CON":
+            section_title = "Constraints"
+        elif prefix == "ANL":
+            section_title = "Analysis"
+        elif prefix == "OVW":
+            section_title = "Overview"
         else:
             logger.warning("Unknown element prefix %s for %s", prefix, old_id)
             continue
@@ -1705,7 +1711,7 @@ def _append_elements_to_spec(
         else:
             missing_sections[section_title] = entry_sets
 
-    ordered_sections = ["Requirements", "Flows", "Constraints", "Dependencies"]
+    ordered_sections = ["Analysis", "Constraints", "Overview", "Details"]
     for section_title in ordered_sections:
         if section_title not in missing_sections:
             continue

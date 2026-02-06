@@ -5,8 +5,10 @@ from pathlib import Path
 from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
+    fix_cross_file_section_pointers,
     resolve_section_reference,
     strip_invalid_file_pointers,
+    strip_invalid_section_pointers,
 )
 
 
@@ -142,3 +144,81 @@ def test_strip_invalid_file_pointers_handles_empty_and_none() -> None:
 
     assert strip_invalid_file_pointers("", file_manifest) == ""
     assert strip_invalid_file_pointers("No pointers here.", file_manifest) == "No pointers here."
+
+
+def test_fix_cross_file_section_pointers_rewrites_mismatched() -> None:
+    file_manifest = {
+        "F0001": {"relpath": "math/base.md", "sha256": "0" * 64},
+        "F0002": {"relpath": "math/recurrence.md", "sha256": "0" * 64},
+    }
+    content = "See [spec_snapshot/math/base.md::SEC-F0002-0001] for details."
+    result = fix_cross_file_section_pointers(content, file_manifest)
+    assert result == "See [spec_snapshot/math/recurrence.md::SEC-F0002-0001] for details."
+
+
+def test_fix_cross_file_section_pointers_preserves_correct() -> None:
+    file_manifest = {
+        "F0001": {"relpath": "math/base.md", "sha256": "0" * 64},
+    }
+    content = "See [spec_snapshot/math/base.md::SEC-F0001-0001] for details."
+    result = fix_cross_file_section_pointers(content, file_manifest)
+    assert result == content
+
+
+def test_fix_cross_file_section_pointers_no_pointers() -> None:
+    file_manifest = {"F0001": {"relpath": "docs/intro.md", "sha256": "0" * 64}}
+    assert (
+        fix_cross_file_section_pointers("No pointers here.", file_manifest) == "No pointers here."
+    )
+
+
+def test_fix_cross_file_section_pointers_unknown_section_file() -> None:
+    file_manifest = {
+        "F0001": {"relpath": "math/base.md", "sha256": "0" * 64},
+    }
+    # SEC-F9999 doesn't exist in manifest, should be left unchanged
+    content = "See [spec_snapshot/math/base.md::SEC-F9999-0001] for details."
+    result = fix_cross_file_section_pointers(content, file_manifest)
+    assert result == content
+
+
+def test_fix_cross_file_section_pointers_multiple_replacements() -> None:
+    file_manifest = {
+        "F0001": {"relpath": "a.md", "sha256": "0" * 64},
+        "F0002": {"relpath": "b.md", "sha256": "0" * 64},
+        "F0003": {"relpath": "c.md", "sha256": "0" * 64},
+    }
+    content = "[spec_snapshot/a.md::SEC-F0002-0001] and [spec_snapshot/c.md::SEC-F0001-0003]"
+    result = fix_cross_file_section_pointers(content, file_manifest)
+    assert result == (
+        "[spec_snapshot/b.md::SEC-F0002-0001] and [spec_snapshot/a.md::SEC-F0001-0003]"
+    )
+
+
+def test_strip_invalid_section_pointers_removes_nonexistent() -> None:
+    manifest = {"F0001": {"relpath": "a.md", "sha256": "0" * 64}}
+
+    def _section_reader(file_id: str):
+        if file_id == "F0001":
+            return {"sections": [{"section_id": "SEC-F0001-0001"}]}
+        return None
+
+    content = "Text [spec_snapshot/a.md::SEC-F0001-0001] and [spec_snapshot/a.md::SEC-F0001-9999]"
+    result = strip_invalid_section_pointers(content, manifest, _section_reader)
+    assert "[spec_snapshot/a.md::SEC-F0001-0001]" in result
+    assert "SEC-F0001-9999" not in result
+
+
+def test_strip_invalid_section_pointers_preserves_all_valid() -> None:
+    manifest = {"F0001": {"relpath": "a.md", "sha256": "0" * 64}}
+
+    def _section_reader(file_id: str):
+        if file_id == "F0001":
+            return {
+                "sections": [{"section_id": "SEC-F0001-0001"}, {"section_id": "SEC-F0001-0002"}]
+            }
+        return None
+
+    content = "[spec_snapshot/a.md::SEC-F0001-0001] and [spec_snapshot/a.md::SEC-F0001-0002]"
+    result = strip_invalid_section_pointers(content, manifest, _section_reader)
+    assert result == content

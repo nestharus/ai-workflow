@@ -25,10 +25,10 @@ def _create_edge(
             "consumer_lib": consumer_lib,
             "provider_lib": provider_lib,
             "kind": "api",
-            "consumer_elements": [f"REQ-{consumer_lib}-0001"],
-            "provider_elements": [f"REQ-{provider_lib}-0001"],
+            "consumer_elements": [f"DTL-{consumer_lib}-0001"],
+            "provider_elements": [f"DTL-{provider_lib}-0001"],
             "summary": "Dependency summary.",
-            "evidence": [f"[{consumer_lib}::spec.md::REQ-{consumer_lib}-0001]"],
+            "evidence": [f"[{consumer_lib}::spec.md::DTL-{consumer_lib}-0001]"],
         }
     )
 

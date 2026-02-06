@@ -50,14 +50,14 @@ def _make_task(
 def test_validate_element_coverage_complete() -> None:
     planning_context = {
         "coverage_targets": {
-            "LIB-0001": ["REQ-LIB-0001-0001", "FLOW-LIB-0001-01", "INV-LIB-0001-0001"],
+            "LIB-0001": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "CON-LIB-0001-0001"],
         }
     }
     tasks = [
         _make_task(
             "TASK-0001",
             "Cover elements",
-            elements=["REQ-LIB-0001-0001", "FLOW-LIB-0001-01", "INV-LIB-0001-0001"],
+            elements=["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "CON-LIB-0001-0001"],
         )
     ]
 
@@ -70,11 +70,11 @@ def test_validate_element_coverage_missing_elements() -> None:
     planning_context = {
         "coverage_targets": {
             "LIB-0001": [
-                "REQ-LIB-0001-0001",
-                "REQ-LIB-0001-0002",
-                "FLOW-LIB-0001-01",
-                "INV-LIB-0001-0001",
-                "INV-LIB-0001-0002",
+                "DTL-LIB-0001-0001",
+                "DTL-LIB-0001-0002",
+                "DTL-LIB-0001-0003",
+                "CON-LIB-0001-0001",
+                "CON-LIB-0001-0002",
             ]
         }
     }
@@ -82,7 +82,7 @@ def test_validate_element_coverage_missing_elements() -> None:
         _make_task(
             "TASK-0001",
             "Partial coverage",
-            elements=["REQ-LIB-0001-0001", "FLOW-LIB-0001-01", "INV-LIB-0001-0001"],
+            elements=["DTL-LIB-0001-0001", "DTL-LIB-0001-0003", "CON-LIB-0001-0001"],
         )
     ]
 
@@ -90,7 +90,7 @@ def test_validate_element_coverage_missing_elements() -> None:
     missing = {error["context"]["element_id"] for error in errors}
 
     assert len(errors) == 2
-    assert missing == {"REQ-LIB-0001-0002", "INV-LIB-0001-0002"}
+    assert missing == {"DTL-LIB-0001-0002", "CON-LIB-0001-0002"}
 
 
 def test_validate_edge_coverage_complete() -> None:
@@ -138,8 +138,8 @@ def test_validate_edge_coverage_missing_edges() -> None:
 def test_validate_decision_coverage_complete() -> None:
     planning_context = {
         "open_decisions": [
-            {"decision_id": "DEC-LIB-0001-0001", "lib_id": "LIB-0001"},
-            {"decision_id": "DEC-LIB-0001-0002", "lib_id": "LIB-0001"},
+            {"decision_id": "ANL-LIB-0001-0001", "lib_id": "LIB-0001"},
+            {"decision_id": "ANL-LIB-0001-0002", "lib_id": "LIB-0001"},
         ],
         "open_gaps": [],
     }
@@ -147,7 +147,7 @@ def test_validate_decision_coverage_complete() -> None:
         _make_task(
             "TASK-0001",
             "Decisions covered",
-            decisions=["DEC-LIB-0001-0001", "DEC-LIB-0001-0002"],
+            decisions=["ANL-LIB-0001-0001", "ANL-LIB-0001-0002"],
         )
     ]
 
@@ -160,7 +160,7 @@ def test_validate_decision_coverage_allows_external_input() -> None:
     planning_context = {
         "open_decisions": [
             {
-                "decision_id": "DEC-LIB-0002-0001",
+                "decision_id": "ANL-LIB-0002-0001",
                 "lib_id": "LIB-0002",
                 "requires_external_input": True,
             }
@@ -243,7 +243,7 @@ def test_validate_acceptance_criteria_empty() -> None:
         component="API Layer",
         libraries=["LIB-0001"],
         covers=TaskCoversSchema.model_construct(
-            elements=["REQ-LIB-0001-0001"],
+            elements=["DTL-LIB-0001-0001"],
             edges=[],
             decisions=[],
             gaps=[],

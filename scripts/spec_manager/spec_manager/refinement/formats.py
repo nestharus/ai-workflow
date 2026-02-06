@@ -321,7 +321,17 @@ def migrate_evidence_json(evidence_path: Path, manager: WorkspaceManager) -> dic
                     "message": "Evidence source sections must be a list of strings.",
                 }
             )
+        # Resolve relpath-style file references to canonical file_ids
         file_entry = manager.state.file_manifest.get(file_id)
+        if not file_entry or "relpath" not in file_entry:
+            from spec_manager.refinement.validation_utils import build_file_id_lookup
+
+            lookup = build_file_id_lookup(manager.state.file_manifest)
+            resolved = lookup.get(file_id)
+            if resolved:
+                file_entry = manager.state.file_manifest.get(resolved)
+                source["file_id"] = resolved
+                file_id = resolved
         if not file_entry or "relpath" not in file_entry:
             issues.append(
                 {
@@ -652,11 +662,14 @@ def parse_evidence_mapper_output(
 
     from spec_manager.schemas import EvidenceMapperOutput
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        validated = EvidenceMapperOutput.model_validate_json(json_str)
+        validated = EvidenceMapperOutput.model_validate_json(cleaned_str)
         data = validated.model_dump()
         try:
-            extracted = _extract_json_payload(json_str)
+            extracted = _extract_json_payload(cleaned_str)
             raw = json.loads(extracted)
         except Exception:
             return data
@@ -670,7 +683,7 @@ def parse_evidence_mapper_output(
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -691,7 +704,9 @@ def parse_evidence_mapper_output(
 def parse_concern_assignment_judge(output: str) -> dict[str, Any]:
     """Parse chatgpt-concern-assignment-judge JSON output."""
     issues: list[dict[str, Any]] = []
-    normalized_output = normalize_compound_pointers(output)
+    # Strip code fences before normalization
+    cleaned_output = _strip_code_fences(output)
+    normalized_output = normalize_compound_pointers(cleaned_output)
 
     try:
         data = json.loads(normalized_output)
@@ -851,11 +866,14 @@ def parse_gap_judge_output(
 
     from spec_manager.schemas import GapJudgeOutput
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        validated = GapJudgeOutput.model_validate_json(json_str)
+        validated = GapJudgeOutput.model_validate_json(cleaned_str)
         data = validated.model_dump()
         try:
-            extracted = _extract_json_payload(json_str)
+            extracted = _extract_json_payload(cleaned_str)
             raw = json.loads(extracted)
         except Exception:
             return data
@@ -869,7 +887,7 @@ def parse_gap_judge_output(
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -892,7 +910,9 @@ def parse_evidence_spotcheck_output(
     """Parse chatgpt-evidence-gap-judge JSON output."""
     import json
 
-    extracted = _extract_json_payload(json_str)
+    # Strip code fences before extraction
+    cleaned_str = _strip_code_fences(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -907,6 +927,84 @@ def parse_evidence_spotcheck_output(
         if field not in data:
             raise ValueError(f"Missing required field: {field}")
     return data
+
+
+def _fix_single_quote_json(text: str) -> str:
+    """Attempt to fix Python-style single-quoted dicts to valid JSON.
+
+    LLMs (especially GLM) sometimes output {'key': 'value'} instead of
+    {"key": "value"}. This uses ast.literal_eval as a fallback parser
+    and re-serializes to proper JSON.
+
+    Returns the original text unchanged if it's already valid JSON or
+    if the fallback also fails.
+    """
+    import ast
+
+    stripped = text.strip()
+    try:
+        json.loads(stripped)
+        return stripped
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    try:
+        parsed = ast.literal_eval(stripped)
+        return json.dumps(parsed, ensure_ascii=False)
+    except (ValueError, SyntaxError):
+        return text
+
+
+def _strip_code_fences(text: str) -> str:
+    """Strip markdown code fences from text if present.
+
+    Handles common LLM output patterns like:
+    ```json
+    {...}
+    ```
+
+    Also handles:
+    - Leading text before code fence (preamble)
+    - Tilde-style fences (~~~)
+    - Multiple fences (extracts first one)
+    - Unclosed fences
+    """
+    if not text:
+        return text
+
+    cleaned = text.strip()
+
+    # Try to find a code fence (backtick or tilde style)
+    fence_patterns = ["```", "~~~"]
+    fence_start = -1
+    fence_marker = ""
+
+    for pattern in fence_patterns:
+        idx = cleaned.find(pattern)
+        if idx != -1 and (fence_start == -1 or idx < fence_start):
+            fence_start = idx
+            fence_marker = pattern
+
+    if fence_start == -1:
+        # No fence found - return cleaned (stripped) version
+        return cleaned
+
+    # Find the newline after the opening fence
+    first_newline = cleaned.find("\n", fence_start)
+    if first_newline == -1:
+        # Fence but no newline - malformed, return original
+        return cleaned
+
+    # Find the closing fence
+    fence_end = cleaned.find(fence_marker, first_newline + 1)
+    if fence_end == -1:
+        # No closing fence - extract from first newline to end
+        content = cleaned[first_newline + 1 :].strip()
+        return content if content else cleaned
+
+    # Extract content between fences
+    content = cleaned[first_newline + 1 : fence_end].strip()
+    return content if content else cleaned
 
 
 def _infer_extraction_method(original: str) -> str:
@@ -1005,6 +1103,76 @@ def _extract_json_payload(output: str) -> str:
     return cleaned[min(starts) :]
 
 
+def extract_json_from_llm_output(
+    output: str,
+    *,
+    allow_array: bool = True,
+    allow_object: bool = True,
+    evidence: list[dict[str, Any]] | None = None,
+    location: str = "unknown",
+) -> dict[str, Any] | list[Any]:
+    """Extract and parse JSON from LLM output with robust error handling.
+
+    This function handles common LLM output patterns:
+    - Code fences (```json ... ```)
+    - Leading/trailing commentary
+    - Preamble text before JSON
+    - Malformed whitespace
+
+    Args:
+        output: Raw LLM output string.
+        allow_array: Whether to accept JSON arrays as valid output.
+        allow_object: Whether to accept JSON objects as valid output.
+        evidence: Optional list to record extraction evidence.
+        location: Location identifier for logging.
+
+    Returns:
+        Parsed JSON as dict or list.
+
+    Raises:
+        ValueError: If no valid JSON could be extracted.
+        TypeError: If extracted JSON doesn't match allowed types.
+    """
+    if not output or not output.strip():
+        raise ValueError("Empty output provided")
+
+    # Step 1: Strip code fences
+    cleaned = _strip_code_fences(output)
+
+    # Step 2: Try direct JSON parse
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and allow_object:
+            return parsed
+        if isinstance(parsed, list) and allow_array:
+            return parsed
+        raise TypeError(
+            f"Expected {'object' if allow_object else ''}"
+            f"{' or ' if allow_object and allow_array else ''}"
+            f"{'array' if allow_array else ''}, got {type(parsed).__name__}"
+        )
+    except json.JSONDecodeError:
+        pass
+
+    # Step 3: Try _extract_json_payload for more robust extraction
+    extracted = _extract_json_payload(cleaned)
+    _record_json_extraction_evidence(output, extracted, evidence, location=location)
+
+    try:
+        parsed = json.loads(extracted)
+        if isinstance(parsed, dict) and allow_object:
+            return parsed
+        if isinstance(parsed, list) and allow_array:
+            return parsed
+        raise TypeError(
+            f"Expected {'object' if allow_object else ''}"
+            f"{' or ' if allow_object and allow_array else ''}"
+            f"{'array' if allow_array else ''}, got {type(parsed).__name__}"
+        )
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Failed to extract valid JSON: {exc}") from exc
+
+
 def _validate_architecture_candidate(candidate: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     required_fields = [
@@ -1045,8 +1213,11 @@ def parse_architecture_proposal(
         ArchitectureProposal as ArchitectureProposalSchema,
     )
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        proposal = ArchitectureProposalSchema.model_validate_json(json_str)
+        proposal = ArchitectureProposalSchema.model_validate_json(cleaned_str)
         return [
             ArchitectureCandidate(**candidate.model_dump()) for candidate in proposal.candidates
         ]
@@ -1056,7 +1227,7 @@ def parse_architecture_proposal(
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -1103,15 +1274,18 @@ def parse_architecture_selection(
 
     from spec_manager.schemas import ArchitectureSelection
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        return ArchitectureSelection.model_validate_json(json_str).model_dump()
+        return ArchitectureSelection.model_validate_json(cleaned_str).model_dump()
     except (ValidationError, ValueError) as exc:
         logger.warning(
             "Structured parsing failed for architecture selection; falling back: %s",
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -1142,15 +1316,18 @@ def parse_library_labeler_output(
 
     from spec_manager.schemas import LibraryLabelerOutput
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        return LibraryLabelerOutput.model_validate_json(json_str).model_dump()
+        return LibraryLabelerOutput.model_validate_json(cleaned_str).model_dump()
     except (ValidationError, ValueError) as exc:
         logger.warning(
             "Structured parsing failed for library labeler output; falling back: %s",
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -1175,15 +1352,18 @@ def parse_spec_patch_output(
 
     from spec_manager.schemas import SpecPatchOutput
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        return SpecPatchOutput.model_validate_json(json_str).model_dump()
+        return SpecPatchOutput.model_validate_json(cleaned_str).model_dump()
     except (ValidationError, ValueError) as exc:
         logger.warning(
             "Structured parsing failed for spec patch output; falling back: %s",
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -1208,15 +1388,18 @@ def parse_architecture_brief_output(
 
     from spec_manager.schemas import ArchitectureBrief
 
+    # Strip code fences before validation
+    cleaned_str = _strip_code_fences(json_str)
+
     try:
-        return ArchitectureBrief.model_validate_json(json_str).model_dump()
+        return ArchitectureBrief.model_validate_json(cleaned_str).model_dump()
     except (ValidationError, ValueError) as exc:
         logger.warning(
             "Structured parsing failed for architecture brief output; falling back: %s",
             exc,
         )
 
-    extracted = _extract_json_payload(json_str)
+    extracted = _extract_json_payload(cleaned_str)
     _record_json_extraction_evidence(
         json_str,
         extracted,
@@ -1345,3 +1528,48 @@ def parse_architecture_mapping(content: str) -> dict[str, Any]:
         "dependencies": dependencies,
         "unmapped_libraries": unmapped,
     }
+
+
+def parse_alignment_check_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Parse opus-alignment-checker JSON output."""
+    cleaned = _strip_code_fences(json_str)
+    extracted = _extract_json_payload(cleaned)
+    _record_json_extraction_evidence(
+        json_str, extracted, evidence, location="parse_alignment_check_output"
+    )
+    data = json.loads(extracted)
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object for alignment check output.")
+    return data
+
+
+def parse_qa_evaluation_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Parse chatgpt-qa-evaluator JSON output."""
+    cleaned = _strip_code_fences(json_str)
+    extracted = _extract_json_payload(cleaned)
+    _record_json_extraction_evidence(
+        json_str, extracted, evidence, location="parse_qa_evaluation_output"
+    )
+    data = json.loads(extracted)
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object for QA evaluation output.")
+    return data
+
+
+def parse_quality_gate_output(
+    json_str: str, evidence: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Parse quality gate reviewer JSON output."""
+    cleaned = _strip_code_fences(json_str)
+    extracted = _extract_json_payload(cleaned)
+    _record_json_extraction_evidence(
+        json_str, extracted, evidence, location="parse_quality_gate_output"
+    )
+    data = json.loads(extracted)
+    if not isinstance(data, dict):
+        raise TypeError("Expected JSON object for quality gate output.")
+    return data

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
+from spec_manager.refinement.formats import _fix_single_quote_json, _strip_code_fences
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
 from spec_manager.schemas.sections import FileSections
@@ -161,6 +162,43 @@ def _build_terms_prompt(
     return "\n".join(lines)
 
 
+def _repair_section_gaps(
+    sections: list[dict[str, Any]],
+    total_lines: int,
+) -> list[dict[str, Any]]:
+    """Repair gaps and off-by-one errors in LLM-generated section spans.
+
+    Ensures sections form a contiguous, non-overlapping sequence from
+    line 1 to total_lines by adjusting start_line values to match the
+    previous section's end_line + 1. Extends the last section to cover
+    all remaining lines.
+    """
+    if not sections or total_lines <= 0:
+        return sections
+
+    repaired = []
+    expected_start = 1
+    for section in sorted(sections, key=lambda s: s.get("start_line", 0)):
+        section = dict(section)
+        if section.get("start_line") != expected_start:
+            section["start_line"] = expected_start
+        end_line = section.get("end_line", expected_start)
+        if end_line < expected_start:
+            end_line = expected_start
+        if end_line > total_lines:
+            end_line = total_lines
+        section["end_line"] = end_line
+        expected_start = end_line + 1
+        if expected_start > total_lines + 1:
+            break
+        repaired.append(section)
+
+    if repaired and repaired[-1]["end_line"] < total_lines:
+        repaired[-1]["end_line"] = total_lines
+
+    return repaired
+
+
 def _count_evidence_lines(evidence_path: Path) -> int:
     if not evidence_path.exists():
         return 0
@@ -238,9 +276,12 @@ def _process_file_sectionization(
 
     if section_output:
         try:
-            parsed = json.loads(section_output)
+            cleaned_output = _strip_code_fences(section_output)
+            cleaned_output = _fix_single_quote_json(cleaned_output)
+            parsed = json.loads(cleaned_output)
             if not isinstance(parsed, list):
                 raise TypeError("Expected JSON array of sections")
+            parsed = _repair_section_gaps(parsed, total_lines)
             sections_payload = {
                 "file_id": file_id,
                 "sections": parsed,
@@ -286,7 +327,9 @@ def _process_file_sectionization(
 
     if terms_output:
         try:
-            parsed_terms = json.loads(terms_output)
+            cleaned_terms = _strip_code_fences(terms_output)
+            cleaned_terms = _fix_single_quote_json(cleaned_terms)
+            parsed_terms = json.loads(cleaned_terms)
             if not isinstance(parsed_terms, dict):
                 raise TypeError("Expected JSON object for terms payload")
             terms_path = manager.write_file_terms(file_id, parsed_terms)

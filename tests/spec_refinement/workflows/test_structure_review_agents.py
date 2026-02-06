@@ -37,9 +37,9 @@ def test_boundary_judge_prompt_structure() -> None:
         charter_b="Intent B. Responsibilities B.",
         matched_elements=[
             {
-                "element_a_id": "REQ-LIB-0001-0001",
+                "element_a_id": "DTL-LIB-0001-0001",
                 "element_a_text": "Handles intake and routing.",
-                "element_b_id": "REQ-LIB-0002-0001",
+                "element_b_id": "DTL-LIB-0002-0001",
                 "element_b_text": "Routes requests into processing.",
                 "similarity": 0.72,
             }
@@ -50,7 +50,7 @@ def test_boundary_judge_prompt_structure() -> None:
     assert prompt.startswith("## OUTPUT CONTRACT (REQUIRED)")
     assert '"action": "merge|keep_separate|move_elements"' in prompt
     assert "Matched Elements (top 10):" in prompt
-    assert "Pair 1: A REQ-LIB-0001-0001" in prompt
+    assert "Pair 1: A DTL-LIB-0001-0001" in prompt
     assert "similarity=0.72" in prompt
 
 
@@ -58,11 +58,11 @@ def test_split_planner_prompt_structure() -> None:
     prompt = _build_split_planner_prompt(
         lib_id="LIB-0003",
         charter="Own ingestion and transformation responsibilities.",
-        spec_excerpt="## Requirements\n- Must normalize input.\n\n## Invariants\n- Preserve IDs.",
+        spec_excerpt="## Details\n- Must normalize input.\n\n## Constraints\n- Preserve IDs.",
         cluster_assignments={
-            "REQ-LIB-0003-0001": 0,
-            "INV-LIB-0003-0002": 0,
-            "REQ-LIB-0003-0003": 1,
+            "DTL-LIB-0003-0001": 0,
+            "CON-LIB-0003-0002": 0,
+            "DTL-LIB-0003-0003": 1,
         },
         silhouette_score=0.42,
         num_clusters=2,
@@ -73,13 +73,13 @@ def test_split_planner_prompt_structure() -> None:
     assert "Silhouette score: 0.420" in prompt
     assert "- Cluster 0" in prompt
     assert "- Cluster 1" in prompt
-    assert "REQ-LIB-0003-0001" in prompt
+    assert "DTL-LIB-0003-0001" in prompt
 
 
 def test_boundary_judge_output_validation() -> None:
     valid_merge = {
         "action": "merge",
-        "rationale": "Overlap is substantial [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+        "rationale": "Overlap is substantial [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.7,
@@ -93,8 +93,8 @@ def test_boundary_judge_output_validation() -> None:
     }
     valid_move = {
         "action": "move_elements",
-        "rationale": "Move the shared intake requirement [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-        "elements_to_move": ["REQ-LIB-0001-0001"],
+        "rationale": "Move the shared intake detail [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+        "elements_to_move": ["DTL-LIB-0001-0001"],
         "target_lib": "LIB-0002",
         "confidence": 0.82,
     }
@@ -109,7 +109,7 @@ def test_boundary_judge_output_validation() -> None:
     }
     invalid_element = {
         "action": "move_elements",
-        "rationale": "Bad element id [LIB-0002::spec.md::REQ-LIB-0002-0001].",
+        "rationale": "Bad element id [LIB-0002::spec.md::DTL-LIB-0002-0001].",
         "elements_to_move": ["BAD-ID"],
         "target_lib": "LIB-0002",
         "confidence": 0.4,
@@ -142,7 +142,7 @@ def test_boundary_judge_rationale_citation_validation() -> None:
 
     with_spec_citation = {
         "action": "keep_separate",
-        "rationale": "See [LIB-0001::spec.md::INV-LIB-0001-0003] for invariant.",
+        "rationale": "See [LIB-0001::spec.md::CON-LIB-0001-0003] for constraint.",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.6,
@@ -158,23 +158,23 @@ def test_boundary_judge_rationale_citation_validation() -> None:
     }
     assert _validate_boundary_judge_output(with_charter_citation, "LIB-0001", "LIB-0002") == []
 
-    with_flow_citation = {
+    with_detail_citation = {
         "action": "merge",
-        "rationale": "Flow overlap [LIB-0001::spec.md::FLOW-LIB-0001-01].",
+        "rationale": "Detail overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.7,
     }
-    assert _validate_boundary_judge_output(with_flow_citation, "LIB-0001", "LIB-0002") == []
+    assert _validate_boundary_judge_output(with_detail_citation, "LIB-0001", "LIB-0002") == []
 
-    with_dec_citation = {
+    with_analysis_citation = {
         "action": "merge",
-        "rationale": "Decision conflict [LIB-0001::spec.md::DEC-LIB-0001-0001].",
+        "rationale": "Analysis conflict [LIB-0001::spec.md::ANL-LIB-0001-0001].",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.7,
     }
-    assert _validate_boundary_judge_output(with_dec_citation, "LIB-0001", "LIB-0002") == []
+    assert _validate_boundary_judge_output(with_analysis_citation, "LIB-0001", "LIB-0002") == []
 
 
 def test_split_planner_output_validation() -> None:
@@ -185,22 +185,22 @@ def test_split_planner_output_validation() -> None:
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
-                "justification": "Distinct intake requirements [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+                "justification": "Distinct intake details [LIB-0001::spec.md::DTL-LIB-0001-0001].",
             },
             {
                 "group_id": 1,
                 "proposed_name": "Processing",
                 "charter_summary": "Own processing.",
                 "element_ids": [
-                    "REQ-LIB-0001-0004",
-                    "REQ-LIB-0001-0005",
-                    "INV-LIB-0001-0006",
+                    "DTL-LIB-0001-0004",
+                    "DTL-LIB-0001-0005",
+                    "CON-LIB-0001-0006",
                 ],
-                "justification": "Distinct processing requirements [LIB-0001::spec.md::REQ-LIB-0001-0004].",
+                "justification": "Distinct processing details [LIB-0001::spec.md::DTL-LIB-0001-0004].",
             },
         ],
         "interface_notes": "Intake hands off to processing.",
@@ -217,7 +217,7 @@ def test_split_planner_output_validation() -> None:
                 "group_id": 0,
                 "proposed_name": "Too Small",
                 "charter_summary": "Too few elements.",
-                "element_ids": ["REQ-LIB-0001-0001", "BAD"],
+                "element_ids": ["DTL-LIB-0001-0001", "BAD"],
                 "justification": "Not enough evidence.",
             }
         ],
@@ -238,11 +238,11 @@ def test_split_planner_justification_citation_validation() -> None:
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
-                "justification": "Distinct intake requirements without any citation.",
+                "justification": "Distinct intake details without any citation.",
             }
         ],
         "interface_notes": "",
@@ -258,9 +258,9 @@ def test_split_planner_justification_citation_validation() -> None:
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
                 "justification": "See [LIB-0001::spec.md] for details.",
             }
@@ -278,9 +278,9 @@ def test_split_planner_justification_citation_validation() -> None:
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
                 "justification": "Charter scope supports split [LIB-0001::charter.md].",
             }
@@ -290,43 +290,43 @@ def test_split_planner_justification_citation_validation() -> None:
     }
     assert _validate_split_planner_output(with_charter_citation, "LIB-0001") == []
 
-    with_inv_citation = {
+    with_constraint_citation = {
         "split_groups": [
             {
                 "group_id": 0,
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
-                "justification": "Invariant boundary [LIB-0001::spec.md::INV-LIB-0001-0003].",
+                "justification": "Constraint boundary [LIB-0001::spec.md::CON-LIB-0001-0003].",
             }
         ],
         "interface_notes": "",
         "confidence": 0.5,
     }
-    assert _validate_split_planner_output(with_inv_citation, "LIB-0001") == []
+    assert _validate_split_planner_output(with_constraint_citation, "LIB-0001") == []
 
-    with_flow_citation = {
+    with_detail_citation = {
         "split_groups": [
             {
                 "group_id": 0,
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
-                "justification": "Flow isolation [LIB-0001::spec.md::FLOW-LIB-0001-01].",
+                "justification": "Detail isolation [LIB-0001::spec.md::DTL-LIB-0001-0001].",
             }
         ],
         "interface_notes": "",
         "confidence": 0.5,
     }
-    assert _validate_split_planner_output(with_flow_citation, "LIB-0001") == []
+    assert _validate_split_planner_output(with_detail_citation, "LIB-0001") == []
 
 
 def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
@@ -339,7 +339,7 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
     (lib_a_dir / "charter.md").write_text("Charter A.", encoding="utf-8")
     (lib_b_dir / "charter.md").write_text("Charter B.", encoding="utf-8")
     (lib_a_dir / "spec.md").write_text(
-        "## Requirements\n- Must intake.\n\n## Invariants\n- Preserve IDs.",
+        "## Details\n- Must intake.\n\n## Constraints\n- Preserve IDs.",
         encoding="utf-8",
     )
 
@@ -348,9 +348,9 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
         "lib_b": "LIB-0002",
         "matched_elements": [
             {
-                "element_a_id": "REQ-LIB-0001-0001",
+                "element_a_id": "DTL-LIB-0001-0001",
                 "element_a_text": "Handles intake.",
-                "element_b_id": "REQ-LIB-0002-0001",
+                "element_b_id": "DTL-LIB-0002-0001",
                 "element_b_text": "Handles intake.",
                 "similarity": 0.8,
             }
@@ -359,9 +359,9 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
     split_candidate = {
         "lib_id": "LIB-0001",
         "cluster_assignments": {
-            "REQ-LIB-0001-0001": 0,
-            "REQ-LIB-0001-0002": 0,
-            "INV-LIB-0001-0003": 0,
+            "DTL-LIB-0001-0001": 0,
+            "DTL-LIB-0001-0002": 0,
+            "CON-LIB-0001-0003": 0,
         },
         "silhouette_score": 0.55,
         "num_clusters": 2,
@@ -369,7 +369,7 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
 
     boundary_output = {
         "action": "merge",
-        "rationale": "Overlap is strong [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+        "rationale": "Overlap is strong [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         "elements_to_move": [],
         "target_lib": "LIB-0001",
         "confidence": 0.74,
@@ -381,11 +381,11 @@ def test_agent_invocation_with_mocks(fs, monkeypatch) -> None:
                 "proposed_name": "Intake",
                 "charter_summary": "Own intake.",
                 "element_ids": [
-                    "REQ-LIB-0001-0001",
-                    "REQ-LIB-0001-0002",
-                    "INV-LIB-0001-0003",
+                    "DTL-LIB-0001-0001",
+                    "DTL-LIB-0001-0002",
+                    "CON-LIB-0001-0003",
                 ],
-                "justification": "Distinct intake requirements [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+                "justification": "Distinct intake details [LIB-0001::spec.md::DTL-LIB-0001-0001].",
             }
         ],
         "interface_notes": "",

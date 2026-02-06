@@ -810,6 +810,11 @@ def main() -> int:
     p_discover = subparsers.add_parser("discover", help="Run library discovery")
     p_discover.add_argument("spec_folder", help="Path to spec folder")
 
+    # eval - add subcommand group for evaluation
+    from spec_manager.refinement.evals.cli import setup_eval_parser
+
+    setup_eval_parser(subparsers)
+
     args = parser.parse_args()
 
     commands = {
@@ -828,6 +833,12 @@ def main() -> int:
         "phase-02": cmd_phase_02,
         "discover": cmd_discover,
     }
+
+    # Handle eval command separately
+    if args.command == "eval":
+        from spec_manager.refinement.evals.cli import handle_eval_command
+
+        return handle_eval_command(args)
 
     return commands[args.command](args)
 

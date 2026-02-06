@@ -19,13 +19,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Element ID patterns for different kinds
 # Format: {KIND}-LIB-{lib_seq:04d}-{seq:04d}
-# e.g., REQ-LIB-0001-0001, FLOW-LIB-0001-01, DEC-LIB-0001-0001
+# e.g., DTL-LIB-0001-0001, CON-LIB-0001-0001, ANL-LIB-0001-0001
 _ELEMENT_ID_PATTERN = re.compile(
     r"^(?:"
-    r"REQ-LIB-\d{4}-\d{4}|"  # Requirements
-    r"FLOW-LIB-\d{4}-\d{2,4}|"  # Flows (2-4 digit sequence)
-    r"INV-LIB-\d{4}-\d{4}|"  # Invariants
-    r"DEC-LIB-\d{4}-\d{4}|"  # Decisions
+    r"DTL-LIB-\d{4}-\d{4}|"  # Details
+    r"CON-LIB-\d{4}-\d{4}|"  # Constraints
+    r"ANL-LIB-\d{4}-\d{4}|"  # Analyses
+    r"OVW-LIB-\d{4}-\d{4}|"  # Overviews
     r"ALG-LIB-\d{4}-\d{4}|"  # Algorithms
     r"DS-LIB-\d{4}-\d{4}|"  # Data Structures
     r"NOTE-LIB-\d{4}-\d{4}|"  # Notes
@@ -37,7 +37,7 @@ _ELEMENT_ID_PATTERN = re.compile(
 _LIB_ID_PATTERN = re.compile(r"^LIB-\d{4}$")
 
 # Derived element kinds
-DerivedElementKind = Literal["REQ", "FLOW", "INV", "DEC", "ALG", "DS", "NOTE", "GAP"]
+DerivedElementKind = Literal["DTL", "CON", "ANL", "OVW", "ALG", "DS", "NOTE", "GAP"]
 
 # Element status states
 ElementStatus = Literal["DRAFT", "ACTIVE", "NON_AUTHORITATIVE", "QUARANTINED", "DEPRECATED"]
@@ -71,9 +71,7 @@ class RelationEdge(BaseModel):
     def validate_element_id(cls, value: str) -> str:
         """Validate element ID format."""
         if not _ELEMENT_ID_PATTERN.fullmatch(value):
-            raise ValueError(
-                f"Element ID must match pattern {{KIND}}-LIB-####-####, got: {value}"
-            )
+            raise ValueError(f"Element ID must match pattern {{KIND}}-LIB-####-####, got: {value}")
         return value
 
 
@@ -117,7 +115,7 @@ class DerivedElement(BaseModel):
         if not _ELEMENT_ID_PATTERN.fullmatch(value):
             raise ValueError(
                 f"elem_id must match pattern {{KIND}}-LIB-####-#### "
-                f"(e.g., REQ-LIB-0001-0001), got: {value}"
+                f"(e.g., DTL-LIB-0001-0001), got: {value}"
             )
         return value
 
@@ -130,7 +128,7 @@ class DerivedElement(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_evidence_grounding(self) -> "DerivedElement":
+    def validate_evidence_grounding(self) -> DerivedElement:
         """Validate evidence grounding (CON-0005).
 
         Every derived element must cite at least one evidence atom to ensure
@@ -143,13 +141,11 @@ class DerivedElement(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_kind_matches_elem_id(self) -> "DerivedElement":
+    def validate_kind_matches_elem_id(self) -> DerivedElement:
         """Validate that kind matches the elem_id prefix."""
         prefix = self.elem_id.split("-")[0]
         if prefix != self.kind:
-            raise ValueError(
-                f"elem_id prefix '{prefix}' does not match kind '{self.kind}'"
-            )
+            raise ValueError(f"elem_id prefix '{prefix}' does not match kind '{self.kind}'")
         return self
 
 
@@ -186,11 +182,7 @@ def allocate_element_id(
             except ValueError:
                 continue
 
-    # FLOW uses 2-digit sequence by default, others use 4-digit
-    if kind == "FLOW":
-        return f"{kind}-LIB-{lib_seq}-{max_seq + 1:02d}"
-    else:
-        return f"{kind}-LIB-{lib_seq}-{max_seq + 1:04d}"
+    return f"{kind}-LIB-{lib_seq}-{max_seq + 1:04d}"
 
 
 def validate_element_references(
@@ -210,9 +202,7 @@ def validate_element_references(
 
     for parent_id in element.derived_from_elem_ids:
         if parent_id not in valid_elem_ids:
-            errors.append(
-                f"Element {element.elem_id} references unknown parent: {parent_id}"
-            )
+            errors.append(f"Element {element.elem_id} references unknown parent: {parent_id}")
 
     for relation in element.relations:
         if relation.from_id not in valid_elem_ids and relation.from_id != element.elem_id:

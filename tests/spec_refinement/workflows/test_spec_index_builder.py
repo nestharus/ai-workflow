@@ -26,24 +26,22 @@ def _create_library_with_spec(manager, lib_id, spec_content: str) -> Path:
 def sample_spec_for_indexing() -> str:
     return """# Library Spec
 
-## Requirements
-- REQ-LIB-0001-0001: Must validate input [spec_snapshot/specs/alpha.md::SEC-F0001-0001]
-- REQ-LIB-0001-0002: Must log errors referencing LIB-0002
-
-## Flows
-- FLOW-LIB-0001-01: User submits request
-- FLOW-LIB-0001-02: System validates and processes
+## Details
+- DTL-LIB-0001-0001: Must validate input [spec_snapshot/specs/alpha.md::SEC-F0001-0001]
+- DTL-LIB-0001-0002: Must log errors referencing LIB-0002
+- DTL-LIB-0001-0003: User submits request
+- DTL-LIB-0001-0004: System validates and processes
 
 ## Constraints
-- INV-LIB-0001-0001: Keep latency under 100ms
+- CON-LIB-0001-0001: Keep latency under 100ms
 """
 
 
 @pytest.fixture
 def sample_decisions_for_indexing() -> str:
-    return """# Decisions
+    return """# Analysis
 
-- DEC-LIB-0001-0001: Should we use async?
+- ANL-LIB-0001-0001: Should we use async?
   **Status**: open
   **Question**: Should we use async processing?
   **Options**: sync, async, hybrid
@@ -51,7 +49,7 @@ def sample_decisions_for_indexing() -> str:
   **Context**: Performance vs complexity tradeoff
   [spec_snapshot/specs/alpha.md::SEC-F0001-0001]
 
-- DEC-LIB-0001-0002: Database choice
+- ANL-LIB-0001-0002: Database choice
   **Status**: resolved
   **Question**: Which database to use?
 """
@@ -60,17 +58,15 @@ def sample_decisions_for_indexing() -> str:
 def test_build_spec_index_extracts_all_elements() -> None:
     spec_content = """# Library Spec
 
-## Requirements
-- REQ-LIB-0001-0001: One
-- REQ-LIB-0001-0002: Two
-- REQ-LIB-0001-0003: Three
-
-## Flows
-- FLOW-LIB-0001-01: Flow one
-- FLOW-LIB-0001-02: Flow two
+## Details
+- DTL-LIB-0001-0001: One
+- DTL-LIB-0001-0002: Two
+- DTL-LIB-0001-0003: Three
+- DTL-LIB-0001-0004: Flow one
+- DTL-LIB-0001-0005: Flow two
 
 ## Constraints
-- INV-LIB-0001-0001: Constraint
+- CON-LIB-0001-0001: Constraint
 """
 
     index = build_spec_index(spec_content, "LIB-0001")
@@ -82,16 +78,16 @@ def test_build_spec_index_sets_correct_element_kinds(sample_spec_for_indexing) -
     index = build_spec_index(sample_spec_for_indexing, "LIB-0001")
     kinds = {element["element_id"]: element["kind"] for element in index["elements"]}
 
-    assert kinds["REQ-LIB-0001-0001"] == "requirement"
-    assert kinds["REQ-LIB-0001-0002"] == "requirement"
-    assert kinds["FLOW-LIB-0001-01"] == "flow"
-    assert kinds["FLOW-LIB-0001-02"] == "flow"
-    assert kinds["INV-LIB-0001-0001"] == "invariant"
+    assert kinds["DTL-LIB-0001-0001"] == "detail"
+    assert kinds["DTL-LIB-0001-0002"] == "detail"
+    assert kinds["DTL-LIB-0001-0003"] == "detail"
+    assert kinds["DTL-LIB-0001-0004"] == "detail"
+    assert kinds["CON-LIB-0001-0001"] == "constraint"
 
 
 def test_build_spec_index_extracts_citations(sample_spec_for_indexing) -> None:
     index = build_spec_index(sample_spec_for_indexing, "LIB-0001")
-    element = next(item for item in index["elements"] if item["element_id"] == "REQ-LIB-0001-0001")
+    element = next(item for item in index["elements"] if item["element_id"] == "DTL-LIB-0001-0001")
 
     assert "[spec_snapshot/specs/alpha.md::SEC-F0001-0001]" in element["citations"]
 
@@ -99,8 +95,8 @@ def test_build_spec_index_extracts_citations(sample_spec_for_indexing) -> None:
 def test_build_spec_index_extracts_mentions_libs() -> None:
     spec_content = """# Library Spec
 
-## Requirements
-- REQ-LIB-0001-0001: Depends on LIB-0002 and LIB-0005
+## Details
+- DTL-LIB-0001-0001: Depends on LIB-0002 and LIB-0005
 """
 
     index = build_spec_index(spec_content, "LIB-0001")
@@ -111,8 +107,8 @@ def test_build_spec_index_extracts_mentions_libs() -> None:
 def test_build_spec_index_removes_id_prefix_from_text() -> None:
     spec_content = """# Library Spec
 
-## Requirements
-- REQ-LIB-0001-0001: Must validate
+## Details
+- DTL-LIB-0001-0001: Must validate
 """
 
     index = build_spec_index(spec_content, "LIB-0001")
@@ -122,17 +118,17 @@ def test_build_spec_index_removes_id_prefix_from_text() -> None:
 
 def test_build_spec_index_preserves_raw_line(sample_spec_for_indexing) -> None:
     index = build_spec_index(sample_spec_for_indexing, "LIB-0001")
-    element = next(item for item in index["elements"] if item["element_id"] == "REQ-LIB-0001-0002")
+    element = next(item for item in index["elements"] if item["element_id"] == "DTL-LIB-0001-0002")
 
-    assert element["raw_line"] == "- REQ-LIB-0001-0002: Must log errors referencing LIB-0002"
+    assert element["raw_line"] == "- DTL-LIB-0001-0002: Must log errors referencing LIB-0002"
 
 
 def test_build_decisions_index_extracts_all_decisions() -> None:
-    decisions_content = """# Decisions
+    decisions_content = """# Analysis
 
-- DEC-LIB-0001-0001: Question one
-- DEC-LIB-0001-0002: Question two
-- DEC-LIB-0001-0003: Question three
+- ANL-LIB-0001-0001: Question one
+- ANL-LIB-0001-0002: Question two
+- ANL-LIB-0001-0003: Question three
 """
 
     index = build_decisions_index(decisions_content, "LIB-0001")
@@ -141,9 +137,9 @@ def test_build_decisions_index_extracts_all_decisions() -> None:
 
 
 def test_build_decisions_index_parses_structured_fields() -> None:
-    decisions_content = """# Decisions
+    decisions_content = """# Analysis
 
-- DEC-LIB-0001-0001: Should we use async?
+- ANL-LIB-0001-0001: Should we use async?
   - status: open
   - options: sync, async
   - default: sync
@@ -161,9 +157,9 @@ def test_build_decisions_index_parses_structured_fields() -> None:
 
 
 def test_build_decisions_index_extracts_status() -> None:
-    decisions_content = """# Decisions
+    decisions_content = """# Analysis
 
-- DEC-LIB-0001-0001: Should we use async?
+- ANL-LIB-0001-0001: Should we use async?
   - status: resolved
 """
 
@@ -173,9 +169,9 @@ def test_build_decisions_index_extracts_status() -> None:
 
 
 def test_build_decisions_index_handles_minimal_decision() -> None:
-    decisions_content = """# Decisions
+    decisions_content = """# Analysis
 
-- DEC-LIB-0001-0001: Should we use async?
+- ANL-LIB-0001-0001: Should we use async?
 """
 
     index = build_decisions_index(decisions_content, "LIB-0001")
@@ -188,9 +184,9 @@ def test_build_decisions_index_handles_minimal_decision() -> None:
 
 
 def test_build_decisions_index_extracts_citations() -> None:
-    decisions_content = """# Decisions
+    decisions_content = """# Analysis
 
-- DEC-LIB-0001-0001: Should we use async? [spec_snapshot/specs/alpha.md::SEC-F0001-0001]
+- ANL-LIB-0001-0001: Should we use async? [spec_snapshot/specs/alpha.md::SEC-F0001-0001]
 """
 
     index = build_decisions_index(decisions_content, "LIB-0001")
@@ -220,8 +216,8 @@ def test_spec_index_rejects_invalid_element_id() -> None:
         "elements": [
             {
                 "element_id": "INVALID-ID",
-                "kind": "requirement",
-                "section": "Requirements",
+                "kind": "detail",
+                "section": "Details",
                 "text": "Bad",
                 "raw_line": "- INVALID-ID: Bad",
                 "citations": [],
@@ -241,7 +237,7 @@ def test_decisions_index_rejects_invalid_decision_id() -> None:
         "decisions_path": "libraries/LIB-0001/decisions.md",
         "decisions": [
             {
-                "decision_id": "INVALID-DEC",
+                "decision_id": "INVALID-ANL",
                 "status": "open",
                 "question": "Question?",
                 "context": "",
@@ -276,8 +272,8 @@ def test_write_spec_index_creates_valid_json(fs) -> None:
     fs.create_dir(lib_dir)
     spec_content = """# Library Spec
 
-## Requirements
-- REQ-LIB-0001-0001: Must validate
+## Details
+- DTL-LIB-0001-0001: Must validate
 """
     index = build_spec_index(spec_content, "LIB-0001")
 
@@ -291,9 +287,9 @@ def test_write_spec_index_creates_valid_json(fs) -> None:
 def test_write_decisions_index_creates_valid_json(fs) -> None:
     lib_dir = Path("/work/libraries/LIB-0001")
     fs.create_dir(lib_dir)
-    decisions_content = """# Decisions
+    decisions_content = """# Analysis
 
-- DEC-LIB-0001-0001: Should we use async?
+- ANL-LIB-0001-0001: Should we use async?
 """
     index = build_decisions_index(decisions_content, "LIB-0001")
 
@@ -308,7 +304,7 @@ def test_build_aggregate_index_merges_all_libraries(spec_refinement_workspace) -
     manager, _ = spec_refinement_workspace(run_id="run_index_001")
     spec_content = """# Library Spec
 
-## Requirements
+## Details
 - Must validate input
 """
 
@@ -333,7 +329,7 @@ def test_aggregate_index_preserves_lib_id_per_element(
     manager, _ = spec_refinement_workspace(run_id="run_index_002")
     spec_content = """# Library Spec
 
-## Requirements
+## Details
 - Must validate input
 """
 

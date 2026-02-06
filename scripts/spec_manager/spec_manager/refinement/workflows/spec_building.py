@@ -31,6 +31,7 @@ from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
     build_section_id_lookup,
+    fix_cross_file_section_pointers,
     resolve_section_reference,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -129,26 +130,26 @@ def _collect_section_ids(
 
 
 def _build_spec_template(lib_id: str, charter: dict[str, Any]) -> str:
+    intent = charter.get("intent", "")
+    boundaries = charter.get("boundaries", "")
+    overview_parts = [p for p in (intent, boundaries) if p]
+    overview_text = "\n".join(overview_parts) if overview_parts else ""
     lines = [
         f"# Library Spec: {lib_id}",
         "",
-        "## Intent",
-        charter.get("intent", ""),
-        "",
-        "## Boundaries",
-        charter.get("boundaries", ""),
-        "",
-        "## Requirements",
-        "<!-- Requirements will be added during integration -->",
+        "## Analysis",
+        "<!-- Options, rationale, tradeoffs, open questions will be recorded here -->",
         "",
         "## Constraints",
-        "<!-- Constraints will be added during integration -->",
+        "<!-- Guiding principles and priorities will be added during integration -->",
         "",
-        "## Dependencies",
-        "<!-- Dependencies will be added during integration -->",
+        "## Overview",
+        overview_text
+        if overview_text
+        else "<!-- Prose: what things are, how they fit together -->",
         "",
-        "## Decisions Needed",
-        "<!-- Ambiguities/contradictions will be recorded here -->",
+        "## Details",
+        "<!-- Algorithms, shapes, technical requirements will be added during integration -->",
         "",
     ]
     return "\n".join(lines).rstrip() + "\n"
@@ -191,11 +192,11 @@ def _build_full_spec_prompt_for_metrics(
         "REQUIRED RULES:",
         "- Preserve evidence-backed content; add missing details with citations "
         "[spec_snapshot/<relpath>::SECTION_ID].",
-        "- Boundaries/Requirements/Constraints/Dependencies bullets MUST include at least "
+        "- Overview/Details/Constraints bullets MUST include at least "
         " one valid evidence pointer. Add missing citations to existing bullets too (including "
         " those originating from the charter).",
         "- When closing gaps, preserve key terms from the source/gap text verbatim.",
-        "- If the gap list indicates an unsupported claim, move it to Decisions Needed as an "
+        "- If the gap list indicates an unsupported claim, move it to Analysis as an "
         " explicit open question/assumption.",
         "- Never cite derived artifacts (charter, libraries, runs). Only cite SOURCE files via "
         " [spec_snapshot/<relpath>::SECTION_ID].",
@@ -241,11 +242,11 @@ def _build_full_spec_prompt_for_metrics(
             "## OUTPUT FORMAT",
             "",
             f"# Library Spec: {lib_id}",
-            "## Boundaries",
+            "## Overview",
             f"- Handles request intake and routing. {example_pointer}",
-            "## Requirements",
+            "## Details",
             f"- Validate payloads before processing. {example_pointer}",
-            "## Decisions Needed",
+            "## Analysis",
             f"- Confirm retention policy for incoming requests. {example_pointer}",
         ]
     )
@@ -344,14 +345,13 @@ def _build_patch_prompt(
         f"- Valid spec sections: {valid_spec_sections}",
         "- Each operation MUST target a valid spec section",
         "- Use add for new content, edit to refine an existing bullet, move to reclassify "
-        "to Decisions Needed",
-        "- Every bullet in Boundaries/Requirements/Constraints/Dependencies MUST include at "
-        "least one citation",
+        "to Analysis",
+        "- Every bullet in Overview/Details/Constraints MUST include at least one citation",
         "- Citations MUST reference SOURCE files only (spec_snapshot/<relpath>::SECTION_ID format)",
         f"- Valid file references for citations (spec_snapshot/<relpath>): {file_ref_list}",
         f"- Valid section IDs for {file_ref}: {valid_list}",
         "- When closing gaps, preserve key terms from source/gap text verbatim",
-        "- If gap indicates unsupported claim, move to Decisions Needed",
+        "- If gap indicates unsupported claim, move to Analysis",
         "",
         "FORBIDDEN:",
         "- Delete operations",
@@ -396,7 +396,7 @@ def _build_patch_prompt(
             "",
             "Example:",
             '{ "file_id": "F0001", "lib_id": "LIB-0001", "patches": ['
-            '{"op": "add", "section": "Requirements", "bullet_index": null, '
+            '{"op": "add", "section": "Details", "bullet_index": null, '
             f'"source_section": null, "content": "...", "citations": ["{example_pointer}"]{{}}'
             "] }",
         ]
@@ -515,8 +515,7 @@ def _build_gap_prompt(
         "REQUIRED RULES:",
         "- Only report gaps for statements explicitly present in the source (within Scope)",
         "- Do NOT infer or invent new requirements/behaviors not stated in the source",
-        "- If the spec already captures the detail anywhere (including Decisions Needed), "
-        "it is NOT a gap",
+        "- If the spec already captures the detail anywhere (including Analysis), it is NOT a gap",
         f"- Scope: only consider gaps from these source sections for {file_ref}: {section_list}",
         "- Use source pointers in [spec_snapshot/<relpath>::SECTION_ID] format",
         f"- Valid section IDs for citations in {file_ref}: {valid_list}",
@@ -638,8 +637,7 @@ def _build_gap_audit_prompt(
         "Return JSON with keys: gaps, total_gaps, file_id.",
         "Only report gaps for statements explicitly present in the evidence union below.",
         "Do NOT infer or invent new requirements/behaviors that are not stated.",
-        "If the spec already captures the detail anywhere (including Decisions"
-        " Needed), it is NOT a gap.",
+        "If the spec already captures the detail anywhere (including Analysis), it is NOT a gap.",
         "Use source pointers in [spec_snapshot/<relpath>::SECTION_ID] format.",
         "Source must match one of the Evidence Union Sources listed below.",
         f'Set file_id to "{GAP_AUDIT_FILE_ID}".',
@@ -715,7 +713,7 @@ def _validate_spec_citations(
             )
 
     sections = _extract_sections(content, level=2)
-    for section_name in ("Boundaries", "Requirements", "Constraints", "Dependencies"):
+    for section_name in ("Overview", "Details", "Constraints"):
         section_text = sections.get(section_name, "")
         for line in section_text.splitlines():
             stripped = line.strip()
@@ -749,12 +747,18 @@ def _read_evidence_sources(lib_dir: Path) -> list[dict[str, Any]]:
 
 def _normalize_evidence_sources(
     sources: list[dict[str, Any]],
+    file_id_lookup: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     merged: dict[str, set[str]] = {}
     for source in sources:
         file_id = source.get("file_id")
         if not isinstance(file_id, str):
             continue
+        # Resolve relpath-style file references to canonical file_ids
+        if file_id_lookup:
+            resolved = file_id_lookup.get(file_id)
+            if resolved:
+                file_id = resolved
         sections = source.get("sections", [])
         if not isinstance(sections, list):
             sections = []
@@ -764,10 +768,10 @@ def _normalize_evidence_sources(
 
 def _update_decisions(lib_dir: Path, spec_content: str) -> None:
     sections = _extract_sections(spec_content, level=2)
-    decisions_text = sections.get("Decisions Needed", "").strip()
+    decisions_text = sections.get("Analysis", sections.get("Decisions Needed", "")).strip()
     decisions_path = lib_dir / "decisions.md"
     if decisions_text:
-        decisions_path.write_text(f"## Decisions Needed\n\n{decisions_text}\n", encoding="utf-8")
+        decisions_path.write_text(f"## Analysis\n\n{decisions_text}\n", encoding="utf-8")
     else:
         decisions_path.write_text("", encoding="utf-8")
 
@@ -882,8 +886,11 @@ def _build_library_spec(
     if stabilization_enabled:
         logger.info("Spec stabilization detected for %s - IDs will be preserved", lib_id)
 
+    file_id_lookup = build_file_id_lookup(
+        manager.state.file_manifest, manager.structure.spec_snapshot_dir
+    )
     sources = _read_evidence_sources(lib_dir)
-    evidence_map = _normalize_evidence_sources(sources)
+    evidence_map = _normalize_evidence_sources(sources, file_id_lookup=file_id_lookup)
     if not evidence_map:
         return {
             "lib_id": lib_id,
@@ -894,10 +901,6 @@ def _build_library_spec(
             "failed": True,
             "coverage_metrics": {},
         }
-
-    file_id_lookup = build_file_id_lookup(
-        manager.state.file_manifest, manager.structure.spec_snapshot_dir
-    )
     section_alias_map = build_section_alias_map(
         {
             manifest_file_id: manager.get_section_labels(manifest_file_id)
@@ -1154,6 +1157,9 @@ def _build_library_spec(
                     )
 
             updated_spec = render_spec(spec_doc, lib_id)
+            updated_spec = fix_cross_file_section_pointers(
+                updated_spec, manager.state.file_manifest
+            )
             spec_path.write_text(updated_spec, encoding="utf-8")
             _update_decisions(lib_dir, updated_spec)
 

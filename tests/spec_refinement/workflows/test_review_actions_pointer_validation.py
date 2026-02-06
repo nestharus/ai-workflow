@@ -18,15 +18,15 @@ def _setup_libraries(manager, lib_ids: list[str]) -> None:
 
 
 def test_validate_pointer_format_multi_hop_spec() -> None:
-    assert validate_pointer_format("[LIB-0001::spec.md::REQ-LIB-0001-0001]") is True
+    assert validate_pointer_format("[LIB-0001::spec.md::DTL-LIB-0001-0001]") is True
 
 
 def test_validate_pointer_format_multi_hop_charter() -> None:
-    assert validate_pointer_format("[LIB-0001::charter.md::INTENT]") is True
+    assert validate_pointer_format("[LIB-0001::charter.md::OVERVIEW]") is True
 
 
-def test_validate_pointer_format_multi_hop_decisions() -> None:
-    assert validate_pointer_format("[LIB-0001::decisions.md::DEC-LIB-0001-0001]") is True
+def test_validate_pointer_format_multi_hop_analysis() -> None:
+    assert validate_pointer_format("[LIB-0001::analysis.md::ANL-LIB-0001-0001]") is True
 
 
 def test_validate_pointer_format_library_doc() -> None:
@@ -38,7 +38,7 @@ def test_validate_pointer_format_source_pointer() -> None:
 
 
 def test_validate_pointer_format_invalid_no_brackets() -> None:
-    assert validate_pointer_format("LIB-0001::spec.md::REQ") is False
+    assert validate_pointer_format("LIB-0001::spec.md::DTL") is False
 
 
 def test_validate_pointer_format_invalid_single_colon() -> None:
@@ -46,7 +46,7 @@ def test_validate_pointer_format_invalid_single_colon() -> None:
 
 
 def test_validate_pointer_format_invalid_lib_id() -> None:
-    assert validate_pointer_format("[LIB-1::spec.md::REQ]") is False
+    assert validate_pointer_format("[LIB-1::spec.md::DTL]") is False
 
 
 def test_validate_pointer_references_valid_multi_hop(spec_refinement_workspace) -> None:
@@ -54,7 +54,7 @@ def test_validate_pointer_references_valid_multi_hop(spec_refinement_workspace) 
     _setup_libraries(manager, ["LIB-0001"])
 
     valid, error = validate_pointer_references(
-        "[LIB-0001::spec.md::REQ-LIB-0001-0001]",
+        "[LIB-0001::spec.md::DTL-LIB-0001-0001]",
         manager.state.file_manifest,
         manager.allocated_library_ids,
     )
@@ -68,7 +68,7 @@ def test_validate_pointer_references_unknown_library(spec_refinement_workspace) 
     _setup_libraries(manager, ["LIB-0001"])
 
     valid, error = validate_pointer_references(
-        "[LIB-9999::spec.md::REQ-LIB-9999-0001]",
+        "[LIB-9999::spec.md::DTL-LIB-9999-0001]",
         manager.state.file_manifest,
         manager.allocated_library_ids,
     )
@@ -82,7 +82,7 @@ def test_validate_pointer_references_unknown_spec_file(spec_refinement_workspace
     _setup_libraries(manager, ["LIB-0001"])
 
     valid, error = validate_pointer_references(
-        "[LIB-0001::unknown.md::REQ-LIB-0001-0001]",
+        "[LIB-0001::unknown.md::DTL-LIB-0001-0001]",
         manager.state.file_manifest,
         manager.allocated_library_ids,
     )
@@ -148,28 +148,24 @@ def test_validate_pointer_references_library_doc_pointer(spec_refinement_workspa
     assert error is None
 
 
-def test_element_id_regex_valid_requirement() -> None:
-    assert ELEMENT_ID_RE.fullmatch("REQ-LIB-0001-0001")
+def test_element_id_regex_valid_detail() -> None:
+    assert ELEMENT_ID_RE.fullmatch("DTL-LIB-0001-0001")
 
 
-def test_element_id_regex_valid_flow() -> None:
-    assert ELEMENT_ID_RE.fullmatch("FLOW-LIB-0001-01")
+def test_element_id_regex_valid_constraint() -> None:
+    assert ELEMENT_ID_RE.fullmatch("CON-LIB-0001-0001")
 
 
-def test_element_id_regex_valid_invariant() -> None:
-    assert ELEMENT_ID_RE.fullmatch("INV-LIB-0001-0001")
-
-
-def test_element_id_regex_valid_decision() -> None:
-    assert ELEMENT_ID_RE.fullmatch("DEC-LIB-0001-0001")
+def test_element_id_regex_valid_analysis() -> None:
+    assert ELEMENT_ID_RE.fullmatch("ANL-LIB-0001-0001")
 
 
 def test_element_id_regex_invalid_format() -> None:
-    assert ELEMENT_ID_RE.fullmatch("REQ-0001") is None
+    assert ELEMENT_ID_RE.fullmatch("DTL-0001") is None
 
 
 def test_element_id_regex_invalid_lib_id() -> None:
-    assert ELEMENT_ID_RE.fullmatch("REQ-LIB-1-0001") is None
+    assert ELEMENT_ID_RE.fullmatch("DTL-LIB-1-0001") is None
 
 
 def test_review_action_validates_all_pointers(spec_refinement_workspace) -> None:
@@ -190,7 +186,7 @@ def test_review_action_validates_all_pointers(spec_refinement_workspace) -> None
             "summary": "Merge",
             "rationale": "Rationale",
             "evidence": [
-                "[LIB-0001::spec.md::REQ-LIB-0001-0001]",
+                "[LIB-0001::spec.md::DTL-LIB-0001-0001]",
                 f"[spec_snapshot/{relpath}::{section_id}]",
                 "[LIB-0001::charter.md]",
             ],

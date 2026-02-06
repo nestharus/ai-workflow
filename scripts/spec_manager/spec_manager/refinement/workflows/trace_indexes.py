@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 ATOM_ID_RE = re.compile(r"^ATOM-[A-Za-z0-9_.-]+-L\d{4}$")
 SECTION_ID_RE = re.compile(r"^SEC-F\d{4}-\d{4}$")
-ELEMENT_ID_RE = re.compile(r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4})$")
+ELEMENT_ID_RE = re.compile(
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
+)
 TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
 
 
@@ -148,7 +150,7 @@ def build_section_to_spec_elements_index(
             element_id = element.element_id
             kind = element.kind
             for citation in element.citations:
-                parsed = parse_evidence_pointer(citation)
+                parsed = parse_evidence_pointer(citation, allow_multi_hop=True)
                 if not parsed:
                     issue = f"Unable to parse citation {citation!r} for {element_id} in {lib_id}"
                     issues.append(issue)

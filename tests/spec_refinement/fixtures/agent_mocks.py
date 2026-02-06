@@ -297,7 +297,7 @@ def mock_spec_integrator_agent(
                     "patches": [
                         {
                             "op": "add",
-                            "section": "Requirements",
+                            "section": "Details",
                             "bullet_index": None,
                             "content": "Compound pointer case.",
                             "citations": [f"[{file_id}::{primary}, {file_id}::{secondary}]"],
@@ -313,7 +313,7 @@ def mock_spec_integrator_agent(
                     "patches": [
                         {
                             "op": "delete",
-                            "section": "Requirements",
+                            "section": "Details",
                             "bullet_index": 0,
                             "content": "",
                             "citations": [f"[{file_id}::{valid_sections[0]}]"],
@@ -328,7 +328,7 @@ def mock_spec_integrator_agent(
                 "patches": [
                     {
                         "op": "add",
-                        "section": "Requirements",
+                        "section": "Details",
                         "bullet_index": None,
                         "content": "Missing citation case.",
                         "citations": [f"[F0999::{valid_sections[0]}]"],
@@ -344,7 +344,7 @@ def mock_spec_integrator_agent(
             "patches": [
                 {
                     "op": "add",
-                    "section": "Requirements",
+                    "section": "Details",
                     "bullet_index": None,
                     "content": f"Supports {LABEL_BY_LIB.get(lib_id, lib_id)} processing.",
                     "citations": [f"[{file_id}::{section}]" for section in valid_sections],
@@ -514,8 +514,8 @@ def _build_interface_contract_payload(bundle: dict[str, Any]) -> dict[str, Any]:
         elem.get("element_id") for elem in provider.get("elements", []) if isinstance(elem, dict)
     ]
 
-    consumer_requirement = consumer_elements[0] if consumer_elements else f"REQ-{consumer_lib}-0001"
-    provider_requirement = provider_elements[0] if provider_elements else f"REQ-{provider_lib}-0001"
+    consumer_requirement = consumer_elements[0] if consumer_elements else f"DTL-{consumer_lib}-0001"
+    provider_requirement = provider_elements[0] if provider_elements else f"DTL-{provider_lib}-0001"
 
     consumer_component = architecture.get("consumer_component") or {}
     provider_component = architecture.get("provider_component") or {}
@@ -638,17 +638,17 @@ def mock_interface_edge_extractor_agent(
         edges = [
             {
                 "provider_lib": "LIB-0002",
-                "consumer_elements": ["REQ-LIB-0001-0001"],
+                "consumer_elements": ["DTL-LIB-0001-0001"],
                 "kind": "api",
                 "summary": "Consumes provider API for lookups.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             },
             {
                 "provider_lib": "LIB-0003",
-                "consumer_elements": ["REQ-LIB-0001-0002"],
+                "consumer_elements": ["DTL-LIB-0001-0002"],
                 "kind": "events",
                 "summary": "Subscribes to provider events.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0002]"],
             },
         ]
 
@@ -668,7 +668,7 @@ def mock_interface_edge_extractor_agent(
         if mode == "invalid_provider_lib":
             edges[0]["provider_lib"] = "LIB-9999"
         elif mode == "missing_consumer_elements":
-            edges[0]["consumer_elements"] = ["REQ-LIB-0001-9999"]
+            edges[0]["consumer_elements"] = ["DTL-LIB-0001-9999"]
         elif mode == "invalid_kind":
             edges[0]["kind"] = "unknown"
 
@@ -695,7 +695,7 @@ def mock_interface_contract_writer_agent(
     elif mode == "missing_sections":
         contract.pop("consumed_by", None)
     elif mode == "invalid_element_ids":
-        contract["provided"][0]["requirements"] = ["REQ-INVALID"]
+        contract["provided"][0]["requirements"] = ["DTL-INVALID"]
 
     markdown = _format_interface_contract_markdown(contract)
     payload = json.dumps(contract, indent=2)
@@ -1355,7 +1355,7 @@ def mock_repair_agent(
             "operations": [
                 {
                     "op": "add",
-                    "section": "Requirements",
+                    "section": "Details",
                     "bullet_index": None,
                     "content": "Repair: restore missing content.",
                     "citations": [f"[{target_file}::{s}]" for s in repair_sections],
@@ -1544,7 +1544,7 @@ class MockAgentController:
                             {
                                 "source": f"[{file_id}::INTRO]",
                                 "missing_content": "Missing requirement details.",
-                                "where_in_spec": "Requirements",
+                                "where_in_spec": "Details",
                                 "severity": "must",
                             }
                         ],

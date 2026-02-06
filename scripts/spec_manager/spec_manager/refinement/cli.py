@@ -665,6 +665,123 @@ def cmd_spec_stabilize_specs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_alignment(args: argparse.Namespace) -> int:
+    """Check alignment of specs against original requirements."""
+    run_id = args.run_id
+
+    from spec_manager.refinement.workflows.alignment_check import check_alignment
+
+    try:
+        result = check_alignment(run_id, max_iterations=args.max_iterations)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries checked: {result['libraries_checked']}")
+    print(f"Drift findings: {result['drift_findings']}")
+    print(f"Reward hacking findings: {result['reward_hacking_findings']}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            print(f"  - {error.get('lib_id', 'unknown')}: {error.get('error', '')}")
+    return 0 if result.get("success") else 1
+
+
+def cmd_generate_overview(args: argparse.Namespace) -> int:
+    """Generate human-readable overview document."""
+    run_id = args.run_id
+
+    from spec_manager.refinement.workflows.overview_generation import generate_overview
+
+    try:
+        result = generate_overview(run_id)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries processed: {result['libraries_processed']}")
+    print(f"Overview: {result['outputs'].get('overview_path', 'N/A')}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            print(f"  - {error.get('lib_id', 'unknown')}: {error.get('error', '')}")
+    return 0 if result.get("success") else 1
+
+
+def cmd_approve_overview(args: argparse.Namespace) -> int:
+    """Approve the generated overview for QA evaluation."""
+    run_id = args.run_id
+    manager = WorkspaceManager(run_id=run_id, input_folder=Path("."))
+    if not manager.is_initialized:
+        print("Workspace not initialized.")
+        return 1
+
+    reports_dir = manager.structure.root / "reports"
+    overview_path = reports_dir / "overview.md"
+    if not overview_path.exists():
+        print("No overview found. Run 'generate-overview' first.")
+        return 1
+
+    marker_path = reports_dir / "overview_approved.marker"
+    comment = args.comment or ""
+    marker_content = json.dumps(
+        {
+            "approved_at": datetime.now().isoformat(),
+            "comment": comment,
+        },
+        indent=2,
+    )
+    marker_path.write_text(marker_content, encoding="utf-8")
+    print("Overview approved.")
+    if comment:
+        print(f"Comment: {comment}")
+    return 0
+
+
+def cmd_qa_evaluate(args: argparse.Namespace) -> int:
+    """Run QA evaluation against approved overview."""
+    run_id = args.run_id
+
+    from spec_manager.refinement.workflows.qa_evaluation import evaluate_qa
+
+    try:
+        result = evaluate_qa(run_id, max_iterations=args.max_iterations)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries evaluated: {result['libraries_evaluated']}")
+    print(f"Total findings: {result['total_findings']}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            print(f"  - {error.get('lib_id', 'unknown')}: {error.get('error', '')}")
+    return 0 if result.get("success") else 1
+
+
+def cmd_quality_gates(args: argparse.Namespace) -> int:
+    """Run multi-dimensional quality review."""
+    run_id = args.run_id
+
+    from spec_manager.refinement.workflows.quality_gates import run_quality_gates
+
+    try:
+        result = run_quality_gates(run_id, threshold=args.threshold)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
+
+    print(f"Libraries reviewed: {result['libraries_reviewed']}")
+    print(f"Average score: {result['average_score']:.4f}")
+    print(f"Threshold: {args.threshold}")
+    print(f"Status: {'PASSED' if result['passed'] else 'FAILED'}")
+    if result.get("errors"):
+        print("Errors:")
+        for error in result["errors"]:
+            print(f"  - {error.get('lib_id', 'unknown')}: {error.get('error', '')}")
+    return 0 if result.get("passed") else 1
+
+
 def cmd_spec_detect_sublibraries(args: argparse.Namespace) -> int:
     """Detect sub-libraries for Phase 5."""
     run_id = args.run_id
@@ -1750,6 +1867,68 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spec_stabilize.set_defaults(func=cmd_spec_stabilize_specs)
 
+    # PDD: Alignment check
+    p_check_alignment = spec_subparsers.add_parser(
+        "check-alignment",
+        help="Check spec alignment against original requirements",
+        description=(
+            "Run alignment check to detect requirement drift and reward hacking.\n"
+            "Requires spec stabilization to be completed.\n"
+            "Outputs: reports/alignment_report.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_check_alignment.add_argument("run_id", help="Run identifier")
+    p_check_alignment.add_argument(
+        "--max-iterations", type=int, default=3, help="Max alignment correction iterations"
+    )
+    p_check_alignment.set_defaults(func=cmd_check_alignment)
+
+    # PDD: Overview generation
+    p_gen_overview = spec_subparsers.add_parser(
+        "generate-overview",
+        help="Generate human-readable overview document",
+        description=(
+            "Generate consolidated overview from library specs.\n"
+            "Requires alignment check to be completed.\n"
+            "Outputs: reports/overview.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_gen_overview.add_argument("run_id", help="Run identifier")
+    p_gen_overview.set_defaults(func=cmd_generate_overview)
+
+    # PDD: Approve overview
+    p_approve_overview = spec_subparsers.add_parser(
+        "approve-overview",
+        help="Approve the generated overview for QA evaluation",
+        description=(
+            "Mark the generated overview as approved.\n"
+            "Creates overview_approved.marker for QA evaluation prerequisite."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_approve_overview.add_argument("run_id", help="Run identifier")
+    p_approve_overview.add_argument("--comment", default="", help="Approval comment")
+    p_approve_overview.set_defaults(func=cmd_approve_overview)
+
+    # PDD: QA evaluation
+    p_qa_eval = spec_subparsers.add_parser(
+        "qa-evaluate",
+        help="Run QA evaluation against approved overview",
+        description=(
+            "Evaluate specs against the approved overview.\n"
+            "Requires overview approval.\n"
+            "Outputs: reports/qa_evaluation.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_qa_eval.add_argument("run_id", help="Run identifier")
+    p_qa_eval.add_argument(
+        "--max-iterations", type=int, default=3, help="Max QA evaluation iterations"
+    )
+    p_qa_eval.set_defaults(func=cmd_qa_evaluate)
+
     p_spec_detect = spec_subparsers.add_parser(
         "detect-sublibraries",
         help="Detect sub-libraries for Phase 5",
@@ -1840,6 +2019,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spec_build_interfaces.add_argument("run_id", help="Run identifier")
     p_spec_build_interfaces.set_defaults(func=cmd_spec_build_interfaces)
+
+    # PDD: Quality gates
+    p_quality_gates = spec_subparsers.add_parser(
+        "quality-gates",
+        help="Run multi-dimensional quality review",
+        description=(
+            "Run completeness, consistency, clarity, and correctness reviews.\n"
+            "Requires interfaces to be completed.\n"
+            "Outputs: reports/quality_gates.md, reports/quality_gates.json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_quality_gates.add_argument("run_id", help="Run identifier")
+    p_quality_gates.add_argument(
+        "--threshold", type=float, default=0.8, help="Minimum score threshold (default: 0.8)"
+    )
+    p_quality_gates.set_defaults(func=cmd_quality_gates)
 
     p_spec_plan_tasks = spec_subparsers.add_parser(
         "plan-tasks",

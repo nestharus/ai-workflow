@@ -16,7 +16,7 @@ from spec_manager.refinement.validation_utils import build_file_id_lookup
 ACTION_ID_RE = re.compile(r"^ACT-\d{4}$")
 LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
 ELEMENT_ID_RE = re.compile(
-    r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
 )
 MULTI_HOP_POINTER_RE = re.compile(r"^\[LIB-\d{4}::[^:]+::[^\]]+\]$")
 LIBRARY_DOC_POINTER_RE = re.compile(r"^\[LIB-\d{4}::[^:\]]+\]$")
@@ -33,10 +33,10 @@ KNOWN_LIBRARY_SPEC_FILES = frozenset(
 )
 MULTI_HOP_SECTION_RE = re.compile(
     r"^(?:"
-    r"REQ-LIB-\d{4}-\d{4}"
-    r"|FLOW-LIB-\d{4}-\d{2}"
-    r"|INV-LIB-\d{4}-\d{4}"
-    r"|DEC-LIB-\d{4}-\d{4}"
+    r"DTL-LIB-\d{4}-\d{4}"
+    r"|CON-LIB-\d{4}-\d{4}"
+    r"|ANL-LIB-\d{4}-\d{4}"
+    r"|OVW-LIB-\d{4}-\d{4}"
     r"|SEC-[A-Za-z0-9]+-\d{4}"
     r"|[A-Za-z][A-Za-z0-9_ ]*"
     r")$"
@@ -94,8 +94,8 @@ class ReviewAction(BaseModel):
         for element_id in value:
             if not ELEMENT_ID_RE.fullmatch(element_id):
                 raise ValueError(
-                    "element IDs must match REQ-LIB-####-####, FLOW-LIB-####-##, "
-                    "INV-LIB-####-####, or DEC-LIB-####-####"
+                    "element IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+                    "ANL-LIB-####-####, or OVW-LIB-####-####"
                 )
         return value
 

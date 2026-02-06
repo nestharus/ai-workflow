@@ -11,7 +11,7 @@ Phase 7 Work Item 1: Projection Generation with Pins
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -34,7 +34,7 @@ class Pin(BaseModel):
     Attributes:
         pin_id: Unique identifier (PIN-####)
         from_projection_offset: Character offset in projection content
-        target_id: ID of the target entity (LIB-####, REQ-LIB-####-####, etc.)
+        target_id: ID of the target entity (LIB-####, DTL-LIB-####-####, etc.)
         target_kind: Type of target (LIBRARY, ELEMENT, ATOM_RANGE)
         target_path: Optional file path for the target
     """
@@ -74,9 +74,7 @@ class ProjectionArtifact(BaseModel):
     generated_from: Literal["LIBRARIES", "SPEC_INDEX", "EVIDENCE_GRAPH"]
     content: str
     pins: list[Pin] = Field(default_factory=list)
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def get_pin_by_id(self, pin_id: str) -> Pin | None:
         """Get a pin by its ID.
@@ -218,11 +216,11 @@ def validate_pins_against_content(artifact: ProjectionArtifact) -> list[str]:
 
 
 __all__ = [
+    "PIN_INLINE_PATTERN",
     "Pin",
     "ProjectionArtifact",
     "ProjectionPolicy",
     "parse_inline_pins",
     "strip_inline_pins",
     "validate_pins_against_content",
-    "PIN_INLINE_PATTERN",
 ]

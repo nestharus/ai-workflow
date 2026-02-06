@@ -22,13 +22,6 @@ FORBIDDEN:
 - Invented sections.
 - Any output outside the markdown structure.
 
-## INPUT DATA
-
-- File ID: {file_id}
-- File path: {relpath}
-- Sections JSON: {sections_json}
-- Source file content: {content}
-
 ## OUTPUT FORMAT
 
 ```markdown

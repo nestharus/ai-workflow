@@ -7,11 +7,13 @@ from unittest.mock import patch
 from spec_manager.refinement.formats import LibraryCharter
 from spec_manager.refinement.workflows.library_labeling import (
     aggregate_labels,
+    build_library_shapes,
     detect_overlaps,
     generate_library_charter,
     label_file_to_libraries,
     refine_library_labels,
     resolve_overlap,
+    validate_library_shapes,
 )
 from spec_manager.refinement.workspace import WorkspaceManager
 
@@ -245,3 +247,74 @@ def test_resolve_overlap_parses_output(fs, monkeypatch) -> None:
         result = resolve_overlap("LIB-0001", "LIB-0002", charters, manager, overlap_score=0.5)
 
     assert result["decision"] == "assign_to_lib_A"
+
+
+def test_build_library_shapes_normalizes_confidence_sum() -> None:
+    file_labels = {
+        "F0001": {
+            "candidate_labels": [
+                {"label": "Lib A", "confidence": 0.9, "sections": [], "rationale": ""},
+                {"label": "Lib B", "confidence": 0.8, "sections": [], "rationale": ""},
+                {"label": "Lib C", "confidence": 1.0, "sections": [], "rationale": ""},
+            ]
+        }
+    }
+    shapes = build_library_shapes(file_labels)
+    total = sum(entry["confidence"] for entry in shapes["F0001"].values())
+    assert total <= 1.0 + 1e-9
+    issues = validate_library_shapes(shapes)
+    confidence_issues = [i for i in issues if i["type"] == "confidence_sum_exceeds_one"]
+    assert len(confidence_issues) == 0
+
+
+def test_build_library_shapes_preserves_low_confidence() -> None:
+    file_labels = {
+        "F0001": {
+            "candidate_labels": [
+                {"label": "Lib A", "confidence": 0.3, "sections": [], "rationale": ""},
+                {"label": "Lib B", "confidence": 0.5, "sections": [], "rationale": ""},
+            ]
+        }
+    }
+    shapes = build_library_shapes(file_labels)
+    assert shapes["F0001"]["Lib A"]["confidence"] == 0.3
+    assert shapes["F0001"]["Lib B"]["confidence"] == 0.5
+
+
+def _make_charter(lib_id: str, intent: str = "Test") -> LibraryCharter:
+    return LibraryCharter(
+        lib_id=lib_id,
+        intent=intent,
+        boundaries="",
+        responsibilities=[],
+        evidence_sources=[],
+        overlap_resolutions=[],
+    )
+
+
+def test_deduplicate_library_ids_renames_duplicates() -> None:
+    from spec_manager.refinement.workflows.library_synthesis import _deduplicate_library_ids
+
+    charters = [
+        _make_charter("LIB-0001", "First"),
+        _make_charter("LIB-0001", "Second"),
+        _make_charter("LIB-0002", "Third"),
+    ]
+    result = _deduplicate_library_ids(charters)
+    ids = [c.lib_id for c in result]
+    assert len(set(ids)) == 3
+    assert "LIB-0001" in ids
+    assert "LIB-0002" in ids
+    assert "LIB-0003" in ids
+
+
+def test_deduplicate_library_ids_no_duplicates() -> None:
+    from spec_manager.refinement.workflows.library_synthesis import _deduplicate_library_ids
+
+    charters = [
+        _make_charter("LIB-0001", "First"),
+        _make_charter("LIB-0002", "Second"),
+    ]
+    result = _deduplicate_library_ids(charters)
+    ids = [c.lib_id for c in result]
+    assert ids == ["LIB-0001", "LIB-0002"]

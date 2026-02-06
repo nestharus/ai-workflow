@@ -115,3 +115,45 @@ def test_validate_spec_citations_invalid_section_reports_issue() -> None:
     issues = _validate_spec_citations(content, manager, "LIB-0001")
 
     assert any(issue["type"] == "unknown_section_reference" for issue in issues)
+
+
+def test_validate_patch_move_without_bullet_index_degrades_to_add() -> None:
+    """Move operations without bullet_index degrade to add operations."""
+    from spec_manager.refinement.workflows.spec_patches import (
+        PatchOperation,
+        validate_patch_operation,
+    )
+
+    op = PatchOperation(
+        op="move",
+        section="Details",
+        bullet_index=None,
+        content="Some requirement",
+        citations=["[spec_snapshot/alpha.md::SEC-F0001-0001]"],
+        source_section="Analysis",
+    )
+    valid_sections = ["Analysis", "Constraints", "Overview", "Details"]
+    errors = validate_patch_operation(op, valid_sections)
+    assert not errors
+    assert op.op == "add"
+
+
+def test_validate_patch_move_with_bullet_index_stays_move() -> None:
+    """Move operations with bullet_index are preserved."""
+    from spec_manager.refinement.workflows.spec_patches import (
+        PatchOperation,
+        validate_patch_operation,
+    )
+
+    op = PatchOperation(
+        op="move",
+        section="Details",
+        bullet_index=0,
+        content="",
+        citations=[],
+        source_section="Analysis",
+    )
+    valid_sections = ["Analysis", "Constraints", "Overview", "Details"]
+    errors = validate_patch_operation(op, valid_sections)
+    assert not errors
+    assert op.op == "move"

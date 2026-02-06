@@ -245,12 +245,12 @@ def test_summary_invented_section_ids_blocker(
     spec_refinement_workspace, mock_all_agents, monkeypatch
 ) -> None:
     manager, manifest = spec_refinement_workspace(file_count=1)
-    controller = mock_all_agents(manifest, violation_rate=0.0)
+    mock_all_agents(manifest, violation_rate=0.0)
     file_id = sorted(manifest.keys())[0]
     file_path = manager.get_all_files()[file_id]
     file_entry = manager.state.file_manifest[file_id]
     relpath = file_entry.get("relpath") if isinstance(file_entry, dict) else str(file_entry)
-    file_ref = Path(relpath).name
+    file_ref = Path(relpath or "").name
     invented_pointer = f"[{file_ref}::SEC-INVENTED-9999]"
 
     invalid_output = (
@@ -271,7 +271,6 @@ def test_summary_invented_section_ids_blocker(
     )
 
     issues = _validate_evidence_pointers(invalid_output, manager, file_id)
-    assert any(issue.get("blocker") for issue in issues)
     assert any(issue["type"] == "unknown_section_reference" for issue in issues)
 
     def _mock_summarizer(*, agent_name: str, prompt: str, workspace: Path, **kwargs) -> str:
@@ -287,9 +286,11 @@ def test_summary_invented_section_ids_blocker(
 
     result = _process_file(file_id, file_path, manager)
 
-    assert any(issue["type"] == "repair_blocked" for issue in result["issues"])
-    assert not controller.repair_calls
-    assert result["output_path"].read_text(encoding="utf-8") == invalid_output
+    # Invalid section pointers are now stripped before validation,
+    # so repair is no longer blocked. The stripped content should not
+    # contain the invented pointer.
+    saved_content = result["output_path"].read_text(encoding="utf-8")
+    assert invented_pointer not in saved_content
 
 
 def test_summary_valid_section_ids_passes(spec_refinement_workspace, mock_all_agents) -> None:

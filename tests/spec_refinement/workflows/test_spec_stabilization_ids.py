@@ -35,19 +35,21 @@ def _load_id_counters(lib_dir: Path) -> dict[str, int]:
 
 def _assert_valid_element_id(element_id: str, lib_id: str, kind: str) -> None:
     """Helper to validate element ID format."""
-    if kind == "requirement":
-        assert re.match(rf"^REQ-{re.escape(lib_id)}-\d{{4}}$", element_id)
-    elif kind == "flow":
-        assert re.match(rf"^FLOW-{re.escape(lib_id)}-\d{{2}}$", element_id)
-    elif kind == "invariant":
-        assert re.match(rf"^INV-{re.escape(lib_id)}-\d{{4}}$", element_id)
+    if kind == "detail":
+        assert re.match(rf"^DTL-{re.escape(lib_id)}-\d{{4}}$", element_id)
+    elif kind == "constraint":
+        assert re.match(rf"^CON-{re.escape(lib_id)}-\d{{4}}$", element_id)
+    elif kind == "analysis":
+        assert re.match(rf"^ANL-{re.escape(lib_id)}-\d{{4}}$", element_id)
+    elif kind == "overview":
+        assert re.match(rf"^OVW-{re.escape(lib_id)}-\d{{4}}$", element_id)
 
 
 @pytest.fixture
 def sample_spec_without_ids() -> str:
     return """# Library Spec
 
-## Requirements
+## Details
 - Must validate input
 - Must log errors
 
@@ -60,12 +62,12 @@ def sample_spec_without_ids() -> str:
 def sample_spec_with_partial_ids() -> str:
     return """# Library Spec
 
-## Requirements
-- REQ-LIB-0001-0001: Existing requirement
+## Details
+- DTL-LIB-0001-0001: Existing requirement
 - Must add new requirement
 
-## Flows
-- FLOW-LIB-0001-01: Existing flow
+## Overview
+- OVW-LIB-0001-0001: Existing overview
 """
 
 
@@ -82,13 +84,13 @@ def test_load_id_counters_creates_default_when_missing(fs) -> None:
 
     counters = load_id_counters(lib_dir)
 
-    assert counters == {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    assert counters == {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
 
 def test_save_and_load_id_counters_roundtrip(fs) -> None:
     lib_dir = Path("/work/libs/LIB-0001")
     fs.create_dir(lib_dir)
-    counters = {"REQ": 5, "FLOW": 2, "INV": 3, "DEC": 1}
+    counters = {"DTL": 5, "CON": 3, "ANL": 1, "OVW": 2}
 
     save_id_counters(lib_dir, counters)
 
@@ -97,76 +99,74 @@ def test_save_and_load_id_counters_roundtrip(fs) -> None:
 
 
 def test_allocate_element_id_increments_counter() -> None:
-    counters = {"REQ": 10}
+    counters = {"DTL": 10}
 
-    element_id = allocate_element_id("LIB-0001", "REQ", counters)
+    element_id = allocate_element_id("LIB-0001", "DTL", counters)
 
-    assert element_id == "REQ-LIB-0001-0011"
-    assert counters["REQ"] == 11
+    assert element_id == "DTL-LIB-0001-0011"
+    assert counters["DTL"] == 11
 
 
 def test_insert_element_ids_adds_ids_to_id_less_bullets(sample_spec_without_ids) -> None:
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     updated, _ = insert_element_ids(sample_spec_without_ids, "LIB-0001", counters)
 
-    assert "- REQ-LIB-0001-0001: Must validate input" in updated
+    assert "- DTL-LIB-0001-0001: Must validate input" in updated
 
 
 def test_insert_element_ids_preserves_existing_ids(sample_spec_with_partial_ids) -> None:
-    counters = {"REQ": 1, "FLOW": 1, "INV": 0, "DEC": 0}
+    counters = {"DTL": 1, "CON": 0, "ANL": 0, "OVW": 1}
 
     updated, _ = insert_element_ids(sample_spec_with_partial_ids, "LIB-0001", counters)
 
-    assert "- REQ-LIB-0001-0001: Existing requirement" in updated
-    assert "- REQ-LIB-0001-0002: Must add new requirement" in updated
-    assert "- FLOW-LIB-0001-01: Existing flow" in updated
-    assert counters["REQ"] == 2
-    assert counters["FLOW"] == 1
+    assert "- DTL-LIB-0001-0001: Existing requirement" in updated
+    assert "- DTL-LIB-0001-0002: Must add new requirement" in updated
+    assert "- OVW-LIB-0001-0001: Existing overview" in updated
+    assert counters["DTL"] == 2
+    assert counters["OVW"] == 1
 
 
 def test_insert_element_ids_handles_all_sections() -> None:
     spec_content = """# Library Spec
 
-## Requirements
+## Details
 - Must validate input
 
-## Flows
-- User submits request
+## Overview
+- System overview item
 
 ## Constraints
 - Keep latency under 100ms
 
-## Dependencies
-- Requires LIB-0002
+## Analysis
+- Open question about design
 """
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     updated, _ = insert_element_ids(spec_content, "LIB-0001", counters)
 
-    assert "- REQ-LIB-0001-0001: Must validate input" in updated
-    assert "- FLOW-LIB-0001-01: User submits request" in updated
-    assert "- INV-LIB-0001-0001: Keep latency under 100ms" in updated
-    assert "- INV-LIB-0001-0002: Requires LIB-0002" in updated
+    assert "- DTL-LIB-0001-0001: Must validate input" in updated
+    assert "- OVW-LIB-0001-0001: System overview item" in updated
+    assert "- CON-LIB-0001-0001: Keep latency under 100ms" in updated
+    assert "- ANL-LIB-0001-0001: Open question about design" in updated
 
 
-def test_insert_element_ids_creates_flows_section_if_missing() -> None:
+def test_insert_element_ids_handles_spec_without_all_sections() -> None:
     spec_content = """# Library Spec
 
-## Requirements
+## Details
 - Must validate input
 
 ## Constraints
 - Keep latency under 100ms
 """
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     updated, _ = insert_element_ids(spec_content, "LIB-0001", counters)
 
-    requirements_index = updated.index("## Requirements")
-    flows_index = updated.index("## Flows")
-    constraints_index = updated.index("## Constraints")
-    assert requirements_index < flows_index < constraints_index
+    assert "- DTL-LIB-0001-0001: Must validate input" in updated
+    assert "- CON-LIB-0001-0001: Keep latency under 100ms" in updated
 
 
 def test_insert_decision_ids_adds_ids_to_decisions() -> None:
@@ -174,43 +174,43 @@ def test_insert_decision_ids_adds_ids_to_decisions() -> None:
 
 - Should we use async?
 """
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     updated, _ = insert_decision_ids(decisions_content, "", "LIB-0001", counters)
 
-    assert "- DEC-LIB-0001-0001: Should we use async?" in updated
+    assert "- ANL-LIB-0001-0001: Should we use async?" in updated
 
 
 def test_insert_decision_ids_preserves_existing_decision_ids() -> None:
     decisions_content = """# Decisions
 
-- DEC-LIB-0001-0003: Existing decision
+- ANL-LIB-0001-0003: Existing decision
 """
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 3}
+    counters = {"DTL": 0, "CON": 0, "ANL": 3, "OVW": 0}
 
     updated, _ = insert_decision_ids(decisions_content, "", "LIB-0001", counters)
 
-    assert "- DEC-LIB-0001-0003: Existing decision" in updated
-    assert counters["DEC"] == 3
+    assert "- ANL-LIB-0001-0003: Existing decision" in updated
+    assert counters["ANL"] == 3
 
 
 def test_extract_decisions_from_spec_when_decisions_md_empty() -> None:
     spec_content = """# Library Spec
 
-## Decisions Needed
+## Analysis
 - Should we use async?
 """
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     updated, assigned = insert_decision_ids("", spec_content, "LIB-0001", counters)
 
     assert updated.startswith("# Decisions")
-    assert "- DEC-LIB-0001-0001: Should we use async?" in updated
+    assert "- ANL-LIB-0001-0001: Should we use async?" in updated
     assert assigned == 1
 
 
 def test_stabilization_is_idempotent(sample_spec_without_ids) -> None:
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     first, _ = insert_element_ids(sample_spec_without_ids, "LIB-0001", counters)
     second, _ = insert_element_ids(first, "LIB-0001", counters)
@@ -223,7 +223,7 @@ def test_counter_persistence_across_runs(fs) -> None:
     fs.create_dir(lib_dir)
     spec_content = """# Library Spec
 
-## Requirements
+## Details
 - First requirement
 """
 
@@ -238,7 +238,7 @@ def test_counter_persistence_across_runs(fs) -> None:
     counters_next = load_id_counters(lib_dir)
     updated_next, _ = insert_element_ids(updated_with_new, "LIB-0001", counters_next)
 
-    assert "- REQ-LIB-0001-0002: New requirement" in updated_next
+    assert "- DTL-LIB-0001-0002: New requirement" in updated_next
 
 
 def test_id_counters_isolated_per_library(spec_refinement_workspace, corpus_spec, fs) -> None:
@@ -258,27 +258,27 @@ def test_id_counters_isolated_per_library(spec_refinement_workspace, corpus_spec
     updated_2, _ = insert_element_ids(spec_content, "LIB-0002", counters_2)
     save_id_counters(lib_dir_2, counters_2)
 
-    assert "REQ-LIB-0001" in updated_1
-    assert "REQ-LIB-0002" in updated_2
-    assert load_id_counters(lib_dir_1)["REQ"] == 3
-    assert load_id_counters(lib_dir_2)["REQ"] == 3
+    assert "DTL-LIB-0001" in updated_1
+    assert "DTL-LIB-0002" in updated_2
+    assert load_id_counters(lib_dir_1)["DTL"] == 3
+    assert load_id_counters(lib_dir_2)["DTL"] == 3
 
 
 def test_id_uniqueness_within_library() -> None:
     requirements = "\n".join([f"- Requirement {idx}" for idx in range(1, 11)])
     spec_content = f"""# Library Spec
 
-## Requirements
+## Details
 {requirements}
 """
-    counters = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
+    counters = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
 
     updated, _ = insert_element_ids(spec_content, "LIB-0001", counters)
 
-    ids = re.findall(r"REQ-LIB-0001-\d{4}", updated)
-    assert ids == [f"REQ-LIB-0001-{idx:04d}" for idx in range(1, 11)]
+    ids = re.findall(r"DTL-LIB-0001-\d{4}", updated)
+    assert ids == [f"DTL-LIB-0001-{idx:04d}" for idx in range(1, 11)]
     for element_id in ids:
-        _assert_valid_element_id(element_id, "LIB-0001", "requirement")
+        _assert_valid_element_id(element_id, "LIB-0001", "detail")
 
 
 def test_stabilize_specs_full_pipeline_idempotent(spec_refinement_workspace) -> None:
@@ -287,11 +287,11 @@ def test_stabilize_specs_full_pipeline_idempotent(spec_refinement_workspace) -> 
 
     spec_content = """# Library Spec
 
-## Requirements
+## Details
 - Must validate input
 - Must log errors
 
-## Flows
+## Overview
 - User submits request
 
 ## Constraints

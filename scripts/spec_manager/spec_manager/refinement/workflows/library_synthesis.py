@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -225,6 +226,31 @@ def _record_boundary_change(
         previous_state=None,
     )
     _write_library_event(lib_dir, event)
+
+
+def _deduplicate_library_ids(charters: list[LibraryCharter]) -> list[LibraryCharter]:
+    """Rename duplicate library IDs to ensure uniqueness.
+
+    When the LLM produces multiple charters with the same ID, rename
+    duplicates to the next available LIB-XXXX number.
+    """
+    seen: set[str] = set()
+    max_ordinal = 0
+    for charter in charters:
+        match = LIB_ID_RE.match(charter.lib_id)
+        if match:
+            ordinal = int(charter.lib_id.split("-")[1])
+            max_ordinal = max(max_ordinal, ordinal)
+
+    result: list[LibraryCharter] = []
+    for charter in charters:
+        if charter.lib_id in seen:
+            max_ordinal += 1
+            charter = dataclasses.replace(charter, lib_id=f"LIB-{max_ordinal:04d}")
+        seen.add(charter.lib_id)
+        result.append(charter)
+
+    return result
 
 
 def _validate_library_ids(charters: list[LibraryCharter]) -> list[dict[str, Any]]:
@@ -548,6 +574,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
         manager.fail_phase(Phase.LIBRARY_SYNTHESIS, error="No libraries synthesized")
         return {"libraries_created": 0, "issues": issues}
 
+    charters = _deduplicate_library_ids(charters)
     issues.extend(_validate_library_ids(charters))
     issues.extend(_validate_evidence_sources(charters, manager))
     issues.extend(_validate_overlap_resolutions(charters))

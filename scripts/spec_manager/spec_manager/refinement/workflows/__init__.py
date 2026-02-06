@@ -33,6 +33,7 @@ from .phase_01_sectionization import sectionize_all
 from .spec_building import build_specs
 from .spec_patches import (
     CITATION_REQUIRED_SECTIONS,
+    LEGACY_SECTION_MAP,
     VALID_SPEC_SECTIONS,
     PatchOperation,
     SpecDocument,
@@ -49,6 +50,7 @@ from .summarization import summarize_all
 
 __all__ = [
     "CITATION_REQUIRED_SECTIONS",
+    "LEGACY_SECTION_MAP",
     "VALID_SPEC_SECTIONS",
     "AtomEmissionResult",
     "CharterResults",

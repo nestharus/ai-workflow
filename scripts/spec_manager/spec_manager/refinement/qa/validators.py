@@ -32,13 +32,13 @@ FORBIDDEN_DERIVED_POINTER_RE = re.compile(
 )
 
 
-def _issue(issue_type: str, message: str, **extra: Any) -> dict[str, Any]:
+def _issue(issue_type: str, message: str, **extra: str | int | float) -> dict[str, Any]:
     out: dict[str, Any] = {"type": issue_type, "message": message}
     out.update(extra)
     return out
 
 
-def _extract_json(output: str) -> Any:
+def _extract_json(output: str) -> int | str | list[dict[str, Any] | str] | dict[str, Any]:
     """Best-effort JSON extraction tolerant of leading/trailing noise."""
     text = output.strip()
     if not text:
@@ -234,21 +234,21 @@ def validate_spec_integrator_output(
         )
 
     sections = _extract_sections(rendered)
-    boundaries = sections.get("Boundaries", "")
-    if "throughput management" in boundaries.lower():
+    overview = sections.get("Overview", "")
+    if "throughput management" in overview.lower():
         issues.append(
             _issue(
                 "unsupported_assertion_still_asserted",
-                "Unsupported 'throughput management' claim must not remain asserted in Boundaries "
+                "Unsupported 'throughput management' claim must not remain asserted in Overview "
                 "after applying patches.",
             )
         )
-    decisions = sections.get("Decisions Needed", "")
-    if "throughput management" not in decisions.lower():
+    analysis = sections.get("Analysis", "")
+    if "throughput management" not in analysis.lower():
         issues.append(
             _issue(
                 "missing_decision_needed",
-                "Unsupported 'throughput management' claim should appear in Decisions Needed "
+                "Unsupported 'throughput management' claim should appear in Analysis "
                 "after applying patches.",
             )
         )
@@ -260,12 +260,10 @@ def patch_set_operations_valid_sections() -> list[str]:
     """Return valid sections for patch set operations."""
     # Keep this local to avoid importing VALID_SPEC_SECTIONS at module import time.
     return [
-        "Intent",
-        "Boundaries",
-        "Requirements",
+        "Analysis",
         "Constraints",
-        "Dependencies",
-        "Decisions Needed",
+        "Overview",
+        "Details",
     ]
 
 

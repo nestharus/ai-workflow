@@ -32,19 +32,19 @@ def test_parse_evidence_pointer_accepts_legacy_format() -> None:
 
 def test_parse_evidence_pointer_accepts_multi_hop_when_allowed() -> None:
     result = parse_evidence_pointer(
-        "[LIB-0001::spec.md::REQ-LIB-0001-0003]",
+        "[LIB-0001::spec.md::DTL-LIB-0001-0003]",
         allow_multi_hop=True,
     )
 
     assert result is not None
     assert result["file_ref"] == "LIB-0001"
     assert result["intermediate"] == "spec.md"
-    assert result["section_ref"] == "REQ-LIB-0001-0003"
+    assert result["section_ref"] == "DTL-LIB-0001-0003"
 
 
 def test_parse_evidence_pointer_rejects_multi_hop_when_disallowed() -> None:
     result = parse_evidence_pointer(
-        "[LIB-0001::spec.md::REQ-LIB-0001-0003]",
+        "[LIB-0001::spec.md::DTL-LIB-0001-0003]",
         allow_multi_hop=False,
     )
 

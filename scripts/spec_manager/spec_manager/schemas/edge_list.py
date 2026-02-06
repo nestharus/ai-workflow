@@ -10,10 +10,10 @@ Example:
         consumer_lib="LIB-0001",
         provider_lib="LIB-0002",
         kind="api",
-        consumer_elements=["REQ-LIB-0001-0001"],
-        provider_elements=["REQ-LIB-0002-0001"],
+        consumer_elements=["DTL-LIB-0001-0001"],
+        provider_elements=["DTL-LIB-0002-0001"],
         summary="Consumer uses provider API.",
-        evidence=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        evidence=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
     )
     edge_list = EdgeListSchema(
         run_id="run_001",
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 EDGE_ID_RE = re.compile(r"^EDGE-LIB-\d{4}-LIB-\d{4}$")
 LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
 ELEMENT_ID_RE = re.compile(
-    r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
 )
 TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
 
@@ -89,10 +89,10 @@ class EdgeSchema(BaseModel):
                 "consumer_lib": "LIB-0001",
                 "provider_lib": "LIB-0002",
                 "kind": "api",
-                "consumer_elements": ["REQ-LIB-0001-0001"],
-                "provider_elements": ["REQ-LIB-0002-0001"],
+                "consumer_elements": ["DTL-LIB-0001-0001"],
+                "provider_elements": ["DTL-LIB-0002-0001"],
                 "summary": "Consumer uses provider API.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             }
         )
     """
@@ -124,10 +124,10 @@ class EdgeSchema(BaseModel):
                     "consumer_lib": "LIB-0001",
                     "provider_lib": "LIB-0002",
                     "kind": "api",
-                    "consumer_elements": ["REQ-LIB-0001-0001"],
-                    "provider_elements": ["REQ-LIB-0002-0001"],
+                    "consumer_elements": ["DTL-LIB-0001-0001"],
+                    "provider_elements": ["DTL-LIB-0002-0001"],
                     "summary": "Summary",
-                    "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                 }
             )
         """
@@ -153,10 +153,10 @@ class EdgeSchema(BaseModel):
                     "consumer_lib": "LIB-0001",
                     "provider_lib": "LIB-0002",
                     "kind": "api",
-                    "consumer_elements": ["REQ-LIB-0001-0001"],
-                    "provider_elements": ["REQ-LIB-0002-0001"],
+                    "consumer_elements": ["DTL-LIB-0001-0001"],
+                    "provider_elements": ["DTL-LIB-0002-0001"],
                     "summary": "Summary",
-                    "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                 }
             )
         """
@@ -182,18 +182,18 @@ class EdgeSchema(BaseModel):
                     "consumer_lib": "LIB-0001",
                     "provider_lib": "LIB-0002",
                     "kind": "api",
-                    "consumer_elements": ["REQ-LIB-0001-0001"],
-                    "provider_elements": ["REQ-LIB-0002-0001"],
+                    "consumer_elements": ["DTL-LIB-0001-0001"],
+                    "provider_elements": ["DTL-LIB-0002-0001"],
                     "summary": "Summary",
-                    "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                 }
             )
         """
         for element_id in value:
             if not ELEMENT_ID_RE.fullmatch(element_id):
                 raise ValueError(
-                    "element IDs must match REQ-LIB-####-####, FLOW-LIB-####-##, "
-                    "INV-LIB-####-####, or DEC-LIB-####-####"
+                    "element IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+                    "ANL-LIB-####-####, or OVW-LIB-####-####"
                 )
         return value
 
@@ -215,10 +215,10 @@ class EdgeSchema(BaseModel):
                     "consumer_lib": "LIB-0001",
                     "provider_lib": "LIB-0002",
                     "kind": "api",
-                    "consumer_elements": ["REQ-LIB-0001-0001"],
-                    "provider_elements": ["REQ-LIB-0002-0001"],
+                    "consumer_elements": ["DTL-LIB-0001-0001"],
+                    "provider_elements": ["DTL-LIB-0002-0001"],
                     "summary": "Summary",
-                    "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                 }
             )
         """
@@ -246,10 +246,10 @@ class EdgeSchema(BaseModel):
                     "consumer_lib": "LIB-0001",
                     "provider_lib": "LIB-0002",
                     "kind": "api",
-                    "consumer_elements": ["REQ-LIB-0001-0001"],
-                    "provider_elements": ["REQ-LIB-0002-0001"],
+                    "consumer_elements": ["DTL-LIB-0001-0001"],
+                    "provider_elements": ["DTL-LIB-0002-0001"],
                     "summary": "Summary",
-                    "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                    "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
                 }
             )
         """
@@ -432,7 +432,7 @@ def validate_edge_references(
         is_valid, errors = validate_edge_references(
             edge,
             {"LIB-0001", "LIB-0002"},
-            {"LIB-0001": {"REQ-LIB-0001-0001"}, "LIB-0002": {"REQ-LIB-0002-0001"}},
+            {"LIB-0001": {"DTL-LIB-0001-0001"}, "LIB-0002": {"DTL-LIB-0002-0001"}},
         )
     """
     errors: list[str] = []

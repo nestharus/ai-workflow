@@ -32,12 +32,16 @@ class Phase(Enum):
     EVIDENCE_EXPANSION = "evidence_expansion"
     SPEC_BUILDING = "spec_building"
     SPEC_STABILIZATION = "spec_stabilization"
+    ALIGNMENT_CHECK = "alignment_check"
+    OVERVIEW_GENERATION = "overview_generation"
+    QA_EVALUATION = "qa_evaluation"
     SUBLIBRARY_DETECTION = "sublibrary_detection"
     ARCHITECTURE_PROPOSAL = "architecture_proposal"
     ARCHITECTURE_SELECTION = "architecture_selection"
     ARCHITECTURE_MAPPING = "architecture_mapping"
     LIBRARY_STRUCTURE_REVIEW = "library_structure_review"
     INTERFACES = "interfaces"
+    QUALITY_GATES = "quality_gates"
     TASKS = "tasks"
     IMPLEMENTATION = "implementation"
     AUDIT = "audit"
@@ -231,12 +235,16 @@ class WorkspaceState:
             Phase.EVIDENCE_EXPANSION,
             Phase.SPEC_BUILDING,
             Phase.SPEC_STABILIZATION,
+            Phase.ALIGNMENT_CHECK,
+            Phase.OVERVIEW_GENERATION,
+            Phase.QA_EVALUATION,
             Phase.SUBLIBRARY_DETECTION,
             Phase.ARCHITECTURE_PROPOSAL,
             Phase.ARCHITECTURE_SELECTION,
             Phase.ARCHITECTURE_MAPPING,
             Phase.LIBRARY_STRUCTURE_REVIEW,
             Phase.INTERFACES,
+            Phase.QUALITY_GATES,
             Phase.TASKS,
             Phase.IMPLEMENTATION,
             Phase.AUDIT,

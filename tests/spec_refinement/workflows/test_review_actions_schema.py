@@ -28,10 +28,10 @@ def _create_sample_action(
         "status": status,
         "source_libs": ["LIB-0001"],
         "target_libs": ["LIB-0002"],
-        "elements": ["REQ-LIB-0001-0001"],
+        "elements": ["DTL-LIB-0001-0001"],
         "summary": "Split intake",
-        "rationale": "Split rationale [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-        "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        "rationale": "Split rationale [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+        "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         "notes": None,
     }
 
@@ -48,7 +48,7 @@ def test_review_action_valid_merge() -> None:
 
 def test_review_action_valid_move_elements() -> None:
     payload = _create_sample_action(action_type="move_elements")
-    payload["elements"] = ["REQ-LIB-0001-0001", "INV-LIB-0001-0002"]
+    payload["elements"] = ["DTL-LIB-0001-0001", "CON-LIB-0001-0002"]
     action = ReviewAction.model_validate(payload)
     assert action.type == "move_elements"
 
@@ -68,7 +68,7 @@ def test_review_action_invalid_lib_id_format() -> None:
 
 def test_review_action_invalid_element_id_format() -> None:
     payload = _create_sample_action()
-    payload["elements"] = ["REQ-0001"]
+    payload["elements"] = ["DTL-0001"]
     with pytest.raises(ValidationError):
         ReviewAction.model_validate(payload)
 
@@ -82,7 +82,7 @@ def test_review_action_invalid_evidence_pointer() -> None:
 
 def test_review_action_valid_multi_hop_pointer() -> None:
     payload = _create_sample_action()
-    payload["evidence"] = ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"]
+    payload["evidence"] = ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"]
     action = ReviewAction.model_validate(payload)
     assert action.evidence[0].startswith("[LIB-0001")
 
@@ -214,16 +214,16 @@ def test_generate_stable_action_ids_sorts_by_elements() -> None:
     actions = [
         {
             **_create_sample_action(action_type="merge"),
-            "elements": ["REQ-LIB-0001-0002"],
+            "elements": ["DTL-LIB-0001-0002"],
         },
         {
             **_create_sample_action(action_type="merge"),
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
         },
     ]
     assigned = generate_stable_action_ids(actions)
-    assert assigned[0]["elements"] == ["REQ-LIB-0001-0001"]
-    assert assigned[1]["elements"] == ["REQ-LIB-0001-0002"]
+    assert assigned[0]["elements"] == ["DTL-LIB-0001-0001"]
+    assert assigned[1]["elements"] == ["DTL-LIB-0001-0002"]
 
 
 def test_generate_stable_action_ids_sequential() -> None:

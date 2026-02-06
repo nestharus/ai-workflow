@@ -35,7 +35,7 @@ def trace_workspace(
     )
     citation_one = f"[spec_snapshot/input.md::{section_ids[0]}]"
     citation_two = f"[spec_snapshot/input.md::{section_ids[1]}]"
-    element_ids = ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002"]
+    element_ids = ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002"]
     _create_minimal_spec_index(
         manager,
         "LIB-0001",
@@ -214,7 +214,7 @@ class TestTraceElementCommand:
 
     def test_trace_element_not_found(self, trace_workspace, capsys) -> None:
         _, known_ids = trace_workspace
-        missing_element = "REQ-LIB-9999-0001"
+        missing_element = "DTL-LIB-9999-0001"
 
         exit_code = main(["trace", "element", known_ids["run_id"], missing_element])
         output = capsys.readouterr().out
@@ -225,11 +225,11 @@ class TestTraceElementCommand:
     def test_trace_element_invalid_format(self, trace_workspace, capsys) -> None:
         _, known_ids = trace_workspace
 
-        exit_code = main(["trace", "element", known_ids["run_id"], "REQ-INVALID"])
+        exit_code = main(["trace", "element", known_ids["run_id"], "DTL-INVALID"])
         output = capsys.readouterr().out
 
         assert exit_code == 2
-        assert "Element not found: REQ-INVALID" in output
+        assert "Element not found: DTL-INVALID" in output
 
     def test_trace_element_workspace_not_initialized(self, trace_workspace, capsys) -> None:
         _, known_ids = trace_workspace
@@ -324,7 +324,7 @@ class TestTraceTaskCommand:
         assert f"- Patch: {known_ids['patch_path']}" in output
         assert f"- SHA256: {known_ids['patch_hash']}" in output
         assert "- Status: done" in output
-        assert f"- {known_ids['element_id']} (requirement, from LIB-0001)" in output
+        assert f"- {known_ids['element_id']} (detail, from LIB-0001)" in output
         assert f"Source sections: {known_ids['section_id']}" in output
 
 

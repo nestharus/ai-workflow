@@ -118,8 +118,8 @@ def _create_minimal_spec_index(
         payload["elements"].append(
             {
                 "element_id": element_id,
-                "kind": element.get("kind", "requirement"),
-                "section": element.get("section", "Requirements"),
+                "kind": element.get("kind", "detail"),
+                "section": element.get("section", "Details"),
                 "text": text,
                 "raw_line": element.get("raw_line", f"- {element_id}: {text}"),
                 "citations": element.get("citations", []),
@@ -164,7 +164,7 @@ def _create_minimal_task_index(
             validation_notes=spec.get("validation_notes", ""),
             citations=spec.get(
                 "citations",
-                ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             ),
             depends_on=spec.get("depends_on", []),
         )
@@ -315,11 +315,11 @@ class TestSectionToElementsIndex:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": [citation_one],
                 },
                 {
-                    "element_id": "REQ-LIB-0001-0002",
+                    "element_id": "DTL-LIB-0001-0002",
                     "citations": [citation_two],
                 },
             ],
@@ -329,7 +329,7 @@ class TestSectionToElementsIndex:
 
         assert section_ids[0] in index
         assert section_ids[1] in index
-        assert index[section_ids[0]][0]["element_id"] == "REQ-LIB-0001-0001"
+        assert index[section_ids[0]][0]["element_id"] == "DTL-LIB-0001-0001"
 
     def test_build_section_to_spec_elements_index_legacy_pointers(
         self, interface_workspace
@@ -340,7 +340,7 @@ class TestSectionToElementsIndex:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": ["[F0001::Intro]"],
                 }
             ],
@@ -364,7 +364,7 @@ class TestSectionToElementsIndex:
                 lib_id,
                 [
                     {
-                        "element_id": f"REQ-{lib_id}-0001",
+                        "element_id": f"DTL-{lib_id}-0001",
                         "citations": [citation],
                     }
                 ],
@@ -385,7 +385,7 @@ class TestSectionToElementsIndex:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": [citation, citation],
                 }
             ],
@@ -404,7 +404,7 @@ class TestSectionToElementsIndex:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": ["not-a-pointer"],
                 }
             ],
@@ -425,19 +425,19 @@ class TestElementToTasksIndex:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 },
                 {
                     "task_id": "TASK-0002",
-                    "elements": ["FLOW-LIB-0001-01"],
+                    "elements": ["DTL-LIB-0001-0003"],
                 },
             ],
         )
 
         index = build_spec_element_to_tasks_index(manager)
 
-        assert index["REQ-LIB-0001-0001"] == ["TASK-0001"]
-        assert index["FLOW-LIB-0001-01"] == ["TASK-0002"]
+        assert index["DTL-LIB-0001-0001"] == ["TASK-0001"]
+        assert index["DTL-LIB-0001-0003"] == ["TASK-0002"]
 
     def test_build_spec_element_to_tasks_index_multiple_tasks(self, interface_workspace) -> None:
         manager, _ = interface_workspace(run_id="run_elements_multi")
@@ -446,22 +446,22 @@ class TestElementToTasksIndex:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 },
                 {
                     "task_id": "TASK-0002",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 },
                 {
                     "task_id": "TASK-0003",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 },
             ],
         )
 
         index = build_spec_element_to_tasks_index(manager)
 
-        assert index["REQ-LIB-0001-0001"] == ["TASK-0001", "TASK-0002", "TASK-0003"]
+        assert index["DTL-LIB-0001-0001"] == ["TASK-0001", "TASK-0002", "TASK-0003"]
 
     def test_build_spec_element_to_tasks_index_missing_task_index(
         self, interface_workspace, fs, caplog
@@ -494,7 +494,7 @@ class TestElementToTasksIndex:
                     priority="p1",
                     component="API Layer",
                     libraries=["LIB-0001"],
-                    covers=TaskCoversSchema(elements=["REQ-LIB-0001-0001"]),
+                    covers=TaskCoversSchema(elements=["DTL-LIB-0001-0001"]),
                 )
             ],
         )
@@ -518,7 +518,7 @@ class TestTaskToPatchesIndex:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )
@@ -535,7 +535,7 @@ class TestTaskToPatchesIndex:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )
@@ -559,7 +559,7 @@ class TestTaskToPatchesIndex:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )
@@ -575,7 +575,7 @@ class TestTaskToPatchesIndex:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )
@@ -608,7 +608,7 @@ class TestTraceIndexesIntegration:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": [f"[spec_snapshot/input.md::{section_ids[0]}]"],
                 }
             ],
@@ -618,7 +618,7 @@ class TestTraceIndexesIntegration:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )
@@ -655,7 +655,7 @@ class TestTraceIndexesIntegration:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": [f"[spec_snapshot/input.md::{section_ids[0]}]"],
                 }
             ],
@@ -665,7 +665,7 @@ class TestTraceIndexesIntegration:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )
@@ -714,7 +714,7 @@ class TestTraceIndexesIntegration:
             json.dumps(
                 {
                     f"SEC-{file_id}-0001": [
-                        {"lib_id": "LIB-0001", "element_id": "BAD-ELEM", "kind": "requirement"}
+                        {"lib_id": "LIB-0001", "element_id": "BAD-ELEM", "kind": "detail"}
                     ]
                 },
                 indent=2,
@@ -798,7 +798,7 @@ class TestTraceIndexesIntegration:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
+                    "element_id": "DTL-LIB-0001-0001",
                     "citations": [f"[spec_snapshot/input.md::{section_ids[0]}]"],
                 }
             ],
@@ -808,7 +808,7 @@ class TestTraceIndexesIntegration:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001"],
+                    "elements": ["DTL-LIB-0001-0001"],
                 }
             ],
         )

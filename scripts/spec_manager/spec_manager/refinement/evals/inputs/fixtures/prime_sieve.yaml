@@ -1,0 +1,167 @@
+# Prime Sieve Sequence Specification
+# An algorithm-heavy test case with 8 rules for evaluating refinement.
+
+spec_id: prime_sieve
+title: Prime Sieve Algorithm Specification
+description: |
+  Implement the Sieve of Eratosthenes for finding all prime numbers up to a
+  given limit. This specification includes the core algorithm, optimization
+  techniques, and memory management.
+
+complexity_score: 6
+tags:
+  - algorithm
+  - primes
+  - sieve
+  - optimization
+  - memory
+
+sections:
+  OVERVIEW: |
+    The Sieve of Eratosthenes is an ancient algorithm for finding all prime
+    numbers up to a specified integer n. It works by iteratively marking the
+    multiples of each prime number starting from 2.
+
+  ALGORITHM_DESCRIPTION: |
+    1. Create a list of consecutive integers from 2 to n
+    2. Start with p = 2 (first prime)
+    3. Mark all multiples of p (2p, 3p, 4p, ...) as composite
+    4. Find the next unmarked number greater than p
+    5. Repeat step 3-4 until p² > n
+    6. All remaining unmarked numbers are prime
+
+  INITIALIZATION: |
+    - Create boolean array is_prime[0..n] initialized to true
+    - Mark 0 and 1 as not prime (is_prime[0] = is_prime[1] = false)
+
+  SIEVING_PROCESS: |
+    For p from 2 to √n:
+      If is_prime[p]:
+        Mark all multiples p², p²+p, p²+2p, ... ≤ n as not prime
+
+  OPTIMIZATION_START_SQUARE: |
+    Start marking from p² instead of 2p because smaller multiples
+    have already been marked by smaller primes.
+
+  OPTIMIZATION_ODD_ONLY: |
+    After handling 2, only check odd numbers since all even
+    numbers > 2 are composite.
+
+  MEMORY_CONSIDERATION: |
+    The basic algorithm requires O(n) space. For large n, consider
+    segmented sieve or bit-packed arrays.
+
+  OUTPUT_FORMAT: |
+    Return list of all prime numbers ≤ n in ascending order.
+
+rules:
+  - rule_id: RULE-001
+    rule_type: base
+    description: Input limit must be at least 2 to find any primes.
+    formal_expression: n ≥ 2
+    dependencies: []
+    examples:
+      - [2, 1]  # 1 prime found (2)
+
+  - rule_id: RULE-002
+    rule_type: base
+    description: Initialize 0 and 1 as not prime.
+    formal_expression: is_prime[0] = is_prime[1] = false
+    dependencies:
+      - RULE-001
+    examples: []
+
+  - rule_id: RULE-003
+    rule_type: base
+    description: Number 2 is the first and only even prime.
+    formal_expression: is_prime[2] = true
+    dependencies:
+      - RULE-001
+    examples:
+      - [2, 2]
+
+  - rule_id: RULE-004
+    rule_type: recurrence
+    description: Mark all multiples of current prime as composite.
+    formal_expression: is_prime[k*p] = false for k ≥ 2
+    dependencies:
+      - RULE-003
+    examples: []
+
+  - rule_id: RULE-005
+    rule_type: constraint
+    description: Only iterate p from 2 to square root of n.
+    formal_expression: p ≤ √n
+    dependencies:
+      - RULE-004
+    examples: []
+
+  - rule_id: RULE-006
+    rule_type: boundary
+    description: Start marking multiples from p squared for efficiency.
+    formal_expression: start_at = p²
+    dependencies:
+      - RULE-004
+      - RULE-005
+    examples: []
+
+  - rule_id: RULE-007
+    rule_type: constraint
+    description: Skip even numbers after processing 2.
+    formal_expression: p ∈ {2} ∪ {3,5,7,...}
+    dependencies:
+      - RULE-003
+      - RULE-004
+    examples: []
+
+  - rule_id: RULE-008
+    rule_type: boundary
+    description: Memory allocation proportional to input size.
+    formal_expression: space = O(n)
+    dependencies:
+      - RULE-001
+    examples: []
+
+ground_truth:
+  sectionization:
+    expected_sections:
+      - OVERVIEW
+      - ALGORITHM_DESCRIPTION
+      - INITIALIZATION
+      - SIEVING_PROCESS
+      - OPTIMIZATION_START_SQUARE
+      - OPTIMIZATION_ODD_ONLY
+      - MEMORY_CONSIDERATION
+      - OUTPUT_FORMAT
+
+  summarization:
+    expected_libraries:
+      - PrimeSieve
+
+  library_synthesis:
+    expected_libraries: []
+    expected_requirements:
+      - Input validation n >= 2
+      - Initialize 0 and 1 as non-prime
+      - Mark 2 as prime
+      - Mark multiples as composite
+      - Iterate up to square root
+      - Start from p squared
+      - Skip even numbers after 2
+      - O(n) memory allocation
+
+  spec_building:
+    expected_requirements:
+      - Minimum input validation
+      - Zero and one non-prime initialization
+      - First prime initialization
+      - Multiple marking procedure
+      - Square root iteration bound
+      - Square start optimization
+      - Even number skipping
+      - Linear space allocation
+    expected_elements: []
+
+  overall_requirements_count: 8
+  overall_elements_count: 8
+  convergence_iterations_max: 6

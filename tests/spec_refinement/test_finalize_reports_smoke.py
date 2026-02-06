@@ -167,7 +167,7 @@ def _write_tasks(
             validation_notes=spec.get("validation_notes", ""),
             citations=spec.get(
                 "citations",
-                ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             ),
             depends_on=spec.get("depends_on", []),
         )
@@ -243,20 +243,20 @@ def _setup_finalize_prerequisites(interface_workspace, fs) -> WorkspaceManager:
         "LIB-0001",
         [
             {
-                "element_id": "REQ-LIB-0001-0001",
-                "kind": "requirement",
-                "section": "Requirements",
+                "element_id": "DTL-LIB-0001-0001",
+                "kind": "detail",
+                "section": "Details",
                 "text": "Handle inbound requests.",
-                "raw_line": "- REQ-LIB-0001-0001: Handle inbound requests.",
+                "raw_line": "- DTL-LIB-0001-0001: Handle inbound requests.",
                 "citations": [f"[spec_snapshot/input.md::{section_ids[0]}]"],
                 "mentions_libs": [],
             },
             {
-                "element_id": "REQ-LIB-0001-0002",
-                "kind": "requirement",
-                "section": "Requirements",
+                "element_id": "DTL-LIB-0001-0002",
+                "kind": "detail",
+                "section": "Details",
                 "text": "Validate processed output.",
-                "raw_line": "- REQ-LIB-0001-0002: Validate processed output.",
+                "raw_line": "- DTL-LIB-0001-0002: Validate processed output.",
                 "citations": [f"[spec_snapshot/input.md::{section_ids[1]}]"],
                 "mentions_libs": [],
             },
@@ -268,14 +268,14 @@ def _setup_finalize_prerequisites(interface_workspace, fs) -> WorkspaceManager:
         [
             {
                 "task_id": "TASK-0001",
-                "elements": ["REQ-LIB-0001-0001"],
+                "elements": ["DTL-LIB-0001-0001"],
                 "status": "done",
                 "with_patch": True,
                 "write_status": True,
             },
             {
                 "task_id": "TASK-0002",
-                "elements": ["FLOW-LIB-0001-01"],
+                "elements": ["DTL-LIB-0001-0003"],
                 "status": "failed",
                 "with_patch": True,
                 "write_status": True,
@@ -283,7 +283,7 @@ def _setup_finalize_prerequisites(interface_workspace, fs) -> WorkspaceManager:
             },
             {
                 "task_id": "TASK-0003",
-                "elements": ["INV-LIB-0001-0001"],
+                "elements": ["CON-LIB-0001-0001"],
                 "status": "blocked",
                 "with_patch": False,
                 "write_status": True,
@@ -415,11 +415,11 @@ class TestComplianceReport:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0001-0001",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Refer to [F0001::INTRO] for context.",
-                    "raw_line": "- REQ-LIB-0001-0001: Refer to [F0001::INTRO] for context.",
+                    "raw_line": "- DTL-LIB-0001-0001: Refer to [F0001::INTRO] for context.",
                     "citations": [],
                     "mentions_libs": [],
                 }
@@ -479,7 +479,7 @@ class TestDriftReport:
 
         content = generate_drift_report(manager)
 
-        assert "REQ-LIB-0001-0002" in content
+        assert "DTL-LIB-0001-0002" in content
 
     def test_generate_drift_report_failed_tasks(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
@@ -499,7 +499,7 @@ class TestDriftReport:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["FLOW-LIB-0001-01"],
+                    "elements": ["DTL-LIB-0001-0001"],
                     "status": "done",
                     "with_patch": True,
                     "write_status": True,
@@ -510,7 +510,7 @@ class TestDriftReport:
 
         content = generate_drift_report(manager)
 
-        assert "EDGE-LIB-0001-LIB-0002" in content
+        assert "EDGE-LIB-0001-LIB-0003" in content
 
     def test_generate_drift_report_task_status_aggregation(self, interface_workspace, fs) -> None:
         manager = _setup_finalize_prerequisites(interface_workspace, fs)
@@ -534,20 +534,20 @@ class TestDriftReport:
             "LIB-0001",
             [
                 {
-                    "element_id": "REQ-LIB-0001-0001",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0001-0001",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Handle inbound requests.",
-                    "raw_line": "- REQ-LIB-0001-0001: Handle inbound requests.",
+                    "raw_line": "- DTL-LIB-0001-0001: Handle inbound requests.",
                     "citations": ["[spec_snapshot/input.md::SEC-F0001-0001]"],
                     "mentions_libs": [],
                 },
                 {
-                    "element_id": "REQ-LIB-0001-0002",
-                    "kind": "requirement",
-                    "section": "Requirements",
+                    "element_id": "DTL-LIB-0001-0002",
+                    "kind": "detail",
+                    "section": "Details",
                     "text": "Subscribe to events.",
-                    "raw_line": "- REQ-LIB-0001-0002: Subscribe to events.",
+                    "raw_line": "- DTL-LIB-0001-0002: Subscribe to events.",
                     "citations": ["[spec_snapshot/input.md::SEC-F0001-0001]"],
                     "mentions_libs": [],
                 },
@@ -563,7 +563,7 @@ class TestDriftReport:
             [
                 {
                     "task_id": "TASK-0001",
-                    "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002"],
+                    "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002"],
                     "status": "done",
                     "with_patch": True,
                     "write_status": True,

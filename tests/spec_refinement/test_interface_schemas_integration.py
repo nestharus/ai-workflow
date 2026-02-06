@@ -28,12 +28,12 @@ from spec_manager.schemas.spec_indexes import SpecElement, SpecIndex
 def _build_spec_index(lib_id: str, element_ids: list[str]) -> SpecIndex:
     elements: list[SpecElement] = []
     for index, element_id in enumerate(element_ids, start=1):
-        if element_id.startswith("REQ-"):
-            kind = "requirement"
-        elif element_id.startswith("FLOW-"):
-            kind = "flow"
+        if element_id.startswith("DTL-"):
+            kind = "detail"
+        elif element_id.startswith("CON-"):
+            kind = "constraint"
         else:
-            kind = "invariant"
+            kind = "detail"
         elements.append(
             SpecElement(
                 element_id=element_id,
@@ -78,15 +78,15 @@ def test_interface_schema_workflow_round_trip(fs) -> None:
             "EDGE-LIB-0001-LIB-0002",
             "LIB-0001",
             "LIB-0002",
-            "REQ-LIB-0001-0001",
-            "REQ-LIB-0002-0001",
+            "DTL-LIB-0001-0001",
+            "DTL-LIB-0002-0001",
         ),
         _build_edge(
             "EDGE-LIB-0002-LIB-0003",
             "LIB-0002",
             "LIB-0003",
-            "REQ-LIB-0002-0002",
-            "REQ-LIB-0003-0001",
+            "DTL-LIB-0002-0002",
+            "DTL-LIB-0003-0001",
         ),
     ]
 
@@ -97,12 +97,12 @@ def test_interface_schema_workflow_round_trip(fs) -> None:
     )
 
     spec_indexes = {
-        "LIB-0001": _build_spec_index("LIB-0001", ["REQ-LIB-0001-0001"]),
+        "LIB-0001": _build_spec_index("LIB-0001", ["DTL-LIB-0001-0001"]),
         "LIB-0002": _build_spec_index(
             "LIB-0002",
-            ["REQ-LIB-0002-0001", "REQ-LIB-0002-0002"],
+            ["DTL-LIB-0002-0001", "DTL-LIB-0002-0002"],
         ),
-        "LIB-0003": _build_spec_index("LIB-0003", ["REQ-LIB-0003-0001"]),
+        "LIB-0003": _build_spec_index("LIB-0003", ["DTL-LIB-0003-0001"]),
     }
 
     errors = validate_edge_list_completeness(edge_list, set(spec_indexes), spec_indexes)
@@ -170,8 +170,8 @@ def test_interface_schema_validation_errors() -> None:
         "EDGE-LIB-0001-LIB-0002",
         "LIB-0001",
         "LIB-0002",
-        "REQ-LIB-0001-0001",
-        "REQ-LIB-0002-0001",
+        "DTL-LIB-0001-0001",
+        "DTL-LIB-0002-0001",
     )
     edge_list = EdgeListSchema(
         run_id="run_001",
@@ -179,8 +179,8 @@ def test_interface_schema_validation_errors() -> None:
         edges=[edge],
     )
     spec_indexes = {
-        "LIB-0001": _build_spec_index("LIB-0001", ["REQ-LIB-0001-0001"]),
-        "LIB-0002": _build_spec_index("LIB-0002", ["REQ-LIB-0002-0001"]),
+        "LIB-0001": _build_spec_index("LIB-0001", ["DTL-LIB-0001-0001"]),
+        "LIB-0002": _build_spec_index("LIB-0002", ["DTL-LIB-0002-0001"]),
     }
 
     errors_missing_lib = validate_edge_list_completeness(
@@ -195,7 +195,7 @@ def test_interface_schema_validation_errors() -> None:
         {"LIB-0001", "LIB-0002"},
         {
             "LIB-0001": _build_spec_index("LIB-0001", []),
-            "LIB-0002": _build_spec_index("LIB-0002", ["REQ-LIB-0002-0001"]),
+            "LIB-0002": _build_spec_index("LIB-0002", ["DTL-LIB-0002-0001"]),
         },
     )
     assert errors_missing_element
@@ -209,7 +209,7 @@ def test_interface_schema_validation_errors() -> None:
             {
                 "name": "Invalid",
                 "type": "http",
-                "requirements": ["REQ-LIB-0002-0001"],
+                "requirements": ["DTL-LIB-0002-0001"],
                 "details": "Details",
                 "acceptance": [],
                 "citations": ["NOT-A-POINTER"],
@@ -217,9 +217,9 @@ def test_interface_schema_validation_errors() -> None:
         ],
         "consumed_by": [
             {
-                "consumer_requirement": "REQ-LIB-0001-0001",
+                "consumer_requirement": "DTL-LIB-0001-0001",
                 "expectations": [],
-                "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             }
         ],
         "open_questions": [],
@@ -230,7 +230,7 @@ def test_interface_schema_validation_errors() -> None:
 
 def test_multi_hop_pointer_validation() -> None:
     pointers = [
-        "[LIB-0001::spec.md::REQ-LIB-0001-0003]",
+        "[LIB-0001::spec.md::DTL-LIB-0001-0003]",
         "[LIB-0002::charter.md::Intent]",
         "[spec_snapshot/file.md::SEC-F0001-0001]",
     ]

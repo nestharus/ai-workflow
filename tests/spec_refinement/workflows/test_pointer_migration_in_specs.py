@@ -85,7 +85,7 @@ def test_normalize_decisions_pointers_converts_legacy_format(
 
 def test_normalize_spec_pointers_preserves_multi_hop(setup_pointer_migration_workspace) -> None:
     manager, _ = setup_pointer_migration_workspace()
-    spec_content = "Evidence: [LIB-0001::spec.md::REQ-LIB-0001-0001]"
+    spec_content = "Evidence: [LIB-0001::spec.md::DTL-LIB-0001-0001]"
 
     migrated = normalize_spec_pointers(spec_content, manager)
 
@@ -96,7 +96,7 @@ def test_normalize_spec_pointers_preserves_derived_pointers(
     setup_pointer_migration_workspace,
 ) -> None:
     manager, _ = setup_pointer_migration_workspace()
-    spec_content = "Evidence: [LIB-0002::decisions.md::DEC-LIB-0002-0001]"
+    spec_content = "Evidence: [LIB-0002::decisions.md::ANL-LIB-0002-0001]"
 
     migrated = normalize_spec_pointers(spec_content, manager)
 
@@ -133,7 +133,7 @@ def test_normalize_pointers_handles_invalid_file_refs(
     setup_pointer_migration_workspace,
 ) -> None:
     manager, _ = setup_pointer_migration_workspace()
-    content = "Evidence: [F9999::MISSING] and [LIB-0001::spec.md::REQ-LIB-0001-0001]"
+    content = "Evidence: [F9999::MISSING] and [LIB-0001::spec.md::DTL-LIB-0001-0001]"
 
     cleaned = strip_invalid_file_pointers(
         content, manager.state.file_manifest, allow_multi_hop=False
@@ -143,9 +143,9 @@ def test_normalize_pointers_handles_invalid_file_refs(
     )
 
     assert "[F9999::MISSING]" not in cleaned
-    assert "[LIB-0001::spec.md::REQ-LIB-0001-0001]" not in cleaned
+    assert "[LIB-0001::spec.md::DTL-LIB-0001-0001]" not in cleaned
     assert "[F9999::MISSING]" not in cleaned_multi
-    assert "[LIB-0001::spec.md::REQ-LIB-0001-0001]" in cleaned_multi
+    assert "[LIB-0001::spec.md::DTL-LIB-0001-0001]" in cleaned_multi
 
 
 def test_normalize_pointers_handles_compound_citations(setup_pointer_migration_workspace) -> None:

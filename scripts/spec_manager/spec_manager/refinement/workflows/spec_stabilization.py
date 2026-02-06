@@ -30,11 +30,13 @@ from spec_manager.refinement.validation_utils import (
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from spec_manager.schemas.spec_indexes import Decision, DecisionsIndex, SpecElement, SpecIndex
 
-DEFAULT_COUNTERS: dict[str, int] = {"REQ": 0, "FLOW": 0, "INV": 0, "DEC": 0}
-COUNTER_LIMITS: dict[str, int] = {"REQ": 9999, "FLOW": 99, "INV": 9999, "DEC": 9999}
-ELEMENT_ID_RE = re.compile(r"^\s*-\s*((?:REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*")
+DEFAULT_COUNTERS: dict[str, int] = {"DTL": 0, "CON": 0, "ANL": 0, "OVW": 0}
+COUNTER_LIMITS: dict[str, int] = {"DTL": 9999, "CON": 9999, "ANL": 9999, "OVW": 9999}
+LEGACY_COUNTER_MAP: dict[str, str] = {"REQ": "DTL", "INV": "CON", "DEC": "ANL", "FLOW": "DTL"}
+ELEMENT_ID_RE = re.compile(r"^\s*-\s*((?:DTL|CON|ANL|OVW|REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*")
 VALID_ELEMENT_ID_RE = re.compile(
-    r"^(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4}"
+    r"|REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4}|DEC-LIB-\d{4}-\d{4})$"
 )
 _DECISION_FIELD_RE = re.compile(r"\*\*\[(\w+)\]\*\*:\s*")
 _DECISION_FIELD_NAMES = frozenset({"status", "context", "options", "default"})
@@ -84,7 +86,7 @@ def load_id_counters(lib_dir: Path) -> dict[str, int]:
         lib_dir: Library directory path.
 
     Returns:
-        Counter map for REQ/FLOW/INV/DEC with defaults if missing.
+        Counter map for DTL/CON/ANL/OVW with defaults if missing.
     """
     counters, _ = _load_id_counters_with_issues(lib_dir)
     return counters
@@ -95,7 +97,7 @@ def save_id_counters(lib_dir: Path, counters: dict[str, int]) -> None:
 
     Args:
         lib_dir: Library directory path.
-        counters: Counter map for REQ/FLOW/INV/DEC.
+        counters: Counter map for DTL/CON/ANL/OVW.
 
     Raises:
         OSError: If the counters file cannot be written.
@@ -111,7 +113,7 @@ def allocate_element_id(lib_id: str, element_type: str, counters: dict[str, int]
 
     Args:
         lib_id: Library identifier (e.g., "LIB-0001").
-        element_type: Element type prefix (REQ/FLOW/INV/DEC).
+        element_type: Element type prefix (DTL/CON/ANL/OVW).
         counters: Mutable counters map for element types.
 
     Returns:
@@ -120,27 +122,20 @@ def allocate_element_id(lib_id: str, element_type: str, counters: dict[str, int]
     Raises:
         ValueError: If the element type is invalid or the counter exceeds limits.
     """
-    if element_type not in counters:
+    # Normalize legacy prefixes to PDD equivalents
+    resolved_type = LEGACY_COUNTER_MAP.get(element_type, element_type)
+
+    if resolved_type not in counters:
         raise ValueError(f"Invalid element type: {element_type}")
 
-    current = counters[element_type]
-    limit = COUNTER_LIMITS.get(element_type)
+    current = counters[resolved_type]
+    limit = COUNTER_LIMITS.get(resolved_type)
     if limit is not None and current + 1 > limit:
-        raise ValueError(f"Counter limit exceeded for {element_type}: {current + 1}")
+        raise ValueError(f"Counter limit exceeded for {resolved_type}: {current + 1}")
 
-    counters[element_type] = current + 1
+    counters[resolved_type] = current + 1
 
-    # ID format is type-prefixed and zero-padded for stable sorting.
-    if element_type == "REQ":
-        return f"REQ-{lib_id}-{counters[element_type]:04d}"
-    if element_type == "FLOW":
-        return f"FLOW-{lib_id}-{counters[element_type]:02d}"
-    if element_type == "INV":
-        return f"INV-{lib_id}-{counters[element_type]:04d}"
-    if element_type == "DEC":
-        return f"DEC-{lib_id}-{counters[element_type]:04d}"
-
-    raise ValueError(f"Invalid element type: {element_type}")
+    return f"{resolved_type}-{lib_id}-{counters[resolved_type]:04d}"
 
 
 def has_element_id(line: str, expected_prefix: str) -> bool:
@@ -148,12 +143,19 @@ def has_element_id(line: str, expected_prefix: str) -> bool:
 
     Args:
         line: Line to check.
-        expected_prefix: Expected prefix (REQ/FLOW/INV/DEC).
+        expected_prefix: Expected prefix (DTL/CON/ANL/OVW or legacy REQ/FLOW/INV/DEC).
 
     Returns:
         True if the line begins with an element ID, False otherwise.
     """
-    pattern = rf"^\s*-\s*({re.escape(expected_prefix)}-LIB-\d{{4}}-\d+):\s*"
+    # Check for the expected prefix and any legacy equivalents
+    prefixes = [expected_prefix]
+    # Also match legacy prefixes that map to this new prefix
+    for legacy, new in LEGACY_COUNTER_MAP.items():
+        if new == expected_prefix and legacy not in prefixes:
+            prefixes.append(legacy)
+    pattern_group = "|".join(re.escape(p) for p in prefixes)
+    pattern = rf"^\s*-\s*((?:{pattern_group})-LIB-\d{{4}}-\d+):\s*"
     return bool(re.search(pattern, line))
 
 
@@ -188,7 +190,7 @@ def _extract_library_mentions(line: str, lib_id: str) -> list[str]:
 
 
 def _remove_element_id_prefix(line: str) -> str:
-    return re.sub(r"^\s*[-*]\s*((?:REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*", "", line)
+    return re.sub(r"^\s*[-*]\s*((?:DTL|CON|ANL|OVW|REQ|FLOW|INV|DEC)-LIB-\d{4}-\d+):\s*", "", line)
 
 
 def _extract_sections_with_positions(content: str, level: int) -> list[tuple[str, int, int]]:
@@ -208,10 +210,14 @@ def _extract_sections_with_positions(content: str, level: int) -> list[tuple[str
 
 def _get_section_element_type(section_title: str) -> str | None:
     mapping = {
-        "Requirements": "REQ",
-        "Flows": "FLOW",
-        "Constraints": "INV",
-        "Dependencies": "INV",
+        "Details": "DTL",
+        "Constraints": "CON",
+        "Analysis": "ANL",
+        "Overview": "OVW",
+        # Legacy mappings for backward compatibility during migration
+        "Requirements": "DTL",
+        "Flows": "DTL",
+        "Dependencies": "DTL",
     }
     return mapping.get(section_title)
 
@@ -274,16 +280,8 @@ def _process_id_managed_section(
 
 
 def _ensure_flows_section(content: str) -> str:
-    sections = _extract_sections_with_positions(content, level=2)
-    if any(title == "Flows" for title, _, _ in sections):
-        return content
-
-    for title, _, end in sections:
-        if title == "Requirements":
-            insert_text = "\n## Flows\n\n"
-            return f"{content[:end]}{insert_text}{content[end:]}"
-
-    return content + "\n## Flows\n\n"
+    """No-op: Flows section is merged into Details in PDD format."""
+    return content
 
 
 def _extract_decisions_from_spec(spec_content: str) -> str:
@@ -291,7 +289,7 @@ def _extract_decisions_from_spec(spec_content: str) -> str:
         return ""
     sections = _extract_sections_with_positions(spec_content, level=2)
     for title, start, end in sections:
-        if title == "Decisions Needed":
+        if title in ("Analysis", "Decisions Needed"):
             return spec_content[start:end]
     return ""
 
@@ -683,7 +681,7 @@ def insert_decision_ids(
     """Insert stable decision IDs into decisions.md content.
 
     If decisions_content is empty, extracts decision bullets from the
-    spec.md "## Decisions Needed" section. Assigns DEC-LIB-####-#### IDs
+    spec.md "## Decisions Needed" section. Assigns ANL-LIB-####-#### IDs
     to decision bullets that don't already have stable IDs. Preserves
     existing decision IDs across re-runs.
 
@@ -710,7 +708,7 @@ def insert_decision_ids(
     for line in lines:
         line_text = line.rstrip("\r\n")
         line_ending = line[len(line_text) :]
-        updated_line, assigned = _process_bullet_line(line_text, lib_id, "DEC", id_counters)
+        updated_line, assigned = _process_bullet_line(line_text, lib_id, "ANL", id_counters)
         if assigned:
             ids_assigned += 1
         updated_lines.append(updated_line + line_ending)
@@ -759,10 +757,14 @@ def build_spec_index(spec_content: str, lib_id: str) -> dict[str, Any]:
         return index
 
     kind_map = {
-        "Requirements": "requirement",
-        "Flows": "flow",
-        "Constraints": "invariant",
-        "Dependencies": "invariant",
+        "Details": "detail",
+        "Constraints": "constraint",
+        "Analysis": "analysis",
+        "Overview": "overview",
+        # Legacy mappings
+        "Requirements": "detail",
+        "Flows": "detail",
+        "Dependencies": "detail",
     }
     bullet_pattern = re.compile(r"^\s*[-*]\s+(.+)$")
     elements: list[dict[str, Any]] = []

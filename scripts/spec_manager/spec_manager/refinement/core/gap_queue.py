@@ -21,10 +21,25 @@ class GapQueue:
 
     @staticmethod
     def _compute_content_hash(gaps: list[Gap]) -> str:
-        """Compute deterministic hash for gaps based on id/status."""
+        """Compute deterministic hash for gaps based on open source pointers.
+
+        Uses source pointers (e.g. ``[spec_snapshot/rules.md::SEC-F0002-0004]``)
+        instead of gap IDs.  Gap IDs are derived from LLM-generated descriptions
+        which vary across iterations, making ID-based hashing useless for
+        stagnation detection.  Source pointers remain stable, so repeated gaps
+        about the same sources will produce the same hash, correctly triggering
+        stagnation.
+        """
         if not gaps:
             return ""
-        canonical = "|".join(sorted({f"{gap.id}:{gap.status}" for gap in gaps}))
+        open_sources: set[str] = set()
+        for gap in gaps:
+            if gap.status == "open":
+                for src in gap.source:
+                    open_sources.add(src)
+        if not open_sources:
+            return ""
+        canonical = "|".join(sorted(open_sources))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     def update(self, current_gaps: list[Gap]) -> None:

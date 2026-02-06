@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.formats import _extract_json_payload
+from spec_manager.refinement.formats import _extract_json_payload, _strip_code_fences
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.repair import ArtifactType, repair_artifact
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -168,8 +168,10 @@ def _parse_contract_output(output: str) -> dict[str, Any] | None:
     """Parse interface contract agent output with tolerant JSON extraction."""
     if not output or not output.strip():
         return None
+    # Strip code fences first - LLMs often wrap JSON in markdown
+    cleaned = _strip_code_fences(output)
     try:
-        payload = json.loads(output)
+        payload = json.loads(cleaned)
     except json.JSONDecodeError:
         pass
     else:
@@ -177,7 +179,7 @@ def _parse_contract_output(output: str) -> dict[str, Any] | None:
             return payload
         return None
     try:
-        extracted = _extract_json_payload(output)
+        extracted = _extract_json_payload(cleaned)
         payload = json.loads(extracted)
     except (json.JSONDecodeError, TypeError):
         return None

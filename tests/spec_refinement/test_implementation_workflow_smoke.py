@@ -63,7 +63,7 @@ def _make_task(
         libraries=["LIB-0001"],
         covers=covers
         or TaskCoversSchema(
-            elements=["REQ-LIB-0001-0001"],
+            elements=["DTL-LIB-0001-0001"],
             edges=[],
             decisions=[],
             gaps=[],
@@ -72,7 +72,7 @@ def _make_task(
         suggested_files=suggested_files,
         risk_notes="Low risk.",
         validation_notes="Run tests.",
-        citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         depends_on=depends_on or [],
     )
 

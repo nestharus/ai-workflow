@@ -32,18 +32,18 @@ def _make_element(
     lib_id: str,
     index: int,
     *,
-    kind: str = "requirement",
+    kind: str = "detail",
     text: str = "alpha",
 ) -> dict[str, str]:
     lib_suffix = lib_id.split("-", 1)[1]
-    if kind == "requirement":
-        element_id = f"REQ-LIB-{lib_suffix}-{index:04d}"
-    elif kind == "invariant":
-        element_id = f"INV-LIB-{lib_suffix}-{index:04d}"
-    elif kind == "flow":
-        element_id = f"FLOW-LIB-{lib_suffix}-{index:02d}"
+    if kind == "detail":
+        element_id = f"DTL-LIB-{lib_suffix}-{index:04d}"
+    elif kind == "constraint":
+        element_id = f"CON-LIB-{lib_suffix}-{index:04d}"
+    elif kind == "analysis":
+        element_id = f"ANL-LIB-{lib_suffix}-{index:04d}"
     else:
-        element_id = f"REQ-LIB-{lib_suffix}-{index:04d}"
+        element_id = f"DTL-LIB-{lib_suffix}-{index:04d}"
     return {"element_id": element_id, "kind": kind, "text": text}
 
 
@@ -65,8 +65,7 @@ def _create_library_with_elements(
     spec_pointer = f"[spec_snapshot/{relpath}::{section_id}]"
 
     sections: dict[str, list[str]] = {
-        "Requirements": [],
-        "Flows": [],
+        "Details": [],
         "Constraints": [],
         "Dependencies": [],
     }
@@ -76,17 +75,15 @@ def _create_library_with_elements(
         text = element["text"]
         lib_pointer = f"[{lib_id}::spec.md::{element_id}]"
         line = f"- {element_id}: {text} {lib_pointer} {spec_pointer}"
-        if element["kind"] == "requirement":
-            sections["Requirements"].append(line)
-        elif element["kind"] == "flow":
-            sections["Flows"].append(line)
-        elif element["kind"] == "invariant":
+        if element["kind"] == "detail":
+            sections["Details"].append(line)
+        elif element["kind"] == "constraint":
             sections["Constraints"].append(line)
         else:
             sections["Dependencies"].append(line)
 
     lines = [f"# Library Spec: {lib_id}", ""]
-    for title in ["Requirements", "Flows", "Constraints", "Dependencies"]:
+    for title in ["Details", "Constraints", "Dependencies"]:
         lines.append(f"## {title}")
         if sections[title]:
             lines.extend(sections[title])
@@ -102,11 +99,8 @@ def _create_library_with_elements(
         [
             f"# Library Charter: {lib_id}",
             "",
-            "## Intent",
+            "## Overview",
             charter_intent,
-            "",
-            "## Boundaries",
-            "Boundaries.",
             "",
             "## Responsibilities",
             "- None",
@@ -228,7 +222,7 @@ def test_detect_structure_issues_loads_architecture_context(
         captured["prompt"] = prompt
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -261,9 +255,9 @@ def test_boundary_judge_merge_decision(spec_refinement_workspace, monkeypatch) -
             "shared_element_count": 1,
             "matched_elements": [
                 {
-                    "element_a_id": "REQ-LIB-0001-0001",
+                    "element_a_id": "DTL-LIB-0001-0001",
                     "element_a_text": "shared alpha",
-                    "element_b_id": "REQ-LIB-0002-0001",
+                    "element_b_id": "DTL-LIB-0002-0001",
                     "element_b_text": "shared alpha",
                     "similarity": 0.9,
                 }
@@ -274,7 +268,7 @@ def test_boundary_judge_merge_decision(spec_refinement_workspace, monkeypatch) -
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -340,8 +334,8 @@ def test_boundary_judge_move_elements_decision(spec_refinement_workspace, monkey
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "move_elements",
-            "Move element [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            elements=["REQ-LIB-0001-0001"],
+            "Move element [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            elements=["DTL-LIB-0001-0001"],
             target_lib="LIB-0002",
         )
 
@@ -353,7 +347,7 @@ def test_boundary_judge_move_elements_decision(spec_refinement_workspace, monkey
     report = consolidate_proposals(manager, overlap_candidates, [], {"overlap_similarity": 0.35})
 
     assert report.actions[0].type == "move_elements"
-    assert report.actions[0].elements == ["REQ-LIB-0001-0001"]
+    assert report.actions[0].elements == ["DTL-LIB-0001-0001"]
 
 
 def test_split_planner_creates_split_action(spec_refinement_workspace, monkeypatch) -> None:
@@ -367,9 +361,9 @@ def test_split_planner_creates_split_action(spec_refinement_workspace, monkeypat
             "num_clusters": 2,
             "silhouette_score": 0.42,
             "cluster_assignments": {
-                "REQ-LIB-0001-0001": 0,
-                "REQ-LIB-0001-0002": 0,
-                "REQ-LIB-0001-0003": 0,
+                "DTL-LIB-0001-0001": 0,
+                "DTL-LIB-0001-0002": 0,
+                "DTL-LIB-0001-0003": 0,
             },
         }
     ]
@@ -380,11 +374,11 @@ def test_split_planner_creates_split_action(spec_refinement_workspace, monkeypat
             "proposed_name": "Intake",
             "charter_summary": "Own intake",
             "element_ids": [
-                "REQ-LIB-0001-0001",
-                "REQ-LIB-0001-0002",
-                "REQ-LIB-0001-0003",
+                "DTL-LIB-0001-0001",
+                "DTL-LIB-0001-0002",
+                "DTL-LIB-0001-0003",
             ],
-            "justification": "Reason [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "justification": "Reason [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         }
     ]
 
@@ -412,9 +406,9 @@ def test_split_planner_empty_output_no_action(spec_refinement_workspace, monkeyp
             "num_clusters": 2,
             "silhouette_score": 0.42,
             "cluster_assignments": {
-                "REQ-LIB-0001-0001": 0,
-                "REQ-LIB-0001-0002": 0,
-                "REQ-LIB-0001-0003": 0,
+                "DTL-LIB-0001-0001": 0,
+                "DTL-LIB-0001-0002": 0,
+                "DTL-LIB-0001-0003": 0,
             },
         }
     ]
@@ -461,7 +455,7 @@ def test_consolidate_proposals_assigns_stable_ids(spec_refinement_workspace, mon
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -492,7 +486,7 @@ def test_consolidate_proposals_validates_pointers(spec_refinement_workspace, mon
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-9999::spec.md::REQ-LIB-9999-0001].",
+            "Overlap [LIB-9999::spec.md::DTL-LIB-9999-0001].",
         )
 
     monkeypatch.setattr(
@@ -528,9 +522,9 @@ def test_consolidate_proposals_merges_boundary_and_split(
             "num_clusters": 2,
             "silhouette_score": 0.42,
             "cluster_assignments": {
-                "REQ-LIB-0001-0001": 0,
-                "REQ-LIB-0001-0002": 0,
-                "REQ-LIB-0001-0003": 0,
+                "DTL-LIB-0001-0001": 0,
+                "DTL-LIB-0001-0002": 0,
+                "DTL-LIB-0001-0003": 0,
             },
         }
     ]
@@ -541,11 +535,11 @@ def test_consolidate_proposals_merges_boundary_and_split(
             "proposed_name": "Intake",
             "charter_summary": "Own intake",
             "element_ids": [
-                "REQ-LIB-0001-0001",
-                "REQ-LIB-0001-0002",
-                "REQ-LIB-0001-0003",
+                "DTL-LIB-0001-0001",
+                "DTL-LIB-0001-0002",
+                "DTL-LIB-0001-0003",
             ],
-            "justification": "Reason [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "justification": "Reason [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         }
     ]
 
@@ -553,7 +547,7 @@ def test_consolidate_proposals_merges_boundary_and_split(
         if agent_name == "chatgpt-library-boundary-judge":
             return _mock_boundary_judge(
                 "merge",
-                "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+                "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
             )
         if agent_name == "opus-library-split-planner":
             return _mock_split_planner(split_groups)
@@ -599,7 +593,7 @@ def test_consolidate_proposals_sorts_actions_deterministically(
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -687,7 +681,7 @@ def test_review_actions_json_contains_actions(spec_refinement_workspace, monkeyp
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -716,10 +710,10 @@ def test_apply_single_split_creates_new_libraries(spec_refinement_workspace) -> 
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -743,10 +737,10 @@ def test_apply_single_split_partitions_elements(spec_refinement_workspace) -> No
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -757,7 +751,7 @@ def test_apply_single_split_partitions_elements(spec_refinement_workspace) -> No
     new_spec = (manager.structure.libraries_dir / new_lib_id / "spec.md").read_text(
         encoding="utf-8"
     )
-    assert f"REQ-{new_lib_id}" in new_spec
+    assert f"DTL-{new_lib_id}" in new_spec
 
     source_spec = (manager.structure.libraries_dir / "LIB-0001" / "spec.md").read_text(
         encoding="utf-8"
@@ -777,10 +771,10 @@ def test_apply_single_split_records_events(spec_refinement_workspace) -> None:
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -807,10 +801,10 @@ def test_apply_single_split_updates_specs(spec_refinement_workspace) -> None:
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -821,7 +815,7 @@ def test_apply_single_split_updates_specs(spec_refinement_workspace) -> None:
     new_spec = (manager.structure.libraries_dir / new_lib_id / "spec.md").read_text(
         encoding="utf-8"
     )
-    assert "REQ-" in new_spec
+    assert "DTL-" in new_spec
 
 
 def test_apply_single_split_updates_charters(spec_refinement_workspace) -> None:
@@ -836,10 +830,10 @@ def test_apply_single_split_updates_charters(spec_refinement_workspace) -> None:
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -866,10 +860,10 @@ def test_apply_single_split_validates_artifacts(spec_refinement_workspace) -> No
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -894,22 +888,22 @@ def test_apply_split_actions_with_flag(spec_refinement_workspace, monkeypatch) -
             "proposed_name": "Intake",
             "charter_summary": "Own intake",
             "element_ids": [
-                "REQ-LIB-0001-0001",
-                "REQ-LIB-0001-0002",
-                "REQ-LIB-0001-0003",
+                "DTL-LIB-0001-0001",
+                "DTL-LIB-0001-0002",
+                "DTL-LIB-0001-0003",
             ],
-            "justification": "Reason [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "justification": "Reason [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         },
         {
             "group_id": 1,
             "proposed_name": "Processing",
             "charter_summary": "Own processing",
             "element_ids": [
-                "REQ-LIB-0001-0004",
-                "REQ-LIB-0001-0005",
-                "REQ-LIB-0001-0006",
+                "DTL-LIB-0001-0004",
+                "DTL-LIB-0001-0005",
+                "DTL-LIB-0001-0006",
             ],
-            "justification": "Reason [LIB-0001::spec.md::REQ-LIB-0001-0004].",
+            "justification": "Reason [LIB-0001::spec.md::DTL-LIB-0001-0004].",
         },
     ]
 
@@ -943,10 +937,10 @@ def test_apply_single_move_inserts_tombstones(spec_refinement_workspace) -> None
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -955,7 +949,7 @@ def test_apply_single_move_inserts_tombstones(spec_refinement_workspace) -> None
     source_spec = (manager.structure.libraries_dir / "LIB-0001" / "spec.md").read_text(
         encoding="utf-8"
     )
-    assert "REQ-LIB-0001-0001 moved to LIB-0002" in source_spec
+    assert "DTL-LIB-0001-0001 moved to LIB-0002" in source_spec
 
 
 def test_apply_single_move_copies_elements(spec_refinement_workspace) -> None:
@@ -971,10 +965,10 @@ def test_apply_single_move_copies_elements(spec_refinement_workspace) -> None:
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -984,7 +978,7 @@ def test_apply_single_move_copies_elements(spec_refinement_workspace) -> None:
         encoding="utf-8"
     )
     assert "Moved from LIB-0001" in target_spec
-    assert "REQ-LIB-0002" in target_spec
+    assert "DTL-LIB-0002" in target_spec
 
 
 def test_apply_single_move_updates_evidence(spec_refinement_workspace) -> None:
@@ -1002,10 +996,10 @@ def test_apply_single_move_updates_evidence(spec_refinement_workspace) -> None:
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -1030,10 +1024,10 @@ def test_apply_single_move_records_events(spec_refinement_workspace) -> None:
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -1058,10 +1052,10 @@ def test_apply_single_move_preserves_traceability(spec_refinement_workspace) -> 
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -1070,7 +1064,7 @@ def test_apply_single_move_preserves_traceability(spec_refinement_workspace) -> 
     source_spec = (manager.structure.libraries_dir / "LIB-0001" / "spec.md").read_text(
         encoding="utf-8"
     )
-    assert "REQ-LIB-0001-0001 moved to LIB-0002" in source_spec
+    assert "DTL-LIB-0001-0001 moved to LIB-0002" in source_spec
 
 
 def test_apply_single_move_validates_artifacts(spec_refinement_workspace) -> None:
@@ -1086,10 +1080,10 @@ def test_apply_single_move_validates_artifacts(spec_refinement_workspace) -> Non
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -1112,10 +1106,10 @@ def test_apply_move_actions_with_flag(spec_refinement_workspace, monkeypatch) ->
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -1158,10 +1152,10 @@ def test_apply_split_rollback_on_validation_failure(spec_refinement_workspace, m
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": [],
-            "elements": ["REQ-LIB-0001-0001", "REQ-LIB-0001-0002", "REQ-LIB-0001-0003"],
+            "elements": ["DTL-LIB-0001-0001", "DTL-LIB-0001-0002", "DTL-LIB-0001-0003"],
             "summary": "Intake - Handles intake",
-            "rationale": "Split [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Split [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
     report_path = _write_review_actions_report(manager, [action])
@@ -1204,10 +1198,10 @@ def test_apply_move_rollback_on_validation_failure(spec_refinement_workspace, mo
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-0001"],
+            "elements": ["DTL-LIB-0001-0001"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -1258,7 +1252,7 @@ def test_agent_failure_continues_workflow(spec_refinement_workspace, monkeypatch
             raise RuntimeError("agent failure")
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -1283,10 +1277,10 @@ def test_invalid_action_skipped_during_application(spec_refinement_workspace) ->
             "status": "proposed",
             "source_libs": ["LIB-0001"],
             "target_libs": ["LIB-0002"],
-            "elements": ["REQ-LIB-0001-9999"],
+            "elements": ["DTL-LIB-0001-9999"],
             "summary": "Move intake",
-            "rationale": "Move [LIB-0001::spec.md::REQ-LIB-0001-0001].",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "rationale": "Move [LIB-0001::spec.md::DTL-LIB-0001-0001].",
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     )
 
@@ -1310,7 +1304,7 @@ def test_full_workflow_overlap_to_merge(spec_refinement_workspace, monkeypatch) 
     def _run_agent(*, agent_name: str, prompt: str, workspace: Path, max_retries: int = 2) -> str:
         return _mock_boundary_judge(
             "merge",
-            "Overlap [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "Overlap [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         )
 
     monkeypatch.setattr(
@@ -1338,22 +1332,22 @@ def test_full_workflow_split_to_new_libraries(spec_refinement_workspace, monkeyp
             "proposed_name": "Intake",
             "charter_summary": "Own intake",
             "element_ids": [
-                "REQ-LIB-0001-0001",
-                "REQ-LIB-0001-0002",
-                "REQ-LIB-0001-0003",
+                "DTL-LIB-0001-0001",
+                "DTL-LIB-0001-0002",
+                "DTL-LIB-0001-0003",
             ],
-            "justification": "Reason [LIB-0001::spec.md::REQ-LIB-0001-0001].",
+            "justification": "Reason [LIB-0001::spec.md::DTL-LIB-0001-0001].",
         },
         {
             "group_id": 1,
             "proposed_name": "Processing",
             "charter_summary": "Own processing",
             "element_ids": [
-                "REQ-LIB-0001-0004",
-                "REQ-LIB-0001-0005",
-                "REQ-LIB-0001-0006",
+                "DTL-LIB-0001-0004",
+                "DTL-LIB-0001-0005",
+                "DTL-LIB-0001-0006",
             ],
-            "justification": "Reason [LIB-0001::spec.md::REQ-LIB-0001-0004].",
+            "justification": "Reason [LIB-0001::spec.md::DTL-LIB-0001-0004].",
         },
     ]
 

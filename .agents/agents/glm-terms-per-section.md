@@ -25,13 +25,6 @@ FORBIDDEN:
 - Invalid confidence values.
 - Any output outside the JSON object.
 
-## INPUT DATA
-
-- File ID: {file_id}
-- File path: {relpath}
-- Sections JSON: {sections_json}
-- Source file content: {content}
-
 ## OUTPUT FORMAT
 
 ```json

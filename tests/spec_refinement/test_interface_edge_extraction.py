@@ -68,17 +68,17 @@ def _create_library_with_cross_refs(
 
     lib_suffix = lib_id.split("-", 1)[1]
     elements = []
-    spec_lines = [f"# Library Spec: {lib_id}", "", "## Requirements"]
+    spec_lines = [f"# Library Spec: {lib_id}", "", "## Details"]
     for index, provider in enumerate(provider_libs, start=1):
-        element_id = f"REQ-LIB-{lib_suffix}-{index:04d}"
+        element_id = f"DTL-LIB-{lib_suffix}-{index:04d}"
         text = f"Depends on {provider} for integration."
         line = f"- {element_id}: {text} [{lib_id}::spec.md::{element_id}]"
         spec_lines.append(line)
         elements.append(
             {
                 "element_id": element_id,
-                "kind": "requirement",
-                "section": "Requirements",
+                "kind": "detail",
+                "section": "Details",
                 "text": text,
                 "raw_line": line,
                 "citations": [f"[{lib_id}::spec.md::{element_id}]"],
@@ -86,15 +86,15 @@ def _create_library_with_cross_refs(
             }
         )
     if not provider_libs:
-        spec_lines.append(f"- REQ-LIB-{lib_suffix}-0001: Standalone requirement.")
+        spec_lines.append(f"- DTL-LIB-{lib_suffix}-0001: Standalone requirement.")
         elements.append(
             {
-                "element_id": f"REQ-LIB-{lib_suffix}-0001",
-                "kind": "requirement",
-                "section": "Requirements",
+                "element_id": f"DTL-LIB-{lib_suffix}-0001",
+                "kind": "detail",
+                "section": "Details",
                 "text": "Standalone requirement.",
-                "raw_line": f"- REQ-LIB-{lib_suffix}-0001: Standalone requirement.",
-                "citations": [f"[{lib_id}::spec.md::REQ-LIB-{lib_suffix}-0001]"],
+                "raw_line": f"- DTL-LIB-{lib_suffix}-0001: Standalone requirement.",
+                "citations": [f"[{lib_id}::spec.md::DTL-LIB-{lib_suffix}-0001]"],
                 "mentions_libs": [],
             }
         )
@@ -157,7 +157,7 @@ def test_deterministic_edge_scanning_finds_explicit_mentions(fs, monkeypatch) ->
     assert all(edge_id.startswith("EDGE-LIB-") for edge_id in edge_ids)
 
     consumer_elements = edges[("LIB-0001", "LIB-0002")]["consumer_elements"]
-    assert "REQ-LIB-0001-0001" in consumer_elements
+    assert "DTL-LIB-0001-0001" in consumer_elements
 
 
 def test_deterministic_scanning_ignores_self_references(fs, monkeypatch) -> None:
@@ -176,24 +176,24 @@ def test_llm_edge_extraction_with_mock_agent(fs, monkeypatch) -> None:
         "LIB-0001": [
             {
                 "provider_lib": "LIB-0002",
-                "consumer_elements": ["REQ-LIB-0001-0001"],
+                "consumer_elements": ["DTL-LIB-0001-0001"],
                 "kind": "api",
                 "summary": "Valid edge.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             },
             {
                 "provider_lib": "LIB-9999",
-                "consumer_elements": ["REQ-LIB-0001-0001"],
+                "consumer_elements": ["DTL-LIB-0001-0001"],
                 "kind": "api",
                 "summary": "Invalid provider.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             },
             {
                 "provider_lib": "LIB-0003",
-                "consumer_elements": ["REQ-LIB-0001-9999"],
+                "consumer_elements": ["DTL-LIB-0001-9999"],
                 "kind": "events",
                 "summary": "Missing consumer elements.",
-                "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             },
         ]
     }
@@ -212,22 +212,22 @@ def test_edge_deduplication_merges_consumer_elements() -> None:
         ("LIB-0001", "LIB-0002"): {
             "consumer_lib": "LIB-0001",
             "provider_lib": "LIB-0002",
-            "consumer_elements": ["REQ-LIB-0001-0001"],
+            "consumer_elements": ["DTL-LIB-0001-0001"],
             "provider_elements": [],
             "kind": "other",
             "summary": "",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     }
     llm = {
         ("LIB-0001", "LIB-0002"): {
             "consumer_lib": "LIB-0001",
             "provider_lib": "LIB-0002",
-            "consumer_elements": ["REQ-LIB-0001-0002"],
+            "consumer_elements": ["DTL-LIB-0001-0002"],
             "provider_elements": [],
             "kind": "api",
             "summary": "",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0002]"],
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0002]"],
         }
     }
 
@@ -235,9 +235,9 @@ def test_edge_deduplication_merges_consumer_elements() -> None:
 
     assert len(merged) == 1
     edge = merged[0]
-    assert set(edge.consumer_elements) == {"REQ-LIB-0001-0001", "REQ-LIB-0001-0002"}
-    assert "[LIB-0001::spec.md::REQ-LIB-0001-0001]" in edge.evidence
-    assert "[LIB-0001::spec.md::REQ-LIB-0001-0002]" in edge.evidence
+    assert set(edge.consumer_elements) == {"DTL-LIB-0001-0001", "DTL-LIB-0001-0002"}
+    assert "[LIB-0001::spec.md::DTL-LIB-0001-0001]" in edge.evidence
+    assert "[LIB-0001::spec.md::DTL-LIB-0001-0002]" in edge.evidence
 
 
 def test_edge_kind_resolution_prefers_specific() -> None:
@@ -245,22 +245,22 @@ def test_edge_kind_resolution_prefers_specific() -> None:
         ("LIB-0001", "LIB-0002"): {
             "consumer_lib": "LIB-0001",
             "provider_lib": "LIB-0002",
-            "consumer_elements": ["REQ-LIB-0001-0001"],
+            "consumer_elements": ["DTL-LIB-0001-0001"],
             "provider_elements": [],
             "kind": "other",
             "summary": "",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     }
     llm = {
         ("LIB-0001", "LIB-0002"): {
             "consumer_lib": "LIB-0001",
             "provider_lib": "LIB-0002",
-            "consumer_elements": ["REQ-LIB-0001-0001"],
+            "consumer_elements": ["DTL-LIB-0001-0001"],
             "provider_elements": [],
             "kind": "api",
             "summary": "",
-            "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         }
     }
 
@@ -320,11 +320,11 @@ def test_parallel_llm_extraction_with_rate_limiting(fs, monkeypatch) -> None:
     def _fake_spec_index(lib_dir: Path) -> SpecIndex:
         lib_id = lib_dir.name
         suffix = lib_id.split("-", 1)[1]
-        element_id = f"REQ-LIB-{suffix}-0001"
+        element_id = f"DTL-LIB-{suffix}-0001"
         element = SpecElement(
             element_id=element_id,
-            kind="requirement",
-            section="Requirements",
+            kind="detail",
+            section="Details",
             text="Parallel edge requirement.",
             raw_line=f"- {element_id}: Parallel edge requirement.",
         )
@@ -350,7 +350,7 @@ def test_parallel_llm_extraction_with_rate_limiting(fs, monkeypatch) -> None:
         match = re.search(r"## Library ID\s+(LIB-\d{4})", prompt)
         lib_id = match.group(1) if match else lib_ids[0]
         suffix = lib_id.split("-", 1)[1]
-        consumer_element = f"REQ-LIB-{suffix}-0001"
+        consumer_element = f"DTL-LIB-{suffix}-0001"
         edge = {
             "provider_lib": lib_ids[0] if lib_id != lib_ids[0] else lib_ids[1],
             "consumer_elements": [consumer_element],

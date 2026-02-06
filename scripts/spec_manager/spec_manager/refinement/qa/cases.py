@@ -324,10 +324,9 @@ def _library_charter(
     lines = [
         f"# Library Charter: {title}",
         "",
-        "## Intent",
+        "## Overview",
         intent.strip(),
         "",
-        "## Boundaries",
     ]
     for item in boundaries:
         lines.append(f"- {item}")
@@ -350,23 +349,24 @@ def _library_spec(
     lines = [
         f"# Library Spec: {lib_id}",
         "",
-        "## Intent",
-        intent.strip(),
+        "## Analysis",
+        "- None",
         "",
-        "## Boundaries",
+        "## Constraints",
     ]
-    for item in boundaries:
-        lines.append(f"- {item}")
-    lines.extend(["", "## Requirements"])
-    for item in requirements:
-        lines.append(f"- {item}")
-    lines.extend(["", "## Constraints"])
     for item in constraints:
         lines.append(f"- {item}")
-    lines.extend(["", "## Dependencies"])
+    lines.extend(["", "## Overview"])
+    lines.append(intent.strip())
+    lines.append("")
+    for item in boundaries:
+        lines.append(f"- {item}")
+    lines.extend(["", "## Details"])
+    for item in requirements:
+        lines.append(f"- {item}")
     for item in dependencies:
         lines.append(f"- {item}")
-    lines.extend(["", "## Decisions Needed", "- None", ""])
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -584,26 +584,23 @@ class SpecIntegratorUnsupportedAssertionCase(QaCase):
 
         current_spec = """# Library Spec: LIB-0002
 
-## Intent
-Provide durable persistence APIs. [F0002::INTRO]
-
-## Boundaries
-- Owns record storage and retrieval operations. [F0002::BOUNDARIES]
-- Does NOT own request validation or request routing. [F0002::BOUNDARIES]
-- Does NOT own throughput management. [F0002::BOUNDARIES]
-
-## Requirements
-- Store records reliably with an idempotency key. [F0002::REQUIREMENTS]
-- Support lookup by ID. [F0002::REQUIREMENTS]
+## Analysis
+- None
 
 ## Constraints
 - Data must be encrypted at rest. [F0002::CONSTRAINTS]
 
-## Dependencies
-- Called by Gateway for persistence. [F0002::INTEGRATION]
+## Overview
+Provide durable persistence APIs. [F0002::INTRO]
 
-## Decisions Needed
-- None
+- Owns record storage and retrieval operations. [F0002::BOUNDARIES]
+- Does NOT own request validation or request routing. [F0002::BOUNDARIES]
+- Does NOT own throughput management. [F0002::BOUNDARIES]
+
+## Details
+- Store records reliably with an idempotency key. [F0002::REQUIREMENTS]
+- Support lookup by ID. [F0002::REQUIREMENTS]
+- Called by Gateway for persistence. [F0002::INTEGRATION]
 """
 
         file_id = "F0002"
@@ -625,13 +622,13 @@ Provide durable persistence APIs. [F0002::INTRO]
             derived_artifact_target=f"libraries/{lib_id}/spec.md",
             description=(
                 "Spec asserts 'Does NOT own throughput management' but the source does not mention "
-                "throughput management. Reclassify as a Decision Needed rather than asserting it."
+                "throughput management. Reclassify into Analysis rather than asserting it."
             ),
             evidence=[
                 GapEvidence(
                     invariant_family="content",
                     description="Unsupported boundary assertion: throughput management.",
-                    details={"where_in_spec": "Boundaries"},
+                    details={"where_in_spec": "Overview"},
                     confidence=1.0,
                     location=f"{file_id}::BOUNDARIES",
                     detector="qa-harness",
@@ -663,8 +660,8 @@ Provide durable persistence APIs. [F0002::INTRO]
             "Output is valid JSON matching SpecPatchOutput (file_id, lib_id, patches).",
             "All patch operations are add/edit/move (no delete).",
             "Citations use only [F####::SECTION] and section labels are from the allow-list.",
-            "The unsupported claim about throughput management is moved from Boundaries into "
-            "Decisions Needed (not asserted in Boundaries after applying patches).",
+            "The unsupported claim about throughput management is moved from Overview into "
+            "Analysis (not asserted in Overview after applying patches).",
         ]
 
         return PreparedQaCase(
@@ -783,9 +780,7 @@ class ArchitectureProposalCase(QaCase):
                 "interfaces": [
                     {
                         "type": "Interface",
-                        "description": (
-                            "See Requirements/Dependencies sections for interaction surface."
-                        ),
+                        "description": ("See Details section for interaction surface."),
                         "citation": f"[{lib_id}::spec.md::REQUIREMENTS]",
                     }
                 ],
@@ -1013,7 +1008,7 @@ QA_CASES: dict[str, QaCase] = {
         description=(
             "Spec integrator must produce valid patch ops (no delete), "
             "keep citations within the [F####::SECTION] allowlists, "
-            "and reclassify unsupported assertions into Decisions Needed."
+            "and reclassify unsupported assertions into Analysis."
         ),
     ),
     "phase6_arch_proposal": ArchitectureProposalCase(

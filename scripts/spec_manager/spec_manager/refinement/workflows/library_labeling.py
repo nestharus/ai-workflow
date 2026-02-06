@@ -21,6 +21,7 @@ from spec_manager.refinement.formats import (
     LibraryCharter,
     LibraryEvent,
     LibraryEventType,
+    _strip_code_fences,
     build_evidence_pointer,
     migrate_pointers_to_new_format,
     normalize_compound_pointers,
@@ -105,7 +106,9 @@ def _build_label_prompt(file_id: str, summary: str) -> str:
 def _parse_label_output(payload: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     issues: list[dict[str, Any]] = []
     try:
-        data = json.loads(payload)
+        # Strip code fences before parsing - LLMs often wrap JSON in markdown
+        cleaned = _strip_code_fences(payload)
+        data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         return {}, [
             {
@@ -301,6 +304,8 @@ def label_all_files(manager: WorkspaceManager) -> dict[str, Any]:
 def build_library_shapes(file_labels: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Build multi-label shape distributions from file labels.
 
+    Confidence values per file are normalized to sum to at most 1.0.
+
     Returns:
         {file_id: {lib_id: {confidence, sections, rationale}}}
     """
@@ -325,6 +330,15 @@ def build_library_shapes(file_labels: dict[str, Any]) -> dict[str, dict[str, Any
             }
 
         if file_shape:
+            total = sum(
+                entry["confidence"]
+                for entry in file_shape.values()
+                if isinstance(entry.get("confidence"), (int, float))
+            )
+            if total > 1.0:
+                for entry in file_shape.values():
+                    if isinstance(entry.get("confidence"), (int, float)):
+                        entry["confidence"] = round(entry["confidence"] / total, 4)
             shapes[file_id] = file_shape
 
     return shapes
@@ -601,7 +615,9 @@ def refine_library_labels(
         output = output.model_dump_json()
 
     try:
-        data = json.loads(output)
+        # Strip code fences before parsing JSON
+        cleaned_output = _strip_code_fences(output)
+        data = json.loads(cleaned_output)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Failed to parse refined labels: {exc}") from exc
 
@@ -814,6 +830,18 @@ def generate_library_charter(
         }
 
     charter = next((item for item in charters if item.lib_id == lib_id), charters[0])
+    # Force the charter to use the requested lib_id. The LLM may return a
+    # different ID (or multiple libraries), which causes duplicate lib_id
+    # validation failures when multiple charters are collected.
+    if charter.lib_id != lib_id:
+        charter = LibraryCharter(
+            lib_id=lib_id,
+            intent=charter.intent,
+            boundaries=charter.boundaries,
+            responsibilities=charter.responsibilities,
+            evidence_sources=charter.evidence_sources,
+            overlap_resolutions=charter.overlap_resolutions,
+        )
     file_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
@@ -1049,7 +1077,9 @@ def resolve_overlap(
         output = output.model_dump_json()
 
     try:
-        data = json.loads(output)
+        # Strip code fences before parsing JSON
+        cleaned_output = _strip_code_fences(output)
+        data = json.loads(cleaned_output)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Failed to parse overlap resolution: {exc}") from exc
 

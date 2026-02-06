@@ -61,12 +61,12 @@ def test_build_context_bundle_includes_task_requirements(interface_workspace, fs
         priority="p1",
         component="API Layer",
         libraries=["LIB-0001"],
-        covers=TaskCoversSchema(elements=["REQ-LIB-0001-0001"], edges=[], decisions=[], gaps=[]),
+        covers=TaskCoversSchema(elements=["DTL-LIB-0001-0001"], edges=[], decisions=[], gaps=[]),
         acceptance_criteria=["Behavior updated.", "Tests added."],
         suggested_files=["app/main.py"],
         risk_notes="Low risk.",
         validation_notes="Run tests.",
-        citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         depends_on=[],
     )
     _write_task(manager.run_root, task)
@@ -95,7 +95,7 @@ def test_build_context_bundle_includes_spec_snippets(interface_workspace, fs) ->
         priority="p1",
         component="API Layer",
         libraries=["LIB-0001"],
-        covers=TaskCoversSchema(elements=["REQ-LIB-0001-0001"], edges=[], decisions=[], gaps=[]),
+        covers=TaskCoversSchema(elements=["DTL-LIB-0001-0001"], edges=[], decisions=[], gaps=[]),
         acceptance_criteria=["Behavior updated."],
         suggested_files=["app/main.py"],
         risk_notes="",
@@ -108,8 +108,8 @@ def test_build_context_bundle_includes_spec_snippets(interface_workspace, fs) ->
     content = build_context_bundle(manager.run_root, "TASK-0001", repo_root)
 
     assert "Relevant Specs / Interfaces" in content
-    assert "REQ-LIB-0001-0001" in content
-    assert "[LIB-0001::spec.md::REQ-LIB-0001-0001]" in content
+    assert "DTL-LIB-0001-0001" in content
+    assert "[LIB-0001::spec.md::DTL-LIB-0001-0001]" in content
 
 
 def test_build_context_bundle_includes_interface_contracts(interface_workspace, fs) -> None:

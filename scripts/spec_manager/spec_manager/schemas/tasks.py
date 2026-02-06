@@ -9,16 +9,16 @@ Example:
         component="spec_manager",
         libraries=["LIB-0001"],
         covers=TaskCoversSchema(
-            elements=["REQ-LIB-0001-0001"],
+            elements=["DTL-LIB-0001-0001"],
             edges=["EDGE-LIB-0001-LIB-0002"],
-            decisions=["DEC-LIB-0001-0001"],
+            decisions=["ANL-LIB-0001-0001"],
             gaps=["GAP-FOUNDATION"],
         ),
         acceptance_criteria=["Tests cover task schemas."],
         suggested_files=["scripts/spec_manager/spec_manager/schemas/tasks.py"],
         risk_notes="Coordinate with consumers of task.json outputs.",
         validation_notes="Run schema validation on sample tasks.",
-        citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
         depends_on=["TASK-0002"],
     )
 """
@@ -52,9 +52,9 @@ class TaskCoversSchema(BaseModel):
 
     Example:
         TaskCoversSchema(
-            elements=["REQ-LIB-0001-0001"],
+            elements=["DTL-LIB-0001-0001"],
             edges=["EDGE-LIB-0001-LIB-0002"],
-            decisions=["DEC-LIB-0001-0001"],
+            decisions=["ANL-LIB-0001-0001"],
             gaps=["GAP-FOUNDATION"],
         )
     """
@@ -67,7 +67,7 @@ class TaskCoversSchema(BaseModel):
     @field_validator("elements")
     @classmethod
     def validate_elements(cls, value: list[str]) -> list[str]:
-        """Ensure element IDs reference REQ/FLOW/INV/DEC identifiers.
+        """Ensure element IDs reference DTL/CON/ANL/OVW identifiers.
 
         Args:
             value: List[str] of element IDs.
@@ -79,13 +79,13 @@ class TaskCoversSchema(BaseModel):
             ValueError: When an element ID does not match the expected pattern.
 
         Example:
-            TaskCoversSchema(elements=["REQ-LIB-0001-0001"])
+            TaskCoversSchema(elements=["DTL-LIB-0001-0001"])
         """
         for element_id in value:
             if not ELEMENT_ID_RE.fullmatch(element_id):
                 raise ValueError(
-                    "element IDs must match REQ-LIB-####-####, FLOW-LIB-####-##, "
-                    "INV-LIB-####-####, or DEC-LIB-####-####"
+                    "element IDs must match DTL-LIB-####-####, CON-LIB-####-####, "
+                    "ANL-LIB-####-####, or OVW-LIB-####-####"
                 )
         return value
 
@@ -114,7 +114,7 @@ class TaskCoversSchema(BaseModel):
     @field_validator("decisions")
     @classmethod
     def validate_decisions(cls, value: list[str]) -> list[str]:
-        """Ensure decision IDs match DEC-LIB-####-#### format.
+        """Ensure decision IDs match ANL-LIB-####-#### format.
 
         Args:
             value: List[str] of decision IDs.
@@ -126,11 +126,11 @@ class TaskCoversSchema(BaseModel):
             ValueError: When a decision ID does not match the expected format.
 
         Example:
-            TaskCoversSchema(decisions=["DEC-LIB-0001-0001"])
+            TaskCoversSchema(decisions=["ANL-LIB-0001-0001"])
         """
         for decision_id in value:
             if not DECISION_ID_RE.fullmatch(decision_id):
-                raise ValueError("decision IDs must match DEC-LIB-####-####")
+                raise ValueError("decision IDs must match ANL-LIB-####-####")
         return value
 
     @field_validator("gaps")
@@ -182,12 +182,12 @@ class TaskSchema(BaseModel):
             priority="p1",
             component="spec_manager",
             libraries=["LIB-0001"],
-            covers=TaskCoversSchema(elements=["REQ-LIB-0001-0001"]),
+            covers=TaskCoversSchema(elements=["DTL-LIB-0001-0001"]),
             acceptance_criteria=["Tests cover task schemas."],
             suggested_files=["scripts/spec_manager/spec_manager/schemas/tasks.py"],
             risk_notes="Coordinate with consumers of task.json outputs.",
             validation_notes="Run schema validation on sample tasks.",
-            citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+            citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             depends_on=["TASK-0002"],
         )
     """
@@ -321,7 +321,7 @@ class TaskSchema(BaseModel):
                 libraries=["LIB-0001"],
                 covers=TaskCoversSchema(),
                 acceptance_criteria=["Criterion"],
-                citations=["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                citations=["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             )
         """
         for pointer in value:
@@ -1247,7 +1247,7 @@ def validate_element_coverage(
         Tuple[bool, list[str]] indicating success and any error messages.
 
     Example:
-        is_valid, errors = validate_element_coverage(tasks, {"REQ-LIB-0001-0001"})
+        is_valid, errors = validate_element_coverage(tasks, {"DTL-LIB-0001-0001"})
     """
     covered: set[str] = set()
     for task in tasks:
@@ -1307,7 +1307,7 @@ def validate_decision_gap_coverage(
     Example:
         is_valid, errors = validate_decision_gap_coverage(
             tasks,
-            {"DEC-LIB-0001-0001"},
+            {"ANL-LIB-0001-0001"},
             {"GAP-FOUNDATION"},
         )
     """

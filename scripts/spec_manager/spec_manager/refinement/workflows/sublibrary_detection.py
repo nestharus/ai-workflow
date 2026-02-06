@@ -658,14 +658,13 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
     charter_content = charter_path.read_text(encoding="utf-8")
     spec_path = _initialize_spec(sub_lib_dir, charter_content, lib_id)
 
-    sources = _read_evidence_sources(sub_lib_dir)
-    evidence_map = _normalize_evidence_sources(sources)
-    if not evidence_map:
-        return
-
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
+    sources = _read_evidence_sources(sub_lib_dir)
+    evidence_map = _normalize_evidence_sources(sources, file_id_lookup=file_id_lookup)
+    if not evidence_map:
+        return
     section_alias_map = build_section_alias_map(manager.state.section_manifest)
 
     existing_gaps = _read_sublibrary_gaps(sub_lib_dir)

@@ -1,0 +1,225 @@
+# Collatz Extended Sequence Specification
+# A complex test case with branching rules (10 rules) for evaluating refinement.
+
+spec_id: collatz_extended
+title: Collatz Extended Sequence
+description: |
+  Compute the extended Collatz sequence with stopping time analysis, orbit
+  computation, and convergence tracking. This specification includes branching
+  logic, iteration counting, and statistical properties.
+
+complexity_score: 7
+tags:
+  - sequence
+  - collatz
+  - branching
+  - convergence
+  - complex
+
+sections:
+  OVERVIEW: |
+    The Collatz conjecture states that starting from any positive integer,
+    repeatedly applying the Collatz function will eventually reach 1.
+    This extended specification includes orbit tracking, stopping time
+    analysis, and maximum value computation.
+
+  MATHEMATICAL_DEFINITION: |
+    The Collatz function C(n) is defined as:
+    - C(n) = n/2 if n is even
+    - C(n) = 3n + 1 if n is odd
+
+    The Collatz sequence for starting value s is: s, C(s), C(C(s)), ...
+    The sequence terminates when it reaches 1.
+
+  BASE_CASES: |
+    C(1) = 4 (applying 3*1 + 1)
+    The sequence 1 → 4 → 2 → 1 forms a cycle.
+    Stopping condition: n = 1
+
+  BRANCHING_RULES: |
+    Branch on parity:
+    - If n mod 2 = 0: divide by 2
+    - If n mod 2 = 1: multiply by 3 and add 1
+
+  STOPPING_TIME: |
+    The stopping time σ(n) is the number of iterations needed to reach 1.
+    σ(1) = 0
+    σ(2) = 1
+    σ(n) = 1 + σ(C(n)) for n > 1
+
+  ORBIT_PROPERTIES: |
+    - Maximum value: max value reached in the orbit
+    - Orbit length: total number of steps
+    - Even steps: count of divisions by 2
+    - Odd steps: count of 3n+1 operations
+
+  EXAMPLES: |
+    Starting from n=6:
+    6 → 3 → 10 → 5 → 16 → 8 → 4 → 2 → 1
+    Stopping time: 8
+    Maximum value: 16
+
+    Starting from n=27:
+    Stopping time: 111
+    Maximum value: 9232
+
+  CONVERGENCE_GUARANTEE: |
+    The Collatz conjecture (unproven) states that all positive integers
+    eventually reach 1. For practical purposes, we assume convergence
+    and set a maximum iteration limit.
+
+  ERROR_HANDLING: |
+    - Input must be a positive integer (n > 0)
+    - Maximum iterations limit to prevent infinite loops
+    - Overflow detection for large intermediate values
+
+  STATISTICAL_PROPERTIES: |
+    - Average stopping time grows approximately as 6.95 * log2(n)
+    - Distribution of stopping times follows specific patterns
+    - Delay records: values with unusually long stopping times
+
+rules:
+  - rule_id: RULE-001
+    rule_type: base
+    description: Input must be a positive integer.
+    formal_expression: n > 0, n ∈ ℤ+
+    dependencies: []
+    examples: []
+
+  - rule_id: RULE-002
+    rule_type: base
+    description: The stopping condition is when n equals 1.
+    formal_expression: STOP when n = 1
+    dependencies: []
+    examples:
+      - [1, 1]
+
+  - rule_id: RULE-003
+    rule_type: recurrence
+    description: If n is even, divide by 2.
+    formal_expression: C(n) = n/2 when n mod 2 = 0
+    dependencies:
+      - RULE-001
+    examples:
+      - [4, 2]
+      - [10, 5]
+      - [16, 8]
+
+  - rule_id: RULE-004
+    rule_type: recurrence
+    description: If n is odd, multiply by 3 and add 1.
+    formal_expression: C(n) = 3n + 1 when n mod 2 = 1
+    dependencies:
+      - RULE-001
+    examples:
+      - [3, 10]
+      - [5, 16]
+      - [7, 22]
+
+  - rule_id: RULE-005
+    rule_type: constraint
+    description: Maximum iteration limit to prevent infinite loops.
+    formal_expression: iterations ≤ MAX_ITER
+    dependencies:
+      - RULE-003
+      - RULE-004
+    examples: []
+
+  - rule_id: RULE-006
+    rule_type: constraint
+    description: Overflow detection for intermediate values.
+    formal_expression: C(n) ≤ MAX_INT
+    dependencies:
+      - RULE-004
+    examples: []
+
+  - rule_id: RULE-007
+    rule_type: boundary
+    description: Stopping time counts iterations until reaching 1.
+    formal_expression: "σ(n) = min{k : C^k(n) = 1}"
+    dependencies:
+      - RULE-002
+      - RULE-003
+      - RULE-004
+    examples:
+      - [6, 8]
+      - [7, 16]
+
+  - rule_id: RULE-008
+    rule_type: boundary
+    description: Track maximum value in the orbit.
+    formal_expression: "max_val(n) = max{C^k(n) : 0 ≤ k ≤ σ(n)}"
+    dependencies:
+      - RULE-007
+    examples:
+      - [6, 16]
+      - [27, 9232]
+
+  - rule_id: RULE-009
+    rule_type: constraint
+    description: Count even steps (divisions) in the orbit.
+    formal_expression: "even_steps(n) = |{k : C^k(n) mod 2 = 0}|"
+    dependencies:
+      - RULE-003
+      - RULE-007
+    examples: []
+
+  - rule_id: RULE-010
+    rule_type: constraint
+    description: Count odd steps (3n+1 operations) in the orbit.
+    formal_expression: "odd_steps(n) = |{k : C^k(n) mod 2 = 1}|"
+    dependencies:
+      - RULE-004
+      - RULE-007
+    examples: []
+
+ground_truth:
+  sectionization:
+    expected_sections:
+      - OVERVIEW
+      - MATHEMATICAL_DEFINITION
+      - BASE_CASES
+      - BRANCHING_RULES
+      - STOPPING_TIME
+      - ORBIT_PROPERTIES
+      - EXAMPLES
+      - CONVERGENCE_GUARANTEE
+      - ERROR_HANDLING
+      - STATISTICAL_PROPERTIES
+
+  summarization:
+    expected_libraries:
+      - CollatzComputation
+      - OrbitAnalysis
+
+  library_synthesis:
+    expected_libraries: []
+    expected_requirements:
+      - Positive integer input validation
+      - Stopping condition at n=1
+      - Even branch division by 2
+      - Odd branch 3n+1 operation
+      - Iteration limit constraint
+      - Overflow detection
+      - Stopping time computation
+      - Maximum value tracking
+      - Even steps counter
+      - Odd steps counter
+
+  spec_building:
+    expected_requirements:
+      - Input validation for positive integers
+      - Stopping condition detection
+      - Even number branch handler
+      - Odd number branch handler
+      - Maximum iteration enforcement
+      - Numeric overflow protection
+      - Stopping time calculator
+      - Peak value tracker
+      - Even operation counter
+      - Odd operation counter
+    expected_elements: []
+
+  overall_requirements_count: 10
+  overall_elements_count: 10
+  convergence_iterations_max: 8

@@ -61,9 +61,11 @@ _SCHEMA_TYPES = (
     Gap,
 )
 _NOW = datetime.now
-_ELEMENT_ID_RE = re.compile(r"(?:REQ-LIB-\d{4}-\d{4}|FLOW-LIB-\d{4}-\d{2}|INV-LIB-\d{4}-\d{4})")
+_ELEMENT_ID_RE = re.compile(
+    r"(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})"
+)
 _EDGE_ID_RE = re.compile(r"EDGE-LIB-\d{4}-LIB-\d{4}")
-_DECISION_ID_RE = re.compile(r"DEC-LIB-\d{4}-\d{4}")
+_DECISION_ID_RE = re.compile(r"ANL-LIB-\d{4}-\d{4}")
 _GAP_ID_RE = re.compile(r"GAP-[A-Z_]+")
 _TASK_ID_FRAGMENT_RE = re.compile(r"TASK-\d{4}")
 
@@ -783,10 +785,10 @@ def _build_task_plan_prompt(planning_context: dict[str, Any]) -> str:
         "REQUIRED SCHEMA:",
         '{"tasks": [{"title": "...", "description": "...", "priority": "p0|p1|p2", '
         '"component": "...", "libraries": ["LIB-####"], '
-        '"covers": {"elements": ["REQ-LIB-####-####"], "edges": ["EDGE-LIB-####-LIB-####"], '
-        '"decisions": ["DEC-LIB-####-####"], "gaps": ["GAP-..."]}, '
+        '"covers": {"elements": ["DTL-LIB-####-####"], "edges": ["EDGE-LIB-####-LIB-####"], '
+        '"decisions": ["ANL-LIB-####-####"], "gaps": ["GAP-..."]}, '
         '"acceptance_criteria": ["..."], "suggested_files": ["..."], '
-        '"risk_notes": "...", "validation_notes": "...", "citations": ["[LIB-####::spec.md::REQ-LIB-####-####]"], '  # noqa: E501
+        '"risk_notes": "...", "validation_notes": "...", "citations": ["[LIB-####::spec.md::DTL-LIB-####-####]"], '  # noqa: E501
         '"depends_on": ["Task title"]}]}',
         "",
         "REQUIRED RULES:",
@@ -845,10 +847,10 @@ def _build_task_plan_judge_prompt(
         "Option A (full repaired plan):",
         '{"tasks": [{"task_id": "TASK-0001", "title": "...", "description": "...", '
         '"priority": "p0|p1|p2", "component": "...", "libraries": ["LIB-####"], '
-        '"covers": {"elements": ["REQ-LIB-####-####"], "edges": ["EDGE-LIB-####-LIB-####"], '
-        '"decisions": ["DEC-LIB-####-####"], "gaps": ["GAP-..."]}, '
+        '"covers": {"elements": ["DTL-LIB-####-####"], "edges": ["EDGE-LIB-####-LIB-####"], '
+        '"decisions": ["ANL-LIB-####-####"], "gaps": ["GAP-..."]}, '
         '"acceptance_criteria": ["..."], "suggested_files": ["..."], '
-        '"risk_notes": "...", "validation_notes": "...", "citations": ["[LIB-####::spec.md::REQ-LIB-####-####]"], '  # noqa: E501
+        '"risk_notes": "...", "validation_notes": "...", "citations": ["[LIB-####::spec.md::DTL-LIB-####-####]"], '  # noqa: E501
         '"depends_on": ["TASK-####"]}]}',
         "",
         "Option B (delta plan):",

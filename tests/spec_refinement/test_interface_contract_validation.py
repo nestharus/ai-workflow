@@ -22,10 +22,10 @@ def _make_valid_edge() -> EdgeSchema:
         "consumer_lib": "LIB-0001",
         "provider_lib": "LIB-0002",
         "kind": "api",
-        "consumer_elements": ["REQ-LIB-0001-0001"],
-        "provider_elements": ["REQ-LIB-0002-0001"],
+        "consumer_elements": ["DTL-LIB-0001-0001"],
+        "provider_elements": ["DTL-LIB-0002-0001"],
         "summary": "Consumer uses provider API.",
-        "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
     }
     return EdgeSchema.model_validate(payload)
 
@@ -40,20 +40,20 @@ def _make_valid_contract() -> InterfaceContractSchema:
             {
                 "name": "Primary API",
                 "type": "http",
-                "requirements": ["REQ-LIB-0002-0001"],
+                "requirements": ["DTL-LIB-0002-0001"],
                 "details": "Provides primary endpoint.",
                 "acceptance": ["Returns expected payload"],
-                "citations": ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"],
+                "citations": ["[LIB-0002::spec.md::DTL-LIB-0002-0001]"],
             }
         ],
         "consumed_by": [
             {
-                "consumer_requirement": "REQ-LIB-0001-0001",
+                "consumer_requirement": "DTL-LIB-0001-0001",
                 "expectations": ["Latency under 200ms"],
-                "citations": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+                "citations": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
             }
         ],
-        "open_questions": ["DEC-LIB-0001-0001"],
+        "open_questions": ["ANL-LIB-0001-0001"],
     }
     return InterfaceContractSchema.model_validate(payload)
 
@@ -86,7 +86,7 @@ def test_edge_schema_validates_element_ids() -> None:
         EdgeSchema.model_validate(payload)
 
     valid = EdgeSchema.model_validate(_make_valid_edge().model_dump())
-    assert valid.consumer_elements == ["REQ-LIB-0001-0001"]
+    assert valid.consumer_elements == ["DTL-LIB-0001-0001"]
 
 
 def test_edge_schema_validates_evidence_pointers() -> None:
@@ -95,7 +95,7 @@ def test_edge_schema_validates_evidence_pointers() -> None:
     with pytest.raises(ValidationError):
         EdgeSchema.model_validate(payload)
 
-    payload["evidence"] = ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"]
+    payload["evidence"] = ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"]
     edge = EdgeSchema.model_validate(payload)
     assert edge.evidence
 
@@ -121,8 +121,8 @@ def test_validate_edge_references_checks_library_existence() -> None:
     edge = _make_valid_edge()
     element_lookup = _make_element_lookup(
         {
-            "LIB-0001": ["REQ-LIB-0001-0001"],
-            "LIB-0002": ["REQ-LIB-0002-0001"],
+            "LIB-0001": ["DTL-LIB-0001-0001"],
+            "LIB-0002": ["DTL-LIB-0002-0001"],
         }
     )
     is_valid, errors = validate_edge_references(
@@ -139,7 +139,7 @@ def test_validate_edge_references_checks_element_existence() -> None:
     element_lookup = _make_element_lookup(
         {
             "LIB-0001": [],
-            "LIB-0002": ["REQ-LIB-0002-0001"],
+            "LIB-0002": ["DTL-LIB-0002-0001"],
         }
     )
     is_valid, errors = validate_edge_references(
@@ -179,7 +179,7 @@ def test_contract_schema_validates_citations() -> None:
         InterfaceContractSchema.model_validate(payload)
 
     payload = _make_valid_contract().model_dump()
-    payload["provided"][0]["citations"] = ["[LIB-0002::spec.md::REQ-LIB-0002-0001]"]
+    payload["provided"][0]["citations"] = ["[LIB-0002::spec.md::DTL-LIB-0002-0001]"]
     contract = InterfaceContractSchema.model_validate(payload)
     assert contract.provided[0].citations
 
@@ -190,7 +190,7 @@ def test_validate_contract_references_checks_requirements() -> None:
         contract,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"REQ-LIB-0001-0001", "DEC-LIB-0001-0001"},
+            "LIB-0001": {"DTL-LIB-0001-0001", "ANL-LIB-0001-0001"},
             "LIB-0002": set(),
         },
     )
@@ -205,8 +205,8 @@ def test_validate_contract_completeness_requires_provided() -> None:
         contract,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"elements": [{"element_id": "REQ-LIB-0001-0001"}]},
-            "LIB-0002": {"elements": [{"element_id": "REQ-LIB-0002-0001"}]},
+            "LIB-0001": {"elements": [{"element_id": "DTL-LIB-0001-0001"}]},
+            "LIB-0002": {"elements": [{"element_id": "DTL-LIB-0002-0001"}]},
         },
     )
     assert any("At least one provided interface" in error["message"] for error in errors)
@@ -219,8 +219,8 @@ def test_validate_contract_completeness_requires_consumed_by() -> None:
         contract,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"elements": [{"element_id": "REQ-LIB-0001-0001"}]},
-            "LIB-0002": {"elements": [{"element_id": "REQ-LIB-0002-0001"}]},
+            "LIB-0001": {"elements": [{"element_id": "DTL-LIB-0001-0001"}]},
+            "LIB-0002": {"elements": [{"element_id": "DTL-LIB-0002-0001"}]},
         },
     )
     assert any("At least one consumer entry" in error["message"] for error in errors)
@@ -228,7 +228,7 @@ def test_validate_contract_completeness_requires_consumed_by() -> None:
 
 def test_multi_hop_pointer_validation_allows_library_references() -> None:
     payload = _make_valid_edge().model_dump()
-    payload["evidence"] = ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"]
+    payload["evidence"] = ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"]
     edge = EdgeSchema.model_validate(payload)
     assert edge.evidence
 

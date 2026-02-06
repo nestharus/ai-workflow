@@ -18,7 +18,9 @@ from spec_manager.refinement.formats import (
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
+    fix_cross_file_section_pointers,
     strip_invalid_file_pointers,
+    strip_invalid_section_pointers,
 )
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
@@ -163,7 +165,6 @@ def _validate_evidence_pointers(
                     "type": "unknown_section_reference",
                     "file_id": file_id,
                     "pointer": match.group(0),
-                    "blocker": True,
                     "message": (
                         f"Unknown section reference: {section_ref} (file: {resolved_file_id})"
                     ),
@@ -244,7 +245,11 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
         return {"file_id": file_id, "error": f"Agent execution failed: {exc}"}
 
     output = normalize_compound_pointers(output)
+    output = fix_cross_file_section_pointers(output, manager.state.file_manifest)
     output = strip_invalid_file_pointers(output, manager.state.file_manifest)
+    output = strip_invalid_section_pointers(
+        output, manager.state.file_manifest, manager.read_file_sections
+    )
 
     summary_path = manager.structure.summaries_dir / f"{file_id}.what.md"
     summary_path.write_text(output, encoding="utf-8")

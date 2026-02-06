@@ -20,25 +20,25 @@ def _element_dict(
     lib_id: str,
     index: int,
     *,
-    kind: str = "requirement",
+    kind: str = "detail",
     text: str = "alpha",
     element_id: str | None = None,
 ) -> dict[str, object]:
     lib_suffix = lib_id.split("-", 1)[1]
     if element_id is None:
-        if kind == "requirement":
-            element_id = f"REQ-LIB-{lib_suffix}-{index:04d}"
-        elif kind == "invariant":
-            element_id = f"INV-LIB-{lib_suffix}-{index:04d}"
-        elif kind == "flow":
-            element_id = f"FLOW-LIB-{lib_suffix}-{index:02d}"
+        if kind == "detail":
+            element_id = f"DTL-LIB-{lib_suffix}-{index:04d}"
+        elif kind == "constraint":
+            element_id = f"CON-LIB-{lib_suffix}-{index:04d}"
+        elif kind == "analysis":
+            element_id = f"ANL-LIB-{lib_suffix}-{index:04d}"
         else:
-            element_id = f"REQ-LIB-{lib_suffix}-{index:04d}"
-    section = "Requirements"
-    if kind == "flow":
-        section = "Flows"
-    elif kind == "invariant":
+            element_id = f"DTL-LIB-{lib_suffix}-{index:04d}"
+    section = "Details"
+    if kind == "constraint":
         section = "Constraints"
+    elif kind == "analysis":
+        section = "Analysis"
     return {
         "element_id": element_id,
         "kind": kind,
@@ -93,8 +93,8 @@ def test_build_tfidf_vectors_from_spec_indexes() -> None:
 
 def test_tfidf_ignores_element_ids_and_citations() -> None:
     text = (
-        "Alpha REQ-LIB-9999-9999 "
-        "[LIB-9999::spec.md::REQ-LIB-9999-9999] "
+        "Alpha DTL-LIB-9999-9999 "
+        "[LIB-9999::spec.md::DTL-LIB-9999-9999] "
         "[spec_snapshot/specs/alpha.md::SEC-F0001-0001]"
     )
     spec_indexes = {
@@ -277,37 +277,28 @@ def test_extract_matched_element_pairs() -> None:
 def test_matched_pairs_include_all_element_types() -> None:
     elements_a = [
         SpecElement.model_construct(
-            element_id="REQ-LIB-0001-0001",
-            kind="requirement",
-            section="Requirements",
-            text="alpha req",
+            element_id="DTL-LIB-0001-0001",
+            kind="detail",
+            section="Details",
+            text="alpha detail",
             raw_line="",
             citations=[],
             mentions_libs=[],
         ),
         SpecElement.model_construct(
-            element_id="INV-LIB-0001-0001",
-            kind="invariant",
+            element_id="CON-LIB-0001-0001",
+            kind="constraint",
             section="Constraints",
-            text="beta inv",
+            text="beta constraint",
             raw_line="",
             citations=[],
             mentions_libs=[],
         ),
         SpecElement.model_construct(
-            element_id="FLOW-LIB-0001-01",
-            kind="flow",
-            section="Flows",
-            text="gamma flow",
-            raw_line="",
-            citations=[],
-            mentions_libs=[],
-        ),
-        SpecElement.model_construct(
-            element_id="DEC-LIB-0001-0001",
-            kind="decision",
-            section="Decisions",
-            text="delta decision",
+            element_id="ANL-LIB-0001-0001",
+            kind="analysis",
+            section="Analysis",
+            text="gamma analysis",
             raw_line="",
             citations=[],
             mentions_libs=[],
@@ -315,37 +306,28 @@ def test_matched_pairs_include_all_element_types() -> None:
     ]
     elements_b = [
         SpecElement.model_construct(
-            element_id="REQ-LIB-0002-0001",
-            kind="requirement",
-            section="Requirements",
-            text="alpha req",
+            element_id="DTL-LIB-0002-0001",
+            kind="detail",
+            section="Details",
+            text="alpha detail",
             raw_line="",
             citations=[],
             mentions_libs=[],
         ),
         SpecElement.model_construct(
-            element_id="INV-LIB-0002-0001",
-            kind="invariant",
+            element_id="CON-LIB-0002-0001",
+            kind="constraint",
             section="Constraints",
-            text="beta inv",
+            text="beta constraint",
             raw_line="",
             citations=[],
             mentions_libs=[],
         ),
         SpecElement.model_construct(
-            element_id="FLOW-LIB-0002-01",
-            kind="flow",
-            section="Flows",
-            text="gamma flow",
-            raw_line="",
-            citations=[],
-            mentions_libs=[],
-        ),
-        SpecElement.model_construct(
-            element_id="DEC-LIB-0002-0001",
-            kind="decision",
-            section="Decisions",
-            text="delta decision",
+            element_id="ANL-LIB-0002-0001",
+            kind="analysis",
+            section="Analysis",
+            text="gamma analysis",
             raw_line="",
             citations=[],
             mentions_libs=[],
@@ -369,7 +351,7 @@ def test_matched_pairs_include_all_element_types() -> None:
     pairs = _extract_matched_element_pairs(spec_a, spec_b, vectorizer, top_n=10)
 
     prefixes = {pair["element_a_id"].split("-", 1)[0] for pair in pairs}
-    assert {"REQ", "INV", "FLOW", "DEC"}.issubset(prefixes)
+    assert {"DTL", "CON", "ANL"}.issubset(prefixes)
 
 
 def test_detect_overlap_candidates_above_threshold(spec_refinement_workspace) -> None:

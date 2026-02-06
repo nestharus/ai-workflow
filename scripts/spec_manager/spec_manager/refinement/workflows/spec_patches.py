@@ -23,15 +23,22 @@ from spec_manager.refinement.validation_utils import (
 from .spec_stabilization import extract_existing_id
 
 VALID_SPEC_SECTIONS = [
-    "Intent",
-    "Boundaries",
-    "Requirements",
+    "Analysis",
     "Constraints",
-    "Dependencies",
-    "Decisions Needed",
+    "Overview",
+    "Details",
 ]
 
-CITATION_REQUIRED_SECTIONS = {"Boundaries", "Requirements", "Constraints", "Dependencies"}
+LEGACY_SECTION_MAP: dict[str, str] = {
+    "Intent": "Overview",
+    "Boundaries": "Overview",
+    "Requirements": "Details",
+    "Dependencies": "Details",
+    "Decisions Needed": "Analysis",
+    "Flows": "Details",
+}
+
+CITATION_REQUIRED_SECTIONS = {"Overview", "Details", "Constraints"}
 
 
 @dataclass
@@ -61,14 +68,28 @@ class SpecDocument:
     def __init__(self, content: str) -> None:
         """Initialize a parsed spec document.
 
+        Normalizes legacy section names (Intent, Boundaries, Requirements,
+        Dependencies, Decisions Needed, Flows) to PDD sections (Analysis,
+        Constraints, Overview, Details) on parse.
+
         Args:
             content: The full spec document content as markdown.
         """
         from . import spec_building
 
         sections = spec_building._extract_sections(content, level=2)
-        self.section_order = list(sections.keys())
-        self.section_lines = {name: self._split_lines(text) for name, text in sections.items()}
+        normalized: dict[str, str] = {}
+        for name, text in sections.items():
+            target = LEGACY_SECTION_MAP.get(name, name)
+            if target in normalized:
+                existing = normalized[target]
+                normalized[target] = f"{existing}\n{text}" if existing else text
+            else:
+                normalized[target] = text
+        self.section_order = list(
+            dict.fromkeys(LEGACY_SECTION_MAP.get(name, name) for name in sections)
+        )
+        self.section_lines = {name: self._split_lines(text) for name, text in normalized.items()}
 
     def get_lines(self, section: str) -> list[str]:
         """Return all lines for a given section, or empty list if section doesn't exist."""
@@ -93,8 +114,17 @@ class SpecDocument:
         return [line.rstrip() for line in text.splitlines()]
 
 
+def _normalize_section_name(name: str) -> str:
+    """Map legacy section names to PDD equivalents."""
+    return LEGACY_SECTION_MAP.get(name, name)
+
+
 def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> list[str]:
     """Validate a patch operation.
+
+    Accepts both legacy (Intent, Requirements, ...) and PDD (Analysis,
+    Overview, Details, Constraints) section names; legacy names are
+    silently normalized.
 
     Args:
         op: The patch operation to validate.
@@ -106,6 +136,8 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
     errors: list[str] = []
     if op.op not in {"add", "move", "edit"}:
         errors.append(f"Invalid op '{op.op}'.")
+    # Normalize legacy section names before validation
+    op.section = _normalize_section_name(op.section)
     if op.section not in valid_sections:
         errors.append(f"Invalid section '{op.section}'.")
     if op.bullet_index is not None and op.bullet_index < 0:
@@ -115,8 +147,11 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
     if op.op == "move":
         if op.source_section is None:
             errors.append("move operations require source_section.")
+        else:
+            op.source_section = _normalize_section_name(op.source_section)
         if op.bullet_index is None:
-            errors.append("move operations require bullet_index.")
+            # Degrade to add operation - LLM omitted which bullet to move
+            op.op = "add"  # type: ignore[assignment]
         if op.source_section is not None and op.source_section not in valid_sections:
             errors.append(f"Invalid source_section '{op.source_section}'.")
     content_stripped = op.content.strip()
@@ -197,7 +232,7 @@ def parse_patch_json(json_str: str, evidence: list[dict[str, Any]] | None = None
 def apply_patch(spec_doc: SpecDocument, operation: PatchOperation) -> None:
     """Apply a patch operation to a spec document.
 
-    Preserves existing element IDs (REQ-/FLOW-/INV-/DEC-) when editing or moving bullets.
+    Preserves existing element IDs (DTL-/CON-/ANL-/OVW-) when editing or moving bullets.
 
     Args:
         spec_doc: The spec document to modify.

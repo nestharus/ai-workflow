@@ -25,10 +25,10 @@ def _create_edge(
         "consumer_lib": consumer_lib,
         "provider_lib": provider_lib,
         "kind": "api",
-        "consumer_elements": ["REQ-LIB-0001-0001"],
-        "provider_elements": ["INV-LIB-0002-0001"],
+        "consumer_elements": ["DTL-LIB-0001-0001"],
+        "provider_elements": ["CON-LIB-0002-0001"],
         "summary": "Consumer depends on provider API.",
-        "evidence": ["[LIB-0001::spec.md::REQ-LIB-0001-0001]"],
+        "evidence": ["[LIB-0001::spec.md::DTL-LIB-0001-0001]"],
     }
 
 
@@ -120,8 +120,8 @@ def test_validate_edge_references_valid() -> None:
         edge,
         {"LIB-0001", "LIB-0002"},
         {
-            "LIB-0001": {"REQ-LIB-0001-0001"},
-            "LIB-0002": {"INV-LIB-0002-0001"},
+            "LIB-0001": {"DTL-LIB-0001-0001"},
+            "LIB-0002": {"CON-LIB-0002-0001"},
         },
     )
     assert is_valid is True
@@ -134,8 +134,8 @@ def test_validate_edge_references_missing_consumer_lib() -> None:
         edge,
         {"LIB-0002"},
         {
-            "LIB-0001": {"REQ-LIB-0001-0001"},
-            "LIB-0002": {"INV-LIB-0002-0001"},
+            "LIB-0001": {"DTL-LIB-0001-0001"},
+            "LIB-0002": {"CON-LIB-0002-0001"},
         },
     )
     assert is_valid is False
@@ -148,8 +148,8 @@ def test_validate_edge_references_missing_provider_lib() -> None:
         edge,
         {"LIB-0001"},
         {
-            "LIB-0001": {"REQ-LIB-0001-0001"},
-            "LIB-0002": {"INV-LIB-0002-0001"},
+            "LIB-0001": {"DTL-LIB-0001-0001"},
+            "LIB-0002": {"CON-LIB-0002-0001"},
         },
     )
     assert is_valid is False
@@ -161,7 +161,7 @@ def test_validate_edge_references_missing_consumer_elements() -> None:
     is_valid, errors = validate_edge_references(
         edge,
         {"LIB-0001", "LIB-0002"},
-        {"LIB-0001": set(), "LIB-0002": {"INV-LIB-0002-0001"}},
+        {"LIB-0001": set(), "LIB-0002": {"CON-LIB-0002-0001"}},
     )
     assert is_valid is False
     assert any("Missing consumer elements" in error for error in errors)
@@ -172,7 +172,7 @@ def test_validate_edge_references_missing_provider_elements() -> None:
     is_valid, errors = validate_edge_references(
         edge,
         {"LIB-0001", "LIB-0002"},
-        {"LIB-0001": {"REQ-LIB-0001-0001"}, "LIB-0002": set()},
+        {"LIB-0001": {"DTL-LIB-0001-0001"}, "LIB-0002": set()},
     )
     assert is_valid is False
     assert any("Missing provider elements" in error for error in errors)
