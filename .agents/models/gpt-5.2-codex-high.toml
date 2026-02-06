@@ -1,3 +1,0 @@
-command = "opencode"
-args = ["run", "-m", "openai/gpt-5.3-codex", "--variant", "high"]
-prompt_mode = "arg"

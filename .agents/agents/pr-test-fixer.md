@@ -58,21 +58,21 @@ If all tests pass, return success immediately.
 
 Analyze the pytest output to classify severity. **The classified severity determines the model used for the fix.**
 
-**LOW Severity** - Routes to Codex Medium (`gpt-5.2-codex-medium`):
+**LOW Severity** - Routes to Codex Medium (`gpt-5.3-codex-medium`):
 - `AssertionError` with simple value mismatch (expected X, got Y)
 - `ImportError` with clear missing import statement
 - `NameError` with obvious typo (undefined variable)
 - Single test function failing
 - Error message directly points to the fix
 
-**MEDIUM Severity** - Routes to Codex High (`gpt-5.2-codex-high`):
+**MEDIUM Severity** - Routes to Codex High (`gpt-5.3-codex-high`):
 - Multiple `AssertionError` failures in the same test
 - `TypeError` (wrong argument types, missing arguments)
 - `AttributeError` (missing method or property)
 - 2-3 test functions failing with related issues
 - Requires understanding data flow to fix
 
-**HIGH Severity** - Routes to Codex XHigh (`gpt-5.2-codex-xhigh`):
+**HIGH Severity** - Routes to Codex XHigh (`gpt-5.3-codex-xhigh`):
 - Failures across multiple test functions (4+)
 - Complex fixture issues (`fixture not found`, setup/teardown failures)
 - Integration test failures involving multiple components

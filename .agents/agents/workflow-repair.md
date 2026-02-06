@@ -159,7 +159,7 @@ If still failing:
   "status": "failed",
   "step": "reviewer",
   "attempts": 3,
-  "diagnosis": "Agent configuration references a missing model: gpt-5.2-codex-xhigh",
+  "diagnosis": "Agent configuration references a missing model: gpt-5.3-codex-xhigh",
   "recommendation": "Add the model file in .agents/models/ or update the agent frontmatter to a valid model"
 }
 ```
@@ -188,7 +188,7 @@ json.dumps({"plan_file": plan_file})
 
 **Error:**
 ```
-Error: Model not found: gpt-5.2-codex-xhigh
+Error: Model not found: gpt-5.3-codex-xhigh
 ```
 
 **Investigation:**
@@ -199,7 +199,7 @@ Either add the missing model config or update the agent to a valid model:
 ```markdown
 ---
 description: Implements a single plan from a plan file
-model: gpt-5.2-codex-high
+model: gpt-5.3-codex-high
 ---
 ```
 

@@ -1,6 +1,6 @@
 ---
 description: Implements a single plan from a plan file
-model: gpt-5.2-codex-xhigh
+model: gpt-5.3-codex-xhigh
 ---
 
 # Implementor Agent
