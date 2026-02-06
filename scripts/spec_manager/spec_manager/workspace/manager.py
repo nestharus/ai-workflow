@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.project_root import resolve_from_root
+
 from .state import Phase, PhaseStatus, WorkspaceState
 
 
@@ -189,7 +191,7 @@ class WorkspaceManager:
 
     def _run_intermediates_dir(self) -> Path:
         run_id = self._ensure_run_id()
-        intermediates_dir = Path("runs") / run_id / "workspace" / "intermediates"
+        intermediates_dir = resolve_from_root("runs", run_id, "workspace", "intermediates")
         intermediates_dir.mkdir(parents=True, exist_ok=True)
         return intermediates_dir
 

@@ -6,18 +6,20 @@ tracking metrics, detecting loops, and generating reports.
 
 from __future__ import annotations
 
+import contextlib
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from spec_manager.core.project_root import resolve_from_root
+from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.checkpoint import CheckpointManager, EvalCheckpoint
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceSpec, load_sequence_spec
 from spec_manager.refinement.evals.logger import EvalLogger
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
 from spec_manager.refinement.evals.metrics import (
-    ConvergenceAnalysis,
     DetailCaptureMetrics,
     PhaseMetrics,
     analyze_convergence,
@@ -44,8 +46,10 @@ class EvalConfig:
     """
 
     spec_ids: list[str] | None = None
-    checkpoint_dir: Path = field(default_factory=lambda: Path("runs/evals/checkpoints"))
-    output_dir: Path = field(default_factory=lambda: Path("runs/evals/reports"))
+    checkpoint_dir: Path = field(
+        default_factory=lambda: resolve_from_root("runs", "evals", "checkpoints")
+    )
+    output_dir: Path = field(default_factory=lambda: resolve_from_root("runs", "evals", "reports"))
     max_iterations_per_phase: int = 10
     stagnation_threshold: int = 3
     convergence_threshold: float = 0.95
@@ -139,8 +143,8 @@ class EvalRunner:
         """
         self.config = config
         self.checkpoint_manager = CheckpointManager(config.checkpoint_dir)
-        self.fixtures_dir = fixtures_dir or Path(
-            "scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures"
+        self.fixtures_dir = fixtures_dir or resolve_from_root(
+            "scripts", "spec_manager", "spec_manager", "refinement", "evals", "inputs", "fixtures"
         )
 
     def run(self) -> EvalReport:
@@ -283,10 +287,9 @@ class EvalRunner:
         finally:
             # Clean up workspace integration if using real workflows
             if state.workspace_integration is not None:
-                try:
+                with contextlib.suppress(Exception):
                     state.workspace_integration.cleanup()
-                except Exception:
-                    pass  # Best effort cleanup
+                # Best effort cleanup
 
         # Finalize
         result.total_duration_ms = (time.perf_counter() - start_time) * 1000
@@ -353,10 +356,9 @@ class EvalRunner:
         finally:
             # Clean up workspace integration if using real workflows
             if state.workspace_integration is not None:
-                try:
+                with contextlib.suppress(Exception):
                     state.workspace_integration.cleanup()
-                except Exception:
-                    pass  # Best effort cleanup
+                # Best effort cleanup
 
         result.total_duration_ms = (time.perf_counter() - start_time) * 1000
         result.detail_metrics = state.detail_metrics
@@ -403,7 +405,9 @@ class EvalRunner:
 
         # Phase execution with convergence tracking
         actual_items: list[str] = []
-        score = score_detail_capture(expected_items, [], fuzzy_threshold=self.config.fuzzy_match_threshold)
+        score = score_detail_capture(
+            expected_items, [], fuzzy_threshold=self.config.fuzzy_match_threshold
+        )
 
         for iteration in range(1, self.config.max_iterations_per_phase + 1):
             state.iteration = iteration
@@ -668,7 +672,7 @@ class EvalRunner:
 
     def _get_expected_items_for_phase(
         self,
-        ground_truth: Any | None,
+        ground_truth: PhaseGroundTruth | None,
         phase: str,
     ) -> list[str]:
         """Get the appropriate expected items for a phase.

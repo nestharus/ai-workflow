@@ -342,6 +342,31 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         session.exitstatus = 1
 
 
+# --- Project Root Mock for pyfakefs Tests ---
+
+
+@pytest.fixture(autouse=True)
+def _mock_project_root(monkeypatch, request):
+    """Ensure get_project_root() returns /work inside pyfakefs tests.
+
+    The real ``git rev-parse`` call does not work inside a fake filesystem.
+    This fixture patches it to return the canonical test CWD and clears the
+    lru_cache on teardown so subsequent tests start fresh.
+    """
+    if "fs" not in request.fixturenames:
+        yield
+        return
+    from spec_manager.core.project_root import get_project_root
+
+    get_project_root.cache_clear()
+    monkeypatch.setattr(
+        "spec_manager.core.project_root.get_project_root",
+        lambda: Path("/work"),
+    )
+    yield
+    get_project_root.cache_clear()
+
+
 # --- Spec Refinement Integration Fixtures ---
 
 

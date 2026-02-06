@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from spec_manager.core.project_root import resolve_from_root
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.core.gap import Gap, format_gap_table
 from spec_manager.refinement.qa.contract_lint import run_contract_lint
@@ -55,6 +56,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     """Initialize run-scoped workspace."""
     run_id = args.run_id
     input_folder = Path(args.input_folder)
+    if not input_folder.is_absolute():
+        input_folder = resolve_from_root(args.input_folder)
 
     if not input_folder.exists():
         print(f"Input folder does not exist: {input_folder}")
@@ -1547,10 +1550,16 @@ def cmd_qa_run_all(args: argparse.Namespace) -> int:
 
 def cmd_qa_lint_contracts(args: argparse.Namespace) -> int:
     """Lint agent prompts and workflow contracts."""
-    output_dir = Path("runs") / args.run_id / "reports" if args.run_id is not None else Path(".tmp")
+    output_dir = (
+        resolve_from_root("runs", args.run_id, "reports")
+        if args.run_id is not None
+        else resolve_from_root(".tmp")
+    )
     issues, exit_code = run_contract_lint(
-        agents_dir=Path(".agents/agents"),
-        workflows_dir=Path("scripts/spec_manager/spec_manager/refinement/workflows"),
+        agents_dir=resolve_from_root(".agents", "agents"),
+        workflows_dir=resolve_from_root(
+            "scripts", "spec_manager", "spec_manager", "refinement", "workflows"
+        ),
         output_dir=output_dir,
     )
 

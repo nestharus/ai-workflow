@@ -18,6 +18,7 @@ from typing import Any, cast
 
 from spec_manager.core.gaps import Severity
 from spec_manager.core.id_registry import FileUidRegistry, RevisionRegistry
+from spec_manager.core.project_root import resolve_from_root
 from spec_manager.refinement.core.gap import (
     Gap,
     GapEvidence,
@@ -139,7 +140,7 @@ class RunFolderStructure:
     @property
     def registry_dir(self) -> Path:
         """Path to the workspace-global registry directory."""
-        return Path("runs") / "_registry"
+        return resolve_from_root("runs", "_registry")
 
     @property
     def file_uids_json(self) -> Path:
@@ -180,7 +181,7 @@ class WorkspaceManager:
         """Initialize the workspace structure and state after dataclass construction."""
         self.structure = RunFolderStructure(
             run_id=self.run_id,
-            root=Path("runs") / self.run_id,
+            root=resolve_from_root("runs", self.run_id),
         )
 
         state_file = self.structure.root / "state.json"

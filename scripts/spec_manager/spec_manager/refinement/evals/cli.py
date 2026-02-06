@@ -12,25 +12,30 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
 
+from spec_manager.core.project_root import resolve_from_root
 from spec_manager.refinement.evals.inputs.sequence_spec import (
     load_sequence_specs_from_dir,
 )
 from spec_manager.refinement.evals.report import (
-    EvalReport,
     generate_markdown_report,
     load_report,
-    save_report,
 )
 from spec_manager.refinement.evals.runner import EvalConfig, EvalRunner
 
 
-DEFAULT_FIXTURES_DIR = Path(
-    "scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures"
-)
-DEFAULT_OUTPUT_DIR = Path("runs/evals/reports")
-DEFAULT_CHECKPOINT_DIR = Path("runs/evals/checkpoints")
+def _default_fixtures_dir() -> Path:
+    return resolve_from_root(
+        "scripts", "spec_manager", "spec_manager", "refinement", "evals", "inputs", "fixtures"
+    )
+
+
+def _default_output_dir() -> Path:
+    return resolve_from_root("runs", "evals", "reports")
+
+
+def _default_checkpoint_dir() -> Path:
+    return resolve_from_root("runs", "evals", "checkpoints")
 
 
 def cmd_eval_run(args: argparse.Namespace) -> int:
@@ -45,8 +50,10 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
     # Build config from args
     config = EvalConfig(
         spec_ids=args.spec_ids if args.spec_ids else None,
-        checkpoint_dir=Path(args.checkpoint_dir) if args.checkpoint_dir else DEFAULT_CHECKPOINT_DIR,
-        output_dir=Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR,
+        checkpoint_dir=Path(args.checkpoint_dir)
+        if args.checkpoint_dir
+        else _default_checkpoint_dir(),
+        output_dir=Path(args.output_dir) if args.output_dir else _default_output_dir(),
         max_iterations_per_phase=args.max_iterations,
         stagnation_threshold=args.stagnation_threshold,
         convergence_threshold=args.convergence_threshold,
@@ -55,9 +62,9 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
         use_real_workflows=getattr(args, "use_real_workflows", False),
     )
 
-    fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else DEFAULT_FIXTURES_DIR
+    fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else _default_fixtures_dir()
 
-    print(f"Running evaluation with config:")
+    print("Running evaluation with config:")
     print(f"  Fixtures: {fixtures_dir}")
     print(f"  Output: {config.output_dir}")
     print(f"  Checkpoint: {config.checkpoint_dir}")
@@ -83,24 +90,24 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
     if report.aggregate_metrics:
         recall = report.aggregate_metrics.get("overall_recall", 0)
         precision = report.aggregate_metrics.get("overall_precision", 0)
-        print(f"\nAggregate metrics:")
+        print("\nAggregate metrics:")
         print(f"  Recall: {recall:.1%}")
         print(f"  Precision: {precision:.1%}")
 
     if report.common_bottlenecks:
-        print(f"\nCommon bottlenecks:")
+        print("\nCommon bottlenecks:")
         for bn in report.common_bottlenecks[:3]:
             print(f"  - {bn}")
 
     if report.recommendations:
-        print(f"\nRecommendations:")
+        print("\nRecommendations:")
         for rec in report.recommendations[:3]:
             print(f"  - {rec}")
 
     # Show report paths
     json_path = config.output_dir / f"eval_report_{report.run_id}.json"
     md_path = config.output_dir / f"eval_report_{report.run_id}.md"
-    print(f"\nReports saved:")
+    print("\nReports saved:")
     print(f"  JSON: {json_path}")
     print(f"  Markdown: {md_path}")
 
@@ -117,9 +124,9 @@ def cmd_eval_resume(args: argparse.Namespace) -> int:
         Exit code.
     """
     run_id = args.run_id
-    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else DEFAULT_CHECKPOINT_DIR
-    output_dir = Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR
-    fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else DEFAULT_FIXTURES_DIR
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else _default_checkpoint_dir()
+    output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir()
+    fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else _default_fixtures_dir()
 
     print(f"Resuming evaluation: {run_id}")
 
@@ -158,7 +165,7 @@ def cmd_eval_report(args: argparse.Namespace) -> int:
         Exit code.
     """
     run_id = args.run_id
-    output_dir = Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR
+    output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir()
     output_format = args.format
 
     # Find report file
@@ -184,6 +191,7 @@ def cmd_eval_report(args: argparse.Namespace) -> int:
 
     if output_format == "json":
         import json
+
         print(json.dumps(report.to_dict(), indent=2))
     elif output_format == "markdown":
         print(generate_markdown_report(report))
@@ -191,7 +199,10 @@ def cmd_eval_report(args: argparse.Namespace) -> int:
         # Summary format
         print(f"Run ID: {report.run_id}")
         print(f"Generated: {report.generated_at}")
-        print(f"Specs: {report.specs_evaluated} ({report.specs_passed} passed, {report.specs_failed} failed)")
+        print(
+            f"Specs: {report.specs_evaluated} "
+            f"({report.specs_passed} passed, {report.specs_failed} failed)"
+        )
 
         if report.aggregate_metrics:
             recall = report.aggregate_metrics.get("overall_recall", 0)
@@ -213,7 +224,7 @@ def cmd_eval_list(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else DEFAULT_FIXTURES_DIR
+    fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else _default_fixtures_dir()
 
     if not fixtures_dir.exists():
         print(f"Fixtures directory not found: {fixtures_dir}")
@@ -263,15 +274,15 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p_run.add_argument(
         "--fixtures-dir",
-        help=f"Directory containing spec fixtures (default: {DEFAULT_FIXTURES_DIR})",
+        help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
     p_run.add_argument(
         "--output-dir",
-        help=f"Directory for reports (default: {DEFAULT_OUTPUT_DIR})",
+        help="Directory for reports (default: <project>/runs/evals/reports)",
     )
     p_run.add_argument(
         "--checkpoint-dir",
-        help=f"Directory for checkpoints (default: {DEFAULT_CHECKPOINT_DIR})",
+        help="Directory for checkpoints (default: <project>/runs/evals/checkpoints)",
     )
     p_run.add_argument(
         "--max-iterations",
@@ -313,15 +324,15 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     p_resume.add_argument("run_id", help="Run ID to resume")
     p_resume.add_argument(
         "--fixtures-dir",
-        help=f"Directory containing spec fixtures (default: {DEFAULT_FIXTURES_DIR})",
+        help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
     p_resume.add_argument(
         "--output-dir",
-        help=f"Directory for reports (default: {DEFAULT_OUTPUT_DIR})",
+        help="Directory for reports (default: <project>/runs/evals/reports)",
     )
     p_resume.add_argument(
         "--checkpoint-dir",
-        help=f"Directory for checkpoints (default: {DEFAULT_CHECKPOINT_DIR})",
+        help="Directory for checkpoints (default: <project>/runs/evals/checkpoints)",
     )
 
     # eval report
@@ -335,14 +346,14 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p_report.add_argument(
         "--output-dir",
-        help=f"Directory containing reports (default: {DEFAULT_OUTPUT_DIR})",
+        help="Directory containing reports (default: <project>/runs/evals/reports)",
     )
 
     # eval list
     p_list = eval_subparsers.add_parser("list", help="List available spec fixtures")
     p_list.add_argument(
         "--fixtures-dir",
-        help=f"Directory containing spec fixtures (default: {DEFAULT_FIXTURES_DIR})",
+        help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
 
 
@@ -388,15 +399,15 @@ def main() -> int:
     )
     p_run.add_argument(
         "--fixtures-dir",
-        help=f"Directory containing spec fixtures (default: {DEFAULT_FIXTURES_DIR})",
+        help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
     p_run.add_argument(
         "--output-dir",
-        help=f"Directory for reports (default: {DEFAULT_OUTPUT_DIR})",
+        help="Directory for reports (default: <project>/runs/evals/reports)",
     )
     p_run.add_argument(
         "--checkpoint-dir",
-        help=f"Directory for checkpoints (default: {DEFAULT_CHECKPOINT_DIR})",
+        help="Directory for checkpoints (default: <project>/runs/evals/checkpoints)",
     )
     p_run.add_argument(
         "--max-iterations",
@@ -438,15 +449,15 @@ def main() -> int:
     p_resume.add_argument("run_id", help="Run ID to resume")
     p_resume.add_argument(
         "--fixtures-dir",
-        help=f"Directory containing spec fixtures (default: {DEFAULT_FIXTURES_DIR})",
+        help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
     p_resume.add_argument(
         "--output-dir",
-        help=f"Directory for reports (default: {DEFAULT_OUTPUT_DIR})",
+        help="Directory for reports (default: <project>/runs/evals/reports)",
     )
     p_resume.add_argument(
         "--checkpoint-dir",
-        help=f"Directory for checkpoints (default: {DEFAULT_CHECKPOINT_DIR})",
+        help="Directory for checkpoints (default: <project>/runs/evals/checkpoints)",
     )
 
     # eval report
@@ -460,14 +471,14 @@ def main() -> int:
     )
     p_report.add_argument(
         "--output-dir",
-        help=f"Directory containing reports (default: {DEFAULT_OUTPUT_DIR})",
+        help="Directory containing reports (default: <project>/runs/evals/reports)",
     )
 
     # eval list
     p_list = subparsers.add_parser("list", help="List available spec fixtures")
     p_list.add_argument(
         "--fixtures-dir",
-        help=f"Directory containing spec fixtures (default: {DEFAULT_FIXTURES_DIR})",
+        help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
 
     args = parser.parse_args()

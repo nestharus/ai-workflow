@@ -24,6 +24,7 @@ from pathlib import Path
 
 from spec_manager.analysis import run_analysis
 from spec_manager.core.libs_registry import LibsRegistry
+from spec_manager.core.project_root import resolve_from_root
 from spec_manager.core.provenance import ProvenanceTracker
 from spec_manager.discovery import discover_libraries_sync
 from spec_manager.merging import run_merging
@@ -34,9 +35,17 @@ from spec_manager.workspace import PhaseStatus, WorkspaceManager
 from spec_manager.workspace.state import Phase
 
 
+def _resolve_spec_folder(raw_path: str) -> Path:
+    """Resolve a spec folder path relative to the project root when not absolute."""
+    p = Path(raw_path)
+    if p.is_absolute():
+        return p
+    return resolve_from_root(raw_path)
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     """Initialize workspace."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     issues = manager.initialize(force=args.force)
@@ -68,7 +77,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     """Show workspace status."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -105,7 +114,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_stage(args: argparse.Namespace) -> int:
     """Run CLEANING phase (staging) using strategy pipeline."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -184,7 +193,7 @@ def cmd_stage(args: argparse.Namespace) -> int:
 
 def cmd_plan(args: argparse.Namespace) -> int:
     """Run DISCOVERY phase (planning)."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -239,7 +248,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 def cmd_merge(args: argparse.Namespace) -> int:
     """Run REVIEW phase (merging)."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -278,7 +287,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
 
 def cmd_verify(args: argparse.Namespace) -> int:
     """Run FINALIZATION phase (verification)."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -315,7 +324,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Run analysis."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     # Build registry by scanning library files
@@ -346,7 +355,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     """Resolve restructuring suggestions to achieve consistent state."""
     from spec_manager.analysis.resolver import resolve_suggestions
 
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     # Build registry by scanning library files
@@ -408,7 +417,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run all phases."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     # Initialize if needed
@@ -452,7 +461,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_cleanup(args: argparse.Namespace) -> int:
     """Clean up workspace."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -467,7 +476,7 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
 
 def cmd_set_order(args: argparse.Namespace) -> int:
     """Set the processing order for ambiguous input files."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -513,7 +522,7 @@ def cmd_set_order(args: argparse.Namespace) -> int:
 
 def cmd_discover(args: argparse.Namespace) -> int:
     """Run library discovery phase."""
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     if not manager.is_initialized:
@@ -676,7 +685,7 @@ def cmd_gaps(args: argparse.Namespace) -> int:
     """Show or update gaps.md with detected gaps."""
     from spec_manager.core.gaps import detect_gaps, format_gaps_md
 
-    spec_folder = Path(args.spec_folder)
+    spec_folder = _resolve_spec_folder(args.spec_folder)
     manager = WorkspaceManager(spec_folder)
 
     # Get library content - this is where the actual spec lives

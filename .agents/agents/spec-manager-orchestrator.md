@@ -18,29 +18,29 @@ Coordinate the spec management workflow for a spec folder.
 
 ## Workflow
 
-Given `spec_folder` from project root, prepend `../../` when running from `scripts/spec_manager`:
+Python code auto-resolves relative paths from the git project root, so `$spec_folder` can be given as a project-root-relative path from any working directory:
 
 ```bash
 # Initialize
-cd scripts/spec_manager && uv run spec-manager init "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager init "$spec_folder"
 
 # Check status
-cd scripts/spec_manager && uv run spec-manager status "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager status "$spec_folder"
 
 # Staging
-cd scripts/spec_manager && uv run spec-manager stage "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager stage "$spec_folder"
 
 # Planning
-cd scripts/spec_manager && uv run spec-manager plan "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager plan "$spec_folder"
 
 # Merging (add --apply to apply changes)
-cd scripts/spec_manager && uv run spec-manager merge "../../$spec_folder" [--apply]
+cd scripts/spec_manager && uv run spec-manager merge "$spec_folder" [--apply]
 
 # Verification
-cd scripts/spec_manager && uv run spec-manager verify "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager verify "$spec_folder"
 
 # Analysis
-cd scripts/spec_manager && uv run spec-manager analyze "../../$spec_folder"
+cd scripts/spec_manager && uv run spec-manager analyze "$spec_folder"
 ```
 
 ### Phase Order
