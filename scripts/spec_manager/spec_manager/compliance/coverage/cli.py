@@ -87,14 +87,17 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
     from spec_manager.branches.layout import BranchLayout
     from spec_manager.compliance.coverage.analyzer import EntityCoverageAnalyzer
     from spec_manager.core.evidence_index import EvidenceIndex
-    from spec_manager.refinement.workspace import WorkspaceManager as RefWorkspaceManager
+    from spec_manager.core.project_root import resolve_from_root
+    from spec_manager.core.run_folder import RunFolderStructure
     from spec_manager.schemas.entities import EntitiesArtifact
 
-    input_folder = Path(args.input_folder)
-    manager = RefWorkspaceManager(run_id=args.run_id, input_folder=input_folder)
+    structure = RunFolderStructure(
+        run_id=args.run_id,
+        root=resolve_from_root("runs", args.run_id),
+    )
 
     # Load evidence index
-    index_path = manager.structure.evidence_index_path
+    index_path = structure.evidence_index_path
     if not index_path.exists():
         print(f"Evidence index not found: {index_path}", file=sys.stderr)
         print("Run 'evidence-store rebuild-index' first.", file=sys.stderr)
@@ -103,12 +106,12 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
     evidence_index = EvidenceIndex.load(index_path)
 
     # Load atom registry
-    layout = BranchLayout(run_root=manager.structure.root)
+    layout = BranchLayout(run_root=structure.root)
     atom_registry = AtomRegistry.load(layout)
 
     # Optionally load entities artifact
     entities_artifact = None
-    entities_dir = manager.structure.libraries_dir
+    entities_dir = structure.libraries_dir
     if entities_dir.exists():
         for lib_dir in sorted(entities_dir.iterdir()):
             if not lib_dir.is_dir():
