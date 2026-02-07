@@ -293,7 +293,15 @@ class EvalRunner:
                 result.phases_completed += 1
 
                 if not phase_metrics.converged:
-                    result.bottlenecks.append(f"{phase}:stagnation")
+                    # For real workflows, the phase ran once and the recall
+                    # gap reflects what the single pass missed — not
+                    # stagnation.  For simulation, the iteration loop adds
+                    # its own specific bottleneck (cycling, stagnant, etc.).
+                    if self.config.use_real_workflows:
+                        recall_pct = int(phase_metrics.detail_score.recall * 100)
+                        result.bottlenecks.append(f"{phase}:incomplete({recall_pct}%)")
+                    else:
+                        result.bottlenecks.append(f"{phase}:stagnation")
 
         except Exception as exc:
             result.success = False
@@ -531,7 +539,12 @@ class EvalRunner:
             expected_items, [], fuzzy_threshold=self.config.fuzzy_match_threshold
         )
 
-        for iteration in range(1, self.config.max_iterations_per_phase + 1):
+        # Real workflows run once per phase (the workflow itself handles any
+        # internal iteration).  The eval iteration loop only makes sense for
+        # simulation mode where we artificially increase coverage each round.
+        max_iters = 1 if self.config.use_real_workflows else self.config.max_iterations_per_phase
+
+        for iteration in range(1, max_iters + 1):
             state.iteration = iteration
             iter_start = time.perf_counter()
 
@@ -581,7 +594,7 @@ class EvalRunner:
                 gaps_open = score.expected_count - score.matched_count
                 break
 
-            # Check for loop conditions
+            # Check for loop conditions (only relevant in simulation mode)
             if loop_status in {LoopStatus.STAGNANT, LoopStatus.CYCLING}:
                 logger.log_loop_warning(
                     phase=phase,
@@ -600,6 +613,12 @@ class EvalRunner:
 
         # Use the last score from the loop (avoids duplicate workflow calls)
         final_score = score
+
+        # For real workflows that didn't converge, record the gap without
+        # false stagnation/cycling signals.
+        if not converged and self.config.use_real_workflows:
+            gaps_open = score.expected_count - score.matched_count
+            gaps_closed = score.matched_count
 
         metrics = PhaseMetrics(
             phase_name=phase,

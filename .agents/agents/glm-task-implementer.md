@@ -123,3 +123,11 @@ Repo root path:
   "patch": "diff --git a/app/auth/middleware.py b/app/auth/middleware.py\nindex abc123..def456 100644\n--- a/app/auth/middleware.py\n+++ b/app/auth/middleware.py\n@@ -10,6 +10,12 @@ from app.core.config import settings\n \n def authenticate_request(request: Request) -> User:\n+    # Implements REQ-LIB-0001-0005: JWT token validation\n+    # [LIB-0001::spec.md::REQ-LIB-0001-0005]\n+    token = request.headers.get('Authorization')\n+    if not token:\n+        raise AuthenticationError('Missing token')\n+    return validate_jwt(token)\n+\n def validate_jwt(token: str) -> User:\n     # existing implementation\n     pass\n"
 }
 ```
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

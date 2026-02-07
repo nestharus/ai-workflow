@@ -141,3 +141,11 @@ Validate task plan for complete coverage of specs, interfaces, gaps, and decisio
 - In `validation_only` mode, do NOT suggest fixes; only identify problems.
 - In `repaired_plan` or `delta_plan` mode, emit repairs/deltas ONLY for reported errors, applying the same constraints as the repairer agent (no semantic changes, no invented IDs).
 - Validate coverage completeness before quality checks.
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]

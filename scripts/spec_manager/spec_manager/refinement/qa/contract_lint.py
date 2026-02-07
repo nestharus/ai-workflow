@@ -74,8 +74,36 @@ class LintIssue:
         }
 
 
-def lint_agent_prompts(agents_dir: Path) -> list[LintIssue]:
-    """Lint agent prompt files for legacy patterns and contract compliance."""
+def _collect_workflow_agent_names(workflows_dir: Path) -> set[str]:
+    """Collect agent names referenced by spec-manager workflow files.
+
+    Only agents referenced by workflows need spec-manager-specific ID
+    format checks.  Non-spec agents (article-writer-*, etc.) are excluded.
+    """
+    agent_names: set[str] = set()
+    for workflow_path in _iter_files(workflows_dir, "*.py"):
+        try:
+            text = workflow_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for match in re.finditer(r'agent_name\s*=\s*["\']([^"\']+)["\']', text):
+            agent_names.add(match.group(1))
+    return agent_names
+
+
+def lint_agent_prompts(
+    agents_dir: Path,
+    *,
+    workflow_agents: set[str] | None = None,
+) -> list[LintIssue]:
+    """Lint agent prompt files for legacy patterns and contract compliance.
+
+    Args:
+        agents_dir: Directory containing agent prompt files.
+        workflow_agents: Set of agent names referenced by workflows.  Only
+            these agents are checked for spec-manager-specific ID format
+            compliance.  If None, all agents are checked (legacy behaviour).
+    """
     issues: list[LintIssue] = []
     for prompt_path in _iter_files(agents_dir, "*.md"):
         rel_path = _relative_path(prompt_path)
@@ -93,28 +121,34 @@ def lint_agent_prompts(agents_dir: Path) -> list[LintIssue]:
             )
             continue
 
+        # Determine whether this agent is referenced by spec-manager workflows
+        agent_name = prompt_path.stem
+        is_workflow_agent = workflow_agents is None or agent_name in workflow_agents
+
         lines = content.splitlines()
         for line_no, line in enumerate(lines, start=1):
-            for match in LEGACY_FILE_ID_RE.finditer(line):
-                issues.append(
-                    LintIssue(
-                        severity="error",
-                        file=rel_path,
-                        line=line_no,
-                        message=f"Legacy ID pattern found: {match.group(0)}",
-                        hint="Replace with current format (F#### or LIB-####).",
+            # Legacy ID checks only apply to workflow-referenced agents
+            if is_workflow_agent:
+                for match in LEGACY_FILE_ID_RE.finditer(line):
+                    issues.append(
+                        LintIssue(
+                            severity="error",
+                            file=rel_path,
+                            line=line_no,
+                            message=f"Legacy ID pattern found: {match.group(0)}",
+                            hint="Replace with current format (F#### or LIB-####).",
+                        )
                     )
-                )
-            for match in LEGACY_LIB_ID_RE.finditer(line):
-                issues.append(
-                    LintIssue(
-                        severity="error",
-                        file=rel_path,
-                        line=line_no,
-                        message=f"Legacy ID pattern found: {match.group(0)}",
-                        hint="Replace with current format (F#### or LIB-####).",
+                for match in LEGACY_LIB_ID_RE.finditer(line):
+                    issues.append(
+                        LintIssue(
+                            severity="error",
+                            file=rel_path,
+                            line=line_no,
+                            message=f"Legacy ID pattern found: {match.group(0)}",
+                            hint="Replace with current format (F#### or LIB-####).",
+                        )
                     )
-                )
             if DERIVED_POINTER_PROHIBITION_RE.search(line):
                 issues.append(
                     LintIssue(
@@ -126,24 +160,26 @@ def lint_agent_prompts(agents_dir: Path) -> list[LintIssue]:
                     )
                 )
 
-        missing_required = _required_format_missing(content)
-        if missing_required:
-            section_hint = _section_id_hint(content)
-            hint = (
-                "Add examples showing F####, LIB-####, SEC-F####-####, and "
-                "[spec_snapshot/<relpath>::SEC-F####-####]."
-            )
-            if section_hint:
-                hint = f"{hint} {section_hint}"
-            issues.append(
-                LintIssue(
-                    severity="error",
-                    file=rel_path,
-                    line=None,
-                    message="Prompt missing required ID format examples.",
-                    hint=hint,
+        # ID format examples only required for workflow-referenced agents
+        if is_workflow_agent:
+            missing_required = _required_format_missing(content)
+            if missing_required:
+                section_hint = _section_id_hint(content)
+                hint = (
+                    "Add examples showing F####, LIB-####, SEC-F####-####, and "
+                    "[spec_snapshot/<relpath>::SEC-F####-####]."
                 )
-            )
+                if section_hint:
+                    hint = f"{hint} {section_hint}"
+                issues.append(
+                    LintIssue(
+                        severity="error",
+                        file=rel_path,
+                        line=None,
+                        message="Prompt missing required ID format examples.",
+                        hint=hint,
+                    )
+                )
 
         if _has_json_only_contract(lines):
             issues.extend(_lint_json_only_prose(rel_path, lines))
@@ -191,8 +227,19 @@ def lint_workflow_agent_references(workflows_dir: Path, agents_dir: Path) -> lis
     return issues
 
 
-def lint_pointer_conventions(agents_dir: Path) -> list[LintIssue]:
-    """Lint pointer format conventions inside agent prompts."""
+def lint_pointer_conventions(
+    agents_dir: Path,
+    *,
+    workflow_agents: set[str] | None = None,
+) -> list[LintIssue]:
+    """Lint pointer format conventions inside agent prompts.
+
+    Args:
+        agents_dir: Directory containing agent prompt files.
+        workflow_agents: Set of agent names referenced by workflows.  Only
+            these agents are checked for spec-manager-specific ID format
+            compliance.  If None, all agents are checked.
+    """
     issues: list[LintIssue] = []
     for prompt_path in _iter_files(agents_dir, "*.md"):
         rel_path = _relative_path(prompt_path)
@@ -210,24 +257,29 @@ def lint_pointer_conventions(agents_dir: Path) -> list[LintIssue]:
             )
             continue
 
-        missing_required = _required_format_missing(content)
-        if missing_required:
-            section_hint = _section_id_hint(content)
-            hint = (
-                "Add examples showing F####, LIB-####, SEC-F####-####, and "
-                "[spec_snapshot/<relpath>::SEC-F####-####]."
-            )
-            if section_hint:
-                hint = f"{hint} {section_hint}"
-            issues.append(
-                LintIssue(
-                    severity="error",
-                    file=rel_path,
-                    line=None,
-                    message="Prompt missing required ID/pointer format examples.",
-                    hint=hint,
+        agent_name = prompt_path.stem
+        is_workflow_agent = workflow_agents is None or agent_name in workflow_agents
+
+        # ID/pointer format requirements only apply to workflow-referenced agents
+        if is_workflow_agent:
+            missing_required = _required_format_missing(content)
+            if missing_required:
+                section_hint = _section_id_hint(content)
+                hint = (
+                    "Add examples showing F####, LIB-####, SEC-F####-####, and "
+                    "[spec_snapshot/<relpath>::SEC-F####-####]."
                 )
-            )
+                if section_hint:
+                    hint = f"{hint} {section_hint}"
+                issues.append(
+                    LintIssue(
+                        severity="error",
+                        file=rel_path,
+                        line=None,
+                        message="Prompt missing required ID/pointer format examples.",
+                        hint=hint,
+                    )
+                )
 
         lines = content.splitlines()
         has_new = False
@@ -411,10 +463,13 @@ def run_contract_lint(
         Exit code is 1 if any errors found, 0 otherwise.
         Note: hardcoding scanner findings are warnings only (report-only mode).
     """
+    # Collect agent names referenced by workflows to scope ID format checks
+    workflow_agents = _collect_workflow_agent_names(workflows_dir)
+
     issues: list[LintIssue] = []
-    issues.extend(lint_agent_prompts(agents_dir))
+    issues.extend(lint_agent_prompts(agents_dir, workflow_agents=workflow_agents))
     issues.extend(lint_workflow_agent_references(workflows_dir, agents_dir))
-    issues.extend(lint_pointer_conventions(agents_dir))
+    issues.extend(lint_pointer_conventions(agents_dir, workflow_agents=workflow_agents))
     issues.extend(lint_evid_compliance(agents_dir))  # CON-0021 enforcement
 
     # Add hardcoding scanner (report-only mode - warnings only)

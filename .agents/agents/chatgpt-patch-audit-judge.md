@@ -140,3 +140,11 @@ output_format: markdown
 - Omitting error context details.
 - Inventing element IDs not in coverage targets.
 - Ignoring test failures when acceptance criteria require success.
+
+## ID and Pointer Formats
+
+- File IDs: F#### (e.g., F0001)
+- Library IDs: LIB-#### (e.g., LIB-0001)
+- Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
+- Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
+- Legacy pointers (accepted): [F####::SECTION]
