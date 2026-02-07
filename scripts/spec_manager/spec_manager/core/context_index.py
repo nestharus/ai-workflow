@@ -1,7 +1,7 @@
-"""Context management for the workflow.
+"""Context index for entity resolution across context strata.
 
-PatchDependencyGraph: Tracks patch dependencies (e.g., "p5 patches p3 which patched p1").
 ContextIndex: Index over all context strata for entity resolution.
+ContextIndexBuilder: Builds ContextIndex from manifest files (terms and sections).
 """
 
 from __future__ import annotations
@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,127 +18,6 @@ from spec_manager.schemas.sections import FileSections
 from spec_manager.schemas.terms import FileTerms
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PatchDependency:
-    """Represents a patch dependency: source_patch patches target_patch."""
-
-    source_patch: str  # e.g., "p5"
-    target_patch: str  # e.g., "p3"
-    dependency_type: str  # "patches", "extends", "replaces"
-    evidence: str  # Where this dependency was detected
-
-
-class PatchDependencyGraph:
-    """Tracks patch dependencies: "p5 patches p3 which patched p1".
-
-    Used for entity resolution when vague references need patch context.
-    """
-
-    def __init__(self) -> None:
-        """Initialize the patch dependency graph."""
-        self.dependencies: list[PatchDependency] = []
-        self._graph: dict[str, list[str]] = {}  # patch_id -> [patched_by]
-
-    def add_dependency(
-        self, source: str, target: str, dep_type: str = "patches", evidence: str = ""
-    ) -> None:
-        """Add a patch dependency."""
-        self.dependencies.append(PatchDependency(source, target, dep_type, evidence))
-        if target not in self._graph:
-            self._graph[target] = []
-        self._graph[target].append(source)
-
-    def get_patch_chain(self, patch_id: str) -> list[str]:
-        """Get the chain of patches that led to patch_id."""
-        chain = [patch_id]
-        current = patch_id
-
-        # Walk backwards through dependencies
-        visited = {patch_id}
-        while True:
-            # Find what this patch depends on
-            depends_on = None
-            for dep in self.dependencies:
-                if dep.source_patch == current:
-                    depends_on = dep.target_patch
-                    break
-
-            if depends_on and depends_on not in visited:
-                chain.append(depends_on)
-                visited.add(depends_on)
-                current = depends_on
-            else:
-                break
-
-        return list(reversed(chain))  # Oldest first
-
-    def infer_from_content(self, patch_content: str, patch_id: str) -> None:
-        """Infer dependencies from patch content.
-
-        PRIMARY inference is from:
-        1. Chronological order (p1 < p2 < p3)
-        2. Shared element IDs (if p5 mentions Algorithm 3, check which patch introduced it)
-        3. Provenance "modified_by" evidence already in units
-
-        SECONDARY (low-confidence hint): regex mention parsing.
-        Do NOT rely on hardcoded domain phrases like "relaxation algorithm".
-        """
-        # PRIMARY: Extract numeric patch ID and assume sequential dependency
-        match = re.match(r"p(\d+)", patch_id)
-        if match:
-            patch_num = int(match.group(1))
-            # Assume patches p1...p(n-1) as potential dependencies
-            for prev_num in range(1, patch_num):
-                prev_id = f"p{prev_num}"
-                # Only add if we have evidence from shared IDs
-                shared_ids = self._find_shared_ids(patch_content, prev_id)
-                if shared_ids:
-                    self.add_dependency(
-                        source=patch_id,
-                        target=prev_id,
-                        dep_type="patches",
-                        evidence=f"Shared IDs: {', '.join(shared_ids[:3])}",
-                    )
-
-        # SECONDARY (low-confidence hint): explicit patch references
-        # These are treated as HINTS, not the backbone of dependency inference
-        hint_patterns = [
-            (r"patches?\s+(p\d+)", "patches", 0.6),
-            (r"from\s+(p\d+)", "extends", 0.5),
-            (r"(p\d+)\'s", "extends", 0.4),
-            (r"updates?\s+(p\d+)", "patches", 0.6),
-        ]
-
-        for pattern, dep_type, confidence in hint_patterns:
-            for m in re.finditer(pattern, patch_content, re.IGNORECASE):
-                target = m.group(1)
-                if target != patch_id:
-                    # Mark as low-confidence hint, not backbone dependency
-                    self.add_dependency(
-                        source=patch_id,
-                        target=target,
-                        dep_type=dep_type,
-                        evidence=f"[hint:{confidence:.1f}] {m.group(0)}",
-                    )
-
-    def _find_shared_ids(self, content: str, other_patch_id: str) -> list[str]:
-        """Find element IDs that appear in both this content and originate from other_patch_id."""
-        # Extract all declared/referenced IDs
-        id_patterns = [
-            r"\(\[=([^\]]+)\]\)",  # Declarations
-            r"\(@\[\+?([^\]]+)\]\)",  # References
-            r"\bAlgorithm\s+(\d+)\b",  # Algorithm references
-            r"\b(P\d+C\d+|P\d+I\d+|D\d+|G\d+)\b",  # Standard IDs
-        ]
-        found_ids = []
-        for pattern in id_patterns:
-            for m in re.finditer(pattern, content):
-                found_ids.append(m.group(1))
-        # In a real implementation, cross-reference with what other_patch_id introduced
-        # For now, return non-empty if we find standard IDs (actual lookup requires state)
-        return list(set(found_ids))[:5]
 
 
 class ContextIndex:

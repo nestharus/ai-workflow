@@ -12,11 +12,11 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 
 from spec_manager.compliance.scorer import ComplianceResult, ComplianceScorer
+from spec_manager.core.context_index import ContextIndex, ContextIndexBuilder
 from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
 from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.refinement.workspace.state import Phase, PhaseStatus
 from spec_manager.schemas.atoms import LineAtom
-from spec_manager.workflow.context import ContextIndex, ContextIndexBuilder
 
 logger = logging.getLogger(__name__)
 

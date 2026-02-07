@@ -7,11 +7,13 @@ This library provides tools for managing specification folders containing:
 - Patches (incremental changes to specifications)
 - Input files (incoming plans/patches to be decomposed)
 
-The system uses a 4-phase workflow:
-1. CLEANING: Validate and legalize incoming content
-2. DISCOVERY: Decompose changes into safe batches
-3. REVIEW: Apply batches to library files
-4. FINALIZATION: Confirm no drift or duplication
+The system consists of:
+1. Refinement Pipeline: 19-phase modern orchestration for spec refinement
+2. PDD Modules: Standalone packages for prototype-driven development
+   - branches: Branch lifecycle management
+   - pin_functions: Pin-function management
+   - planning: Algorithmic planning (code parser, inserter, reverser)
+   - compliance: Detection, promotion, and coverage analysis
 
 Key concepts:
 - Annotations: ([=ID]) declarations and (@[+ID]), (@[=ID]) references
@@ -20,15 +22,10 @@ Key concepts:
 
 Usage:
     # CLI
-    uv run spec-manager init <spec_folder>
-    uv run spec-manager run <spec_folder> --apply
+    uv run spec refine <run_id> --auto
+    uv run spec branches run <run_id>
 
     # Python API
-    from spec_manager import WorkspaceManager
-    from spec_manager.staging import run_staging  # CLEANING phase
-    from spec_manager.planning import run_planning  # DISCOVERY phase
-    from spec_manager.merging import run_merging  # REVIEW phase
-    from spec_manager.verification import run_verification  # FINALIZATION phase
     from spec_manager.analysis import run_analysis
 """
 
@@ -43,20 +40,11 @@ if str(_SPEC_MANAGER_ROOT) not in sys.path:
 
 __all__ = [
     "AnnotationParser",
-    "CandidateIdentifier",
-    "CandidateLibrary",
-    "ContextIndex",
-    "ElementLabels",
     "IdValidator",
-    "LibraryRefiner",
-    "LibraryShape",
     "LibsRegistry",
-    "MultiLabeler",
-    "PatchDependencyGraph",
     "ProcessingContext",
     "ProvenanceTracker",
     "SectionExtractor",
-    "ShapeAggregator",
     "SourceLocation",
     "Strategy",
     "StrategyPhase",
@@ -65,19 +53,7 @@ __all__ = [
     "TrackedUnit",
     "UnitStatus",
     "UnitType",
-    "WorkflowConfig",
-    "WorkflowOrchestrator",
-    "WorkflowPhase",
-    "WorkflowState",
-    "WorkspaceManager",
-    "discover_libraries",
-    "discover_libraries_sync",
-    "ingest",
     "run_analysis",
-    "run_merging",
-    "run_planning",
-    "run_staging",
-    "run_verification",
 ]
 
 
@@ -121,80 +97,9 @@ def __getattr__(name: str) -> object:
 
         return locals()[name]
 
-    if name == "WorkspaceManager":
-        from .workspace import WorkspaceManager
-
-        return WorkspaceManager
-
-    if name == "run_staging":
-        from .staging import run_staging
-
-        return run_staging
-
-    if name == "run_planning":
-        from .planning import run_planning
-
-        return run_planning
-
-    if name == "run_merging":
-        from .merging import run_merging
-
-        return run_merging
-
-    if name == "run_verification":
-        from .verification import run_verification
-
-        return run_verification
-
     if name == "run_analysis":
         from .analysis import run_analysis
 
         return run_analysis
-
-    if name in (
-        "WorkflowOrchestrator",
-        "WorkflowConfig",
-        "WorkflowState",
-        "WorkflowPhase",
-        "PatchDependencyGraph",
-        "ingest",
-        "ContextIndex",
-    ):
-        from .workflow import (
-            ContextIndex,  # noqa: F401
-            PatchDependencyGraph,  # noqa: F401
-            WorkflowConfig,  # noqa: F401
-            WorkflowOrchestrator,  # noqa: F401
-            WorkflowPhase,  # noqa: F401
-            WorkflowState,  # noqa: F401
-            ingest,  # noqa: F401
-        )
-
-        return locals()[name]
-
-    if name in (
-        "CandidateLibrary",
-        "CandidateIdentifier",
-        "ElementLabels",
-        "MultiLabeler",
-        "LibraryShape",
-        "ShapeAggregator",
-        "LibraryRefiner",
-        "discover_libraries",
-        "discover_libraries_sync",
-    ):
-        from .discovery import (
-            CandidateIdentifier,  # noqa: F401
-            CandidateLibrary,  # noqa: F401
-            ElementLabels,  # noqa: F401
-            LibraryRefiner,  # noqa: F401
-            LibraryShape,  # noqa: F401
-            MultiLabeler,  # noqa: F401
-            ShapeAggregator,  # noqa: F401
-            discover_libraries,  # noqa: F401
-            discover_libraries_sync,  # noqa: F401
-        )
-
-        return locals()[name]
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

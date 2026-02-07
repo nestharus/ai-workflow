@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from spec_manager.core.data_structures import ComplianceMetrics
 from spec_manager.core.gaps import Severity
-from spec_manager.workspace.state import WorkspaceState
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.config import PromotionGateConfig
     from spec_manager.schemas.pin_functions import PinFunctionRegistry
-    from spec_manager.workflow.orchestrator import WorkflowEvidence
+
+
+class Evidence(Protocol):
+    """Protocol for compliance evidence with standardized fields."""
+
+    detector: str
+    severity: str | Severity
+    details: dict[str, Any] | None
+    message: str
 
 
 @dataclass
@@ -53,88 +59,6 @@ class ComplianceScorer:
         """Initialize compliance scorer with thresholds."""
         self.blocker_threshold = blocker_threshold
         self.warning_threshold = warning_threshold
-        self._previous_state: WorkspaceState | None = None
-
-    def score_compliance(
-        self,
-        evidence: list[WorkflowEvidence],
-        state: WorkspaceState,
-        spec_folder: Path,
-    ) -> ComplianceResult:
-        """Score compliance using evidence, workspace state, and artifacts."""
-        blockers: list[dict[str, Any]] = []
-        warnings: list[dict[str, Any]] = []
-
-        blockers.extend(self.check_artifact_presence(spec_folder))
-        blockers.extend(self.check_schema_validity(spec_folder))
-        blockers.extend(self.check_section_spans(spec_folder))
-        blockers.extend(self.check_regressions(state, self._previous_state))
-
-        remainder_ratio = self._compute_remainder_ratio(state)
-        unresolved_references = self._count_unresolved_references(evidence)
-        low_confidence = self._count_low_confidence_mappings(state)
-
-        if remainder_ratio > self.warning_threshold:
-            warnings.append(
-                {
-                    "type": "high_remainder_ratio",
-                    "severity": Severity.WARNING.value,
-                    "message": (
-                        f"Remainder ratio {remainder_ratio:.1%} exceeds threshold "
-                        f"{self.warning_threshold:.1%}"
-                    ),
-                    "details": {"ratio": remainder_ratio, "threshold": self.warning_threshold},
-                }
-            )
-
-        if unresolved_references:
-            warnings.append(
-                {
-                    "type": "unresolved_references",
-                    "severity": Severity.WARNING.value,
-                    "message": f"{unresolved_references} unresolved references detected",
-                    "details": {"count": unresolved_references},
-                }
-            )
-
-        if low_confidence:
-            warnings.append(
-                {
-                    "type": "low_confidence_mappings",
-                    "severity": Severity.WARNING.value,
-                    "message": f"{low_confidence} low-confidence mappings detected",
-                    "details": {
-                        "count": low_confidence,
-                        "threshold": self.warning_threshold,
-                    },
-                }
-            )
-
-        metrics, evidence_by_category = self._compute_metrics_from_evidence(evidence)
-        score = (
-            metrics.format_compliance + metrics.annotation_coverage + metrics.id_normalization
-        ) / 3.0
-
-        details = {
-            "format_compliance": metrics.format_compliance,
-            "annotation_coverage": metrics.annotation_coverage,
-            "id_normalization": metrics.id_normalization,
-            "remainder_ratio": remainder_ratio,
-            "unresolved_references": unresolved_references,
-            "low_confidence_mappings": low_confidence,
-            "evidence_by_category": evidence_by_category,
-        }
-
-        result = ComplianceResult(
-            score=score,
-            blockers=blockers,
-            warnings=warnings,
-            passed=len(blockers) == 0,
-            details=details,
-        )
-
-        self._previous_state = copy.deepcopy(state)
-        return result
 
     def score_run_compliance(
         self,
@@ -314,47 +238,8 @@ class ComplianceScorer:
 
         return blockers
 
-    def check_regressions(
-        self,
-        current_state: WorkspaceState,
-        previous_state: WorkspaceState | None,
-    ) -> list[dict[str, Any]]:
-        """Detect regressions between passes."""
-        if previous_state is None:
-            return []
-
-        blockers: list[dict[str, Any]] = []
-
-        current_ids = self._collect_unit_ids(current_state)
-        previous_ids = self._collect_unit_ids(previous_state)
-        lost_ids = sorted(previous_ids - current_ids)
-        if lost_ids:
-            blockers.append(
-                {
-                    "type": "regression_lost_ids",
-                    "severity": Severity.ERROR.value,
-                    "message": f"Lost {len(lost_ids)} unit IDs since previous pass",
-                    "details": {"count": len(lost_ids), "sample": lost_ids[:10]},
-                }
-            )
-
-        current_atoms = self._collect_atom_ids(current_state)
-        previous_atoms = self._collect_atom_ids(previous_state)
-        lost_atoms = sorted(previous_atoms - current_atoms)
-        if lost_atoms:
-            blockers.append(
-                {
-                    "type": "regression_lost_atoms",
-                    "severity": Severity.ERROR.value,
-                    "message": f"Lost {len(lost_atoms)} atom IDs since previous pass",
-                    "details": {"count": len(lost_atoms), "sample": lost_atoms[:10]},
-                }
-            )
-
-        return blockers
-
     def _compute_metrics_from_evidence(
-        self, evidence: list[WorkflowEvidence]
+        self, evidence: list[Evidence]
     ) -> tuple[ComplianceMetrics, dict[str, int]]:
         category_counts = {
             "format": 0,
@@ -388,7 +273,7 @@ class ComplianceScorer:
         )
 
     @staticmethod
-    def _extract_evidence_category(evidence: WorkflowEvidence) -> str | None:
+    def _extract_evidence_category(evidence: Evidence) -> str | None:
         detector = getattr(evidence, "detector", "")
         if not isinstance(detector, str) or not detector.startswith("strategy:"):
             return None
@@ -408,47 +293,6 @@ class ComplianceScorer:
         if isinstance(severity, Severity):
             return severity.value
         return str(severity)
-
-    @staticmethod
-    def _compute_remainder_ratio(state: WorkspaceState) -> float:
-        units = getattr(state, "units", [])
-        remainders = getattr(state, "remainders", [])
-        return len(remainders) / max(len(units), 1)
-
-    @staticmethod
-    def _count_unresolved_references(evidence: list[WorkflowEvidence]) -> int:
-        return sum(1 for e in evidence if getattr(e, "detector", "") == "undefined_reference")
-
-    def _count_low_confidence_mappings(self, state: WorkspaceState) -> int:
-        final_labels = getattr(state, "final_labels", {})
-        count = 0
-        if isinstance(final_labels, dict):
-            for value in final_labels.values():
-                confidence = getattr(value, "confidence", None)
-                if confidence is None and isinstance(value, dict):
-                    confidence = value.get("confidence")
-                if isinstance(confidence, (int, float)) and confidence < self.warning_threshold:
-                    count += 1
-        return count
-
-    @staticmethod
-    def _collect_unit_ids(state: WorkspaceState) -> set[str]:
-        ids: set[str] = set()
-        for unit in getattr(state, "units", []):
-            unit_id = getattr(unit, "id", None)
-            if unit_id:
-                ids.add(str(unit_id))
-        return ids
-
-    @staticmethod
-    def _collect_atom_ids(state: WorkspaceState) -> set[str]:
-        atom_ids: set[str] = set()
-        units = list(getattr(state, "units", [])) + list(getattr(state, "remainders", []))
-        for unit in units:
-            for atom_id in getattr(unit, "source_atom_ids", []) or []:
-                if atom_id:
-                    atom_ids.add(str(atom_id))
-        return atom_ids
 
     @staticmethod
     def _resolve_artifacts(
