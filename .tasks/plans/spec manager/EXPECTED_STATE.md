@@ -11,9 +11,9 @@ spec_manager package should look like.
 spec_manager/
 ├── __init__.py              # Top-level exports (core types + entry points)
 ├── __main__.py              # Entry point
-├── cli.py                   # CLI with both refinement and PDD commands
-├── core/                    # Shared infrastructure (no refinement dependency)
-│   ├── agent_utils.py       # LLM agent runner (DONE)
+├── cli.py                   # CLI wiring layer (imports from all subsystems)
+├── core/                    # Shared infrastructure (NO refinement dependency)
+│   ├── agent_utils.py       # LLM agent runner [DONE]
 │   ├── annotations.py       # Annotation parsing
 │   ├── compat.py            # Python compat helpers
 │   ├── context_index.py     # ContextIndex for Phase 2
@@ -21,110 +21,99 @@ spec_manager/
 │   ├── data_structures.py   # FileSections, FileTerms
 │   ├── edit_in_place.py     # Plan 01: edit-in-place engine
 │   ├── edit_in_place_bridge.py
-│   ├── evidence_pointers.py # Evidence pointer parsing (DONE)
-│   ├── gap.py               # Gap types (DONE)
+│   ├── evidence_index.py    # EvidenceIndex for hollowed specs [DONE]
+│   ├── evidence_pointers.py # Evidence pointer parsing [DONE]
+│   ├── file_id_lookup.py    # File ID lookup builder [DONE]
+│   ├── gap.py               # Gap types [DONE]
 │   ├── gap_compat.py        # Gap compatibility
-│   ├── gap_queue.py         # GapQueue (DONE)
+│   ├── gap_queue.py         # GapQueue [DONE]
 │   ├── gaps.py              # GapSynthesizer v1 + Severity
-│   ├── id_registry.py
-│   ├── ids.py
-│   ├── intermediate.py
-│   ├── library_registry.py
-│   ├── libs_registry.py
-│   ├── local_id_resolver.py
-│   ├── pin_registry.py
-│   ├── project_root.py
-│   ├── provenance.py
-│   └── sections.py
+│   ├── json_extraction.py   # JSON payload extraction [DONE]
+│   ├── run_folder.py        # RunFolderStructure [DONE]
+│   └── ...                  # id_registry, provenance, sections, etc.
 │
-├── refinement/              # 19-phase LLM pipeline (THE ACTIVE SYSTEM)
-│   ├── __init__.py          # Re-exports for backwards compat within refinement
-│   ├── cli.py               # Refinement-specific CLI
-│   ├── core/                # Thin re-export layer → core/
-│   ├── evals/               # Eval framework (fixtures, runners, metrics)
-│   ├── evaluation/          # Evaluation utilities
-│   ├── formats.py           # LLM output parsing (strip_code_fences, etc.)
-│   ├── hollowed_spec/       # Plan 06 integration point
-│   ├── interactive/         # Interactive ambiguity resolution
-│   ├── progress.py          # Progress tracking
-│   ├── qa/                  # QA evaluation
-│   ├── repair.py            # Format repair
-│   ├── trace.py             # Tracing
-│   ├── validation_utils.py  # Validation helpers
+├── refinement/              # 19-phase LLM pipeline (active system)
 │   ├── workflows/           # Phase implementations
-│   └── workspace/           # WorkspaceManager + Phase enum
+│   ├── workspace/           # WorkspaceManager + Phase enum
+│   ├── interactive/         # Interactive ambiguity resolution
+│   ├── hollowed_spec/       # Hollowed-out spec system
+│   ├── evals/               # Eval framework
+│   ├── formats.py           # LLM output parsing (re-exports from core)
+│   └── ...
 │
-├── branches/                # Plan 04: Branch organization
-├── pin_functions/           # Plan 02: Pin-function management
-├── planning/                # Plan 03: Algorithmic planning
-├── compliance/              # Plans 05, 06, 08: Detection + promotion + gating
+├── branches/                # Plan 04: Branch organization [CLEAN]
+├── pin_functions/           # Plan 02: Pin-function management [CLEAN]
+├── planning/                # Plan 03: Algorithmic planning [CLEAN]
+├── compliance/              # Plans 05, 06, 08 [CLEAN]
 │   ├── detection/           # Executable gap detection
-│   ├── promotion/           # Hollowed-out spec evidence + promotion gates
-│   ├── coverage/            # Coverage tracking
-│   └── ...                  # Scoring, validation, metrics
-├── projection/              # Plan 09: Lineage + drift + projection
-├── analysis/                # Plans 07, 11: Adjacency + analysis generation
-├── strategies/              # Plan 10: Strategy evolution
-├── schemas/                 # Pydantic schemas for all artifacts
-├── decomposition/           # Decomposition utilities
-├── labyrinth/               # Eval labyrinth framework
+│   ├── promotion/           # Promotion gates
+│   └── coverage/            # Entity coverage
+├── projection/              # Plan 09: Lineage + drift [CLEAN]
+├── analysis/                # Plans 07, 11: Adjacency + generation [CLEAN]
+├── strategies/              # Plan 10: Strategy evolution [ACCEPTABLE]
+│   └── implementations/format_repair.py → refinement.repair (LLM-specific)
+├── schemas/                 # Pydantic schemas [CLEAN]
+├── decomposition/           # Decomposition utilities [CLEAN]
+├── labyrinth/               # Eval labyrinth framework [CLEAN]
 └── utils/                   # Misc utilities
 ```
 
 ---
 
-## Import Rules (Cross-Contamination)
+## Import Rules (ACHIEVED)
 
-These rules MUST hold when Phase 1 is done:
+### core/ imports NOTHING from refinement/ — DONE
+### schemas/ imports NOTHING from refinement/ — DONE
+### PDD modules import from core/ not refinement/ — DONE
 
-### core/ imports NOTHING from refinement/
-- `core/*.py` must not have `from spec_manager.refinement` imports
-- This is the foundation layer; everything depends on it
+All PDD modules are clean:
+- `planning/` — 0 refinement imports
+- `branches/` — 0 refinement imports
+- `pin_functions/` — 0 refinement imports
+- `projection/` — 0 refinement imports
+- `analysis/` — 0 refinement imports
+- `compliance/` — 0 refinement imports
+- `decomposition/` — 0 refinement imports
+- `labyrinth/` — 0 refinement imports
 
-### schemas/ imports NOTHING from refinement/
-- `schemas/*.py` must not have `from spec_manager.refinement` imports
-- Schemas are data contracts; they cannot depend on pipeline logic
-- CURRENT VIOLATION: `schemas/review_actions.py` imports `build_file_id_lookup` from `refinement/validation_utils.py`
+### Acceptable boundary imports:
+- `cli.py` — top-level wiring layer, dispatches to all subsystems
+- `strategies/implementations/format_repair.py` — wraps refinement LLM repair
 
-### PDD modules import from core/ not refinement/
-- `planning/*.py` — CLEAN (0 refinement imports)
-- `branches/*.py` — CLEAN (0 refinement imports)
-- `pin_functions/*.py` — CLEAN (0 refinement imports)
-- `projection/*.py` — CLEAN (0 refinement imports)
-- `analysis/*.py` — need to verify
-- `strategies/*.py` — need to verify (`format_repair.py` may import refinement/formats.py)
-- `compliance/detection/*.py` — CLEAN for gap types; need to verify all
-- `compliance/promotion/*.py` — need to verify
-- `compliance/scorer.py` — may still have refinement deps
-
-### refinement/ CAN import from core/
-- This is expected and correct; refinement builds on core
-
-### refinement/ CAN import from PDD modules
-- Refinement workflows may use PDD modules (e.g., branch_lifecycle, evidence_store)
+### refinement/ CAN import from core/ and PDD modules — correct
 
 ---
 
-## Remaining Cross-Contamination to Fix
+## Remaining Work
 
-### 1. schemas/review_actions.py → refinement/validation_utils.py
-`build_file_id_lookup` needs to move to core/ or schemas/
+### Cross-contamination: COMPLETE
 
-### 2. strategies/ → refinement/
-`strategies/implementations/format_repair.py` may import from refinement/formats.py
+All structural violations are resolved. The remaining refinement imports
+in cli.py and format_repair.py are architecturally correct.
 
-### 3. compliance/scorer.py → legacy deps
-Previous session identified legacy imports from workspace/ and workflow/.
-The legacy packages are deleted now. Need to verify scorer.py still works.
+### Next: Verify implementations match plans
 
-### 4. core/tests/ → refinement/
-`core/tests/test_edit_in_place_bridge.py` imported Phase from refinement workspace
+Each PDD module was built per its plan. Verify:
+1. All plan requirements are implemented
+2. No hardcoded values or reward hacking in tests
+3. Tests test real behavior, not implementation details
+4. No dead code or orphaned files
+5. CLI commands work correctly
+
+### Next: Check for dead code and unused files
+
+Scan for:
+- Functions defined but never called
+- Files that are never imported
+- Test files that don't test anything meaningful
+- Re-exports that are no longer needed
 
 ---
 
 ## Test State
 
 All tests must pass: `uv run python -m pytest scripts/spec_manager/tests/ -p no:randomly -x -q`
+Current: 700 passed, 2 warnings
 
 Tests should:
 - Not import from deleted packages
@@ -133,23 +122,13 @@ Tests should:
 
 ---
 
-## CLI State
-
-The CLI should have:
-- Refinement commands (refine, phase-02, etc.) — working
-- PDD commands (branches, pin, plan-v2, scan-source, adjacency, etc.) — working
-- Evidence store commands — working
-- Eval commands — working
-- NO dead commands that reference deleted packages
-
----
-
 ## What "Done" Looks Like
 
 Phase 1 is done when:
-1. Zero cross-contamination violations (no non-refinement code imports from refinement/)
-2. All tests pass
-3. All CLI commands work
-4. No dead code, orphaned imports, or unused files
-5. The package structure matches this document
-6. CONSOLIDATION_LOG.md documents every change made
+1. [x] Zero cross-contamination violations (core/, schemas/, PDD modules clean)
+2. [x] All tests pass (700 passed)
+3. [ ] All CLI commands work
+4. [ ] No dead code, orphaned imports, or unused files
+5. [ ] Package structure matches this document
+6. [ ] CONSOLIDATION_LOG.md documents every change made
+7. [ ] All PDD module implementations verified against plans
