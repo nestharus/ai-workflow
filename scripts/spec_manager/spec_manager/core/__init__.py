@@ -1,19 +1,6 @@
 """Core utilities for spec management."""
 
 from .annotations import AnnotationParser
-from .compat import (
-    DEFAULT_LEGACY_REV_ID,
-    LEGACY_ATOM_PATTERN,
-    NEW_ATOM_PATTERN,
-    ParsedAtomId,
-    extract_file_uid,
-    extract_line_no,
-    extract_rev_id,
-    is_legacy_format,
-    is_new_format,
-    parse_atom_id,
-    upgrade_atom_id,
-)
 from .gaps import (
     ContentVerifier,
     DetectorFinding,
@@ -41,24 +28,12 @@ from .id_registry import (
     RevisionRegistry,
 )
 from .ids import IdValidator
-from .intermediate import (
-    FileSnapshot,
-    IntermediateManager,
-    IntermediateState,
-)
 from .library_registry import (
     LibraryEntry,
     LibraryIdAllocator,
     generate_stability_key,
 )
 from .libs_registry import LibsRegistry
-from .local_id_resolver import (
-    DeterministicIdAllocatorState,
-    LocalIdResolver,
-    ResolvedDelta,
-    ResolvedItem,
-    ResolvedRelation,
-)
 from .pin_registry import PinRegistryIndex
 from .provenance import (
     GranularityLevel,
@@ -77,16 +52,11 @@ from .provenance import (
 from .sections import SectionExtractor
 
 __all__ = [
-    "DEFAULT_LEGACY_REV_ID",
-    "LEGACY_ATOM_PATTERN",
-    "NEW_ATOM_PATTERN",
     "AnnotationParser",
     "ContentVerifier",
     "DetectorFinding",
-    "DeterministicIdAllocatorState",
     "DuplicateDetector",
     "EvidenceExtractor",
-    "FileSnapshot",
     "FileUidEntry",
     "FileUidRegistry",
     "FormatComplianceDetector",
@@ -95,23 +65,16 @@ __all__ = [
     "GranularityLevel",
     "IdValidator",
     "InferredClaimPromotionStrategy",
-    "IntermediateManager",
-    "IntermediateState",
     "LibraryEntry",
     "LibraryIdAllocator",
     "LibsRegistry",
     "LineageEdge",
     "LineageTable",
-    "LocalIdResolver",
     "MembershipEvidence",
-    "ParsedAtomId",
     "PinRegistryIndex",
     "ProofChainDetector",
     "ProseFragmentInferenceDetector",
     "ProvenanceTracker",
-    "ResolvedDelta",
-    "ResolvedItem",
-    "ResolvedRelation",
     "RevisionEntry",
     "RevisionRegistry",
     "SectionExtractor",
@@ -127,15 +90,8 @@ __all__ = [
     "UnitStatus",
     "UnitType",
     "detect_gaps",
-    "extract_file_uid",
-    "extract_line_no",
-    "extract_rev_id",
     "format_gaps_md",
     "generate_stability_key",
     "generate_stamp",
-    "is_legacy_format",
-    "is_new_format",
-    "parse_atom_id",
     "parse_stamp",
-    "upgrade_atom_id",
 ]
