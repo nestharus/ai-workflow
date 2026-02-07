@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
+
+from spec_manager.core.file_id_lookup import (
+    build_file_id_lookup as build_file_id_lookup,
+)
 
 from .formats import EVIDENCE_POINTER_NEW_RE, EVIDENCE_POINTER_RE
 
@@ -14,36 +17,6 @@ SECTION_ID_RE = re.compile(r"^SEC-[A-Za-z0-9]+-\d{4}$")
 _SECTION_FILE_ID_RE = re.compile(r"^SEC-(F\d{4})-\d{4}$")
 
 logger = logging.getLogger(__name__)
-
-
-def build_file_id_lookup(
-    file_manifest: dict[str, dict[str, str]], spec_snapshot_dir: Path | None = None
-) -> dict[str, str]:
-    """Build a lookup mapping various file identifiers to canonical file_id.
-
-    Maps: file_id, relpath, resolved absolute path, filename, and stem.
-    """
-    lookup: dict[str, str] = {}
-    spec_snapshot_dir = spec_snapshot_dir or Path.cwd()
-    for file_id, file_data in file_manifest.items():
-        _add_lookup(lookup, file_id, file_id)
-        relpath = file_data["relpath"]
-        _add_lookup(lookup, relpath, file_id)
-        _add_lookup(lookup, f"spec_snapshot/{relpath}", file_id)
-        path = Path(relpath)
-        if not path.is_absolute():
-            path = spec_snapshot_dir / path
-        try:
-            resolved = str(path.resolve())
-        except OSError:
-            resolved = ""
-        if resolved:
-            _add_lookup(lookup, resolved, file_id)
-        if path.name:
-            _add_lookup(lookup, path.name, file_id)
-        if path.stem:
-            _add_lookup(lookup, path.stem, file_id)
-    return lookup
 
 
 def build_section_alias_map(
@@ -123,14 +96,6 @@ def resolve_section_reference(
 
 def _normalize_section_label(label: str) -> str:
     return label.strip().lower().replace(" ", "_").replace("-", "_")
-
-
-def _add_lookup(lookup: dict[str, str], key: str, value: str) -> None:
-    if not key:
-        return
-    if key in lookup:
-        return
-    lookup[key] = value
 
 
 def strip_invalid_file_pointers(

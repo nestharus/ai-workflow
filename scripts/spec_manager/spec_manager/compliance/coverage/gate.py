@@ -16,7 +16,7 @@ from spec_manager.compliance.promotion.result import GateCheckResult
 if TYPE_CHECKING:
     from spec_manager.branches.atoms import AtomRegistry
     from spec_manager.compliance.promotion.config import GateSpec
-    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+    from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.schemas.entities import EntitiesArtifact
 
 
@@ -49,20 +49,24 @@ def check_entity_coverage(
     # Build findings from unmatched entities
     findings = []
     for ue in report.unmatched_entities:
-        findings.append({
-            "entity_id": ue.entity_id,
-            "name": ue.name,
-            "kind": ue.kind,
-            "lib_ids": ue.lib_ids,
-            "type": "unmatched_entity",
-        })
+        findings.append(
+            {
+                "entity_id": ue.entity_id,
+                "name": ue.name,
+                "kind": ue.kind,
+                "lib_ids": ue.lib_ids,
+                "type": "unmatched_entity",
+            }
+        )
     for ua in report.unmatched_atoms:
-        findings.append({
-            "atom_id": ua.atom_id,
-            "function_name": ua.function_name,
-            "kind": ua.kind,
-            "type": "unmatched_atom",
-        })
+        findings.append(
+            {
+                "atom_id": ua.atom_id,
+                "function_name": ua.function_name,
+                "kind": ua.kind,
+                "type": "unmatched_atom",
+            }
+        )
 
     passed = report.entity_coverage >= gate_spec.threshold
     duration_ms = (time.monotonic() - start) * 1000

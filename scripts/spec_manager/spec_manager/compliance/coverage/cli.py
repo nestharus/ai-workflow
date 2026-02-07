@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -18,12 +19,8 @@ def setup_coverage_parser(subparsers: argparse._SubParsersAction) -> None:
     Args:
         subparsers: The parent subparsers action to register into.
     """
-    p_coverage = subparsers.add_parser(
-        "coverage", help="Coverage analysis commands"
-    )
-    coverage_sub = p_coverage.add_subparsers(
-        dest="coverage_command", required=True
-    )
+    p_coverage = subparsers.add_parser("coverage", help="Coverage analysis commands")
+    coverage_sub = p_coverage.add_subparsers(dest="coverage_command", required=True)
 
     p_entity_gaps = coverage_sub.add_parser(
         "entity-gaps", help="Analyze entity-to-atom coverage gaps"
@@ -89,7 +86,7 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
     from spec_manager.branches.atoms import AtomRegistry
     from spec_manager.branches.layout import BranchLayout
     from spec_manager.compliance.coverage.analyzer import EntityCoverageAnalyzer
-    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+    from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.refinement.workspace import WorkspaceManager as RefWorkspaceManager
     from spec_manager.schemas.entities import EntitiesArtifact
 
@@ -106,7 +103,7 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
     evidence_index = EvidenceIndex.load(index_path)
 
     # Load atom registry
-    layout = BranchLayout(run_root=manager.structure.run_dir)
+    layout = BranchLayout(run_root=manager.structure.root)
     atom_registry = AtomRegistry.load(layout)
 
     # Optionally load entities artifact
@@ -124,8 +121,9 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
                     data = _json.loads(entities_path.read_text(encoding="utf-8"))
                     entities_artifact = EntitiesArtifact.model_validate(data)
                     break  # Use first found
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"Failed to load entities from {entities_path}: {e}")
+                    continue
 
     # Run analysis
     analyzer = EntityCoverageAnalyzer(evidence_index, atom_registry, entities_artifact)

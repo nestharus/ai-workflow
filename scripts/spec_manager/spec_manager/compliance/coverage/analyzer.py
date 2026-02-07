@@ -22,7 +22,7 @@ from spec_manager.compliance.coverage.report import (
 
 if TYPE_CHECKING:
     from spec_manager.branches.atoms import AtomRegistry
-    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+    from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.schemas.entities import EntitiesArtifact
     from spec_manager.schemas.hollowed_spec import HollowedParagraph
 
@@ -45,6 +45,13 @@ class EntityCoverageAnalyzer:
         atom_registry: AtomRegistry,
         entities_artifact: EntitiesArtifact | None = None,
     ) -> None:
+        """Initialize the analyzer with evidence index and atom registry.
+
+        Args:
+            evidence_index: The evidence index with entity/paragraph data.
+            atom_registry: The atom registry with atom descriptors.
+            entities_artifact: Optional entities artifact for explicit linkage.
+        """
         self._evidence_index = evidence_index
         self._atom_registry = atom_registry
         self._entities_artifact = entities_artifact
@@ -88,9 +95,7 @@ class EntityCoverageAnalyzer:
             for entity in self._entities_artifact.entities:
                 entity_names[entity.name] = entity.entity_id
 
-        keyword_matches = match_by_keywords(
-            entity_paragraphs, atom_keywords, entity_names
-        )
+        keyword_matches = match_by_keywords(entity_paragraphs, atom_keywords, entity_names)
 
         # Resolve all matches
         matched = resolve_matches(explicit_matches, naming_matches, keyword_matches)
@@ -108,12 +113,8 @@ class EntityCoverageAnalyzer:
         total_entities = len(self._get_all_entity_ids())
         total_atoms = len(all_atoms)
 
-        entity_coverage = (
-            len(matched_entity_ids) / total_entities if total_entities > 0 else 1.0
-        )
-        atom_coverage = (
-            len(matched_atom_ids) / total_atoms if total_atoms > 0 else 1.0
-        )
+        entity_coverage = len(matched_entity_ids) / total_entities if total_entities > 0 else 1.0
+        atom_coverage = len(matched_atom_ids) / total_atoms if total_atoms > 0 else 1.0
 
         return EntityCoverageReport(
             matched=matched,
@@ -189,9 +190,7 @@ class EntityCoverageAnalyzer:
                     # Look up paragraph and lib info from evidence index
                     para_ids: list[str] = []
                     lib_ids: list[str] = []
-                    entries = self._evidence_index.global_entity_index.get(
-                        entity.name, []
-                    )
+                    entries = self._evidence_index.global_entity_index.get(entity.name, [])
                     for lib_id, para_id in entries:
                         para_ids.append(para_id)
                         if lib_id not in lib_ids:

@@ -25,11 +25,13 @@ from spec_manager.core.edit_in_place_bridge import (
 from spec_manager.core.gap import GapType
 from spec_manager.core.gaps import Severity
 from spec_manager.core.provenance import UnitStatus, UnitType
-from spec_manager.refinement.workspace.state import Phase
 
 
 class TestSpecCommentToGap:
+    """Tests for spec comment to gap conversion."""
+
     def test_spec_comment_conversion(self) -> None:
+        """Verify spec comments are converted to gaps correctly."""
         comment = SpecComment(
             file="module.py",
             line=23,
@@ -51,6 +53,7 @@ class TestSpecCommentToGap:
         assert gap.evidence[0].invariant_family == "edit_in_place"
 
     def test_todo_comment_maps_to_ambiguity(self) -> None:
+        """Verify TODO comments map to ambiguity gap type."""
         comment = SpecComment(
             file="module.py",
             line=10,
@@ -66,6 +69,7 @@ class TestSpecCommentToGap:
         assert gap.derived_artifact_target == "module-level"
 
     def test_gap_has_valid_id(self) -> None:
+        """Verify gap has valid generated ID."""
         comment = SpecComment(
             file="test.py",
             line=5,
@@ -97,7 +101,10 @@ class TestSpecCommentToGap:
 
 
 class TestFunctionInfoToTrackedUnit:
+    """Tests for function info to tracked unit conversion."""
+
     def test_implemented_function(self) -> None:
+        """Verify implemented functions map to PROCESSED units."""
         func = FunctionInfo(
             name="process",
             qualified_name="Service.process",
@@ -126,6 +133,7 @@ class TestFunctionInfoToTrackedUnit:
         assert unit.source.line_end == 25
 
     def test_stub_function_status(self) -> None:
+        """Verify stub functions map to PENDING units."""
         func = FunctionInfo(
             name="foo",
             qualified_name="foo",
@@ -147,6 +155,7 @@ class TestFunctionInfoToTrackedUnit:
         assert unit.status == UnitStatus.PENDING
 
     def test_partial_function_status(self) -> None:
+        """Verify partial functions map to PENDING units."""
         func = FunctionInfo(
             name="bar",
             qualified_name="bar",
@@ -168,6 +177,7 @@ class TestFunctionInfoToTrackedUnit:
         assert unit.status == UnitStatus.PENDING
 
     def test_verified_function_status(self) -> None:
+        """Verify verified functions map to MAPPED units."""
         func = FunctionInfo(
             name="verified_func",
             qualified_name="verified_func",
@@ -189,6 +199,7 @@ class TestFunctionInfoToTrackedUnit:
         assert unit.status == UnitStatus.MAPPED
 
     def test_no_docstring_uses_signature(self) -> None:
+        """Verify functions without docstring use signature as content."""
         func = FunctionInfo(
             name="foo",
             qualified_name="MyClass.foo",
@@ -213,7 +224,10 @@ class TestFunctionInfoToTrackedUnit:
 
 
 class TestFileStateToGapQueue:
+    """Tests for file state to gap queue conversion."""
+
     def test_gap_count(self, tmp_path: Path) -> None:
+        """Verify gap queue counts all gaps in a file."""
         source = textwrap.dedent("""\
             # gap one
             # TODO: gap two
@@ -234,6 +248,7 @@ class TestFileStateToGapQueue:
         assert all(g.status == "open" for g in queue.gaps)
 
     def test_no_gaps_empty_queue(self, tmp_path: Path) -> None:
+        """Verify clean file produces empty gap queue."""
         source = "def f():\n    return 1\n"
         fpath = tmp_path / "clean.py"
         fpath.write_text(source)
@@ -243,7 +258,7 @@ class TestFileStateToGapQueue:
         assert len(queue.gaps) == 0
 
     def test_gap_queue_compatible_with_update(self, tmp_path: Path) -> None:
-        """GapQueue.update should work with our gaps."""
+        """Verify GapQueue.update works with converted gaps."""
         source = "# gap\ndef f(): pass\n"
         fpath = tmp_path / "compat.py"
         fpath.write_text(source)
@@ -259,7 +274,10 @@ class TestFileStateToGapQueue:
 
 
 class TestProjectStateToGapQueue:
+    """Tests for project state to gap queue conversion."""
+
     def test_aggregation_across_files(self, tmp_path: Path) -> None:
+        """Verify gap queue aggregates gaps across multiple files."""
         (tmp_path / "a.py").write_text("# gap A\ndef f(): return 1\n")
         (tmp_path / "b.py").write_text("# gap B\ndef g(): pass\n")
 
@@ -268,8 +286,3 @@ class TestProjectStateToGapQueue:
 
         # a.py: 1 spec comment, b.py: 1 spec comment + 1 stub
         assert len(queue.gaps) == 3
-
-
-class TestPhaseEnumExtension:
-    def test_edit_in_place_phase_exists(self) -> None:
-        assert Phase.EDIT_IN_PLACE.value == "edit_in_place"

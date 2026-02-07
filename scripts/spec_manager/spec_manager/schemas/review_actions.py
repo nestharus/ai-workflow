@@ -11,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from spec_manager.core.evidence_pointers import parse_evidence_pointer
-from spec_manager.refinement.validation_utils import build_file_id_lookup
+from spec_manager.core.file_id_lookup import build_file_id_lookup
 
 ACTION_ID_RE = re.compile(r"^ACT-\d{4}$")
 LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
