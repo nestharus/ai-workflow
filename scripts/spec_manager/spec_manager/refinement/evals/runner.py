@@ -7,6 +7,7 @@ tracking metrics, detecting loops, and generating reports.
 from __future__ import annotations
 
 import contextlib
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -806,7 +807,7 @@ class EvalRunner:
         # Simulate gradual improvement: extract more items each iteration
         # This is a placeholder - real implementation would use actual extraction
         coverage = min(1.0, (iteration * 0.2) + 0.3)  # 50% at iter 1, 70% at iter 2, etc.
-        num_to_return = int(len(expected) * coverage)
+        num_to_return = math.ceil(len(expected) * coverage)
 
         # Return a subset of expected items to simulate extraction
         return expected[:num_to_return]
