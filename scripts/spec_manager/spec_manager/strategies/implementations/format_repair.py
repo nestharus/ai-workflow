@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.formats import (
+from spec_manager.core.json_extraction import (
     _extract_json_payload,
     _record_json_extraction_evidence,
 )
