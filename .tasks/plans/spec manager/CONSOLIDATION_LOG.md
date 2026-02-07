@@ -47,6 +47,34 @@ Removed `TestPhaseEnumExtension` from `core/tests/test_edit_in_place_bridge.py`.
 It tested `Phase.EDIT_IN_PLACE` from `refinement/workspace/state.py` — core tests
 should not test refinement internals.
 
+## Step 9: Remove dead code — first pass (done)
+
+Deleted 3 dead files (1,026 lines):
+
+* `core/compat.py` — atom ID compatibility functions, never referenced
+* `core/intermediate.py` — FileSnapshot/IntermediateManager, never used
+* `core/local_id_resolver.py` — LocalIdResolver, never imported
+
+Cleaned `refinement/core/__init__.py` (was dead re-export layer).
+Removed dead exports from `core/__init__.py`. 700 tests pass.
+
+## Step 10: Remove dead lazy exports (done)
+
+Removed all lazy `__getattr__` exports from:
+
+* `refinement/__init__.py` — ArtifactType, get_repair_model, repair_artifact, ProgressTracker
+* top-level `__init__.py` — 16 re-exported symbols (AnnotationParser, Strategy, etc.)
+
+All consumers import directly from submodules. 700 tests pass.
+
+## Step 11: Remove dead core re-exports and orphaned modules (done)
+
+* `core/__init__.py` — removed 44 unused re-exports, replaced with docstring only
+* `core/gap_compat.py` — deleted orphaned v1→v2 migration adapter (zero imports)
+* `core/library_registry.py` — deleted dead module (only used by dead __init__.py)
+
+543 lines removed. 700 tests pass.
+
 ## Cross-Contamination Status
 
 **CLEAN** (zero refinement imports):

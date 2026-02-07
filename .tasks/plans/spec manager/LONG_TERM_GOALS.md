@@ -1,22 +1,23 @@
 # Spec Manager: Long-Term Goals
 
-## Phase 1: Consolidation & Implementation (CURRENT)
+## Phase 1: Consolidation & Implementation (COMPLETE)
 
 Make sure everything is implemented correctly, nothing is extra, and
 consolidate/remove old processes.
 
 **Expected state when done**: See `EXPECTED_STATE.md`
 
-**Work**:
-- Extract shared infrastructure from refinement/ to core/ (gap types, agent_utils, evidence pointers — DONE)
-- Delete legacy dead code (workflow/, workspace/, staging/, discovery/, merging/, verification/ — DONE)
-- Remove remaining cross-contamination (schemas→refinement, compliance→refinement)
-- Verify all PDD modules are complete and match their plans
-- Verify refinement pipeline works correctly as-is (it IS the active system)
-- Clean up any extras, dead imports, or orphaned code
-- Ensure all tests pass and are testing real behavior
+**Completed**
 
-## Phase 2: QA & Eval Debugging
+* [x] Extract shared infrastructure from refinement/ to core/ (8 modules extracted)
+* [x] Delete legacy dead code (workflow/, workspace/, staging/, discovery/, merging/, verification/)
+* [x] Remove remaining cross-contamination (schemas→refinement, compliance→refinement)
+* [x] Verify all PDD modules are complete and match their plans (11 plans + 5 refactors)
+* [x] All CLI commands work (spec + spec-manager entry points)
+* [x] Clean up dead imports, orphaned code, unused re-exports
+* [x] All 700 tests pass
+
+## Phase 2: QA & Eval Debugging (CURRENT)
 
 Run QA with evals on each step to debug the entire process.
 
