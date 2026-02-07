@@ -12,7 +12,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from spec_manager.planning.code_parser import _find_function, parse_source
+from spec_manager.planning.code_parser import _find_function
 from spec_manager.planning.models import (
     CodeFile,
     CommentKind,
@@ -52,15 +52,11 @@ def reverse_translate(
     """
     func = _find_function(code_file, function_name)
     if func is None:
-        raise ValueError(
-            f"Function '{function_name}' not found in {code_file.file_path}"
-        )
+        raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
 
     # Determine the range to reverse
     source = Path(code_file.file_path).read_text(encoding="utf-8")
-    return reverse_translate_from_source(
-        source, code_file.file_path, func, start_line, end_line
-    )
+    return reverse_translate_from_source(source, code_file.file_path, func, start_line, end_line)
 
 
 def reverse_translate_from_source(
@@ -88,10 +84,7 @@ def reverse_translate_from_source(
     body_start = _get_body_start(source, func)
     body_end = func.end_line
 
-    if start_line is not None:
-        actual_start = max(start_line, body_start)
-    else:
-        actual_start = body_start
+    actual_start = max(start_line, body_start) if start_line is not None else body_start
 
     if end_line is not None:
         actual_end = min(end_line, body_end)
@@ -245,7 +238,7 @@ def _generate_pseudocode_comments(
     Raises:
         RuntimeError: If agent invocation fails.
     """
-    from spec_manager.refinement.agent_utils import run_agent
+    from spec_manager.core.agent_utils import run_agent
 
     code_text = "\n".join(code_lines)
     prompt = (
@@ -263,9 +256,7 @@ def _generate_pseudocode_comments(
         f'["validate input parameters", "compute the result hash"]\n'
     )
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(prompt)
         prompt_path = f.name
 

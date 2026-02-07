@@ -11,8 +11,8 @@ from spec_manager.compliance.detection.orchestrator import (
     integrate_with_gap_queue,
     scan_executable_gaps,
 )
-from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
-from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.core.gap import GapEvidence, GapSynthesizer
+from spec_manager.core.gap_queue import GapQueue
 
 
 class TestScanConfig:
@@ -141,9 +141,7 @@ class TestScanExecutableGaps:
         comment_evidence = [
             e for e in report.all_evidence if e.invariant_family == "executable_comment"
         ]
-        stub_evidence = [
-            e for e in report.all_evidence if e.invariant_family == "executable_stub"
-        ]
+        stub_evidence = [e for e in report.all_evidence if e.invariant_family == "executable_stub"]
         assert len(comment_evidence) >= 1
         assert len(stub_evidence) == 1
 
@@ -173,8 +171,8 @@ class TestIntegrateWithGapQueue:
         assert updated.gaps[0].gap_type.value == "stub_function"
 
     def test_merge_with_existing_gaps(self, tmp_path: Path) -> None:
+        from spec_manager.core.gap import Gap, GapType
         from spec_manager.core.gaps import Severity
-        from spec_manager.refinement.core.gap import Gap, GapType
 
         # Create existing gap
         existing_evidence = GapEvidence(

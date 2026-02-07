@@ -9,7 +9,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from spec_manager.compliance.detection.call_graph import (
     CallGraph,
@@ -23,7 +22,6 @@ from spec_manager.compliance.detection.comment_scanner import (
     scan_comments,
 )
 from spec_manager.compliance.detection.coverage_analyzer import (
-    CoverageReport,
     coverage_to_gap_evidence,
     parse_coverage_report,
     run_coverage,
@@ -38,8 +36,8 @@ from spec_manager.compliance.detection.stub_scanner import (
     scan_stubs,
     stubs_to_gap_evidence,
 )
-from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
-from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.core.gap import GapEvidence, GapSynthesizer
+from spec_manager.core.gap_queue import GapQueue
 
 
 @dataclass
@@ -152,9 +150,7 @@ def scan_executable_gaps(
     if config.enable_coverage and test_command is not None:
         source_dirs = list({fp.parent for fp in filepaths})
         try:
-            coverage_data_file = run_coverage(
-                test_command, source_dirs, project_root
-            )
+            coverage_data_file = run_coverage(test_command, source_dirs, project_root)
             cov_report = parse_coverage_report(coverage_data_file, filepaths)
             coverage_evidence = coverage_to_gap_evidence(
                 cov_report,

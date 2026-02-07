@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.core.gap import GapEvidence
+from spec_manager.core.gap import GapEvidence
 from spec_manager.schemas.atoms import LineAtom
 from spec_manager.schemas.evidence_ranges import EvidenceRange, EvidenceRangesArtifact
 from spec_manager.schemas.sections import FileSections, SectionSpan

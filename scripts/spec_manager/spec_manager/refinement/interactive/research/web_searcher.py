@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
@@ -51,12 +51,10 @@ Return JSON with:
 
     def _parse_output(self, output: str) -> dict[str, Any]:
         try:
-            data = extract_json_from_llm_output(
-                output, allow_object=True, location="web_searcher"
-            )
+            data = extract_json_from_llm_output(output, allow_object=True, location="web_searcher")
             if isinstance(data, dict):
                 return data
         except (ValueError, TypeError) as exc:
-            logger.error("Failed to parse web searcher output: %s", exc)
+            logger.exception("Failed to parse web searcher output: %s", exc)
 
         return {"findings": [], "overall_summary": ""}

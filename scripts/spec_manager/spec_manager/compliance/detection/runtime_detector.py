@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from spec_manager.compliance.detection.stub_scanner import StubFunction
-from spec_manager.refinement.core.gap import GapEvidence
+from spec_manager.core.gap import GapEvidence
 
 
 @dataclass
@@ -178,9 +178,7 @@ def probe_function(
 
     start_time = time.monotonic()
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, encoding="utf-8"
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
         tmp.write(script)
         tmp_path = tmp.name
 
@@ -284,9 +282,7 @@ def probe_stubs(
         List of RuntimeProbeResult.
     """
     # Sort so not_implemented stubs come first
-    sorted_stubs = sorted(
-        stubs, key=lambda s: (0 if s.stub_type == "not_implemented" else 1)
-    )
+    sorted_stubs = sorted(stubs, key=lambda s: (0 if s.stub_type == "not_implemented" else 1))
 
     results: list[RuntimeProbeResult] = []
     for stub in sorted_stubs:

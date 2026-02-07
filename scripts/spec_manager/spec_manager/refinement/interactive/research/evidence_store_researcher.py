@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from spec_manager.refinement.hollowed_spec.searcher import EvidenceSearcher, SearchResult
 from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+from spec_manager.refinement.hollowed_spec.searcher import EvidenceSearcher, SearchResult
 from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 from spec_manager.refinement.interactive.spec_patcher import SteeringResponse
 
@@ -106,15 +106,13 @@ class EvidenceStoreResearcher:
         Creates a Gap entry in the workspace's gap queue for the
         spec building phase to address.
         """
-        from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
-        from spec_manager.refinement.core.gap_queue import GapQueue
+        from spec_manager.core.gap import Gap, GapEvidence, GapType
+        from spec_manager.core.gap_queue import GapQueue
         from spec_manager.core.gaps import Severity
 
         gap_evidence = GapEvidence(
             invariant_family="ambiguity",
-            description=(
-                f"Unresolved ambiguity: {ambiguity.suggested_question}"
-            ),
+            description=(f"Unresolved ambiguity: {ambiguity.suggested_question}"),
             details={
                 "ambiguity_id": ambiguity.ambiguity_id,
                 "source_text": ambiguity.source_text,
@@ -134,9 +132,7 @@ class EvidenceStoreResearcher:
             severity=Severity.WARNING,
             source=[ambiguity.source_location],
             derived_artifact_target=ambiguity.source_location,
-            description=(
-                f"Evidence gap: {ambiguity.suggested_question}"
-            ),
+            description=(f"Evidence gap: {ambiguity.suggested_question}"),
             evidence=[gap_evidence],
         )
 
@@ -145,9 +141,7 @@ class EvidenceStoreResearcher:
         if gap_queue_path.exists():
             import json
 
-            existing_data = json.loads(
-                gap_queue_path.read_text(encoding="utf-8")
-            )
+            existing_data = json.loads(gap_queue_path.read_text(encoding="utf-8"))
             queue = GapQueue.from_dict(existing_data)
         else:
             queue = GapQueue()
@@ -160,9 +154,7 @@ class EvidenceStoreResearcher:
         import json
 
         gap_queue_path.parent.mkdir(parents=True, exist_ok=True)
-        gap_queue_path.write_text(
-            json.dumps(queue.to_dict(), indent=2), encoding="utf-8"
-        )
+        gap_queue_path.write_text(json.dumps(queue.to_dict(), indent=2), encoding="utf-8")
         logger.info(
             "Flagged ambiguity %s as spec gap in %s",
             ambiguity.ambiguity_id,

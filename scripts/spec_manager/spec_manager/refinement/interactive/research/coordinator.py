@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import extract_json_from_llm_output
 from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 from spec_manager.refinement.interactive.spec_patcher import SteeringResponse

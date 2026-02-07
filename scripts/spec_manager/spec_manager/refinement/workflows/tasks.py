@@ -10,9 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.core.gap import Gap, parse_gaps_markdown
-from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.gap import Gap, parse_gaps_markdown
+from spec_manager.core.gap_queue import GapQueue
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 from spec_manager.schemas.edge_list import (

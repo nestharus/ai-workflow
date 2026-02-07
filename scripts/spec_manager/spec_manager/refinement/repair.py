@@ -12,9 +12,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.workspace import WorkspaceManager
-
-from .agent_utils import run_agent
 
 _FALLBACK_REPAIR_MODEL = "gpt-5.2-low"
 _REPAIR_MODEL_SELECTION_PATH = (

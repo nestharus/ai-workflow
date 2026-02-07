@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import extract_json_from_llm_output
 from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 
@@ -58,6 +57,6 @@ Return JSON with:
             if isinstance(data, dict):
                 return data
         except (ValueError, TypeError) as exc:
-            logger.error("Failed to parse signal extractor output: %s", exc)
+            logger.exception("Failed to parse signal extractor output: %s", exc)
 
         return {"search_queries": [], "relevance_reasons": []}

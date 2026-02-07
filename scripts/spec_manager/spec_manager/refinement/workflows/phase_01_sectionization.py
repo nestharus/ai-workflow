@@ -9,8 +9,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.core.gap import GapEvidence, GapSynthesizer
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.gap import GapEvidence, GapSynthesizer
 from spec_manager.refinement.formats import _fix_single_quote_json, _strip_code_fences
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, WorkspaceManager

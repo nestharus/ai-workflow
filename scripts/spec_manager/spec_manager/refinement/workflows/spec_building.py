@@ -17,9 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
-from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.gap import Gap, GapEvidence, GapSynthesizer, format_gap_table
+from spec_manager.core.gap_queue import GapQueue
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     parse_evidence_pointer,

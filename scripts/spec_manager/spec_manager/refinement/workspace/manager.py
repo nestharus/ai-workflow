@@ -21,10 +21,7 @@ if TYPE_CHECKING:
     from spec_manager.projection.lineage.import_graph import ImportGraph
     from spec_manager.projection.lineage.table import ProjectionLineageTable
 
-from spec_manager.core.gaps import Severity
-from spec_manager.core.id_registry import FileUidRegistry, RevisionRegistry
-from spec_manager.core.project_root import resolve_from_root
-from spec_manager.refinement.core.gap import (
+from spec_manager.core.gap import (
     Gap,
     GapEvidence,
     GapType,
@@ -32,7 +29,10 @@ from spec_manager.refinement.core.gap import (
     format_gap_markdown,
     parse_gaps_markdown,
 )
-from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.core.gap_queue import GapQueue
+from spec_manager.core.gaps import Severity
+from spec_manager.core.id_registry import FileUidRegistry, RevisionRegistry
+from spec_manager.core.project_root import resolve_from_root
 from spec_manager.schemas.edge_list import (
     EdgeListSchema,
     InterfaceIndexSchema,

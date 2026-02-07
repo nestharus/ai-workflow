@@ -106,9 +106,7 @@ class EvidenceStore:
                 current_line = i
 
             # Extract element IDs (patterns like LIB-xxxx, ATOM-xxxx, etc.)
-            element_ids = re.findall(
-                r"\b((?:LIB|ATOM|PIN|SEC|DEC|EDGE)-[A-Z0-9-]+)\b", stripped
-            )
+            element_ids = re.findall(r"\b((?:LIB|ATOM|PIN|SEC|DEC|EDGE)-[A-Z0-9-]+)\b", stripped)
 
             # Build keywords from the heading
             keywords = set(current_heading.lower().split())
@@ -208,9 +206,7 @@ class EvidenceStore:
         # Use cache
         if file_path not in self._content_cache:
             try:
-                self._content_cache[file_path] = Path(file_path).read_text(
-                    encoding="utf-8"
-                )
+                self._content_cache[file_path] = Path(file_path).read_text(encoding="utf-8")
             except OSError:
                 return ""
 
@@ -252,8 +248,7 @@ class EvidenceStore:
         query = " ".join(query_parts)
 
         context = (
-            f"function: {function_context.name}, "
-            f"params: {', '.join(function_context.parameters)}"
+            f"function: {function_context.name}, params: {', '.join(function_context.parameters)}"
         )
 
         # Search evidence
@@ -265,17 +260,13 @@ class EvidenceStore:
                 answer=None,
                 evidence_refs=[],
                 gap_description=(
-                    f"No spec evidence found for: {comment_text}. "
-                    f"Context: {function_context.name}"
+                    f"No spec evidence found for: {comment_text}. Context: {function_context.name}"
                 ),
                 refined_comments=[comment_text],
             )
 
         # Try to synthesize answer via LLM
-        evidence_refs = [
-            f"{hit.lib_id}::{hit.element_id or hit.section_heading}"
-            for hit in hits
-        ]
+        evidence_refs = [f"{hit.lib_id}::{hit.element_id or hit.section_heading}" for hit in hits]
 
         try:
             answer, refined = self._synthesize_answer(
@@ -325,7 +316,7 @@ class EvidenceStore:
         Raises:
             RuntimeError: If agent invocation fails.
         """
-        from spec_manager.refinement.agent_utils import run_agent
+        from spec_manager.core.agent_utils import run_agent
 
         evidence_text = "\n\n".join(
             f"### {hit.lib_id} - {hit.section_heading}\n{hit.excerpt}" for hit in hits

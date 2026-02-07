@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     EVIDENCE_POINTER_RE,
     FileSummary,

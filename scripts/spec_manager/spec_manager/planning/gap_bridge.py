@@ -9,9 +9,8 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
+from spec_manager.core.gap import Gap, GapEvidence, GapType
 from spec_manager.core.gaps import Severity
-from spec_manager.planning.adjacency import find_store_touches
-from spec_manager.planning.code_parser import detect_stubs_from_source
 from spec_manager.planning.models import (
     AdjacentDetail,
     CodeFile,
@@ -19,7 +18,6 @@ from spec_manager.planning.models import (
     FunctionInfo,
     PseudocodeComment,
 )
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 
 
 def scan_for_gaps(code_files: list[CodeFile]) -> list[Gap]:
@@ -42,12 +40,8 @@ def scan_for_gaps(code_files: list[CodeFile]) -> list[Gap]:
         # Collect all PLAN comments across all functions and top-level
         plan_comments: list[PseudocodeComment] = []
         for func in code_file.functions:
-            plan_comments.extend(
-                c for c in func.comments if c.kind == CommentKind.PLAN
-            )
-        plan_comments.extend(
-            c for c in code_file.top_level_comments if c.kind == CommentKind.PLAN
-        )
+            plan_comments.extend(c for c in func.comments if c.kind == CommentKind.PLAN)
+        plan_comments.extend(c for c in code_file.top_level_comments if c.kind == CommentKind.PLAN)
 
         # Convert comments to gaps
         gaps.extend(comments_to_gaps(plan_comments))
@@ -198,9 +192,7 @@ def adjacencies_to_gaps(adjacencies: list[AdjacentDetail]) -> list[Gap]:
         if not adj.needs_plan:
             continue
 
-        gap_id = _generate_gap_id(
-            "ADJ", adj.source_function, 0, adj.related_function
-        )
+        gap_id = _generate_gap_id("ADJ", adj.source_function, 0, adj.related_function)
         store_info = f" via {adj.store_or_event}" if adj.store_or_event else ""
         description = (
             f"Adjacent detail: {adj.related_function} "

@@ -9,7 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import (
     normalize_compound_pointers,
     parse_architecture_brief_output,

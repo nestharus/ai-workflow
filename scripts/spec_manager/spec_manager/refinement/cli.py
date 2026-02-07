@@ -24,9 +24,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.gap import Gap, format_gap_table
 from spec_manager.core.project_root import resolve_from_root
-from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.core.gap import Gap, format_gap_table
 from spec_manager.refinement.qa.contract_lint import run_contract_lint
 from spec_manager.refinement.trace import (
     format_atom_trace,

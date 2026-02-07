@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from spec_manager.refinement.core.gap import GapEvidence
+from spec_manager.core.gap import GapEvidence
 
 
 @dataclass
@@ -73,9 +73,7 @@ def _is_ellipsis(stmt: ast.stmt) -> bool:
     """Check if a statement is an Ellipsis expression (`...`)."""
     if not isinstance(stmt, ast.Expr):
         return False
-    if isinstance(stmt.value, ast.Constant) and stmt.value.value is ...:
-        return True
-    return False
+    return isinstance(stmt.value, ast.Constant) and stmt.value.value is ...
 
 
 def _is_not_implemented_raise(stmt: ast.stmt) -> bool:
@@ -93,12 +91,12 @@ def _is_not_implemented_raise(stmt: ast.stmt) -> bool:
         if isinstance(func, ast.Attribute) and func.attr == "NotImplementedError":
             return True
     # raise NotImplementedError
-    if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
-        return True
-    return False
+    return isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
 
 
-def _classify_stub(body: list[ast.stmt]) -> tuple[Literal["pass", "ellipsis", "not_implemented"] | None, bool]:
+def _classify_stub(
+    body: list[ast.stmt],
+) -> tuple[Literal["pass", "ellipsis", "not_implemented"] | None, bool]:
     """Classify a function body as a stub or not.
 
     Returns (stub_type, has_docstring) or (None, False) if not a stub.

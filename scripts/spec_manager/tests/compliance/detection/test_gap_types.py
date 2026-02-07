@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from spec_manager.core.gaps import Severity
-from spec_manager.refinement.core.gap import (
+from spec_manager.core.gap import (
     Gap,
     GapEvidence,
     GapType,
     _infer_gap_type,
 )
+from spec_manager.core.gaps import Severity
 
 
 class TestNewGapTypeMembers:

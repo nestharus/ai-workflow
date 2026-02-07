@@ -9,14 +9,14 @@ Phase 7 Work Item 2: Atom-Aware Drift Comparator
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
+from spec_manager.core.gap import Gap, GapEvidence, GapType
 from spec_manager.core.gaps import Severity
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 
 if TYPE_CHECKING:
     from spec_manager.schemas.atoms import LineAtom
@@ -102,9 +102,7 @@ class DriftReport:
     total_pins: int = 0
     valid_pins: int = 0
     missing_targets: int = 0
-    created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def has_significant_drift(self, threshold: float = 0.8) -> bool:
         """Check if drift exceeds significance threshold.
@@ -135,9 +133,9 @@ class AtomAwareDriftComparator:
 
     def compare(
         self,
-        projection: "ProjectionArtifact",
-        spec_index: "SpecIndexV2",
-        atoms: list["LineAtom"] | None = None,
+        projection: ProjectionArtifact,
+        spec_index: SpecIndexV2,
+        atoms: list[LineAtom] | None = None,
     ) -> DriftReport:
         """Compare projection against spec index.
 
@@ -155,17 +153,13 @@ class AtomAwareDriftComparator:
 
         # Check each pin for target existence
         for pin in projection.pins:
-            target_exists = self._check_target_exists(
-                pin.target_id, pin.target_kind, spec_index
-            )
+            target_exists = self._check_target_exists(pin.target_id, pin.target_kind, spec_index)
 
             if target_exists:
                 valid_pins += 1
             else:
                 missing_targets += 1
-                excerpt = self._extract_excerpt(
-                    projection.content, pin.from_projection_offset
-                )
+                excerpt = self._extract_excerpt(projection.content, pin.from_projection_offset)
                 drift_items.append(
                     DriftItem(
                         drift_type="PIN_TARGET_MISSING",
@@ -180,9 +174,7 @@ class AtomAwareDriftComparator:
         # Compute atom-level alignment if atoms provided
         atom_similarity = 1.0
         if atoms:
-            atom_drift_items, atom_similarity = self._compare_atoms(
-                projection, spec_index, atoms
-            )
+            atom_drift_items, atom_similarity = self._compare_atoms(projection, spec_index, atoms)
             drift_items.extend(atom_drift_items)
 
         # Compute overall similarity
@@ -205,7 +197,7 @@ class AtomAwareDriftComparator:
         self,
         target_id: str,
         target_kind: str,
-        spec_index: "SpecIndexV2",
+        spec_index: SpecIndexV2,
     ) -> bool:
         """Check if a pin target exists in the spec index.
 
@@ -253,9 +245,9 @@ class AtomAwareDriftComparator:
 
     def _compare_atoms(
         self,
-        projection: "ProjectionArtifact",
-        spec_index: "SpecIndexV2",
-        atoms: list["LineAtom"],
+        projection: ProjectionArtifact,
+        spec_index: SpecIndexV2,
+        atoms: list[LineAtom],
     ) -> tuple[list[DriftItem], float]:
         """Compare atoms between projection and spec index.
 
@@ -272,7 +264,7 @@ class AtomAwareDriftComparator:
         drift_items: list[DriftItem] = []
 
         # Build fingerprint index from provided atoms
-        fingerprint_to_atom: dict[str, "LineAtom"] = {}
+        fingerprint_to_atom: dict[str, LineAtom] = {}
         for atom in atoms:
             fp = atom.atom_fingerprint
             fingerprint_to_atom[fp] = atom
@@ -281,7 +273,7 @@ class AtomAwareDriftComparator:
         total_element_atoms = 0
         matched_atoms = 0
 
-        for elem_id, elem_data in spec_index.elements.items():
+        for elem_id, _elem_data in spec_index.elements.items():
             elem_atoms = spec_index.get_atoms_for_element(elem_id)
             total_element_atoms += len(elem_atoms)
 
@@ -295,8 +287,8 @@ class AtomAwareDriftComparator:
 
     def align_atoms(
         self,
-        old_atoms: list["LineAtom"],
-        new_atoms: list["LineAtom"],
+        old_atoms: list[LineAtom],
+        new_atoms: list[LineAtom],
     ) -> AtomAlignment:
         """Align atoms between two revisions using fingerprints.
 
@@ -425,8 +417,8 @@ def convert_drift_to_gaps(
 
 
 __all__ = [
-    "AtomAwareDriftComparator",
     "AtomAlignment",
+    "AtomAwareDriftComparator",
     "DriftItem",
     "DriftPolicy",
     "DriftReport",

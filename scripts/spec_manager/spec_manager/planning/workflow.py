@@ -107,9 +107,7 @@ def run_planning_v2_phase(
         module = _module_name_from_path(code_file.file_path)
         for func in code_file.functions:
             qualified = f"{module}.{func.name}"
-            adjacencies = discover_adjacent_details(
-                qualified, call_graph, store_touches
-            )
+            adjacencies = discover_adjacent_details(qualified, call_graph, store_touches)
             all_adjacencies.extend(adjacencies)
 
     # Step 7: Convert to gaps
@@ -196,7 +194,7 @@ def _write_artifacts(
     plans_path.write_text(json.dumps(plans_data, indent=2), encoding="utf-8")
 
     # Gaps
-    from spec_manager.refinement.core.gap import Gap
+    from spec_manager.core.gap import Gap
 
     gaps_data = [g.to_dict() if isinstance(g, Gap) else g for g in gaps]
     gaps_path = output_dir / f"{run_id}_gaps.json"

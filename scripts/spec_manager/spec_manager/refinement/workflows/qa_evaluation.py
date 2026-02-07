@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import _extract_json_payload, _strip_code_fences
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -105,8 +105,7 @@ def evaluate_qa(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
     marker_path = reports_dir / "overview_approved.marker"
     if not marker_path.exists():
         raise RuntimeError(
-            "Overview must be approved before QA evaluation. "
-            "Run 'approve-overview' first."
+            "Overview must be approved before QA evaluation. Run 'approve-overview' first."
         )
 
     manager.start_phase(Phase.QA_EVALUATION)
@@ -193,9 +192,7 @@ def evaluate_qa(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
         f"Total findings: {total_findings}",
         "",
     ]
-    (reports_dir / "qa_evaluation.md").write_text(
-        "\n".join(report_lines), encoding="utf-8"
-    )
+    (reports_dir / "qa_evaluation.md").write_text("\n".join(report_lines), encoding="utf-8")
 
     outputs = {
         "libraries_evaluated": libraries_evaluated,

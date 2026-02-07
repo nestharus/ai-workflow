@@ -19,7 +19,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from spec_manager.refinement.core.gap import GapEvidence
+from spec_manager.core.gap import GapEvidence
 from spec_manager.schemas.sections import FileSections, SectionSpan
 from spec_manager.schemas.validation_utils import (
     validate_section_coverage,

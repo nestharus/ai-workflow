@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.core.gap import GapEvidence
+from spec_manager.core.gap import GapEvidence
 
 
 @dataclass
@@ -84,7 +84,8 @@ def run_coverage(
         f"--source={source_arg}",
         f"--data-file={coverage_data_file}",
         "-m",
-    ] + test_command
+        *test_command,
+    ]
 
     subprocess.run(
         cmd,

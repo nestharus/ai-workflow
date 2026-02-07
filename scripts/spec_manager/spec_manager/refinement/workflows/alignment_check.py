@@ -10,13 +10,20 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import _extract_json_payload, _strip_code_fences
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 from .spec_building import _extract_sections
-from .spec_patches import VALID_SPEC_SECTIONS, SpecDocument, apply_patch, parse_patch_json, render_spec, validate_patch_operation
+from .spec_patches import (
+    VALID_SPEC_SECTIONS,
+    SpecDocument,
+    apply_patch,
+    parse_patch_json,
+    render_spec,
+    validate_patch_operation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +77,15 @@ def _generate_alignment_patches(drift_findings: list[dict[str, Any]]) -> list[di
     patches: list[dict[str, Any]] = []
     for finding in drift_findings:
         if finding.get("severity") == "high":
-            patches.append({
-                "op": "edit",
-                "section": "Details",
-                "bullet_index": None,
-                "content": f"[DRIFT] {finding.get('description', '')}",
-                "citations": [],
-            })
+            patches.append(
+                {
+                    "op": "edit",
+                    "section": "Details",
+                    "bullet_index": None,
+                    "content": f"[DRIFT] {finding.get('description', '')}",
+                    "citations": [],
+                }
+            )
     return patches
 
 
@@ -129,7 +138,7 @@ def check_alignment(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
         charter_content = charter_path.read_text(encoding="utf-8")
         original_sections = _extract_sections(spec_content, level=2)
 
-        for iteration in range(max_iterations):
+        for _iteration in range(max_iterations):
             prompt = _build_alignment_prompt(
                 lib_id, spec_content, original_sections, charter_content
             )
@@ -162,7 +171,9 @@ def check_alignment(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
             # Apply patches if provided
             if patches:
                 try:
-                    patch_json = json.dumps({"operations": patches, "lib_id": lib_id, "file_id": "alignment"})
+                    patch_json = json.dumps(
+                        {"operations": patches, "lib_id": lib_id, "file_id": "alignment"}
+                    )
                     patch_set = parse_patch_json(patch_json)
                     spec_doc = SpecDocument(spec_content)
                     for op in patch_set.operations:
@@ -196,9 +207,7 @@ def check_alignment(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
         f"Reward hacking findings: {total_reward_hacking}",
         "",
     ]
-    (reports_dir / "alignment_report.md").write_text(
-        "\n".join(report_lines), encoding="utf-8"
-    )
+    (reports_dir / "alignment_report.md").write_text("\n".join(report_lines), encoding="utf-8")
 
     outputs = {
         "libraries_checked": libraries_checked,

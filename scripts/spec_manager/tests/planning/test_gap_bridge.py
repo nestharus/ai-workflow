@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 
+from spec_manager.core.gap import GapType
 from spec_manager.core.gaps import Severity
 from spec_manager.planning.code_parser import parse_source
 from spec_manager.planning.gap_bridge import (
@@ -18,8 +19,6 @@ from spec_manager.planning.models import (
     FunctionInfo,
     PseudocodeComment,
 )
-from spec_manager.refinement.core.gap import GapType
-
 
 # --- Fixtures ---
 

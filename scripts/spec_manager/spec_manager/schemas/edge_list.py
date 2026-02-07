@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from spec_manager.refinement.formats import parse_evidence_pointer
+from spec_manager.core.evidence_pointers import parse_evidence_pointer
 
 if TYPE_CHECKING:
     from .interface_contract import InterfaceContractSchema

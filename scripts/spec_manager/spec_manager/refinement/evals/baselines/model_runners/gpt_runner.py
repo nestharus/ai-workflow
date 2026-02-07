@@ -18,16 +18,14 @@ from spec_manager.refinement.evals.baselines.prompt_builder import build_prompt
 class GPTRunner:
     """Runs GPT via the agent runner infrastructure."""
 
-    def invoke(
-        self, spec_text: str, codebase_path: Path, workspace: Path
-    ) -> ModelOutput:
+    def invoke(self, spec_text: str, codebase_path: Path, workspace: Path) -> ModelOutput:
         """Invoke GPT with the spec text.
 
         Builds a comprehensive prompt with full codebase context,
         then runs via the agents CLI. After execution, writes the
         agent output as labyrinth_setup.py in the codebase directory.
         """
-        from spec_manager.refinement.agent_utils import run_agent
+        from spec_manager.core.agent_utils import run_agent
 
         prompt = build_prompt(spec_text, codebase_path)
 

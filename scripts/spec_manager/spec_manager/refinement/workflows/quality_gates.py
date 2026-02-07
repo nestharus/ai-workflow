@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import _extract_json_payload, _strip_code_fences
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
@@ -125,11 +125,13 @@ def run_quality_gates(run_id: str, threshold: float = 0.8) -> dict[str, Any]:
                     workspace=manager.workspace_path,
                 )
             except RuntimeError as exc:
-                errors.append({
-                    "lib_id": lib_id,
-                    "dimension": dimension,
-                    "error": f"Agent failed: {exc}",
-                })
+                errors.append(
+                    {
+                        "lib_id": lib_id,
+                        "dimension": dimension,
+                        "error": f"Agent failed: {exc}",
+                    }
+                )
                 dimension_scores[dimension] = 0.0
                 tracker.update(status=f"{lib_id}/{dimension}")
                 continue
@@ -139,11 +141,13 @@ def run_quality_gates(run_id: str, threshold: float = 0.8) -> dict[str, Any]:
                 score = float(data.get("score", 0.0))
                 dimension_scores[dimension] = min(max(score, 0.0), 1.0)
             except Exception as exc:
-                errors.append({
-                    "lib_id": lib_id,
-                    "dimension": dimension,
-                    "error": f"Parse failed: {exc}",
-                })
+                errors.append(
+                    {
+                        "lib_id": lib_id,
+                        "dimension": dimension,
+                        "error": f"Parse failed: {exc}",
+                    }
+                )
                 dimension_scores[dimension] = 0.0
 
             tracker.update(status=f"{lib_id}/{dimension}")
@@ -156,17 +160,10 @@ def run_quality_gates(run_id: str, threshold: float = 0.8) -> dict[str, Any]:
     # Calculate weighted averages
     overall_scores: dict[str, float] = {}
     for lib_id, scores in library_scores.items():
-        weighted = sum(
-            scores.get(dim, 0.0) * DIMENSION_WEIGHTS[dim]
-            for dim in QUALITY_DIMENSIONS
-        )
+        weighted = sum(scores.get(dim, 0.0) * DIMENSION_WEIGHTS[dim] for dim in QUALITY_DIMENSIONS)
         overall_scores[lib_id] = round(weighted, 4)
 
-    avg_score = (
-        sum(overall_scores.values()) / len(overall_scores)
-        if overall_scores
-        else 0.0
-    )
+    avg_score = sum(overall_scores.values()) / len(overall_scores) if overall_scores else 0.0
     passed = avg_score >= threshold
 
     # Write quality gates report
@@ -189,17 +186,18 @@ def run_quality_gates(run_id: str, threshold: float = 0.8) -> dict[str, Any]:
         report_lines.append(f"- {lib_id}: {score:.4f} ({dim_str})")
     report_lines.append("")
 
-    (reports_dir / "quality_gates.md").write_text(
-        "\n".join(report_lines), encoding="utf-8"
-    )
+    (reports_dir / "quality_gates.md").write_text("\n".join(report_lines), encoding="utf-8")
     (reports_dir / "quality_gates.json").write_text(
-        json.dumps({
-            "threshold": threshold,
-            "average_score": avg_score,
-            "passed": passed,
-            "library_scores": library_scores,
-            "overall_scores": overall_scores,
-        }, indent=2),
+        json.dumps(
+            {
+                "threshold": threshold,
+                "average_score": avg_score,
+                "passed": passed,
+                "library_scores": library_scores,
+                "overall_scores": overall_scores,
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -216,7 +214,9 @@ def run_quality_gates(run_id: str, threshold: float = 0.8) -> dict[str, Any]:
     if passed:
         manager.complete_phase(Phase.QUALITY_GATES, outputs=outputs)
     else:
-        manager.fail_phase(Phase.QUALITY_GATES, error=f"Quality score {avg_score:.4f} below threshold {threshold}")
+        manager.fail_phase(
+            Phase.QUALITY_GATES, error=f"Quality score {avg_score:.4f} below threshold {threshold}"
+        )
 
     return {
         "success": passed,

@@ -9,19 +9,14 @@ Phase 7 Work Item 4: Unified Gap Flow
 
 from __future__ import annotations
 
-import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from spec_manager.core.gaps import DetectorFinding, GapElement, Severity
-from spec_manager.refinement.core.gap import (
+from spec_manager.core.gap import (
     Gap,
     GapEvidence,
     GapType,
-    compute_evidence_signature,
 )
-
-if TYPE_CHECKING:
-    pass
+from spec_manager.core.gaps import DetectorFinding, GapElement, Severity
 
 
 def _infer_invariant_family(finding: DetectorFinding) -> str:
@@ -39,10 +34,7 @@ def _infer_invariant_family(finding: DetectorFinding) -> str:
     detector = finding.detector.lower() if finding.detector else ""
 
     # Check detector prefix patterns
-    if any(
-        p in detector
-        for p in ("format", "duplicate", "legacy", "pattern", "escape")
-    ):
+    if any(p in detector for p in ("format", "duplicate", "legacy", "pattern", "escape")):
         return "format"
 
     if any(p in detector for p in ("undefined", "unresolved", "entity")):
@@ -109,9 +101,7 @@ def gap_element_to_gap(element: GapElement) -> Gap:
         Equivalent Gap object
     """
     # Convert evidence list
-    evidence_list = [
-        detector_finding_to_gap_evidence(e) for e in element.evidence
-    ]
+    evidence_list = [detector_finding_to_gap_evidence(e) for e in element.evidence]
 
     # Infer gap type from evidence
     gap_type = _infer_gap_type_from_element(element, evidence_list)
@@ -138,9 +128,7 @@ def gap_element_to_gap(element: GapElement) -> Gap:
     )
 
 
-def _infer_gap_type_from_element(
-    element: GapElement, evidence: list[GapEvidence]
-) -> GapType:
+def _infer_gap_type_from_element(element: GapElement, evidence: list[GapEvidence]) -> GapType:
     """Infer GapType from GapElement content.
 
     Maps element ID patterns and evidence to GapType:
@@ -225,8 +213,8 @@ def batch_convert_elements(elements: list[GapElement]) -> list[Gap]:
 
 
 __all__ = [
+    "batch_convert_elements",
+    "batch_convert_findings",
     "detector_finding_to_gap_evidence",
     "gap_element_to_gap",
-    "batch_convert_findings",
-    "batch_convert_elements",
 ]

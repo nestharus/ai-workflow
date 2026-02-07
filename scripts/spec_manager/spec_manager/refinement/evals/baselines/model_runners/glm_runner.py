@@ -17,9 +17,7 @@ from spec_manager.refinement.evals.baselines.prompt_builder import build_prompt
 class GLMRunner:
     """Runs GLM via the agents CLI using run_agent()."""
 
-    def invoke(
-        self, spec_text: str, codebase_path: Path, workspace: Path
-    ) -> ModelOutput:
+    def invoke(self, spec_text: str, codebase_path: Path, workspace: Path) -> ModelOutput:
         """Invoke GLM with the spec text.
 
         Builds a comprehensive prompt with full codebase context
@@ -27,7 +25,7 @@ class GLMRunner:
         After execution, writes the agent output as labyrinth_setup.py
         in the codebase directory.
         """
-        from spec_manager.refinement.agent_utils import run_agent
+        from spec_manager.core.agent_utils import run_agent
 
         prompt = build_prompt(spec_text, codebase_path)
 
@@ -97,6 +95,7 @@ def _extract_python_code(output: str) -> str:
     """
     # Try to extract from code fences
     import re
+
     pattern = re.compile(r"```python\s*\n(.*?)```", re.DOTALL)
     match = pattern.search(output)
     if match:

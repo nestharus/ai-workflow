@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from spec_manager.core.gap import Gap, GapEvidence, GapType
 from spec_manager.core.gaps import Severity
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 from spec_manager.refinement.qa.validators import (
     validate_architecture_library_mapping_output,
     validate_architecture_proposal_output,

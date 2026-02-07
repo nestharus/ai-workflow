@@ -22,7 +22,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.formats import LibraryEvent, LibraryEventType, parse_evidence_pointer
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact

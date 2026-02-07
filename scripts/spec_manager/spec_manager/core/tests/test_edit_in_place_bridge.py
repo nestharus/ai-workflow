@@ -8,13 +8,9 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from spec_manager.core.edit_in_place import (
     CommentKind,
-    FileTranslationState,
     FunctionInfo,
-    ProjectTranslationState,
     SpecComment,
     TranslationState,
     analyze_file,
@@ -26,9 +22,9 @@ from spec_manager.core.edit_in_place_bridge import (
     project_state_to_gap_queue,
     spec_comment_to_gap,
 )
+from spec_manager.core.gap import GapType
 from spec_manager.core.gaps import Severity
 from spec_manager.core.provenance import UnitStatus, UnitType
-from spec_manager.refinement.core.gap import GapType
 from spec_manager.refinement.workspace.state import Phase
 
 

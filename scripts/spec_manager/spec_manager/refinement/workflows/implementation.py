@@ -23,7 +23,7 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from spec_manager.refinement.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 from spec_manager.refinement.workflows.patch_utils import (
     IMMUTABLE_PATH_PATTERNS,

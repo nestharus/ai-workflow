@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from spec_manager.planning.code_parser import (
     _find_function,
     find_insertion_points,
-    parse_source,
 )
 from spec_manager.planning.models import (
     CodeFile,
@@ -56,9 +55,7 @@ def plan_insertions(
     """
     func = _find_function(code_file, function_name)
     if func is None:
-        raise ValueError(
-            f"Function '{function_name}' not found in {code_file.file_path}"
-        )
+        raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
 
     # Step 1: Decompose intention into micro-units
     micro_units = decompose_intention(intention, func)
@@ -175,13 +172,11 @@ def _decompose_via_agent(
     Raises:
         RuntimeError: If the agent invocation fails.
     """
-    from spec_manager.refinement.agent_utils import run_agent
+    from spec_manager.core.agent_utils import run_agent
 
     # Build prompt with function context
     body = "\n".join(function_context.body_lines)
-    existing_comments = "\n".join(
-        f"  # {c.text}" for c in function_context.comments
-    )
+    existing_comments = "\n".join(f"  # {c.text}" for c in function_context.comments)
 
     prompt = (
         f"Decompose the following intention into micro-unit pseudocode comments.\n"
@@ -198,9 +193,7 @@ def _decompose_via_agent(
         f'["validate input parameters", "compute result hash", "store result"]\n'
     )
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(prompt)
         prompt_path = f.name
 
@@ -342,9 +335,7 @@ def match_comments_to_insertion_points(
     used_indices: set[int] = set()
 
     for comment in comments:
-        best_idx = _find_best_insertion_point(
-            comment, insertion_points, used_indices
-        )
+        best_idx = _find_best_insertion_point(comment, insertion_points, used_indices)
         used_indices.add(best_idx)
         result.append((insertion_points[best_idx], comment))
 

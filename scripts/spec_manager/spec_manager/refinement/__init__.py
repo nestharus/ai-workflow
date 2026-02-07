@@ -7,14 +7,14 @@ to avoid a circular import through ``schemas.edge_list`` which imports
 
 from __future__ import annotations
 
-from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.core import (
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.gap import (
     Gap,
     GapEvidence,
-    GapQueue,
     GapSynthesizer,
     GapType,
 )
+from spec_manager.core.gap_queue import GapQueue
 
 _LAZY = {
     "ArtifactType": "spec_manager.refinement.repair",

@@ -1,6 +1,6 @@
 """Core gap primitives for spec refinement."""
 
-from spec_manager.refinement.core.gap import (
+from spec_manager.core.gap import (
     Gap,
     GapEvidence,
     GapSynthesizer,
@@ -10,7 +10,7 @@ from spec_manager.refinement.core.gap import (
     format_gap_table,
     parse_gaps_markdown,
 )
-from spec_manager.refinement.core.gap_queue import GapQueue
+from spec_manager.core.gap_queue import GapQueue
 
 __all__ = [
     "Gap",

@@ -32,7 +32,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from spec_manager.refinement.formats import parse_evidence_pointer
+from spec_manager.core.evidence_pointers import parse_evidence_pointer
 
 from .edge_list import EDGE_ID_RE, ELEMENT_ID_RE, LIB_ID_RE, _validate_iso8601
 from .interface_contract import DECISION_ID_RE

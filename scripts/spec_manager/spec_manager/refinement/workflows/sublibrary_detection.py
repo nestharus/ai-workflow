@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
-from spec_manager.refinement.agent_utils import run_agent
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.gap import Gap, GapEvidence, GapSynthesizer, parse_gaps_markdown
 from spec_manager.refinement.formats import (
     parse_evidence_pointer,
     parse_file_summary,

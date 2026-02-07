@@ -19,6 +19,8 @@ from spec_manager.core.edit_in_place import (
     SpecComment,
     TranslationState,
 )
+from spec_manager.core.gap import Gap, GapEvidence, GapType
+from spec_manager.core.gap_queue import GapQueue
 from spec_manager.core.gaps import Severity
 from spec_manager.core.provenance import (
     SourceLocation,
@@ -26,8 +28,6 @@ from spec_manager.core.provenance import (
     UnitStatus,
     UnitType,
 )
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
-from spec_manager.refinement.core.gap_queue import GapQueue
 
 
 def spec_comment_to_gap(comment: SpecComment) -> Gap:
@@ -47,10 +47,7 @@ def spec_comment_to_gap(comment: SpecComment) -> Gap:
         A refinement ``Gap`` object compatible with the existing workflow.
     """
     # Map comment kind to gap type
-    if comment.kind == CommentKind.TODO:
-        gap_type = GapType.ambiguity
-    else:
-        gap_type = GapType.missing_detail
+    gap_type = GapType.ambiguity if comment.kind == CommentKind.TODO else GapType.missing_detail
 
     # Build evidence
     evidence = GapEvidence(
