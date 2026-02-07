@@ -1,0 +1,80 @@
+{
+  "level": 0,
+  "ambiguities": [
+    {
+      "trigger_patterns": ["industry.standard.*base rate", "base rate.*per.*insured", "base rate.*standard cargo", "amount per unit of insured"],
+      "question_patterns": ["what.*base rate", "premium.*base.*rate", "rate.*per.*insured", "how much.*base.*rate"],
+      "response": "The premium base rate is $2.50 per $1,000 of insured value for standard cargo. This was set by the pricing committee in Q3 2024."
+    },
+    {
+      "trigger_patterns": ["calibrated band", "calibrated range", "risk score.*range", "score.*calibrated", "varying risk profile"],
+      "question_patterns": ["what.*risk score.*range", "route.*score.*range", "risk.*score.*band", "minimum.*maximum.*score"],
+      "response": "The route risk score ranges from a floor of 1.0 for well-established domestic corridors to a ceiling of 3.5 for routes traversing conflict zones or regions with poor infrastructure. The score multiplies the base rate directly."
+    },
+    {
+      "trigger_patterns": ["surcharge.*sea", "surcharge.*air", "surcharge.*multimodal", "mode.*surcharge", "different surcharge", "their own surcharge"],
+      "question_patterns": ["what.*peril.*surcharge", "surcharge.*marine", "surcharge.*air", "transport.*mode.*surcharge", "how much.*surcharge"],
+      "response": "Marine shipments attract a 15% peril surcharge, air shipments carry an 8% surcharge, and multimodal consignments bear a 12% surcharge. Road and rail have no additional surcharge."
+    },
+    {
+      "trigger_patterns": ["reasonable ceiling", "deductible.*cap", "cap.*regardless", "moral hazard.*premium relief"],
+      "question_patterns": ["what.*deductible.*cap", "deductible.*credit.*cap", "maximum.*deductible.*credit", "cap.*deductible"],
+      "response": "The deductible credit is capped at 20% regardless of the actual deductible-to-insured-value ratio. Beyond that level, the actuaries determined that moral hazard outweighs the premium relief."
+    },
+    {
+      "trigger_patterns": ["retain.*defined amount", "insurer.*retention", "retains.*individual loss", "retention.*threshold"],
+      "question_patterns": ["what.*retention.*amount", "how much.*retain", "excess.*loss.*retention", "retention.*per.*loss"],
+      "response": "The insurer retains the first $500,000 of any individual loss under the excess-of-loss treaty structure. Losses above this retention are ceded to reinsurers proportionally."
+    },
+    {
+      "trigger_patterns": ["treaty ceiling.*occurrence", "treaty ceiling.*per", "exceeding.*treaty ceiling", "loss exceeding.*ceiling"],
+      "question_patterns": ["what.*treaty.*ceiling", "maximum.*treaty", "ceiling.*per.*occurrence", "treaty.*limit"],
+      "response": "The treaty ceiling is $10,000,000 (ten million dollars) per occurrence. Losses above this amount fall back entirely to the insurer unless a separate catastrophe treaty has been purchased."
+    },
+    {
+      "trigger_patterns": ["unusual claim.*pattern", "velocity.*frequency", "flags unusual", "claim frequency.*flag", "flagging logic.*refined"],
+      "question_patterns": ["what.*velocity.*threshold", "fraud.*velocity.*check", "how many claims.*flag", "velocity.*criteria"],
+      "response": "The velocity check flags more than 3 claims from the same beneficiary within a 90-day window, but only when the total amount claimed in that window exceeds 200% of the expected loss ratio for the relevant cargo type. Both conditions must be met."
+    },
+    {
+      "trigger_patterns": ["strict service.level commitment", "SLA.*submission.*decision", "service.level.*claims", "aggressive.*SLA"],
+      "question_patterns": ["what.*claims.*SLA", "assessment.*SLA.*duration", "how long.*claims.*assessment", "SLA.*hours"],
+      "response": "The claims assessment SLA is 4 hours from the moment of claim submission to the issuance of an assessment decision (approve, deny, or refer for investigation). This clock is paused only during sanctions holds."
+    },
+    {
+      "trigger_patterns": ["large.loss.*threshold.*regulatory", "threshold.*filing deadline.*regulatory", "reporting.*defined by.*regulatory"],
+      "question_patterns": ["what.*large.loss.*threshold", "reporting.*threshold.*deadline", "large.*loss.*report", "when.*file.*large.*loss"],
+      "response": "The large-loss reporting threshold is $1,000,000 (one million dollars). Regulatory filings must be submitted within 72 hours of the triggering event (claim approval for claims, loss discovery for catastrophe events)."
+    },
+    {
+      "trigger_patterns": ["acceptable timeframe", "reconstructable.*within", "reconstruction.*acceptable", "ledger.*within.*time"],
+      "question_patterns": ["what.*reconstruction.*time", "how.*fast.*reconstruct", "audit.*reconstruction.*SLA", "reconstruct.*within"],
+      "response": "The full lifecycle of any claim must be reconstructable from the audit ledger alone within 5 minutes. This imposes stringent indexing requirements on the append-only event store."
+    },
+    {
+      "trigger_patterns": ["mandatory hold period", "sanctions.*hold.*period", "hold.*compliance officer", "sanctions.*mandatory hold"],
+      "question_patterns": ["what.*sanctions.*hold.*duration", "how long.*sanctions.*hold", "sanctions.*hold.*period", "hold.*how.*long"],
+      "response": "A sanctions match at claim payment time triggers a mandatory 24-hour hold during which a compliance officer must review the match. This hold pauses the 4-hour claims SLA clock."
+    },
+    {
+      "trigger_patterns": ["higher threshold.*senior", "above.*threshold.*senior adjuster", "senior adjuster.*threshold", "claims above.*that threshold"],
+      "question_patterns": ["what.*senior.*adjuster.*threshold", "senior.*approval.*amount", "how much.*senior.*adjuster", "threshold.*senior.*review"],
+      "response": "Claims above $250,000 require a senior adjuster who must provide an independent assessment before approval. Claims between $25,000 and $250,000 are assigned to a standard adjuster, and claims below $25,000 go to the automated fast-track queue."
+    },
+    {
+      "trigger_patterns": ["catastrophe loading.*base premium", "catastrophe.*surcharge", "significant insured losses.*recent past", "catastrophe.*loading.*compound"],
+      "question_patterns": ["what.*catastrophe.*loading", "catastrophe.*surcharge.*percent", "how much.*catastrophe.*loading", "catastrophe.*zone.*premium"],
+      "response": "The catastrophe loading is 25% applied on top of the base premium when a route passes through a designated catastrophe zone. A catastrophe zone is defined as any region with insured natural-disaster losses exceeding $50,000,000 in any single event within the past 5 years. The loading is applied before route-risk score multiplication, causing it to compound."
+    },
+    {
+      "trigger_patterns": ["recency.*weighting scheme", "weighting.*prioritises recent", "configured weights", "recency.based weighting"],
+      "question_patterns": ["what.*loss.*history.*weight", "weighting.*distribution", "recency.*weight.*percent", "how.*weight.*loss.*history"],
+      "response": "The loss-history weighting is: 50% for the most recent 3 years, 30% for years 4-7, and 20% for years 8-10. This is applied to the loss ratio for each band, not to raw claim amounts. Claims older than 10 years are excluded entirely."
+    },
+    {
+      "trigger_patterns": ["contractual deadline.*reporting month", "bordereau.*due.*contractual", "monthly.*contractual deadline", "bordereau.*deadline"],
+      "question_patterns": ["what.*bordereau.*deadline", "when.*bordereau.*due", "bordereau.*submission.*date", "reporting.*deadline"],
+      "response": "Bordereau reports are due monthly by the 15th calendar day following the end of each reporting month (T+15). For example, January data must be submitted by February 15th. Late submission triggers penalty interest at 2% per month on outstanding reinsurance balances."
+    }
+  ]
+}

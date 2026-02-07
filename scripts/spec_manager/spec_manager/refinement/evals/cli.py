@@ -60,9 +60,19 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
         fuzzy_match_threshold=args.fuzzy_threshold,
         parallel=args.parallel,
         use_real_workflows=getattr(args, "use_real_workflows", False),
+        sparse=getattr(args, "sparse", False),
+        resolve_ambiguities=getattr(args, "resolve_ambiguities", False),
     )
 
     fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else _default_fixtures_dir()
+
+    # Build signal resolver if --mode specified
+    signal_resolver = None
+    eval_mode = getattr(args, "mode", None)
+    if eval_mode is not None:
+        from spec_manager.refinement.interactive.signal_resolver import create_resolver
+
+        signal_resolver = create_resolver(mode=eval_mode)
 
     print("Running evaluation with config:")
     print(f"  Fixtures: {fixtures_dir}")
@@ -74,8 +84,13 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
     else:
         print("  Specs: all available")
 
+    if eval_mode:
+        print(f"  Mode: {eval_mode}")
+    if config.resolve_ambiguities:
+        print("  Resolve ambiguities: enabled")
+
     # Create and run
-    runner = EvalRunner(config, fixtures_dir=fixtures_dir)
+    runner = EvalRunner(config, fixtures_dir=fixtures_dir, signal_resolver=signal_resolver)
     report = runner.run()
 
     # Display summary
@@ -317,6 +332,22 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         "--use-real-workflows",
         action="store_true",
         help="Use real workflow extraction instead of simulation",
+    )
+    p_run.add_argument(
+        "--sparse",
+        action="store_true",
+        help="Run sparse-to-dense steering evaluation mode",
+    )
+    p_run.add_argument(
+        "--mode",
+        choices=["auto", "interactive", "steering-only"],
+        default=None,
+        help="Signal resolution mode for sparse-to-dense evals",
+    )
+    p_run.add_argument(
+        "--resolve-ambiguities",
+        action="store_true",
+        help="Enable post-phase ambiguity resolution during evaluation",
     )
 
     # eval resume
@@ -743,6 +774,22 @@ def main() -> int:
         "--use-real-workflows",
         action="store_true",
         help="Use real workflow extraction instead of simulation",
+    )
+    p_run.add_argument(
+        "--sparse",
+        action="store_true",
+        help="Run sparse-to-dense steering evaluation mode",
+    )
+    p_run.add_argument(
+        "--mode",
+        choices=["auto", "interactive", "steering-only"],
+        default=None,
+        help="Signal resolution mode for sparse-to-dense evals",
+    )
+    p_run.add_argument(
+        "--resolve-ambiguities",
+        action="store_true",
+        help="Enable post-phase ambiguity resolution during evaluation",
     )
 
     # eval resume

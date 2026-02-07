@@ -19,6 +19,7 @@ from spec_manager.refinement.validation_utils import (
     build_section_alias_map,
     resolve_section_reference,
 )
+from spec_manager.refinement.workflows.section_semantics import validate_section_content
 
 from .spec_stabilization import extract_existing_id
 
@@ -313,6 +314,43 @@ def render_spec(spec_doc: SpecDocument, lib_id: str) -> str:
         remaining_sections.discard(section)
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def validate_patch_section_content(
+    operations: list[PatchOperation],
+    lib_id: str,
+) -> list[dict[str, Any]]:
+    """Validate that patch operation content is appropriate for its target section.
+
+    Uses heuristic keyword scanning to detect misplaced content:
+    - Overview with implementation-level detail
+    - Constraints with requirements language
+    - Analysis with directives rather than decisions
+    - Details with architectural rationale
+
+    Args:
+        operations: List of patch operations to validate.
+        lib_id: Library ID for error reporting.
+
+    Returns:
+        List of validation warning dicts (empty if no issues).
+    """
+    issues: list[dict[str, Any]] = []
+    for operation in operations:
+        if operation.op not in {"add", "edit"} or not operation.content.strip():
+            continue
+        warnings = validate_section_content(operation.section, operation.content)
+        for warning in warnings:
+            issues.append(
+                {
+                    "type": "section_content_mismatch",
+                    "lib_id": lib_id,
+                    "section": operation.section,
+                    "line": operation.content.strip()[:120],
+                    "message": warning,
+                }
+            )
+    return issues
 
 
 def validate_patch_citations(

@@ -711,42 +711,9 @@ def cmd_gaps(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_refine_interactive(args: argparse.Namespace) -> int:
-    """Run interactive spec refinement."""
-    from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
-
-    workspace = Path(args.workspace) if args.workspace else Path.cwd() / "runs" / args.run_id
-    if not workspace.exists():
-        print(f"Workspace not found: {workspace}")
-        return 1
-
-    spec_path = workspace / "spec.md"
-    if not spec_path.exists():
-        print(f"Spec not found: {spec_path}")
-        return 1
-
-    spec_text = spec_path.read_text(encoding="utf-8")
-
-    print(f"Running interactive refinement: run_id={args.run_id}")
-    print(f"  Workspace: {workspace}")
-    print(f"  Max iterations: {args.max_iterations}")
-
-    workflow = InteractiveWorkflow(
-        workspace=workspace,
-        interactive=True,
-        max_iterations=args.max_iterations,
-    )
-
-    refined = workflow.run(spec_text)
-
-    output_path = workspace / "refined_spec.md"
-    output_path.write_text(refined, encoding="utf-8")
-    print(f"Refined spec saved: {output_path}")
-    return 0
-
-
-def cmd_refine_auto(args: argparse.Namespace) -> int:
-    """Run automated spec refinement."""
+def cmd_refine(args: argparse.Namespace) -> int:
+    """Run spec refinement (interactive or auto mode)."""
+    from spec_manager.refinement.interactive.signal_resolver import create_resolver
     from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
 
     workspace = Path(args.workspace) if args.workspace else Path.cwd() / "runs" / args.run_id
@@ -762,19 +729,36 @@ def cmd_refine_auto(args: argparse.Namespace) -> int:
     spec_text = spec_path.read_text(encoding="utf-8")
 
     steering_path = Path(args.steering) if args.steering else None
+    file_signals = getattr(args, "file_signals", False)
 
-    print(f"Running automated refinement: run_id={args.run_id}")
+    # Determine resolver mode
+    if file_signals:
+        mode_str = "file"
+    elif args.auto:
+        mode_str = "auto"
+    else:
+        mode_str = "interactive"
+
+    print(f"Running {mode_str} refinement: run_id={args.run_id}")
     print(f"  Workspace: {workspace}")
-    print(f"  Steering: {steering_path or 'none'}")
-    print(f"  Research: {args.research}")
+    if args.auto or file_signals:
+        print(f"  Steering: {steering_path or 'none'}")
+        print(f"  Research: {args.research}")
+        print(f"  Evidence store: {args.evidence_store}")
     print(f"  Max iterations: {args.max_iterations}")
+
+    resolver = create_resolver(
+        mode=mode_str,
+        workspace=workspace,
+        steering_path=steering_path,
+        use_research=args.research,
+        use_evidence_store=args.evidence_store,
+    )
 
     workflow = InteractiveWorkflow(
         workspace=workspace,
-        interactive=False,
-        steering_path=steering_path,
-        use_research=args.research,
         max_iterations=args.max_iterations,
+        signal_resolver=resolver,
     )
 
     refined = workflow.run(spec_text)
@@ -1440,26 +1424,27 @@ def main() -> int:
     p_discover = subparsers.add_parser("discover", help="Run library discovery")
     p_discover.add_argument("spec_folder", help="Path to spec folder")
 
-    # refine-interactive
-    p_refine_interactive = subparsers.add_parser(
-        "refine-interactive", help="Interactive spec refinement"
+    # refine (unified command)
+    p_refine = subparsers.add_parser("refine", help="Run spec refinement")
+    p_refine.add_argument("run_id", help="Run identifier")
+    p_refine.add_argument("--workspace", help="Workspace directory")
+    p_refine.add_argument(
+        "--auto", action="store_true", help="Use automated mode (default: interactive)"
     )
-    p_refine_interactive.add_argument("run_id", help="Run identifier")
-    p_refine_interactive.add_argument("--workspace", help="Workspace directory")
-    p_refine_interactive.add_argument(
+    p_refine.add_argument("--steering", help="Path to steering script JSON (auto mode)")
+    p_refine.add_argument(
+        "--research", action="store_true", help="Use research-based resolution (auto mode)"
+    )
+    p_refine.add_argument(
+        "--evidence-store", action="store_true", help="Use evidence store search (auto mode)"
+    )
+    p_refine.add_argument(
         "--max-iterations", type=int, default=5, help="Max iterations (default: 5)"
     )
-
-    # refine-auto
-    p_refine_auto = subparsers.add_parser("refine-auto", help="Automated spec refinement")
-    p_refine_auto.add_argument("run_id", help="Run identifier")
-    p_refine_auto.add_argument("--workspace", help="Workspace directory")
-    p_refine_auto.add_argument("--steering", help="Path to steering script JSON")
-    p_refine_auto.add_argument(
-        "--research", action="store_true", help="Use research-based resolution"
-    )
-    p_refine_auto.add_argument(
-        "--max-iterations", type=int, default=5, help="Max iterations (default: 5)"
+    p_refine.add_argument(
+        "--file-signals",
+        action="store_true",
+        help="Use file-based signal exchange (write signals to disk, read responses)",
     )
 
     # ambiguities (sub-group with "list" subcommand)
@@ -1644,8 +1629,7 @@ def main() -> int:
         "gaps": cmd_gaps,
         "phase-02": cmd_phase_02,
         "discover": cmd_discover,
-        "refine-interactive": cmd_refine_interactive,
-        "refine-auto": cmd_refine_auto,
+        "refine": cmd_refine,
         "adjacency": cmd_adjacency,
         "generate-analysis": cmd_generate_analysis,
         "scan-source": cmd_scan_source,

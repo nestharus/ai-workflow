@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from spec_manager.refinement.interactive.input_signal import InputSignal
 
 
 @dataclass
@@ -14,10 +17,13 @@ class SteeringResponse:
         ambiguity_id: ID of the resolved ambiguity.
         response_text: The clarifying response.
         source: How the response was obtained.
+        signal: Optional InputSignal for traceability.
     """
+
     ambiguity_id: str
     response_text: str
     source: str  # interactive | steering_script | research
+    signal: InputSignal | None = None
 
 
 class SpecPatcher:

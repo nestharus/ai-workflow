@@ -11,11 +11,11 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.core.project_root import resolve_from_root
-from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.checkpoint import CheckpointManager, EvalCheckpoint
+from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceSpec, load_sequence_spec
 from spec_manager.refinement.evals.logger import EvalLogger
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -26,6 +26,9 @@ from spec_manager.refinement.evals.metrics import (
     score_detail_capture,
 )
 from spec_manager.refinement.evals.report import EvalReport, EvalResult, save_report
+
+if TYPE_CHECKING:
+    from spec_manager.refinement.interactive.signal_resolver import SignalResolver
 
 
 @dataclass
@@ -43,6 +46,7 @@ class EvalConfig:
         parallel: Whether to evaluate specs in parallel.
         use_real_workflows: Whether to use real workflow extraction instead of simulation.
         workspace_temp_dir: Optional temp directory for real workflow workspaces.
+        resolve_ambiguities: Whether to run post-phase ambiguity resolution.
     """
 
     spec_ids: list[str] | None = None
@@ -57,6 +61,8 @@ class EvalConfig:
     parallel: bool = False
     use_real_workflows: bool = False
     workspace_temp_dir: Path | None = None
+    sparse: bool = False
+    resolve_ambiguities: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -71,6 +77,8 @@ class EvalConfig:
             "parallel": self.parallel,
             "use_real_workflows": self.use_real_workflows,
             "workspace_temp_dir": str(self.workspace_temp_dir) if self.workspace_temp_dir else None,
+            "sparse": self.sparse,
+            "resolve_ambiguities": self.resolve_ambiguities,
         }
 
 
@@ -134,18 +142,21 @@ class EvalRunner:
         self,
         config: EvalConfig,
         fixtures_dir: Path | None = None,
+        signal_resolver: SignalResolver | None = None,
     ) -> None:
         """Initialize the eval runner.
 
         Args:
             config: Evaluation configuration.
             fixtures_dir: Directory containing spec fixtures.
+            signal_resolver: Optional ``SignalResolver`` for ambiguity resolution.
         """
         self.config = config
         self.checkpoint_manager = CheckpointManager(config.checkpoint_dir)
         self.fixtures_dir = fixtures_dir or resolve_from_root(
             "scripts", "spec_manager", "spec_manager", "refinement", "evals", "inputs", "fixtures"
         )
+        self._signal_resolver = signal_resolver
 
     def run(self) -> EvalReport:
         """Run evaluation on all configured specs.
@@ -227,7 +238,7 @@ class EvalRunner:
 
         if self.config.spec_ids:
             return [spec for spec in all_specs if spec.spec_id in self.config.spec_ids]
-        return all_specs
+        return [spec for spec in all_specs if not spec.spec_id.endswith("_sparse")]
 
     def _load_spec(self, spec_id: str) -> SequenceSpec | None:
         """Load a single spec by ID."""
@@ -248,6 +259,11 @@ class EvalRunner:
             EvalResult for the spec.
         """
         state = EvalState(spec=spec, run_id=run_id)
+
+        # Sparse-to-dense evaluation mode
+        if self.config.sparse and spec.sparse_spec_path:
+            return self._evaluate_sparse_to_dense(spec, state, run_id)
+
         logger = EvalLogger(
             self.config.output_dir / f"{run_id}_{spec.spec_id}.log.jsonl",
             spec_id=spec.spec_id,
@@ -303,6 +319,112 @@ class EvalRunner:
 
         logger.log_eval_end(success=result.success, summary=result.to_dict())
 
+        return result
+
+    def _evaluate_sparse_to_dense(
+        self,
+        spec: SequenceSpec,
+        state: EvalState,
+        run_id: str,
+    ) -> EvalResult:
+        """Evaluate sparse-to-dense steering for a spec.
+
+        Loads the sparse spec, runs InteractiveWorkflow with steering,
+        and scores the refined result against dense ground truth.
+
+        Args:
+            spec: The full (dense) SequenceSpec with ground truth.
+            state: Evaluation state.
+            run_id: Run identifier.
+
+        Returns:
+            EvalResult for the sparse-to-dense evaluation.
+        """
+        import time
+
+        from spec_manager.refinement.evals.metrics import score_detail_capture
+
+        start_time = time.perf_counter()
+        result = EvalResult(
+            spec_id=spec.spec_id,
+            spec_title=f"{spec.title} (sparse-to-dense)",
+            phases_total=1,
+        )
+
+        # Load sparse spec
+        sparse_path = self.fixtures_dir / spec.sparse_spec_path
+        if not sparse_path.exists():
+            result.success = False
+            result.errors.append(f"Sparse spec not found: {sparse_path}")
+            return result
+
+        sparse_spec = load_sequence_spec(sparse_path)
+
+        # Run interactive workflow with steering
+        steering_path = None
+        if spec.steering_script_path:
+            steering_path = self.fixtures_dir / spec.steering_script_path
+            if not steering_path.exists():
+                steering_path = None
+
+        try:
+            import tempfile
+
+            from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                workspace = Path(tmpdir)
+                spec_file = workspace / "spec.md"
+                spec_file.write_text(sparse_spec.to_markdown(), encoding="utf-8")
+
+                # Determine resolver: explicit > steering-only > legacy
+                resolver = self._signal_resolver
+                if resolver is None and steering_path and steering_path.exists():
+                    from spec_manager.refinement.interactive.signal_resolver import (
+                        SteeringOnlyResolver,
+                    )
+                    from spec_manager.refinement.interactive.steering.steering_script import (
+                        SteeringScript,
+                    )
+
+                    resolver = SteeringOnlyResolver(SteeringScript.from_file(steering_path))
+
+                workflow = InteractiveWorkflow(
+                    workspace=workspace,
+                    interactive=False,
+                    steering_path=steering_path if resolver is None else None,
+                    max_iterations=5,
+                    signal_resolver=resolver,
+                )
+                refined_text = workflow.run(sparse_spec.to_markdown())
+
+                # Score refined text against dense ground truth
+                expected = spec.ground_truth.get_all_expected_requirements()
+                # Simple heuristic: check which requirements appear in refined text
+                actual = [req for req in expected if req.lower() in refined_text.lower()]
+                score = score_detail_capture(
+                    expected, actual, fuzzy_threshold=self.config.fuzzy_match_threshold
+                )
+
+                result.phases_completed = 1
+                result.detail_metrics = DetailCaptureMetrics()
+                result.detail_metrics.add_phase_metrics(
+                    PhaseMetrics(
+                        phase_name="sparse_to_dense",
+                        detail_score=score,
+                        iterations=1,
+                        converged=score.recall >= self.config.convergence_threshold,
+                        duration_ms=(time.perf_counter() - start_time) * 1000,
+                        gaps_open=score.expected_count - score.matched_count,
+                        gaps_closed=score.matched_count,
+                    )
+                )
+
+        except Exception as exc:
+            result.success = False
+            result.errors.append(f"Sparse-to-dense evaluation failed: {exc}")
+
+        result.total_duration_ms = (time.perf_counter() - start_time) * 1000
         return result
 
     def _evaluate_spec_from_checkpoint(

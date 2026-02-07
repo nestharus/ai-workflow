@@ -340,6 +340,29 @@ def generate_markdown_report(report: EvalReport) -> str:
 
     lines.append("")
 
+    # Ambiguity detection metrics (sparse-to-dense results)
+    sparse_results = [r for r in report.results if "(sparse-to-dense)" in r.spec_title]
+    if sparse_results:
+        lines.extend(
+            [
+                "## Sparse-to-Dense Steering Results",
+                "",
+                "| Spec | Recall | Precision | Duration |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for result in sparse_results:
+            recall = precision = 0.0
+            if result.detail_metrics:
+                recall = result.detail_metrics.recall
+                precision = result.detail_metrics.precision
+            duration = f"{result.total_duration_ms:.0f}ms"
+            lines.append(
+                f"| {result.spec_id} | {_format_percentage(recall)} | "
+                f"{_format_percentage(precision)} | {duration} |"
+            )
+        lines.append("")
+
     # Bottlenecks
     if report.common_bottlenecks:
         lines.extend(

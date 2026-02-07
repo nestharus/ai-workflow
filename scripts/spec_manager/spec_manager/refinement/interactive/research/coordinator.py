@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Confidence threshold below which we generate a tradeoff analysis
+TRADEOFF_CONFIDENCE_THRESHOLD = 0.5
+
 
 class ResearchCoordinator:
     """Sequential multi-agent research using file IO coordination.
@@ -25,6 +28,7 @@ class ResearchCoordinator:
     1. [Opus] Signal extractor: extract search queries
     2. [GLM] Web researcher: search via Firecrawl
     3. [GPT] Synthesizer: synthesize into decision
+    4. If confidence < 0.5: run tradeoff analysis
     """
 
     def __init__(self, evidence_index: EvidenceIndex | None = None) -> None:
@@ -77,12 +81,79 @@ class ResearchCoordinator:
         )
         (research_dir / "decision.json").write_text(decision_json, encoding="utf-8")
 
-        # Step 4: Flag as spec gap if web search also fails
+        # Step 4: Check confidence and optionally run tradeoff analysis
+        confidence = self._extract_confidence(decision_json)
+        if confidence < TRADEOFF_CONFIDENCE_THRESHOLD:
+            tradeoff_response = self._run_tradeoff_analysis(
+                ambiguity, decision_json, findings_json, research_dir
+            )
+            if tradeoff_response is not None:
+                return tradeoff_response
+
+        # Step 5: Flag as spec gap if web search also fails
         response = self._parse_decision(ambiguity, decision_json)
         if not response.response_text.strip():
             self._flag_spec_gap(ambiguity, workspace)
 
         return response
+
+    def _run_tradeoff_analysis(
+        self,
+        ambiguity: Ambiguity,
+        decision_json: str,
+        findings_json: str,
+        research_dir: Path,
+    ) -> SteeringResponse | None:
+        """Run tradeoff analysis when confidence is low.
+
+        In auto mode, chooses the highest-confidence option. Returns a
+        SteeringResponse with the chosen option, or None if analysis fails.
+        """
+        try:
+            from spec_manager.refinement.interactive.research.tradeoff_analyzer import (
+                TradeoffAnalyzer,
+            )
+
+            analyzer = TradeoffAnalyzer()
+            analysis = analyzer.analyze(
+                ambiguity_id=ambiguity.ambiguity_id,
+                question=ambiguity.suggested_question,
+                decision_json=decision_json,
+                findings_json=findings_json,
+            )
+
+            # Persist the analysis
+            analyzer.save(analysis, research_dir / "tradeoff.json")
+
+            best = analysis.best_option()
+            if best and best.confidence > 0:
+                logger.info(
+                    "Tradeoff analysis for %s chose %s (confidence=%.0f%%)",
+                    ambiguity.ambiguity_id,
+                    best.option_id,
+                    best.confidence * 100,
+                )
+                return SteeringResponse(
+                    ambiguity_id=ambiguity.ambiguity_id,
+                    response_text=best.description,
+                    source="research",
+                )
+        except Exception as exc:
+            logger.warning("Tradeoff analysis failed for %s: %s", ambiguity.ambiguity_id, exc)
+
+        return None
+
+    def _extract_confidence(self, decision_json: str) -> float:
+        """Extract confidence from decision JSON, defaulting to 0.0."""
+        try:
+            data = extract_json_from_llm_output(
+                decision_json, allow_object=True, location="research_coordinator_confidence"
+            )
+            if isinstance(data, dict):
+                return float(data.get("confidence", 0.0))
+        except (ValueError, TypeError):
+            pass
+        return 0.0
 
     def _search_evidence_store(
         self, ambiguity: Ambiguity, workspace: Path

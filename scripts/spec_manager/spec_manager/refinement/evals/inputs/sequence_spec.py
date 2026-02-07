@@ -93,6 +93,8 @@ class SequenceSpec:
     ground_truth: GroundTruth
     complexity_score: int = 5
     tags: list[str] = field(default_factory=list)
+    sparse_spec_path: str | None = None
+    steering_script_path: str | None = None
 
     def get_section_content(self, section_label: str) -> str | None:
         """Get content for a specific section."""
@@ -137,25 +139,26 @@ class SequenceSpec:
             lines.append(content)
             lines.append("")
 
-        lines.append("## Rules")
-        lines.append("")
-        for rule in self.rules:
-            lines.append(f"### {rule.rule_id}: {rule.rule_type.upper()}")
+        if self.rules:
+            lines.append("## Rules")
             lines.append("")
-            lines.append(rule.description)
-            lines.append("")
-            if rule.formal_expression:
-                lines.append(f"**Formula:** `{rule.formal_expression}`")
+            for rule in self.rules:
+                lines.append(f"### {rule.rule_id}: {rule.rule_type.upper()}")
                 lines.append("")
-            if rule.dependencies:
-                deps = ", ".join(rule.dependencies)
-                lines.append(f"**Depends on:** {deps}")
+                lines.append(rule.description)
                 lines.append("")
-            if rule.examples:
-                lines.append("**Examples:**")
-                for inp, out in rule.examples:
-                    lines.append(f"- f({inp}) = {out}")
-                lines.append("")
+                if rule.formal_expression:
+                    lines.append(f"**Formula:** `{rule.formal_expression}`")
+                    lines.append("")
+                if rule.dependencies:
+                    deps = ", ".join(rule.dependencies)
+                    lines.append(f"**Depends on:** {deps}")
+                    lines.append("")
+                if rule.examples:
+                    lines.append("**Examples:**")
+                    for inp, out in rule.examples:
+                        lines.append(f"- f({inp}) = {out}")
+                    lines.append("")
 
         return "\n".join(lines)
 
@@ -170,6 +173,8 @@ class SequenceSpec:
             "ground_truth": self.ground_truth.to_dict(),
             "complexity_score": self.complexity_score,
             "tags": self.tags,
+            "sparse_spec_path": self.sparse_spec_path,
+            "steering_script_path": self.steering_script_path,
         }
 
     @classmethod
@@ -184,6 +189,8 @@ class SequenceSpec:
             ground_truth=GroundTruth.from_dict(data.get("ground_truth", {})),
             complexity_score=data.get("complexity_score", 5),
             tags=data.get("tags", []),
+            sparse_spec_path=data.get("sparse_spec_path"),
+            steering_script_path=data.get("steering_script_path"),
         )
 
 
@@ -213,7 +220,7 @@ def load_sequence_spec(path: Path) -> SequenceSpec:
         raise ValueError(f"Unsupported file format: {path.suffix}")
 
     if not isinstance(data, dict):
-        raise ValueError(f"Invalid spec file format: expected dict, got {type(data)}")
+        raise TypeError(f"Invalid spec file format: expected dict, got {type(data)}")
 
     return SequenceSpec.from_dict(data)
 

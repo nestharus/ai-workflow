@@ -3,19 +3,33 @@
 from __future__ import annotations
 
 import logging
+from enum import Enum
 from pathlib import Path
 
 from spec_manager.refinement.interactive.ambiguity_detector import (
-    Ambiguity,
     AmbiguityDetector,
 )
+from spec_manager.refinement.interactive.input_signal import (
+    InputSignal,
+    WorkContext,
+)
 from spec_manager.refinement.interactive.question_generator import QuestionGenerator
+from spec_manager.refinement.interactive.signal_resolver import (
+    AutoSignalResolver,
+    InteractiveSignalResolver,
+    SignalResolver,
+)
 from spec_manager.refinement.interactive.spec_patcher import SpecPatcher, SteeringResponse
-from spec_manager.refinement.interactive.steering.auto_responder import AutoResponder
-from spec_manager.refinement.interactive.steering.interactive_io import InteractiveIO
 from spec_manager.refinement.interactive.steering.steering_script import SteeringScript
 
 logger = logging.getLogger(__name__)
+
+
+class RefineMode(Enum):
+    """How the interactive workflow resolves ambiguities."""
+
+    AUTO = "auto"
+    INTERACTIVE = "interactive"
 
 
 class InteractiveWorkflow:
@@ -36,6 +50,7 @@ class InteractiveWorkflow:
         use_research: bool = False,
         use_evidence_store: bool = False,
         max_iterations: int = 5,
+        signal_resolver: SignalResolver | None = None,
     ) -> None:
         """Initialize the interactive workflow.
 
@@ -46,37 +61,50 @@ class InteractiveWorkflow:
             use_research: Whether to enable web research fallback.
             use_evidence_store: Whether to enable evidence store search.
             max_iterations: Maximum number of refinement iterations.
+            signal_resolver: Optional pre-built resolver.  When provided
+                the *interactive*, *steering_path*, *use_research*, and
+                *use_evidence_store* flags are ignored.
         """
         self._workspace = workspace
-        self._interactive = interactive
+        self._mode = RefineMode.INTERACTIVE if interactive else RefineMode.AUTO
         self._max_iterations = max_iterations
 
         self._detector = AmbiguityDetector()
         self._question_gen = QuestionGenerator()
         self._patcher = SpecPatcher()
 
-        # Load evidence index if requested
-        evidence_index = None
-        if use_evidence_store:
-            try:
-                from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+        if signal_resolver is not None:
+            self._resolver = signal_resolver
+        else:
+            # Build resolver from legacy flags
+            evidence_index = None
+            if use_evidence_store:
+                try:
+                    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 
-                index_path = workspace / "workspace" / "indexes" / "evidence_store_index.json"
-                if index_path.exists():
-                    evidence_index = EvidenceIndex.load(index_path)
-                    logger.info("Loaded evidence index from %s", index_path)
-            except Exception as exc:
-                logger.warning("Failed to load evidence index: %s", exc)
+                    index_path = workspace / "workspace" / "indexes" / "evidence_store_index.json"
+                    if index_path.exists():
+                        evidence_index = EvidenceIndex.load(index_path)
+                        logger.info("Loaded evidence index from %s", index_path)
+                except Exception as exc:
+                    logger.warning("Failed to load evidence index: %s", exc)
 
-        # Set up responders
-        steering = SteeringScript.from_file(steering_path) if steering_path else None
-        self._auto_responder = AutoResponder(
-            steering_script=steering,
-            use_research=use_research,
-            workspace=workspace,
-            evidence_index=evidence_index,
-        )
-        self._interactive_io = InteractiveIO()
+            steering = SteeringScript.from_file(steering_path) if steering_path else None
+
+            if interactive:
+                self._resolver = InteractiveSignalResolver(
+                    steering_script=steering,
+                    use_research=use_research,
+                    workspace=workspace,
+                    evidence_index=evidence_index,
+                )
+            else:
+                self._resolver = AutoSignalResolver(
+                    steering_script=steering,
+                    use_research=use_research,
+                    workspace=workspace,
+                    evidence_index=evidence_index,
+                )
 
     def run(self, spec_text: str) -> str:
         """Run the interactive refinement workflow.
@@ -92,18 +120,26 @@ class InteractiveWorkflow:
         for iteration in range(1, self._max_iterations + 1):
             logger.info("Iteration %d: detecting ambiguities", iteration)
 
-            ambiguities = self._detector.detect(current_spec, self._workspace)
+            work_context = WorkContext(
+                current_phase="interactive_refinement",
+                current_library=None,
+                current_task="Detecting and resolving specification ambiguities",
+                iteration=iteration,
+                artifacts_produced=[],
+                related_libraries=[],
+            )
 
-            if not ambiguities:
+            signals = self._detector.detect_signals(current_spec, self._workspace, work_context)
+
+            if not signals:
                 logger.info("No ambiguities detected - spec is complete")
                 break
 
-            logger.info("Found %d ambiguities", len(ambiguities))
+            logger.info("Found %d ambiguities", len(signals))
 
             responses: list[SteeringResponse] = []
-            for ambiguity in ambiguities:
-                question = self._question_gen.generate(ambiguity)
-                response = self._resolve_ambiguity(ambiguity, question)
+            for signal in signals:
+                response = self._resolve_signal(signal)
                 if response is not None:
                     responses.append(response)
 
@@ -116,15 +152,6 @@ class InteractiveWorkflow:
 
         return current_spec
 
-    def _resolve_ambiguity(self, ambiguity: Ambiguity, question: str) -> SteeringResponse | None:
-        """Resolve a single ambiguity."""
-        # Try auto-responder first
-        if not self._interactive:
-            return self._auto_responder.respond(ambiguity)
-
-        # Try auto first, fall back to interactive
-        auto_response = self._auto_responder.respond(ambiguity)
-        if auto_response is not None:
-            return auto_response
-
-        return self._interactive_io.ask(ambiguity, question)
+    def _resolve_signal(self, signal: InputSignal) -> SteeringResponse | None:
+        """Resolve a single signal."""
+        return self._resolver.resolve(signal)

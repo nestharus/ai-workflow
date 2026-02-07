@@ -1,0 +1,45 @@
+{
+  "level": 0,
+  "ambiguities": [
+    {
+      "trigger_patterns": ["netting.*threshold", "certain threshold", "below.*threshold.*netted", "aggregate notional.*falls below"],
+      "question_patterns": ["what.*netting.*threshold", "netting.*amount", "threshold.*netting"],
+      "response": "The netting threshold is $1,000,000. Settlements below this amount between the same counterparty and value date are netted into a single net obligation; those at or above this threshold are processed gross."
+    },
+    {
+      "trigger_patterns": ["appropriate rate source", "rate.*cache", "FX conversion.*rate"],
+      "question_patterns": ["what.*FX.*rate", "rate.*source", "ECB.*reference", "exchange rate"],
+      "response": "The FX conversion rate is the ECB (European Central Bank) reference rate captured at T-1, i.e., the business day before the value date. If the required currency pair is not directly available, the processor triangulates through EUR."
+    },
+    {
+      "trigger_patterns": ["reconciliation.*tolerance", "tolerance.*band", "acceptable tolerance", "domestic.*tolerance", "cross.border.*tolerance"],
+      "question_patterns": ["what.*tolerance", "tolerance.*band", "reconciliation.*threshold", "mismatch.*tolerance"],
+      "response": "The domestic reconciliation tolerance band is 0.01% of the expected amount. The cross-border tolerance band is 0.05% of the expected amount to account for FX conversion variance. Breaks below $1,000 in absolute value are auto-resolved regardless of percentage."
+    },
+    {
+      "trigger_patterns": ["event.*ordering", "ordering.*guarantee", "reliable delivery", "partition.*order", "guaranteed.*order"],
+      "question_patterns": ["what.*ordering", "event.*order", "partition.*guarantee", "delivery.*order"],
+      "response": "Ordering is guaranteed within a topic partition. Consumers processing events from a single partition will always see them in the order they were produced. Ordering across partitions is not guaranteed."
+    },
+    {
+      "trigger_patterns": ["regulatory.*reporting.*window", "reporting.*timeframe", "required timeframe", "report.*within", "reporting window"],
+      "question_patterns": ["what.*reporting.*window", "reporting.*timeframe", "when.*report", "how.*soon.*report"],
+      "response": "Settlement transactions exceeding $10M must be reported to the regulator within 15 minutes of confirmation. Cross-border settlements exceeding $5M are subject to a 24-hour hold period. Transactions above $25M trigger a suspicious-transaction flag."
+    },
+    {
+      "trigger_patterns": ["audit.*latency", "acceptable window", "audit.*write.*time", "latency.*budget", "write.*latency"],
+      "question_patterns": ["what.*audit.*latency", "audit.*write.*time", "latency.*budget", "how.*fast.*audit"],
+      "response": "Every audit write must complete within 50ms to avoid back-pressure on the settlement pipeline. The service uses an append-only data store optimised for sequential writes to meet this target."
+    },
+    {
+      "trigger_patterns": ["retry.*strategy", "retry.*policy", "dead.letter.*retry", "appropriate retry", "backoff", "retry interval"],
+      "question_patterns": ["what.*retry.*strategy", "retry.*policy", "backoff.*interval", "how.*many.*retries"],
+      "response": "The retry policy uses exponential backoff with a base of 1 second and a multiplier of 4, producing intervals of 1s, 4s, and 16s for the first, second, and third attempts respectively. After the third failed attempt the event is moved to the dead-letter queue."
+    },
+    {
+      "trigger_patterns": ["tier.1.*override", "override.*risk.*cap", "risk.*cap.*conflict", "tier.1.*bypass", "override.*conflict", "systemically important"],
+      "question_patterns": ["what.*tier.1.*override", "override.*conflict", "how.*resolve.*tier.1", "tier.1.*bypass"],
+      "response": "The Tier-1 override allows systemically important counterparties designated by the central bank to bypass the $50M credit cap and the 25% concentration limit. This creates a deliberate conflict with standard risk controls. The conflict is resolved by allowing the instruction to proceed but flagging it for mandatory post-facto review by the compliance team, who must sign off within 4 hours or the position is unwound."
+    }
+  ]
+}

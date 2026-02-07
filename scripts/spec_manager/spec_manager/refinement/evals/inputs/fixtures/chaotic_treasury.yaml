@@ -1,0 +1,329 @@
+# Treasury Settlement Engine (Chaotic Prose)
+# A high-complexity test case with 30 rules across 6 interacting libraries.
+# Prose is deliberately chaotic: rules are scattered across sections,
+# side effects are embedded in narrative, and conflicting requirements
+# (Tier-1 override vs risk cap) challenge the refinement pipeline.
+
+spec_id: chaotic_treasury
+title: Treasury Settlement Engine (Chaotic Prose)
+description: |
+  A multi-library treasury settlement engine handling netting, gross
+  processing, FX conversion, risk management, reconciliation, event
+  distribution, regulatory compliance, and audit. Requirements are
+  expressed in dense natural-language prose with cross-cutting concerns
+  scattered intentionally across sections.
+
+complexity_score: 9
+tags:
+  - chaotic
+  - prose
+  - treasury
+  - multi-library
+  - integration
+
+sparse_spec_path: chaotic_treasury_sparse.yaml
+steering_script_path: chaotic_treasury_steering.json
+
+sections:
+  OVERVIEW: |
+    The treasury settlement engine is the backbone of our clearing
+    infrastructure and it touches practically every downstream system we
+    operate. At the highest level an inbound settlement instruction
+    passes through a pipeline that can be summarised in
+    function-composition style as process(instructions) = instructions
+    |> risk_check(limits) |> apply_netting(counterparty, value_date)
+    |> submit_clearing() but that tidy notation hides a tremendous
+    amount of machinery. The SettlementProcessor is responsible for
+    deciding whether a batch of instructions should be netted or sent
+    through gross, and it consults the RiskEngine before any netting
+    decision is finalised because the exposure windows maintained by the
+    RiskEngine determine whether additional margin is required. If the
+    RiskEngine flags an exposure breach the entire batch is held and a
+    margin call is issued, which in turn must be recorded by the
+    AuditNotification service so that compliance can review the event
+    later. Meanwhile the EventPipeline carries every state transition as
+    a typed event across the organisation, feeding the
+    ReconciliationService which detects breaks between our internal
+    ledger and the counterparty's acknowledgement. The
+    RegulatoryCompliance module watches for reportable thresholds and
+    hold-period triggers, injecting regulatory holds into the settlement
+    flow before final confirmation. All of this must happen with enough
+    speed that the AuditNotification service can persist a full snapshot
+    within its latency budget while still routing alerts to the right
+    team through the right channel. The interplay between these six
+    systems is what makes the engine both powerful and treacherous to
+    change, because a modification to one library's timing assumptions
+    can cascade into reconciliation breaks, missed regulatory windows,
+    or silent audit gaps.
+
+  SETTLEMENT_PROCESSING: |
+    Settlement processing begins the moment an instruction file is
+    ingested from the upstream trade-capture platform. Each instruction
+    carries a counterparty identifier, a value date, a currency pair,
+    and a notional amount. The processor first validates that all
+    mandatory fields are present and that the counterparty identifier
+    maps to a known entity in the reference-data service; if validation
+    fails the instruction is rejected and an event is emitted on the
+    settlement.rejected topic so that operations can investigate. Once
+    validated, the processor evaluates whether the instruction qualifies
+    for netting. The netting threshold is $1,000,000: any set of
+    instructions between the same counterparty on the same value date
+    whose aggregate notional falls below this threshold is collapsed
+    into a single net obligation, whereas instructions at or above the
+    threshold are processed gross to maintain full audit granularity.
+    Cross-currency instructions require FX conversion before netting can
+    proceed. The applicable rate is the ECB reference rate captured at
+    T-1 (the business day before the value date) and stored in the rate
+    cache; if the rate cache does not contain the required pair the
+    processor falls back to a triangulation through EUR. Every time a
+    settlement instruction transitions to the confirmed state the
+    processor publishes a settlement.confirmed event on the event bus
+    and, as a side effect, the AuditNotification service receives a
+    snapshot containing the settlement identifier, both party
+    identifiers, the gross and net amounts, the applied FX rate, and the
+    UTC timestamp of confirmation. The processor must also tag
+    instructions that exceed the regulatory reporting threshold so that
+    the RegulatoryCompliance module can pick them up within its
+    reporting window. Gross-processed instructions retain their original
+    notional amounts for downstream reconciliation, while netted
+    instructions carry both the original constituent amounts and the
+    calculated net in their payload so the ReconciliationService can
+    verify the arithmetic.
+
+  RISK_ENGINE: |
+    The RiskEngine maintains a real-time exposure model for every active
+    counterparty. Each counterparty is assigned a credit limit and the
+    current implementation caps that limit at $50M per counterparty,
+    though the limit can be adjusted by the credit-risk team through the
+    admin console. Exposure is calculated across a window spanning T+0
+    to T+2 inclusive, meaning that any settlement instruction with a
+    value date falling within the next two business days contributes to
+    the counterparty's current exposure. When the aggregate exposure for
+    a counterparty reaches 80% of its assigned limit the RiskEngine
+    automatically issues a margin call, which is published as a
+    risk.breach event on the EventPipeline and simultaneously triggers a
+    notification to the risk desk via a dashboard push. Concentration
+    risk is also monitored: no single counterparty may represent more
+    than 25% of the total outstanding exposure across all counterparties
+    at any point in time, and if this threshold is breached the
+    RiskEngine blocks new instructions for that counterparty until the
+    concentration drops below the limit. There is however a Tier-1
+    override provision for systemically important counterparties
+    designated by the central bank; when a Tier-1 flag is present the
+    RiskEngine must allow the instruction to proceed even if the $50M
+    cap or the 25% concentration limit would otherwise be breached,
+    creating a deliberate conflict with the standard risk controls that
+    must be resolved by the compliance team post-facto. The RiskEngine
+    also feeds exposure snapshots to the AuditNotification service at
+    five-minute intervals so that the audit trail reflects the
+    near-real-time risk posture.
+
+  RECONCILIATION_SERVICE: |
+    Reconciliation runs continuously against the internal ledger and the
+    counterparty acknowledgement feed. The matching algorithm considers
+    a tuple of exact amount, counterparty identifier, and value date; if
+    all three fields match the entry is considered reconciled. Breaks
+    are classified by the magnitude of the discrepancy relative to the
+    expected amount. For domestic settlements the tolerance band is
+    0.01%, meaning that any mismatch whose absolute value is less than
+    or equal to 0.01% of the expected amount is treated as a rounding
+    artefact and auto-reconciled. Cross-border settlements use a wider
+    tolerance of 0.05% to account for FX conversion variance, and the
+    rate used for this comparison is the same ECB reference rate applied
+    during settlement processing, although the ReconciliationService
+    fetches it independently from the rate cache rather than trusting
+    the value embedded in the settlement payload. Breaks below $1,000
+    in absolute terms are auto-resolved regardless of the percentage
+    because the cost of manual investigation exceeds the risk. Breaks
+    that exceed the tolerance band or the $1,000 absolute ceiling are
+    published as reconciliation.break events on the EventPipeline and
+    routed to the operations team for manual resolution. The
+    ReconciliationService must also detect duplicate acknowledgements
+    from counterparties and suppress them to prevent double-counting,
+    and it maintains a sliding window of seven business days beyond
+    which unmatched entries are escalated to a senior reconciliation
+    analyst.
+
+  EVENT_PIPELINE: |
+    The EventPipeline is the nervous system of the settlement engine. It
+    implements a pub/sub architecture where each event is published to a
+    named topic and consumers subscribe to the topics they care about.
+    Ordering is guaranteed within a topic partition, so consumers
+    processing events from a single partition will always see them in
+    the order they were produced; however, ordering across partitions is
+    not guaranteed and consumers must tolerate out-of-order delivery when
+    reading from multiple partitions. The key topics are
+    settlement.confirmed, risk.breach, reconciliation.break, and
+    audit.snapshot, though additional topics may be added as the system
+    evolves. If a consumer fails to acknowledge an event within thirty
+    seconds the pipeline retries delivery. The retry policy uses
+    exponential backoff with a base of one second and a multiplier of
+    four, producing intervals of 1s, 4s, and 16s for the first, second,
+    and third attempts respectively. After the third failed attempt the
+    event is moved to a dead-letter queue where it remains for ninety
+    days before automatic purging. The pipeline also supports
+    transactional publishing, meaning that a producer can publish events
+    to multiple topics atomically; if any publication in the transaction
+    fails, all publications in that transaction are rolled back. Event
+    payloads are serialised as JSON and must not exceed 256 KB per
+    message; oversized payloads are rejected at the producer side with a
+    PayloadTooLarge error. The pipeline emits its own operational
+    metrics, including throughput per topic, consumer lag, and
+    dead-letter queue depth, which the AuditNotification service
+    consumes for operational alerting.
+
+  REGULATORY_COMPLIANCE: |
+    The RegulatoryCompliance module enforces reporting obligations and
+    hold periods dictated by the applicable regulatory framework.
+    Settlement transactions whose notional exceeds $10M must be reported
+    to the regulator within 15 minutes of confirmation; the module
+    listens for settlement.confirmed events and evaluates the notional
+    against this threshold, queuing a regulatory report if the condition
+    is met. Cross-border settlements with a notional exceeding $5M are
+    subject to a 24-hour hold period during which the settlement cannot
+    be finalised; the module injects a regulatory hold status into the
+    settlement record and only releases it after the hold window has
+    elapsed and no objection has been received from the compliance desk.
+    Transactions above $25M trigger an additional suspicious-transaction
+    flag that is forwarded to the financial-intelligence unit for
+    review; this flag does not block settlement but must be attached to
+    the audit snapshot so that the AuditNotification service can include
+    it in downstream reports. The module also monitors for structuring
+    patterns where a series of sub-threshold transactions from the same
+    counterparty within a single business day aggregate to an amount
+    that would have triggered the $10M reporting threshold had they been
+    submitted as a single instruction, and if such a pattern is detected
+    the entire series is retroactively reported. Regulatory reports are
+    transmitted via a secure SFTP channel and the module must retain a
+    local copy for seven years in accordance with record-retention
+    policy.
+
+  NOTIFICATION_AND_AUDIT: |
+    The AuditNotification service serves two intertwined purposes: it
+    maintains the immutable audit trail and it routes notifications to
+    the appropriate operational teams. Every audit write must complete
+    within 50ms to avoid back-pressure on the settlement pipeline, and
+    the service uses an append-only data store optimised for sequential
+    writes to meet this target. Each audit snapshot includes the
+    settlement identifier, both counterparty identifiers, the gross and
+    net amounts, the applied FX rate, the value date, the UTC timestamp
+    of the event, and the risk assessment summary produced by the
+    RiskEngine at the time of processing. Notifications are routed
+    based on the event type: compliance-related events such as
+    regulatory holds and suspicious-transaction flags are sent via email
+    to the compliance inbox; risk events including margin calls and
+    concentration breaches are pushed to the risk dashboard in
+    real-time; operational events such as reconciliation breaks and
+    dead-letter arrivals are delivered to the operations Slack channel
+    via a webhook integration. The service must guarantee that every
+    audit entry is written before the corresponding notification is
+    dispatched, ensuring that if an operator investigates an alert the
+    audit record is already available for inspection. In the event of a
+    write failure the service must retry with the same idempotency key
+    and must not dispatch the notification until the write succeeds. The
+    notification subsystem supports batching for high-volume periods,
+    consolidating up to 50 individual alerts into a single digest
+    message if more than 20 alerts accumulate within a 60-second window,
+    to prevent alert fatigue among operations staff.
+
+rules: []
+
+ground_truth:
+  sectionization:
+    expected_sections:
+      - OVERVIEW
+      - SETTLEMENT_PROCESSING
+      - RISK_ENGINE
+      - RECONCILIATION_SERVICE
+      - EVENT_PIPELINE
+      - REGULATORY_COMPLIANCE
+      - NOTIFICATION_AND_AUDIT
+
+  summarization:
+    expected_libraries:
+      - Settlement netting and gross processing with FX conversion
+      - Counterparty credit exposure and margin call management
+      - Ledger reconciliation with tolerance-based break detection
+      - Pub/sub event distribution with dead-letter handling
+      - Regulatory reporting windows and hold-period enforcement
+      - Immutable audit trail with routed notifications
+
+  library_synthesis:
+    expected_libraries:
+      - SettlementProcessor
+      - RiskEngine
+      - ReconciliationService
+      - EventPipeline
+      - RegulatoryCompliance
+      - AuditNotification
+    expected_requirements:
+      - Settlement instructions must contain counterparty ID, value date, currency pair, and notional amount
+      - Netting threshold is $1,000,000 for same counterparty and value date
+      - Instructions at or above netting threshold are processed gross
+      - FX conversion uses ECB reference rate captured at T-1 with EUR triangulation fallback
+      - Counterparty credit limit capped at $50M
+      - Exposure calculated across T+0 to T+2 window
+      - Margin call issued when exposure reaches 80% of limit
+      - No single counterparty may exceed 25% of total exposure
+      - Tier-1 override bypasses credit cap and concentration limit
+      - Reconciliation matching on exact amount, counterparty, and value date
+      - Domestic tolerance band of 0.01%
+      - Cross-border tolerance band of 0.05%
+      - Breaks below $1,000 are auto-resolved
+      - Event ordering guaranteed within topic partition
+      - Exponential backoff retry at 1s, 4s, 16s
+      - Dead-letter queue after 3 failed attempts
+      - Dead-letter events purged after 90 days
+      - Event payloads must not exceed 256 KB
+      - Settlements above $10M reported within 15 minutes
+      - Cross-border settlements above $5M subject to 24-hour hold
+      - Transactions above $25M flagged as suspicious
+      - Audit writes must complete within 50ms
+      - Notification routing by event type to email, dashboard, or Slack
+      - Audit entry written before notification dispatch
+      - Audit snapshot emitted on settlement confirmation
+      - Exposure snapshots published to audit every five minutes
+      - Structuring detection aggregates sub-threshold transactions against $10M reporting threshold
+      - Regulatory reports retained for seven years
+      - Unmatched reconciliation entries escalated after seven business days
+      - Notification batching consolidates alerts during high-volume periods
+
+  spec_building:
+    expected_requirements:
+      - Settlement instructions must contain counterparty ID, value date, currency pair, and notional amount
+      - Netting threshold is $1,000,000 for same counterparty and value date
+      - Instructions at or above netting threshold are processed gross
+      - FX conversion uses ECB reference rate captured at T-1 with EUR triangulation fallback
+      - Counterparty credit limit capped at $50M
+      - Exposure calculated across T+0 to T+2 window
+      - Margin call issued when exposure reaches 80% of limit
+      - No single counterparty may exceed 25% of total exposure
+      - Tier-1 override bypasses credit cap and concentration limit
+      - Reconciliation matching on exact amount, counterparty, and value date
+      - Domestic tolerance band of 0.01%
+      - Cross-border tolerance band of 0.05%
+      - Breaks below $1,000 are auto-resolved
+      - Event ordering guaranteed within topic partition
+      - Exponential backoff retry at 1s, 4s, 16s
+      - Dead-letter queue after 3 failed attempts
+      - Dead-letter events purged after 90 days
+      - Event payloads must not exceed 256 KB
+      - Settlements above $10M reported within 15 minutes
+      - Cross-border settlements above $5M subject to 24-hour hold
+      - Transactions above $25M flagged as suspicious
+      - Audit writes must complete within 50ms
+      - Notification routing by event type to email, dashboard, or Slack
+      - Audit entry written before notification dispatch
+      - Audit snapshot emitted on settlement confirmation
+      - Exposure snapshots published to audit every five minutes
+      - Structuring detection aggregates sub-threshold transactions against $10M reporting threshold
+      - Regulatory reports retained for seven years
+      - Unmatched reconciliation entries escalated after seven business days
+      - Notification batching consolidates alerts during high-volume periods
+    expected_elements: []
+    expected_decisions:
+      - Tier-1 override vs risk cap conflict resolution
+
+  overall_requirements_count: 30
+  overall_elements_count: 30
+  convergence_iterations_max: 15

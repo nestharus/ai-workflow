@@ -33,6 +33,7 @@ class PhaseGroundTruth:
     expected_decisions: list[str] = field(default_factory=list)
     expected_tasks: list[str] = field(default_factory=list)
     custom_expectations: dict[str, Any] = field(default_factory=dict)
+    expected_ambiguities: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -45,6 +46,7 @@ class PhaseGroundTruth:
             "expected_decisions": self.expected_decisions,
             "expected_tasks": self.expected_tasks,
             "custom_expectations": self.custom_expectations,
+            "expected_ambiguities": self.expected_ambiguities,
         }
 
     @classmethod
@@ -59,6 +61,7 @@ class PhaseGroundTruth:
             expected_decisions=data.get("expected_decisions", []),
             expected_tasks=data.get("expected_tasks", []),
             custom_expectations=data.get("custom_expectations", {}),
+            expected_ambiguities=data.get("expected_ambiguities", []),
         )
 
     def get_all_expected_items(self, item_type: str) -> list[str]:
@@ -71,6 +74,7 @@ class PhaseGroundTruth:
             "elements": self.expected_elements,
             "decisions": self.expected_decisions,
             "tasks": self.expected_tasks,
+            "ambiguities": self.expected_ambiguities,
         }
         return mapping.get(item_type, [])
 

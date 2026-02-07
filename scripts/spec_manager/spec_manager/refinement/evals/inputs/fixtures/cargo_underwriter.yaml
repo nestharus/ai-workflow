@@ -1,0 +1,698 @@
+# Cargo Insurance Underwriting & Claims Engine (Chaotic Prose)
+# A high-complexity test case with 56 requirements across 8 interacting libraries.
+# Prose is deliberately chaotic: requirements are scattered across sections that
+# do not map 1:1 to libraries, computed values require multi-step reasoning from
+# narrative, side effects are embedded in descriptions of unrelated workflows,
+# and four architectural conflicts are documented in the analysis section.
+# Cross-cutting concerns (sanctions, audit, fraud) appear in every section.
+
+spec_id: cargo_underwriter
+title: Cargo Insurance Underwriting & Claims Engine (Chaotic Prose)
+description: |
+  A multi-library cargo insurance system handling underwriting, premium
+  calculation, claims processing, reinsurance cession, fraud detection,
+  regulatory compliance, audit, and notifications. Requirements are expressed
+  in dense natural-language prose with cross-cutting concerns deliberately
+  scattered across sections that do not align with library boundaries.
+  Computed values (premiums, reinsurance shares, loss-history weightings)
+  are described through worked examples and narrative rather than formulae.
+  Four architectural conflicts are documented with tradeoff analysis.
+
+complexity_score: 10
+tags:
+  - chaotic
+  - prose
+  - insurance
+  - multi-library
+  - integration
+  - computed-values
+  - side-effects
+  - conflict-resolution
+
+sparse_spec_path: cargo_underwriter_sparse.yaml
+steering_script_path: cargo_underwriter_steering.json
+
+sections:
+  OVERVIEW: |
+    The freight cargo insurance underwriting and claims engine is the
+    commercial core of the organisation's marine, air, and multimodal cargo
+    protection business. It serves the entire policy lifecycle from initial
+    risk assessment through premium quotation, binding, claims handling,
+    reinsurance cession, regulatory compliance, and audit. The system
+    comprises eight interacting libraries whose coupling is both the source
+    of its power and the primary driver of operational risk: the PolicyEngine
+    governs underwriting decisions and premium arithmetic; the RiskModeler
+    supplies the actuarial backbone including route-level risk scores that
+    feed directly into pricing; the ClaimsProcessor handles the full arc
+    from first notification of loss through assessment, settlement, and
+    subrogation recovery; the ReinsuranceBroker manages treaty obligations
+    including excess-of-loss cessions and quota-share arrangements; the
+    FraudDetector runs pattern analysis and velocity checks against incoming
+    claims; the ComplianceGateway enforces sanctions screening,
+    anti-money-laundering rules, and regulatory filing obligations; the
+    AuditLedger maintains an immutable event-sourced record of every state
+    transition; and the NotificationHub routes alerts and status updates to
+    the relevant parties through their preferred channels. What makes this
+    system particularly challenging to reason about is that almost every
+    operation in one library produces side effects consumed by two or three
+    others, and the timing of those side effects matters: a claims payment
+    cannot be released until the fraud score has been computed, the sanctions
+    screening has cleared, the reinsurance share has been calculated, and the
+    audit record has been committed, yet the claims SLA demands that all of
+    this happen within four hours of submission. The remainder of this
+    document describes each subsystem's behaviour in the prose style that our
+    domain experts prefer, interleaved with the constraints and analysis that
+    govern architectural decisions.
+
+  UNDERWRITING_JOURNEY: |
+    When a broker submits a new policy request the underwriting journey
+    begins with the PolicyEngine performing a coverage eligibility check.
+    Every policy application must include the insured value of the cargo, the
+    cargo type classification (standard goods, hazardous materials,
+    perishables, or high-value items), the origin and destination locations,
+    the transport mode (marine, air, road, rail, or multimodal), and the
+    coverage period expressed as a start date and end date. Missing any of
+    these fields results in immediate rejection with a structured error
+    returned to the broker's system.
+
+    The premium calculation is where most of the complexity lives and it is
+    deliberately spread across the PolicyEngine and the RiskModeler because
+    the actuarial team insisted on separation of concerns during the last
+    architecture review. The base rate is two dollars and fifty cents per
+    thousand dollars of insured value for standard cargo — that number was
+    set by the pricing committee in Q3 2024 and will next be reviewed in Q1
+    2026 — and it serves as the starting point for every quotation. The
+    RiskModeler consults its route database to produce a risk score for the
+    origin-destination pair, which ranges from a floor of 1.0 for
+    well-established domestic corridors to a ceiling of 3.5 for routes that
+    traverse conflict zones or regions with poor infrastructure. This score
+    multiplies the base rate directly. On top of that the transport mode
+    introduces a peril surcharge: marine shipments attract a fifteen percent
+    surcharge because of the inherent risk of total loss at sea, air
+    shipments carry an eight percent surcharge reflecting the lower incidence
+    but higher severity of air-cargo incidents, and multimodal consignments
+    — which pass through at least two transport modes — bear a twelve
+    percent surcharge that represents the blended risk of mode transitions
+    where cargo is most vulnerable to damage and theft. Road and rail are
+    treated as the baseline with no additional surcharge.
+
+    There is also a deductible credit applied when the policyholder opts for
+    a higher deductible, calculated as the deductible amount divided by the
+    insured value but capped at twenty percent regardless of the actual
+    ratio, because the actuaries found that beyond that level the moral
+    hazard outweighs the premium relief. So for a standard shipment of
+    electronics worth two hundred thousand dollars moving by sea from
+    Shanghai to Rotterdam on a route with a risk score of 2.1 and a
+    deductible of twenty thousand dollars, you would take the base rate,
+    scale it to the insured value, multiply by the route score, add the
+    marine surcharge, and subtract the deductible credit — and the brokers
+    really do expect to see that arithmetic spelled out in the quotation
+    breakdown, not just the final number.
+
+    The underwriting journey also involves the ComplianceGateway performing
+    sanctions screening at the point of quotation — not just at binding —
+    because the organisation learned the hard way that quoting an entity on
+    the OFAC list creates reputational risk even if the policy is never
+    bound. The sanctions check covers OFAC, the EU consolidated list, and
+    the UN Security Council sanctions list, and a positive match halts the
+    underwriting process entirely until a compliance officer reviews the
+    match and either clears it as a false positive or confirms it and
+    rejects the application. Meanwhile, politically exposed persons named as
+    insureds trigger enhanced due diligence that adds up to two business
+    days to the underwriting timeline but does not block quotation.
+
+    Policy endorsements — mid-term changes to coverage, insured value, or
+    route — take effect at midnight UTC on the requested effective date and
+    trigger a pro-rata premium adjustment. The premium delta is calculated
+    from the endorsement date to the original policy expiry, and if the
+    endorsement increases risk the additional premium is due immediately, but
+    if it reduces risk the refund is credited to the broker's account within
+    ten business days. When a policy reaches its natural expiry the renewal
+    process begins automatically sixty days in advance. The renewal premium
+    is adjusted based on the prior-year loss ratio for the specific
+    policyholder: if the loss ratio exceeds seventy-five percent the premium
+    increases by thirty percent of the base rate for that policy, which the
+    pricing committee considers punitive enough to incentivise loss
+    prevention without driving the client to a competitor. If the gap between
+    policy expiry and renewal binding exceeds forty-eight hours the system
+    treats it as a lapse and the broker must submit a fresh application
+    rather than a renewal, because continuity of coverage is a regulatory
+    requirement in several jurisdictions we operate in. Every policy
+    regardless of type or size carries an automatic exclusion for losses
+    arising from war, civil unrest, or sanctions — this exclusion cannot be
+    removed by endorsement.
+
+    The RiskModeler's contribution to underwriting extends beyond the route
+    score. When a route passes through a designated catastrophe zone —
+    defined as any region that has experienced a natural disaster causing
+    insured losses exceeding fifty million dollars in the past five years —
+    the model applies a catastrophe loading of twenty-five percent on top of
+    the base premium, compounding with the peril surcharge and the route
+    risk score. This was a deliberate actuarial choice documented in the
+    analysis section. The actuarial team also insists that high-risk routes,
+    defined as those with a score exceeding 2.5, require a mandatory
+    physical survey of the cargo before the policy can be issued, adding
+    between three and five business days to the underwriting timeline. The
+    loss-history weighting that feeds into pricing is stratified by recency:
+    claims from the most recent three years receive fifty percent of the
+    total weight, claims from years four through seven receive thirty
+    percent, and claims from years eight through ten receive the remaining
+    twenty percent. Claims older than ten years are excluded entirely from
+    the pricing model. The model is recalibrated quarterly by the actuarial
+    team, but an emergency recalibration is triggered whenever the aggregate
+    loss ratio across the book deviates by more than fifteen percentage
+    points from the projected loss ratio for the current quarter.
+
+  CLAIMS_AND_RECOVERY: |
+    The claims lifecycle begins when a policyholder or their broker files a
+    first notification of loss. There is a hard deadline of thirty days from
+    the date of loss discovery — not the date of loss itself, which matters
+    for cargo that spends weeks in transit — within which the claim must be
+    filed or coverage is forfeited. Every claim submission requires a
+    description of the loss event, an estimated claim amount, supporting
+    documentation (photographs, survey reports, shipping manifests, and any
+    third-party evidence), and the date of the incident. Once filed, the
+    ClaimsProcessor assigns a severity tier based on the estimated amount:
+    claims below twenty-five thousand dollars are handled by the automated
+    fast-track queue, claims between twenty-five thousand and two hundred
+    and fifty thousand are assigned to a standard adjuster, and claims above
+    two hundred and fifty thousand dollars require a senior adjuster who
+    must provide an independent assessment before approval. The SLA for
+    standard claims assessment is four hours from submission to decision,
+    which sounds aggressive until you understand that most of the elapsed
+    time is consumed by the automated checks that run in parallel: fraud
+    scoring, sanctions screening, coverage verification, and reinsurance
+    share calculation.
+
+    Speaking of fraud scoring — and this is where things get tangled — the
+    FraudDetector performs a velocity check on every incoming claim. The
+    velocity check looks at claim frequency from the same beneficiary: more
+    than three claims within a ninety-day window raises a flag, but only
+    when the total amount claimed in that window exceeds two hundred percent
+    of the expected loss ratio for the relevant cargo type. That second
+    condition was added after the fraud team discovered that certain
+    high-volume logistics operators legitimately file many small claims for
+    routine transit damage, and flagging them was consuming investigation
+    bandwidth without yielding results. The FraudDetector also runs document
+    anomaly detection, comparing metadata in photographs (EXIF dates, GPS
+    coordinates, device identifiers) against the submitted incident date and
+    location; inconsistencies elevate the fraud score. Additionally, any
+    claim whose estimated amount exceeds ninety percent of the policy's
+    insured value triggers an automatic cross-reference review because
+    total-loss-adjacent claims have historically had a much higher fraud
+    incidence. The fraud score itself is a continuous value between 0 and 1,
+    and claims with a score above 0.7 have their automatic payment suspended
+    and are routed to the Special Investigations Unit. SIU investigations
+    must complete within ten business days; if the investigation is
+    inconclusive at that point, the claim proceeds to payment but with an
+    enhanced monitoring flag that persists for twenty-four months on that
+    beneficiary.
+
+    When a claim is approved — assuming it passes fraud, sanctions, and
+    coverage checks — the payment calculation involves several adjustments
+    that trip up people who are not familiar with the insurance arithmetic.
+    First, any salvage value is deducted from the gross claim amount because
+    the insurer is entitled to the salvage. Then the reinsurance recovery
+    share is calculated based on the treaty structure (more on this in the
+    treaty management section, but the short version is that we retain the
+    first five hundred thousand dollars and cede the rest up to the treaty
+    ceiling). The net payment to the policyholder is the gross claim minus
+    salvage, and the insurer then recovers the ceded portion from reinsurers
+    separately. For claims where there is a coverage dispute — say the
+    policyholder claims the loss falls under the standard perils clause but
+    the adjuster believes it falls under the excluded war-risk clause — the
+    ClaimsProcessor is authorised to issue a partial payment equal to sixty
+    percent of the undisputed portion while the dispute is resolved, which
+    prevents the policyholder from suffering cash-flow harm during what can
+    be a lengthy adjudication. Subrogation rights are preserved for all
+    claims exceeding one hundred thousand dollars, and the legal team is
+    notified within forty-eight hours of claim approval so they can evaluate
+    recovery prospects against responsible third parties. Payment is issued
+    within five business days of approval, and it hits the broker's trust
+    account for distribution to the policyholder.
+
+    There is also the matter of sanctions during claims, which catches a lot
+    of people off guard. The ComplianceGateway runs a fresh sanctions check
+    at the point of claim payment — not just at underwriting — because an
+    entity can be sanctioned between policy inception and claim filing. If
+    the sanctions screening returns a match at payment time, the payment
+    enters a mandatory twenty-four-hour hold during which a compliance
+    officer must review the match. This hold pauses the four-hour claims SLA
+    clock, which was a contentious architectural decision documented in the
+    analysis section. For anti-money-laundering purposes, any premium
+    payment made in cash equivalents exceeding fifty thousand dollars
+    triggers an AML investigation regardless of the payment's legitimacy;
+    this mostly affects markets in Southeast Asia and West Africa where cash
+    transactions remain common.
+
+  ACTUARIAL_BACKBONE: |
+    The RiskModeler is a stateful service that maintains several overlapping
+    datasets: a route-risk matrix updated quarterly from loss data and
+    geopolitical intelligence feeds, a cargo-type classification table that
+    maps thousands of commodity codes to a handful of risk categories, a
+    catastrophe-zone registry that evolves as new natural disaster data
+    becomes available, and a loss-history index that tracks every claim by
+    cargo type, route, and time period. The route-risk matrix is the most
+    commercially sensitive asset in the system because it represents decades
+    of accumulated underwriting experience, and access to it is restricted
+    to the pricing engine and senior actuaries.
+
+    Route risk scores are computed as a composite of four factors: the base
+    corridor risk (derived from historical loss frequency on that specific
+    origin-destination pair), a geopolitical overlay (current conflict or
+    instability assessments from external intelligence providers), a
+    seasonal adjustment (some routes have dramatically different risk
+    profiles in monsoon season versus dry season), and a cargo-type modifier
+    (high-value electronics attract different risks than bulk commodities).
+    The composite score is normalised to the 1.0-3.5 range mentioned
+    earlier. The seasonal adjustment alone can swing a route's score by up
+    to 0.8 points — the Bay of Bengal route from Chennai to Singapore, for
+    instance, carries a score of 1.4 in the dry season but 2.2 during
+    monsoon, which translates to a fifty-seven percent premium increase that
+    brokers frequently complain about.
+
+    The catastrophe-zone registry deserves special mention because it
+    interacts with pricing in a way that is not immediately obvious. When a
+    route passes through a catastrophe zone, the twenty-five percent
+    catastrophe loading is applied to the base premium before the route-risk
+    score multiplication, which means its effect compounds rather than adds
+    linearly. This was a deliberate actuarial choice: the argument was that
+    catastrophe exposure fundamentally changes the risk profile of a route,
+    not just its expected loss — it changes the tail risk, which is what
+    keeps reinsurers awake at night and what drives their treaty pricing.
+    The catastrophe-zone definition itself is objective: any region where
+    insured natural-disaster losses have exceeded fifty million dollars in
+    any single event within the past five years. The registry is updated
+    monthly by the catastrophe modelling team, and changes to zone
+    designations take effect on the first of the following month to give
+    underwriters time to adjust their pipelines.
+
+    The loss-history weighting deserves elaboration because the way it
+    interacts with renewal pricing is subtle. The 50/30/20 weighting by
+    recency band is not applied to the raw claim amounts — it is applied to
+    the loss ratio for each band. So if a client had a 60% loss ratio in
+    years 1-3, an 80% loss ratio in years 4-7, and a 40% loss ratio in
+    years 8-10, the weighted loss ratio would be 0.60 times 0.50 plus 0.80
+    times 0.30 plus 0.40 times 0.20, equalling 0.62. This weighted ratio
+    is what gets compared against the 75% threshold for renewal surcharges.
+    The actuarial team chose this approach because it smooths out
+    catastrophe-year spikes while still penalising persistently poor loss
+    experience.
+
+  TREATY_MANAGEMENT: |
+    The reinsurance programme is structured as a combination of
+    excess-of-loss and quota-share arrangements that were designed to
+    balance risk transfer with premium retention. The primary treaty is an
+    excess-of-loss structure where the insurer retains the first five
+    hundred thousand dollars of any individual loss. Losses that breach this
+    retention threshold are ceded to the reinsurance panel proportionally
+    based on each reinsurer's participation percentage, up to a treaty
+    ceiling of ten million dollars per occurrence. Any loss exceeding ten
+    million dollars — which thankfully happens rarely, maybe once or twice
+    per decade — falls back entirely to the insurer unless a separate
+    catastrophe treaty has been purchased, which is negotiated annually and
+    falls outside the scope of this system. The participation percentages
+    among reinsurers are fixed at treaty inception and cannot change
+    mid-year without a formal amendment signed by all parties.
+
+    The quota-share arrangement is more nuanced. It applies specifically
+    when a single catastrophe event affects multiple policies — a typhoon
+    destroying cargo across thirty different shipments, for example — and is
+    triggered when the aggregate retained loss from the event exceeds the
+    excess-of-loss retention. In that scenario, forty percent of the
+    retained portion (the first five hundred thousand per individual loss)
+    is ceded to the quota-share panel, which may or may not be the same
+    reinsurers as the excess-of-loss panel. This quota-share mechanism was
+    introduced three years ago after a catastrophe in the Malacca Strait
+    caused twenty-three separate claims totalling four point two million
+    dollars, of which the insurer retained one point eight million after
+    excess-of-loss recoveries. The forty percent quota share would have
+    reduced that retention to one point zero eight million, which the board
+    considered a more manageable exposure.
+
+    Bordereau reporting — the periodic submission of detailed claim and
+    premium data to reinsurers — is due monthly, specifically by the
+    fifteenth calendar day following the end of each reporting month. So
+    January data must be submitted by February 15th, and so on. The
+    bordereau must include every claim that has been paid, reserved, or
+    closed during the reporting month, along with premium movements from new
+    policies, endorsements, and cancellations. Late submission triggers
+    penalty interest at two percent per month on any outstanding reinsurance
+    balances. When a claim is approved and the reinsurance share is
+    calculated, the ReinsuranceBroker must update the claim reserve within
+    forty-eight hours of receiving cession confirmation from the reinsurers,
+    because the reserve figures feed into the quarterly regulatory filings
+    and stale reserves can trigger regulatory action.
+
+    Treaty inception is January 1st of each year. For policies written or
+    endorsed after treaty inception, the premium allocated to the treaty
+    uses a pro-rata calculation based on the remaining days in the treaty
+    year. The ReinsuranceBroker must also track commissions owed to ceding
+    brokers, which are calculated as a fixed percentage of ceded premium —
+    currently twelve percent — and are settled quarterly.
+
+  INTEGRITY_AND_DETECTION: |
+    The fraud detection and compliance infrastructure operates as a
+    cross-cutting concern that touches almost every transactional workflow
+    in the system. The FraudDetector maintains a real-time scoring model
+    that evaluates claims against approximately forty features spanning
+    claim history, document integrity, and behavioural patterns. The fraud
+    model is retrained monthly using the most recent twelve months of
+    confirmed fraud cases and legitimate claims, and the model performance
+    metrics (precision, recall, F1 score) are published to the actuarial
+    team for monitoring. A minimum recall threshold of eighty-five percent
+    is maintained — the business would rather investigate a few extra
+    legitimate claims than miss actual fraud. The velocity check mechanics
+    were described in the claims section, but there is an additional layer:
+    geographic velocity analysis, where claims from the same insured
+    originating from locations more than five hundred kilometres apart
+    within a seven-day window are flagged as potentially fraudulent
+    regardless of claim amount or loss ratio.
+
+    The ComplianceGateway maintains its own event loop that subscribes to
+    policy-issuance, claim-filing, and payment-execution events from the
+    AuditLedger. For large-loss regulatory reporting, the threshold is one
+    million dollars and the filing deadline is seventy-two hours from the
+    event that triggers the obligation (claim approval for claims, loss
+    discovery for catastrophe events). The regulatory filing must include
+    the policy number, insured identity, loss description, estimated and
+    paid amounts, and the reinsurance recovery status. These filings go to
+    the relevant regulator via a secure API integration — SFTP was the
+    original channel but the regulator migrated to API in 2024 — and the
+    ComplianceGateway retains a local copy of every filing for seven years.
+    The ComplianceGateway also produces an annual regulatory filing that
+    summarises the book's loss ratios, reserve adequacy, and reinsurance
+    utilisation metrics. This annual filing is due within ninety days of the
+    fiscal year end and is prepared semi-automatically by aggregating data
+    from the AuditLedger and the ReinsuranceBroker.
+
+  OPERATIONAL_FABRIC: |
+    The event architecture underpinning the system follows an event-sourced,
+    pub-sub model where the AuditLedger serves as both the event store and
+    the primary publisher. Every library publishes state-transition events
+    to the AuditLedger, which persists them and then republishes to the
+    NotificationHub and any other subscribing service. Event ordering is
+    guaranteed within a single claim's lifecycle — all events related to
+    claim CLM-2024-00421 will be delivered in the order they were produced
+    — but ordering across different claims or policies is not guaranteed,
+    and downstream consumers must handle interleaving gracefully. The
+    NotificationHub subscribes to the full event stream and applies routing
+    rules to determine which events need human attention and through what
+    channel.
+
+    The AuditLedger is the system of record for forensic reconstruction.
+    Every state transition in every library — policy created, claim filed,
+    fraud score assigned, reinsurance share calculated, payment released,
+    notification sent — is persisted as an immutable event in an
+    append-only store. Each event carries the actor's identity (which system
+    or human triggered the transition), a UTC timestamp with microsecond
+    precision, the previous state, the new state, and the triggering action
+    identifier. Events are chained using a cryptographic hash where each
+    event's hash includes the hash of the preceding event, creating a
+    tamper-evident chain similar to a blockchain but without the distributed
+    consensus overhead. Tamper detection runs every six hours by recomputing
+    the hash chain from a known-good checkpoint and comparing it against
+    the stored hashes; any discrepancy immediately triggers an incident
+    alert to the security team. The full lifecycle of any claim — from
+    first notification through assessment, approval, payment, reinsurance
+    recovery, and bordereau reporting — must be reconstructable from the
+    audit ledger alone within five minutes, which imposes stringent indexing
+    requirements on the store. Audit records are retained for ten years from
+    the expiry date of the associated policy, not from the date of the
+    event, which means that a ten-year policy expiring in 2035 would have
+    its earliest events retained until 2045 — a twenty-year horizon that
+    drives significant storage planning decisions.
+
+    Notification routing follows a priority-based model. Claims status
+    changes (filed, assessed, approved, paid, denied) generate
+    notifications to the policyholder through their preferred channel, which
+    can be email, SMS, or the self-service portal. Fraud investigation
+    triggers are classified as priority notifications and must reach the SIU
+    team within fifteen minutes of the fraud score crossing the 0.7
+    threshold; these go via a dedicated priority channel that bypasses
+    normal queuing. Large-loss events — those crossing the one-million-
+    dollar reporting threshold — trigger simultaneous notifications to the
+    reinsurance team, the compliance team, and senior management, each
+    through their configured channels. The NotificationHub must confirm
+    delivery of every notification; undelivered notifications are retried
+    three times over a twenty-four-hour window with increasing intervals,
+    and persistently failed deliveries are escalated to the operations team
+    for manual intervention.
+
+    During catastrophe events — a typhoon season, an earthquake affecting a
+    major port — the system can generate hundreds of notifications in a
+    short window. To prevent alert fatigue, the NotificationHub implements
+    a digest mode that batches up to one hundred individual alerts into a
+    single consolidated message per recipient when the alert volume for that
+    recipient exceeds twenty alerts within a five-minute window. The digest
+    includes summary counts by alert type and a link to the full list in
+    the portal. This batching applies only to operational alerts, not to
+    regulatory or priority notifications, which are always delivered
+    individually.
+
+    The system imposes several cross-cutting operational constraints that
+    deserve explicit mention. The claims SLA of four hours applies from the
+    moment of claim submission to the issuance of an assessment decision
+    (approve, deny, or refer for investigation). This clock is paused only
+    during sanctions holds — the twenty-four-hour sanctions hold does not
+    count against the SLA — but is not paused during fraud investigation
+    routing, senior adjuster review, or reinsurance calculations. If a
+    claim breaches the SLA, an escalation notification is sent to the
+    claims manager and the incident is logged for quarterly SLA reporting.
+    Premium refunds on mid-term policy cancellation are calculated on a
+    pro-rata daily basis but are subject to a fifteen percent short-rate
+    penalty, meaning the policyholder receives eighty-five percent of the
+    pro-rata unused premium. This penalty was introduced to discourage
+    tactical cancellation by brokers who would bind policies to secure
+    cargo-in-transit and then cancel once the shipment arrived safely.
+
+  ANALYSIS: |
+    This section records the key architectural and design decisions that
+    shape the system's behaviour.
+
+    Decision 1: Sanctions Hold vs Claims SLA. The most debated
+    architectural decision was how to handle the interaction between the
+    ComplianceGateway's twenty-four-hour sanctions hold and the
+    ClaimsProcessor's four-hour assessment SLA. Three options were
+    considered: (a) exempt sanctioned claims from the SLA entirely, (b)
+    pause the SLA clock during the sanctions hold, or (c) run sanctions
+    screening asynchronously and only block at the payment stage. Option (a)
+    was rejected because it would create a perverse incentive to trigger
+    false sanctions matches to buy more assessment time. Option (c) was
+    rejected because it would allow claims to be approved before sanctions
+    clearance, creating reputational and legal risk. Option (b) was adopted:
+    the SLA clock pauses when the sanctions hold begins and resumes when
+    the hold is released or the claim is rejected due to a confirmed
+    sanctions match.
+
+    Decision 2: Catastrophe Loading Compounding. The actuarial team chose
+    to apply catastrophe loading before route-risk score multiplication,
+    causing it to compound with the score rather than add linearly. The
+    alternative — applying it as a flat addition after all multiplicative
+    factors — would have produced lower premiums for high-risk routes in
+    catastrophe zones, which the reinsurance team argued would underprice
+    the tail risk. The compounding approach means that a 3.5-risk-score
+    route through a catastrophe zone pays significantly more than a
+    1.0-risk-score route through the same zone, which the actuarial team
+    considers appropriate because the baseline risk and the catastrophe risk
+    are correlated, not independent.
+
+    Decision 3: Fraud Velocity Two-Condition Gate. The original fraud
+    velocity check flagged any beneficiary with more than three claims in
+    ninety days regardless of amount. This produced an unacceptable
+    false-positive rate of approximately forty percent, concentrated among
+    high-volume logistics operators. The two-condition gate — frequency AND
+    amount threshold — reduced false positives to approximately eight
+    percent while maintaining the same true-positive rate for actual fraud
+    schemes.
+
+    Decision 4: Reinsurance Quota Share Trigger. The quota-share mechanism
+    was introduced reactively after the Malacca Strait catastrophe and the
+    board debated whether to make it a standing arrangement or to trigger it
+    only during multi-policy catastrophe events. The standing arrangement
+    would have reduced retained premium by forty percent on every loss,
+    which was commercially unacceptable. The event-triggered approach means
+    the quota share only activates when aggregate retained loss from a
+    single event exceeds the per-occurrence retention, which preserves
+    premium retention on routine individual losses while providing
+    protection against catastrophe aggregation.
+
+rules: []
+
+ground_truth:
+  sectionization:
+    expected_sections:
+      - OVERVIEW
+      - UNDERWRITING_JOURNEY
+      - CLAIMS_AND_RECOVERY
+      - ACTUARIAL_BACKBONE
+      - TREATY_MANAGEMENT
+      - INTEGRITY_AND_DETECTION
+      - OPERATIONAL_FABRIC
+      - ANALYSIS
+
+  summarization:
+    expected_libraries:
+      - Policy lifecycle management including underwriting, premium calculation, endorsements, and renewals
+      - Actuarial risk scoring with route-level models, catastrophe loading, and loss-history weighting
+      - Claims intake, assessment, and settlement with severity-based triage and partial payment capability
+      - Treaty management including excess-of-loss and quota-share cession with bordereau reporting
+      - Claim fraud detection using velocity checks, document analysis, and behavioral scoring
+      - Regulatory compliance including sanctions screening, AML checks, and large-loss reporting
+      - Immutable event-sourced audit trail with cryptographic hash chain and reconstruction capability
+      - Alert routing and notification delivery with priority channels and catastrophe digest batching
+
+  library_synthesis:
+    expected_libraries:
+      - PolicyEngine
+      - RiskModeler
+      - ClaimsProcessor
+      - ReinsuranceBroker
+      - FraudDetector
+      - ComplianceGateway
+      - AuditLedger
+      - NotificationHub
+    expected_requirements:
+      # PolicyEngine (10)
+      - Policy application must include insured value, cargo type, origin, destination, transport mode, and coverage period
+      - Premium base rate is $2.50 per $1,000 of insured value for standard cargo
+      - Route risk score ranges from 1.0 to 3.5 and multiplies the base rate
+      - Marine peril surcharge is 15%, air is 8%, multimodal is 12%
+      - Deductible credit equals deductible divided by insured value, capped at 20%
+      - Endorsements take effect at midnight UTC on requested effective date
+      - Renewal premium increases by 30% of base rate when prior-year loss ratio exceeds 75%
+      - Coverage gap exceeding 48 hours requires new application instead of renewal
+      - Automatic war and sanctions exclusion on all policies
+      - Mid-term cancellation refund is pro-rata less 15% short-rate penalty
+      # RiskModeler (6)
+      - High-risk routes with score above 2.5 require mandatory physical survey
+      - Loss-history weighting is 50% for years 1-3, 30% for years 4-7, 20% for years 8-10
+      - Catastrophe loading of 25% applied when route passes through catastrophe zone
+      - Catastrophe zone defined as region with insured losses exceeding $50M in past 5 years
+      - Risk model recalibrated quarterly or when loss ratio deviates more than 15% from projected
+      - Catastrophe loading compounds with route risk score applied before multiplication
+      # ClaimsProcessor (8)
+      - Claims must be filed within 30 days of loss discovery
+      - Claims assessment SLA is 4 hours from submission to decision
+      - Claims above $250,000 require senior adjuster approval
+      - Payment issued within 5 business days of claim approval
+      - Subrogation rights preserved for claims exceeding $100,000
+      - Partial payment at 60% of undisputed amount during coverage disputes
+      - Salvage value deducted from claim before reinsurance recovery calculation
+      - Claims below $25,000 handled by automated fast-track queue
+      # ReinsuranceBroker (7)
+      - Insurer retains first $500,000 of any individual loss under excess-of-loss treaty
+      - Losses above retention ceded up to $10M treaty ceiling per occurrence
+      - Quota share of 40% on retained portion triggered by multi-policy catastrophe events
+      - Bordereau reports due monthly by T+15 calendar days
+      - Reinsurance recovery updates claim reserve within 48 hours of cession confirmation
+      - Treaty inception January 1 with pro-rata premium allocation for mid-year policies
+      - Ceding broker commission is 12% of ceded premium settled quarterly
+      # FraudDetector (7)
+      - Velocity check flags more than 3 claims from same beneficiary in 90 days
+      - Velocity investigation only when total claimed exceeds 200% of expected loss ratio
+      - Claims exceeding 90% of insured value trigger automatic cross-reference review
+      - Fraud score above 0.7 suspends payment and routes to Special Investigations Unit
+      - SIU investigation must complete within 10 business days
+      - Geographic velocity flags claims more than 500km apart within 7 days
+      - Fraud model retrained monthly with minimum 85% recall threshold
+      # ComplianceGateway (6)
+      - Sanctions screening against OFAC, EU, and UN lists at policy issuance and claim payment
+      - Sanctions match triggers mandatory 24-hour hold
+      - Large-loss reports filed within 72 hours for losses exceeding $1M
+      - AML checks for premium payments exceeding $50,000 in cash equivalents
+      - Regulatory filings retained for 7 years
+      - PEP screening triggers enhanced due diligence
+      # AuditLedger (5)
+      - Every state transition persisted as immutable event with cryptographic hash chain
+      - Full claim lifecycle reconstructable from audit ledger within 5 minutes
+      - Tamper detection via hash chain verification runs every 6 hours
+      - Audit retention is 10 years from policy expiry date
+      - Each event includes actor identity, timestamp, previous state, new state, and triggering action
+      # NotificationHub (5)
+      - Policyholder notified of claims status changes via preferred channel
+      - Fraud investigation triggers notify SIU within 15 minutes via priority channel
+      - Large-loss events notify reinsurance, compliance, and senior management simultaneously
+      - Undelivered notifications retried 3 times over 24 hours
+      - Catastrophe digest batches up to 100 alerts per 5-minute window
+      # Cross-cutting (2)
+      - Sanctions hold pauses claims SLA clock
+      - Event ordering guaranteed within single claim lifecycle but not across claims
+
+  spec_building:
+    expected_requirements:
+      # PolicyEngine (10)
+      - Policy application must include insured value, cargo type, origin, destination, transport mode, and coverage period
+      - Premium base rate is $2.50 per $1,000 of insured value for standard cargo
+      - Route risk score ranges from 1.0 to 3.5 and multiplies the base rate
+      - Marine peril surcharge is 15%, air is 8%, multimodal is 12%
+      - Deductible credit equals deductible divided by insured value, capped at 20%
+      - Endorsements take effect at midnight UTC on requested effective date
+      - Renewal premium increases by 30% of base rate when prior-year loss ratio exceeds 75%
+      - Coverage gap exceeding 48 hours requires new application instead of renewal
+      - Automatic war and sanctions exclusion on all policies
+      - Mid-term cancellation refund is pro-rata less 15% short-rate penalty
+      # RiskModeler (6)
+      - High-risk routes with score above 2.5 require mandatory physical survey
+      - Loss-history weighting is 50% for years 1-3, 30% for years 4-7, 20% for years 8-10
+      - Catastrophe loading of 25% applied when route passes through catastrophe zone
+      - Catastrophe zone defined as region with insured losses exceeding $50M in past 5 years
+      - Risk model recalibrated quarterly or when loss ratio deviates more than 15% from projected
+      - Catastrophe loading compounds with route risk score applied before multiplication
+      # ClaimsProcessor (8)
+      - Claims must be filed within 30 days of loss discovery
+      - Claims assessment SLA is 4 hours from submission to decision
+      - Claims above $250,000 require senior adjuster approval
+      - Payment issued within 5 business days of claim approval
+      - Subrogation rights preserved for claims exceeding $100,000
+      - Partial payment at 60% of undisputed amount during coverage disputes
+      - Salvage value deducted from claim before reinsurance recovery calculation
+      - Claims below $25,000 handled by automated fast-track queue
+      # ReinsuranceBroker (7)
+      - Insurer retains first $500,000 of any individual loss under excess-of-loss treaty
+      - Losses above retention ceded up to $10M treaty ceiling per occurrence
+      - Quota share of 40% on retained portion triggered by multi-policy catastrophe events
+      - Bordereau reports due monthly by T+15 calendar days
+      - Reinsurance recovery updates claim reserve within 48 hours of cession confirmation
+      - Treaty inception January 1 with pro-rata premium allocation for mid-year policies
+      - Ceding broker commission is 12% of ceded premium settled quarterly
+      # FraudDetector (7)
+      - Velocity check flags more than 3 claims from same beneficiary in 90 days
+      - Velocity investigation only when total claimed exceeds 200% of expected loss ratio
+      - Claims exceeding 90% of insured value trigger automatic cross-reference review
+      - Fraud score above 0.7 suspends payment and routes to Special Investigations Unit
+      - SIU investigation must complete within 10 business days
+      - Geographic velocity flags claims more than 500km apart within 7 days
+      - Fraud model retrained monthly with minimum 85% recall threshold
+      # ComplianceGateway (6)
+      - Sanctions screening against OFAC, EU, and UN lists at policy issuance and claim payment
+      - Sanctions match triggers mandatory 24-hour hold
+      - Large-loss reports filed within 72 hours for losses exceeding $1M
+      - AML checks for premium payments exceeding $50,000 in cash equivalents
+      - Regulatory filings retained for 7 years
+      - PEP screening triggers enhanced due diligence
+      # AuditLedger (5)
+      - Every state transition persisted as immutable event with cryptographic hash chain
+      - Full claim lifecycle reconstructable from audit ledger within 5 minutes
+      - Tamper detection via hash chain verification runs every 6 hours
+      - Audit retention is 10 years from policy expiry date
+      - Each event includes actor identity, timestamp, previous state, new state, and triggering action
+      # NotificationHub (5)
+      - Policyholder notified of claims status changes via preferred channel
+      - Fraud investigation triggers notify SIU within 15 minutes via priority channel
+      - Large-loss events notify reinsurance, compliance, and senior management simultaneously
+      - Undelivered notifications retried 3 times over 24 hours
+      - Catastrophe digest batches up to 100 alerts per 5-minute window
+      # Cross-cutting (2)
+      - Sanctions hold pauses claims SLA clock
+      - Event ordering guaranteed within single claim lifecycle but not across claims
+    expected_elements: []
+    expected_decisions:
+      - Sanctions hold vs claims SLA conflict resolved by pausing SLA clock during hold
+      - Catastrophe loading compounds with route risk score rather than adding linearly
+      - Fraud velocity uses two-condition gate combining frequency and amount threshold
+      - Reinsurance quota share triggered by catastrophe events rather than standing arrangement
+
+  overall_requirements_count: 56
+  overall_elements_count: 56
+  convergence_iterations_max: 20
