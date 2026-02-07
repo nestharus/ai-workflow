@@ -27,6 +27,7 @@ class DivergenceCandidate:
     confidence: float  # 0.0 to 1.0
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
         return {
             "library": self.library,
             "suggested_split": self.suggested_split,
@@ -47,6 +48,7 @@ class ConvergenceCandidate:
     confidence: float  # 0.0 to 1.0
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
         return {
             "library1": self.library1,
             "library2": self.library2,
@@ -66,6 +68,7 @@ class ReferencePattern:
     referenced_ids: list[str]
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
         return {
             "source_library": self.source_library,
             "target_library": self.target_library,
@@ -86,6 +89,7 @@ class RestructuringSuggestion:
     confidence: float
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
         return {
             "action": self.action,
             "libraries": self.libraries,
@@ -104,14 +108,19 @@ class AnalysisResult:
     convergence_candidates: list[ConvergenceCandidate] = field(default_factory=list)
     reference_patterns: list[ReferencePattern] = field(default_factory=list)
     suggestions: list[RestructuringSuggestion] = field(default_factory=list)
+    adjacency_report: Any = None  # Optional AdjacencyReport from adjacency analysis
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        """Convert to dictionary representation."""
+        result = {
             "divergence_candidates": [d.to_dict() for d in self.divergence_candidates],
             "convergence_candidates": [c.to_dict() for c in self.convergence_candidates],
             "reference_patterns": [r.to_dict() for r in self.reference_patterns],
             "suggestions": [s.to_dict() for s in self.suggestions],
         }
+        if self.adjacency_report is not None:
+            result["adjacency_report"] = self.adjacency_report.to_dict()
+        return result
 
 
 def detect_divergence(
@@ -160,7 +169,7 @@ def detect_divergence(
         )
 
     # Also check for category-based clustering
-    for lib_name, ids in [(e.primary, e.id_value) for e in registry.iter_entries()]:
+    for _lib_name, _ids in [(e.primary, e.id_value) for e in registry.iter_entries()]:
         pass  # Category clustering could be added here
 
     # Check for large libraries
@@ -333,7 +342,9 @@ def suggest_restructuring(
                     action="split",
                     libraries=[d.library],
                     ids=d.ids_to_move,
-                    description=f"Split {len(d.ids_to_move)} IDs from {d.library} into {d.suggested_split}",
+                    description=(
+                        f"Split {len(d.ids_to_move)} IDs from {d.library} into {d.suggested_split}"
+                    ),
                     priority=1,
                     confidence=d.confidence,
                 )
@@ -347,7 +358,9 @@ def suggest_restructuring(
                     action="merge",
                     libraries=[c.library1, c.library2],
                     ids=c.shared_context_ids,
-                    description=f"Merge {c.library1} and {c.library2} ({len(c.shared_context_ids)} shared)",
+                    description=(
+                        f"Merge {c.library1} and {c.library2} ({len(c.shared_context_ids)} shared)"
+                    ),
                     priority=2,
                     confidence=c.confidence,
                 )
@@ -361,7 +374,10 @@ def suggest_restructuring(
                     action="move_ids",
                     libraries=[p.source_library, p.target_library],
                     ids=p.referenced_ids[:5],
-                    description=f"Consider moving frequently-referenced IDs from {p.target_library} to {p.source_library}",
+                    description=(
+                        f"Consider moving frequently-referenced IDs from "
+                        f"{p.target_library} to {p.source_library}"
+                    ),
                     priority=3,
                     confidence=min(p.reference_count / 10, 0.8),
                 )

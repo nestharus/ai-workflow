@@ -10,6 +10,13 @@ from .atom_emitter import (
     emit_atoms,
     emit_atoms_with_evidence,
 )
+from .branch_lifecycle import (
+    run_branch_analyze,
+    run_branch_gaps,
+    run_branch_init,
+    run_branch_init_from_edit_in_place,
+    run_branch_promote,
+)
 from .evidence_builder import (
     build_evidence_graph,
     build_evidence_ranges_from_spans,
@@ -79,6 +86,11 @@ __all__ = [
     "render_spec",
     "resolve_all_overlaps",
     "review_library_structure",
+    "run_branch_analyze",
+    "run_branch_gaps",
+    "run_branch_init",
+    "run_branch_init_from_edit_in_place",
+    "run_branch_promote",
     "sectionize_all",
     "select_architecture",
     "spotcheck_evidence",

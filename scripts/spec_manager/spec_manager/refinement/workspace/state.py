@@ -45,6 +45,11 @@ class Phase(Enum):
     TASKS = "tasks"
     IMPLEMENTATION = "implementation"
     AUDIT = "audit"
+    EDIT_IN_PLACE = "edit_in_place"
+    BRANCH_INIT = "branch_init"
+    BRANCH_GAPS = "branch_gaps"
+    BRANCH_PROMOTE = "branch_promote"
+    BRANCH_ANALYZE = "branch_analyze"
 
 
 LIBRARY_ID_PATTERN = re.compile(r"^LIB-(\d{4})$")

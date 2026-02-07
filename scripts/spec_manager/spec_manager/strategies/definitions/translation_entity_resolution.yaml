@@ -1,0 +1,21 @@
+name: translation_entity_resolution
+version: "1.0"
+
+purpose: "Resolve vague references in pseudocode comments to specific function names"
+
+risk_addressed: "Translation failure from comments referencing 'the algorithm' without specifics"
+
+risk_category: vague_references
+
+phases:
+  - translation
+
+when_conditions:
+  - "Comment contains vague references ('the algorithm', 'it', 'this')"
+  - "Function call graph context available"
+
+tools_used:
+  - reference_resolver
+  - call_graph_analyzer
+
+implementation_class: "spec_manager.strategies.implementations.translation_entity_resolution.TranslationEntityResolutionStrategy"

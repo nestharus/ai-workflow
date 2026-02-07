@@ -59,6 +59,7 @@ from .local_id_resolver import (
     ResolvedItem,
     ResolvedRelation,
 )
+from .pin_registry import PinRegistryIndex
 from .provenance import (
     GranularityLevel,
     LineageEdge,
@@ -76,9 +77,11 @@ from .provenance import (
 from .sections import SectionExtractor
 
 __all__ = [
+    "DEFAULT_LEGACY_REV_ID",
+    "LEGACY_ATOM_PATTERN",
+    "NEW_ATOM_PATTERN",
     "AnnotationParser",
     "ContentVerifier",
-    "DEFAULT_LEGACY_REV_ID",
     "DetectorFinding",
     "DeterministicIdAllocatorState",
     "DuplicateDetector",
@@ -94,16 +97,15 @@ __all__ = [
     "InferredClaimPromotionStrategy",
     "IntermediateManager",
     "IntermediateState",
-    "LEGACY_ATOM_PATTERN",
-    "LibsRegistry",
     "LibraryEntry",
     "LibraryIdAllocator",
+    "LibsRegistry",
     "LineageEdge",
     "LineageTable",
     "LocalIdResolver",
     "MembershipEvidence",
-    "NEW_ATOM_PATTERN",
     "ParsedAtomId",
+    "PinRegistryIndex",
     "ProofChainDetector",
     "ProseFragmentInferenceDetector",
     "ProvenanceTracker",
@@ -129,8 +131,8 @@ __all__ = [
     "extract_line_no",
     "extract_rev_id",
     "format_gaps_md",
-    "generate_stamp",
     "generate_stability_key",
+    "generate_stamp",
     "is_legacy_format",
     "is_new_format",
     "parse_atom_id",

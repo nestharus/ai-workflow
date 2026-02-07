@@ -29,6 +29,7 @@ from spec_manager.strategies.base import (
     StrategyPhase,
     StrategyResult,
     Tool,
+    TranslationContext,
 )
 from spec_manager.strategies.entity_resolution import (
     EntityResolver,
@@ -36,25 +37,39 @@ from spec_manager.strategies.entity_resolution import (
     ResolutionContext,
     ResolutionResult,
 )
+from spec_manager.strategies.evolution import (
+    EvolutionStateStore,
+    LLMStrategyProposer,
+    PromotionCriteria,
+    StrategyEvolutionPipeline,
+    StrategyPerformanceRecord,
+    TemplateStrategyProposer,
+)
 from spec_manager.strategies.registry import (
+    FailureMode,
     StrategyGapEvidence,
     StrategyRegistry,
 )
 
 __all__ = [
-    # Base classes
-    "StrategyPhase",
+    "EntityResolver",
+    "EvolutionStateStore",
+    "FailureMode",
+    "LLMStrategyProposer",
     "ProcessingContext",
-    "StrategyResult",
-    "Strategy",
-    "Tool",
-    "StrategyDefinition",
-    # Registry
-    "StrategyRegistry",
-    "StrategyGapEvidence",
-    # Entity resolution
+    "PromotionCriteria",
+    "ReferenceStore",
     "ResolutionContext",
     "ResolutionResult",
-    "ReferenceStore",
-    "EntityResolver",
+    "Strategy",
+    "StrategyDefinition",
+    "StrategyEvolutionPipeline",
+    "StrategyGapEvidence",
+    "StrategyPerformanceRecord",
+    "StrategyPhase",
+    "StrategyRegistry",
+    "StrategyResult",
+    "TemplateStrategyProposer",
+    "Tool",
+    "TranslationContext",
 ]

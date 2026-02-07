@@ -1,0 +1,22 @@
+name: ambiguity_research
+version: "1.0"
+
+purpose: "Search hollowed-out spec for details when comment has insufficient context"
+
+risk_addressed: "Translation failure from insufficient detail in pseudocode"
+
+risk_category: information_loss
+
+phases:
+  - translation
+
+when_conditions:
+  - "Hollowed spec available"
+  - "Comment contains underspecified terms"
+  - "Previous translation attempt produced low-confidence result"
+
+tools_used:
+  - spec_researcher
+  - needle_searcher
+
+implementation_class: "spec_manager.strategies.implementations.ambiguity_research.AmbiguityResearchStrategy"

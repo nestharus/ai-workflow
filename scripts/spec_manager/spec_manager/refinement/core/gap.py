@@ -29,6 +29,11 @@ class GapType(Enum):
     content_mismatch = "content_mismatch"
     uncertainty_marker = "uncertainty_marker"
     format_violation = "format_violation"
+    unimplemented_comment = "unimplemented_comment"
+    stub_function = "stub_function"
+    runtime_not_implemented = "runtime_not_implemented"
+    disconnected_subgraph = "disconnected_subgraph"
+    uncovered_path = "uncovered_path"
 
 
 @dataclass
@@ -293,6 +298,11 @@ def _infer_gap_type(evidence: list[GapEvidence]) -> GapType:
         "ambiguity": GapType.ambiguity,
         "out_of_scope": GapType.out_of_scope,
         "needs_decision": GapType.needs_decision,
+        "executable_comment": GapType.unimplemented_comment,
+        "executable_stub": GapType.stub_function,
+        "executable_runtime": GapType.runtime_not_implemented,
+        "executable_adjacency": GapType.disconnected_subgraph,
+        "executable_coverage": GapType.uncovered_path,
     }
     return mapping.get(invariant, GapType.missing_detail)
 

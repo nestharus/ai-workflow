@@ -1025,7 +1025,71 @@ def _extract_case_summary(result: dict[str, Any]) -> str:
     return f"See report: {report_path}"
 
 
+def generate_analysis_report(manager: WorkspaceManager) -> str:
+    """Generate analysis file report from algorithmic/architectural layers.
+
+    Reads the pre-generated analysis JSON artifact and renders it as
+    a Markdown report with sections for:
+    - Per-atom forward traces with projection types
+    - Adjacency graph summary
+    - Unimplemented atoms
+    - Orphaned architecture
+    - Data flow summaries
+    - Aggregate statistics
+
+    If no pre-generated analysis JSON exists, generates one on the fly
+    using the workspace's spec snapshot and libraries directories.
+
+    Args:
+        manager: WorkspaceManager providing access to run artifacts.
+
+    Returns:
+        Markdown content string. Also writes to reports/analysis.md.
+    """
+    from spec_manager.analysis.generator import (
+        generate_analysis_file,
+        read_analysis_json,
+        write_analysis_json,
+    )
+    from spec_manager.analysis.report_renderer import render_analysis_markdown
+
+    analysis_json_path = manager.structure.analysis_dir / "analysis.json"
+
+    if analysis_json_path.exists():
+        try:
+            analysis = read_analysis_json(analysis_json_path)
+        except Exception as exc:
+            logger.warning("Failed to read analysis JSON %s: %s", analysis_json_path, exc)
+            analysis = None
+    else:
+        analysis = None
+
+    if analysis is None:
+        # Generate on the fly.
+        algorithmic_dir = manager.structure.spec_snapshot_dir
+        architectural_dir = manager.structure.libraries_dir
+        analysis = generate_analysis_file(
+            algorithmic_dir=algorithmic_dir,
+            architectural_dir=architectural_dir,
+            run_id=manager.run_id,
+        )
+        manager.structure.analysis_dir.mkdir(parents=True, exist_ok=True)
+        write_analysis_json(analysis, analysis_json_path)
+        logger.info("Generated analysis JSON: %s", analysis_json_path)
+
+    content = render_analysis_markdown(analysis)
+
+    reports_dir = manager.structure.reports_dir
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "analysis.md"
+    report_path.write_text(content, encoding="utf-8")
+    logger.info("Wrote analysis report to %s", report_path)
+
+    return content
+
+
 __all__ = [
+    "generate_analysis_report",
     "generate_compliance_report",
     "generate_coverage_report",
     "generate_drift_report",

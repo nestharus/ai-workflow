@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from spec_manager.refinement.agent_utils import run_agent
 from spec_manager.refinement.formats import extract_json_from_llm_output
 from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 from spec_manager.refinement.interactive.spec_patcher import SteeringResponse
+
+if TYPE_CHECKING:
+    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +21,19 @@ class ResearchCoordinator:
     """Sequential multi-agent research using file IO coordination.
 
     Flow:
+    0. [Local] Evidence store search (if index available)
     1. [Opus] Signal extractor: extract search queries
     2. [GLM] Web researcher: search via Firecrawl
     3. [GPT] Synthesizer: synthesize into decision
     """
+
+    def __init__(self, evidence_index: EvidenceIndex | None = None) -> None:
+        """Initialize the research coordinator.
+
+        Args:
+            evidence_index: Optional evidence index for local search.
+        """
+        self._evidence_index = evidence_index
 
     def research(self, ambiguity: Ambiguity, workspace: Path) -> SteeringResponse:
         """Research an ambiguity using multi-agent coordination.
@@ -33,6 +45,11 @@ class ResearchCoordinator:
         Returns:
             SteeringResponse with the research result.
         """
+        # Step 0: Search evidence store first (if available)
+        evidence_response = self._search_evidence_store(ambiguity, workspace)
+        if evidence_response is not None:
+            return evidence_response
+
         research_dir = workspace / "research" / ambiguity.ambiguity_id
         research_dir.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +77,43 @@ class ResearchCoordinator:
         )
         (research_dir / "decision.json").write_text(decision_json, encoding="utf-8")
 
-        return self._parse_decision(ambiguity, decision_json)
+        # Step 4: Flag as spec gap if web search also fails
+        response = self._parse_decision(ambiguity, decision_json)
+        if not response.response_text.strip():
+            self._flag_spec_gap(ambiguity, workspace)
+
+        return response
+
+    def _search_evidence_store(
+        self, ambiguity: Ambiguity, workspace: Path
+    ) -> SteeringResponse | None:
+        """Search the evidence store for an answer."""
+        if self._evidence_index is None:
+            return None
+        try:
+            from spec_manager.refinement.interactive.research.evidence_store_researcher import (
+                EvidenceStoreResearcher,
+            )
+
+            researcher = EvidenceStoreResearcher(self._evidence_index)
+            return researcher.research(ambiguity, workspace)
+        except Exception as exc:
+            logger.warning("Evidence store search failed: %s", exc)
+            return None
+
+    def _flag_spec_gap(self, ambiguity: Ambiguity, workspace: Path) -> None:
+        """Flag an unresolved ambiguity as a spec gap."""
+        if self._evidence_index is None:
+            return
+        try:
+            from spec_manager.refinement.interactive.research.evidence_store_researcher import (
+                EvidenceStoreResearcher,
+            )
+
+            researcher = EvidenceStoreResearcher(self._evidence_index)
+            researcher.flag_as_spec_gap(ambiguity, workspace)
+        except Exception as exc:
+            logger.warning("Failed to flag spec gap: %s", exc)
 
     def _build_signal_prompt(self, ambiguity: Ambiguity) -> str:
         return f"""Extract search queries to resolve the following ambiguity.

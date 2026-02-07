@@ -29,6 +29,27 @@ class StrategyPhase(Enum):
     RESOLUTION = "resolution"  # Resolving ambiguities
     LABELING = "labeling"  # Assigning to libraries
     VERIFICATION = "verification"  # Strategy verification, not workflow phase
+    TRANSLATION = "translation"  # Pseudocode comment -> code
+    PROJECTION = "projection"  # Algorithmic -> architectural
+
+
+@dataclass
+class TranslationContext:
+    """Context specific to translation failures.
+
+    Captures the pseudocode comment, enclosing function signature,
+    surrounding code lines, and dependency information needed for
+    translation/projection strategies.
+    """
+
+    comment_text: str  # The pseudocode comment being translated
+    function_signature: str | None = None  # Enclosing function signature
+    surrounding_code: list[str] = field(default_factory=list)  # Lines before/after
+    file_path: str | None = None  # Source file
+    line_number: int | None = None  # Comment line number
+    hollowed_spec_path: str | None = None  # Path to hollowed-out spec for research
+    store_dependencies: list[str] = field(default_factory=list)  # Stores this function touches
+    call_graph_neighbors: list[str] = field(default_factory=list)  # Adjacent functions
 
 
 @dataclass
@@ -67,6 +88,9 @@ class ProcessingContext:
 
     # Optional lineage tracking for derived units
     lineage_table: LineageTable | None = None
+
+    # Translation/projection context for algorithmic-projection paradigm
+    translation_context: TranslationContext | None = None
 
 
 @dataclass

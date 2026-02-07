@@ -14,7 +14,12 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from spec_manager.branches.manager import BranchManager
+    from spec_manager.projection.lineage.import_graph import ImportGraph
+    from spec_manager.projection.lineage.table import ProjectionLineageTable
 
 from spec_manager.core.gaps import Severity
 from spec_manager.core.id_registry import FileUidRegistry, RevisionRegistry
@@ -88,6 +93,11 @@ class RunFolderStructure:
         return self.root / "reports"
 
     @property
+    def analysis_dir(self) -> Path:
+        """Path to the analysis artifacts directory."""
+        return self.root / "analysis"
+
+    @property
     def files_json(self) -> Path:
         """Path to the files manifest."""
         return self.manifest_dir / "files.json"
@@ -113,6 +123,11 @@ class RunFolderStructure:
         return self.manifest_dir / "terms"
 
     @property
+    def branches_dir(self) -> Path:
+        """Path to the branches directory."""
+        return self.root / "branches"
+
+    @property
     def workspace_dir(self) -> Path:
         """Path to the workspace directory for intermediates."""
         return self.root / "workspace"
@@ -136,6 +151,16 @@ class RunFolderStructure:
     def indexes_dir(self) -> Path:
         """Path to the indexes directory for cross-cutting data."""
         return self.workspace_dir / "indexes"
+
+    @property
+    def evidence_store_dir(self) -> Path:
+        """Path to the hollowed-out spec evidence store directory."""
+        return self.workspace_dir / "evidence_store"
+
+    @property
+    def evidence_index_path(self) -> Path:
+        """Path to the evidence store index file."""
+        return self.workspace_dir / "indexes" / "evidence_store_index.json"
 
     @property
     def registry_dir(self) -> Path:
@@ -190,6 +215,18 @@ class WorkspaceManager:
         else:
             self.state = WorkspaceState(run_id=self.run_id, input_folder=str(self.input_folder))
 
+        # Lazy initialization -- BranchManager is created on first access
+        self._branch_manager: BranchManager | None = None
+
+    @property
+    def branches(self) -> BranchManager:
+        """Access the branch organization system."""
+        if self._branch_manager is None:
+            from spec_manager.branches.manager import BranchManager
+
+            self._branch_manager = BranchManager(self.structure.root)
+        return self._branch_manager
+
     @property
     def allocated_library_ids(self) -> set[str]:
         """Return allocated library IDs for this workspace."""
@@ -240,8 +277,13 @@ class WorkspaceManager:
             self.structure.tasks_dir,
             self.structure.audits_dir,
             self.structure.reports_dir,
+            self.structure.branches_dir,
         ]:
             subdir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-initialize branch directory structure if not yet initialized
+        if not self.branches.is_initialized():
+            self.branches.initialize()
 
         snapshot_issues: list[str] = []
         snapshot_verified = False
@@ -1234,6 +1276,42 @@ class WorkspaceManager:
         if not shapes_path.exists():
             return {}
         return json.loads(shapes_path.read_text(encoding="utf-8"))
+
+    def write_lineage_table(self, table: ProjectionLineageTable) -> Path:
+        """Write lineage table to workspace/indexes/lineage_table.json."""
+        from spec_manager.projection.lineage.persistence import save_lineage_table
+
+        self.structure.indexes_dir.mkdir(parents=True, exist_ok=True)
+        lineage_path = self.structure.indexes_dir / "lineage_table.json"
+        save_lineage_table(table, lineage_path)
+        return lineage_path
+
+    def read_lineage_table(self) -> ProjectionLineageTable | None:
+        """Read lineage table from workspace/indexes/lineage_table.json."""
+        from spec_manager.projection.lineage.persistence import load_lineage_table
+
+        lineage_path = self.structure.indexes_dir / "lineage_table.json"
+        if not lineage_path.exists():
+            return None
+        return load_lineage_table(lineage_path)
+
+    def write_import_graph(self, graph: ImportGraph) -> Path:
+        """Write import graph to workspace/indexes/import_graph.json."""
+        from spec_manager.projection.lineage.persistence import save_import_graph
+
+        self.structure.indexes_dir.mkdir(parents=True, exist_ok=True)
+        graph_path = self.structure.indexes_dir / "import_graph.json"
+        save_import_graph(graph, graph_path)
+        return graph_path
+
+    def read_import_graph(self) -> ImportGraph | None:
+        """Read import graph from workspace/indexes/import_graph.json."""
+        from spec_manager.projection.lineage.persistence import load_import_graph
+
+        graph_path = self.structure.indexes_dir / "import_graph.json"
+        if not graph_path.exists():
+            return None
+        return load_import_graph(graph_path)
 
     def _save_state(self) -> None:
         """Save current state to disk."""

@@ -5,7 +5,11 @@ description = "General-purpose specification management library"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "numpy>=2.4.2",
+    "pydantic>=2.12.5",
     "pyyaml>=6.0",
+    "scikit-learn>=1.8.0",
+    "tqdm>=4.67.3",
 ]
 
 [project.scripts]
@@ -18,3 +22,8 @@ build-backend = "hatchling.build"
 [tool.uv]
 # Use project-local venv
 managed = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

@@ -1,0 +1,22 @@
+name: adjacency_detection
+version: "1.0"
+
+purpose: "Detect algorithms connected through shared stores during translation"
+
+risk_addressed: "Missed adjacency when translated code touches shared state"
+
+risk_category: content_loss
+
+phases:
+  - translation
+  - projection
+
+when_conditions:
+  - "Function touches stores"
+  - "Store is accessed by multiple functions"
+  - "Call graph has disconnected subgraphs sharing stores"
+
+tools_used:
+  - store_graph_analyzer
+
+implementation_class: "spec_manager.strategies.implementations.adjacency_detection.AdjacencyDetectionStrategy"

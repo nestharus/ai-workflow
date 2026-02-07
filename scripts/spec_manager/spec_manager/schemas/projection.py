@@ -42,7 +42,7 @@ class Pin(BaseModel):
     pin_id: str
     from_projection_offset: int = Field(ge=0)
     target_id: str
-    target_kind: Literal["LIBRARY", "ELEMENT", "ATOM_RANGE"]
+    target_kind: Literal["LIBRARY", "ELEMENT", "ATOM_RANGE", "ATOM_FUNCTION"]
     target_path: str | None = None
 
     @field_validator("pin_id")

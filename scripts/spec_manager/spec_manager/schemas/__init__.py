@@ -74,6 +74,13 @@ from .interface_contract import (
 )
 from .library_labels import LibraryLabel, LibraryLabelerOutput
 from .patch_output import PatchOutputSchema, read_patch_output_json, write_patch_output_json
+from .pin_functions import (
+    ImportEdge,
+    MicroAddress,
+    PinFunction,
+    PinFunctionRegistry,
+    ProjectionType,
+)
 from .qa_judge import QaCriterionResult, QaJudgeOutput
 from .review_actions import (
     ReviewAction,
@@ -171,16 +178,21 @@ __all__ = [
     "FilesManifest",
     "GapFinding",
     "GapJudgeOutput",
+    "ImportEdge",
     "InterfaceContractSchema",
     "InterfaceIndexSchema",
     "Library",
     "LibraryLabel",
     "LibraryLabelerOutput",
     "LineAtom",
+    "MicroAddress",
     "NodeType",
     "OperationalContract",
     "PatchGraphSchema",
     "PatchOutputSchema",
+    "PinFunction",
+    "PinFunctionRegistry",
+    "ProjectionType",
     "ProvidedInterface",
     "QaCriterionResult",
     "QaJudgeOutput",

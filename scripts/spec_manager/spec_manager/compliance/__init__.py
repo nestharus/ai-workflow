@@ -43,6 +43,12 @@ from spec_manager.compliance.coverage_gate import (
     build_coverage_report,
     verify_coverage_or_emit_gap,
 )
+from spec_manager.compliance.detection import (
+    ExecutableGapReport,
+    ScanConfig,
+    integrate_with_gap_queue,
+    scan_executable_gaps,
+)
 from spec_manager.compliance.evidence_field_lint import (
     LintResult,
     is_evidence_field,
@@ -57,6 +63,15 @@ from spec_manager.compliance.metrics import (
     compute_format_compliance,
     compute_id_normalization,
 )
+from spec_manager.compliance.promotion import (
+    GateCheckResult,
+    GateId,
+    GateMode,
+    GateSpec,
+    LayerPromotionGate,
+    PromotionGateConfig,
+    PromotionReport,
+)
 from spec_manager.compliance.schema_registry import (
     SchemaRegistry,
     get_default_registry,
@@ -70,7 +85,16 @@ __all__ = [
     "ContractValidationResult",
     "CoverageGateResult",
     "CoverageReport",
+    "ExecutableGapReport",
+    "GateCheckResult",
+    "GateId",
+    "GateMode",
+    "GateSpec",
+    "LayerPromotionGate",
     "LintResult",
+    "PromotionGateConfig",
+    "PromotionReport",
+    "ScanConfig",
     "SchemaRegistry",
     "build_coverage_report",
     "compute_annotation_coverage",
@@ -78,9 +102,11 @@ __all__ = [
     "compute_format_compliance",
     "compute_id_normalization",
     "get_default_registry",
+    "integrate_with_gap_queue",
     "is_evidence_field",
     "lint_l1_artifact",
     "scan_evidence_fields",
+    "scan_executable_gaps",
     "scan_for_forbidden_output_signatures",
     "validate_artifact_contract",
     "validate_evid_value",

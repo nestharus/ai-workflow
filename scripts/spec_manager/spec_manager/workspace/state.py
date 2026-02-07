@@ -49,6 +49,7 @@ class Phase(Enum):
     DISCOVERY = "discovery"
     REVIEW = "review"
     FINALIZATION = "finalization"
+    PLANNING_V2 = "planning_v2"  # Algorithmic planning (edit-in-place)
 
 
 @dataclass

@@ -34,8 +34,19 @@ class InteractiveWorkflow:
         interactive: bool = True,
         steering_path: Path | None = None,
         use_research: bool = False,
+        use_evidence_store: bool = False,
         max_iterations: int = 5,
     ) -> None:
+        """Initialize the interactive workflow.
+
+        Args:
+            workspace: Working directory for spec and artifacts.
+            interactive: Whether to prompt user when auto-responder fails.
+            steering_path: Optional path to steering script JSON.
+            use_research: Whether to enable web research fallback.
+            use_evidence_store: Whether to enable evidence store search.
+            max_iterations: Maximum number of refinement iterations.
+        """
         self._workspace = workspace
         self._interactive = interactive
         self._max_iterations = max_iterations
@@ -44,12 +55,26 @@ class InteractiveWorkflow:
         self._question_gen = QuestionGenerator()
         self._patcher = SpecPatcher()
 
+        # Load evidence index if requested
+        evidence_index = None
+        if use_evidence_store:
+            try:
+                from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+
+                index_path = workspace / "workspace" / "indexes" / "evidence_store_index.json"
+                if index_path.exists():
+                    evidence_index = EvidenceIndex.load(index_path)
+                    logger.info("Loaded evidence index from %s", index_path)
+            except Exception as exc:
+                logger.warning("Failed to load evidence index: %s", exc)
+
         # Set up responders
         steering = SteeringScript.from_file(steering_path) if steering_path else None
         self._auto_responder = AutoResponder(
             steering_script=steering,
             use_research=use_research,
             workspace=workspace,
+            evidence_index=evidence_index,
         )
         self._interactive_io = InteractiveIO()
 
@@ -91,9 +116,7 @@ class InteractiveWorkflow:
 
         return current_spec
 
-    def _resolve_ambiguity(
-        self, ambiguity: Ambiguity, question: str
-    ) -> SteeringResponse | None:
+    def _resolve_ambiguity(self, ambiguity: Ambiguity, question: str) -> SteeringResponse | None:
         """Resolve a single ambiguity."""
         # Try auto-responder first
         if not self._interactive:

@@ -8,11 +8,19 @@ The registry:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import yaml
+
+if TYPE_CHECKING:
+    from spec_manager.strategies.evolution import (
+        StrategyEvolutionPipeline,
+        StrategyPerformanceRecord,
+    )
 
 from spec_manager.core.provenance import TrackedUnit
 from spec_manager.strategies.base import (
@@ -20,19 +28,43 @@ from spec_manager.strategies.base import (
     Strategy,
     StrategyDefinition,
     Tool,
+    TranslationContext,
 )
+
+
+class FailureMode:
+    """Classified failure modes that trigger strategy evolution."""
+
+    MULTI_CONCERN_COMMENT = "multi_concern_comment"  # Comment describes multiple things
+    VAGUE_ENTITY_REFERENCE = "vague_entity_reference"  # "the algorithm" without specifics
+    INSUFFICIENT_DETAIL = "insufficient_detail"  # Not enough info to translate
+    SHARED_STORE_ADJACENCY = "shared_store_adjacency"  # Missed connected algorithm
+    STUB_WITH_CONTEXT = "stub_with_context"  # Stub has enough info to implement
+    CONFLICTING_REQUIREMENTS = "conflicting_requirements"  # Contradictory spec elements
+    UNKNOWN_PROJECTION_TYPE = "unknown_projection_type"  # No known projection pattern applies
 
 
 @dataclass
 class StrategyGapEvidence:
-    """Evidence for a strategy gap - no strategy could handle this failure mode.
+    """Evidence for a strategy gap -- no strategy could handle this failure mode.
 
     This is a FIRST-CLASS evidence type that triggers strategy evolution.
     """
 
-    failure_mode: str  # What failed (e.g., "vague_reference_resolution")
-    fixture: dict[str, Any]  # Minimal failing fixture
-    proposed_strategy: StrategyDefinition | None = None  # LLM-proposed solution
+    failure_mode: str  # Classified failure type
+    failure_category: str  # "translation" | "projection" | "resolution" | "decomposition"
+    fixture: dict[str, Any]  # Minimal failing fixture (rich format)
+    translation_context: TranslationContext | None = None  # If translation failure
+    strategies_attempted: list[str] = field(default_factory=list)
+    proposed_strategy: StrategyDefinition | None = None
+    timestamp: datetime = field(default_factory=datetime.now)
+    gap_id: str = ""  # Unique ID for tracking (auto-generated)
+
+    def __post_init__(self) -> None:
+        """Generate unique gap ID if not provided."""
+        if not self.gap_id:
+            content = f"{self.failure_mode}:{self.failure_category}:{self.timestamp.isoformat()}"
+            self.gap_id = f"gap_{hashlib.sha256(content.encode()).hexdigest()[:12]}"
 
     @property
     def severity(self) -> str:
@@ -101,6 +133,21 @@ class StrategyRegistry:
         self.definitions: dict[str, StrategyDefinition] = {}
         self.strategies: dict[str, Strategy] = {}
         self.tools: dict[str, Tool] = {}
+        self.evolution_pipeline: StrategyEvolutionPipeline | None = None
+
+    def enable_evolution(self, llm_client: LLMClient | None = None) -> None:
+        """Enable the strategy evolution pipeline."""
+        from spec_manager.strategies.evolution import (
+            LLMStrategyProposer,
+            StrategyEvolutionPipeline,
+            TemplateStrategyProposer,
+        )
+
+        self.evolution_pipeline = StrategyEvolutionPipeline(
+            registry=self,
+            template_proposer=TemplateStrategyProposer(),
+            llm_proposer=LLMStrategyProposer(llm_client=llm_client),
+        )
 
     def register_tool(self, name: str, tool: Tool) -> None:
         """Register a tool that strategies can use."""
@@ -338,6 +385,47 @@ class StrategyRegistry:
             "status": "requested",
         }
 
+    def check_and_evolve(
+        self,
+        context: ProcessingContext,
+        previous_context: ProcessingContext | None = None,
+    ) -> list[StrategyDefinition]:
+        """Check triggers and evolve strategies if needed.
+
+        Returns list of newly registered experimental strategies.
+        """
+        if not self.evolution_pipeline:
+            return []
+
+        triggers = self.check_evolution_triggers(context, previous_context)
+        new_strategies: list[StrategyDefinition] = []
+
+        for trigger in triggers:
+            failure_mode = self._classify_trigger(trigger)
+            result = self.evolution_pipeline.on_translation_failure(
+                context=context,
+                failure_mode=failure_mode,
+            )
+            if result:
+                new_strategies.append(result)
+
+        return new_strategies
+
+    @staticmethod
+    def _classify_trigger(trigger: str) -> str:
+        """Classify a trigger string into a FailureMode constant.
+
+        Maps stagnation signals from check_evolution_triggers() to the
+        closest FailureMode for strategy proposal.
+        """
+        if trigger.startswith("remainder_stuck"):
+            return FailureMode.INSUFFICIENT_DETAIL
+        if trigger.startswith("resolution_failures"):
+            return FailureMode.VAGUE_ENTITY_REFERENCE
+        if trigger.startswith("prose_stuck"):
+            return FailureMode.MULTI_CONCERN_COMMENT
+        return FailureMode.UNKNOWN_PROJECTION_TYPE
+
     def add_experimental_strategy(
         self,
         definition: StrategyDefinition,
@@ -354,8 +442,13 @@ class StrategyRegistry:
         self.definitions[definition.name] = definition
         return True
 
-    def promote_to_stable(self, name: str) -> bool:
-        """Promote an experimental strategy to stable after validation."""
+    def promote_to_stable(
+        self, name: str, performance: StrategyPerformanceRecord | None = None
+    ) -> bool:
+        """Promote an experimental strategy to stable after validation.
+
+        When performance record is provided, validates against PromotionCriteria.
+        """
         if name not in self.definitions:
             return False
 
@@ -363,9 +456,22 @@ class StrategyRegistry:
         if definition.metadata.get("status") != "experimental":
             return False
 
-        # Validate against test fixtures
-        # (Simplified - real implementation would be more thorough)
+        from spec_manager.strategies.evolution import PromotionCriteria
+
+        criteria = PromotionCriteria()
+
+        if performance is not None:
+            if performance.successes < criteria.min_successful_applications:
+                return False
+            if performance.success_rate < (1.0 - criteria.max_regression_rate):
+                return False
+
         definition.metadata["status"] = "stable"
+        definition.metadata["promoted_at"] = datetime.now().isoformat()
+        definition.metadata["promotion_evidence"] = {
+            "successes": performance.successes if performance else 0,
+            "success_rate": performance.success_rate if performance else 0.0,
+        }
         return True
 
     # =========================================================================
@@ -373,7 +479,12 @@ class StrategyRegistry:
     # =========================================================================
 
     def capture_strategy_gap(
-        self, context: ProcessingContext, failure_mode: str, failing_inputs: list[TrackedUnit]
+        self,
+        context: ProcessingContext,
+        failure_mode: str,
+        failing_inputs: list[TrackedUnit],
+        failure_category: str | None = None,
+        error_details: str | None = None,
     ) -> StrategyGapEvidence:
         """Capture a strategy gap when no strategy can handle a failure mode.
 
@@ -384,9 +495,31 @@ class StrategyRegistry:
 
         Returns StrategyGapEvidence to be included in gaps.md.
         """
-        # Capture minimal fixture
-        fixture = {
+        # Determine failure category from context phase if not provided
+        if failure_category is None:
+            phase_to_category = {
+                "translation": "translation",
+                "projection": "projection",
+                "resolution": "resolution",
+                "decomposition": "decomposition",
+            }
+            failure_category = phase_to_category.get(context.phase.value, "resolution")
+
+        # Build translation-specific context fields
+        tc = context.translation_context
+        comment_text = tc.comment_text if tc else None
+        function_signature = tc.function_signature if tc else None
+        surrounding_code = tc.surrounding_code if tc else []
+        store_dependencies = tc.store_dependencies if tc else []
+
+        strategies_attempted = [
+            d.name for d in self.definitions.values() if context.phase.value in d.phases
+        ]
+
+        # Capture rich fixture
+        fixture: dict[str, Any] = {
             "failure_mode": failure_mode,
+            "failure_category": failure_category,
             "inputs": [
                 {"id": u.id, "content": u.content[:500], "type": u.unit_type.value}
                 for u in failing_inputs[:5]
@@ -394,16 +527,27 @@ class StrategyRegistry:
             "context": {
                 "phase": context.phase.value,
                 "patch_id": context.patch_id,
-                "previous_results": context.previous_results,
+                "comment_text": comment_text,
+                "function_signature": function_signature,
+                "surrounding_code": surrounding_code,
+                "store_dependencies": store_dependencies,
             },
-            "existing_strategies_tried": [
-                d.name for d in self.definitions.values() if context.phase.value in d.phases
-            ],
+            "strategies_attempted": strategies_attempted,
+            "error_details": error_details,
         }
 
         evidence = StrategyGapEvidence(
-            failure_mode=failure_mode, fixture=fixture, proposed_strategy=None
+            failure_mode=failure_mode,
+            failure_category=failure_category,
+            fixture=fixture,
+            translation_context=context.translation_context,
+            strategies_attempted=strategies_attempted,
+            proposed_strategy=None,
         )
+
+        # Delegate to evolution pipeline if available
+        if self.evolution_pipeline is not None:
+            self.evolution_pipeline.gap_log.append(evidence)
 
         return evidence
 

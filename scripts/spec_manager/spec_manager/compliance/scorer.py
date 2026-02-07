@@ -13,6 +13,8 @@ from spec_manager.core.gaps import Severity
 from spec_manager.workspace.state import WorkspaceState
 
 if TYPE_CHECKING:
+    from spec_manager.compliance.promotion.config import PromotionGateConfig
+    from spec_manager.schemas.pin_functions import PinFunctionRegistry
     from spec_manager.workflow.orchestrator import WorkflowEvidence
 
 
@@ -524,6 +526,160 @@ class ComplianceScorer:
                     }
                 )
         return blockers
+
+    def check_executable_gaps(
+        self,
+        spec_folder: Path,
+        algorithmic_files: list[Path] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Check for executable gaps that block promotion.
+
+        Per design doc Section 12:
+        - No remaining comments (all pseudocode translated) -> blocker
+        - No stub functions (all atoms implemented) -> blocker
+
+        Args:
+            spec_folder: Path to the spec workspace.
+            algorithmic_files: Optional explicit list of algorithmic code files.
+
+        Returns:
+            List of blocker dicts for compliance scoring.
+        """
+        from spec_manager.compliance.detection.comment_scanner import scan_comments
+        from spec_manager.compliance.detection.stub_scanner import scan_stubs
+
+        blockers: list[dict[str, Any]] = []
+
+        if algorithmic_files is None:
+            return blockers
+
+        total_comments = 0
+        total_stubs = 0
+
+        for filepath in algorithmic_files:
+            if not filepath.exists() or filepath.suffix != ".py":
+                continue
+
+            try:
+                comments = scan_comments(filepath)
+                total_comments += len(comments)
+            except (OSError, UnicodeDecodeError):
+                pass
+
+            try:
+                stubs = scan_stubs(filepath)
+                total_stubs += len(stubs)
+            except (OSError, UnicodeDecodeError):
+                pass
+
+        if total_comments > 0:
+            blockers.append(
+                {
+                    "type": "unimplemented_comments",
+                    "severity": Severity.ERROR.value,
+                    "message": (
+                        f"{total_comments} unimplemented comments remain in algorithmic code"
+                    ),
+                    "details": {
+                        "count": total_comments,
+                        "files": [str(f) for f in algorithmic_files],
+                    },
+                }
+            )
+
+        if total_stubs > 0:
+            blockers.append(
+                {
+                    "type": "stub_functions",
+                    "severity": Severity.ERROR.value,
+                    "message": (f"{total_stubs} stub functions remain in algorithmic code"),
+                    "details": {
+                        "count": total_stubs,
+                        "files": [str(f) for f in algorithmic_files],
+                    },
+                }
+            )
+
+        return blockers
+
+    def score_promotion_compliance(
+        self,
+        config: PromotionGateConfig,
+        pin_registry: PinFunctionRegistry | None = None,
+        provenance_registry_path: Path | None = None,
+    ) -> ComplianceResult:
+        """Score compliance for layer promotion.
+
+        Creates a LayerPromotionGate, runs all checks, and converts
+        the PromotionReport into a ComplianceResult for compatibility
+        with the existing compliance pipeline.
+
+        Args:
+            config: Promotion gate configuration.
+            pin_registry: PinFunctionRegistry (optional).
+            provenance_registry_path: Path to provenance registry (optional).
+
+        Returns:
+            ComplianceResult with blockers/warnings from promotion gates.
+        """
+        from spec_manager.compliance.promotion.orchestrator import LayerPromotionGate
+
+        gate = LayerPromotionGate(
+            config=config,
+            pin_registry=pin_registry,
+            provenance_registry_path=provenance_registry_path,
+        )
+        report = gate.run_all_checks()
+
+        blockers: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+
+        for blocker in report.blockers:
+            blockers.append(
+                {
+                    "type": f"promotion_gate_{blocker.gate_id}",
+                    "severity": Severity.ERROR.value,
+                    "message": blocker.summary,
+                    "details": {
+                        "gate_id": blocker.gate_id,
+                        "score": blocker.score,
+                        "findings": blocker.findings,
+                        "duration_ms": blocker.duration_ms,
+                    },
+                }
+            )
+
+        for warning in report.warnings:
+            warnings.append(
+                {
+                    "type": f"promotion_gate_{warning.gate_id}",
+                    "severity": Severity.WARNING.value,
+                    "message": warning.summary,
+                    "details": {
+                        "gate_id": warning.gate_id,
+                        "score": warning.score,
+                        "findings": warning.findings,
+                        "duration_ms": warning.duration_ms,
+                    },
+                }
+            )
+
+        # Compute average score across all gate results
+        if report.gate_results:
+            avg_score = sum(r.score for r in report.gate_results) / len(report.gate_results)
+        else:
+            avg_score = 1.0
+
+        return ComplianceResult(
+            score=avg_score,
+            blockers=blockers,
+            warnings=warnings,
+            passed=report.passed,
+            details={
+                "promotion_report": report.to_dict(),
+                "total_duration_ms": report.total_duration_ms,
+            },
+        )
 
     def _validate_terms_files(self, files: list[Path]) -> list[dict[str, Any]]:
         blockers: list[dict[str, Any]] = []

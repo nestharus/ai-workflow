@@ -1,0 +1,22 @@
+name: stub_promotion
+version: "1.0"
+
+purpose: "Promote stub functions with enough context to real implementations"
+
+risk_addressed: "Stubs remain unimplemented despite sufficient context"
+
+risk_category: information_loss
+
+phases:
+  - translation
+
+when_conditions:
+  - "Function body is pass/raise NotImplementedError"
+  - "Function has docstring or surrounding comments with implementation details"
+  - "Adjacent translated functions provide sufficient context"
+
+tools_used:
+  - stub_detector
+  - context_analyzer
+
+implementation_class: "spec_manager.strategies.implementations.stub_promotion.StubPromotionStrategy"

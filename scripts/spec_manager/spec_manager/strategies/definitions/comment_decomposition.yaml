@@ -1,0 +1,27 @@
+name: comment_decomposition
+version: "1.0"
+
+purpose: "Split multi-concern pseudocode comments into separate single-concern comments"
+
+risk_addressed: "Translation failure when a comment describes multiple things"
+
+risk_category: compound_loss
+
+phases:
+  - translation
+
+when_conditions:
+  - "Comment contains multiple verbs"
+  - "Comment has conjunctions connecting distinct actions"
+  - "Comment has semicolons separating concerns"
+
+tools_used:
+  - spacy_splitter
+
+implementation_class: "spec_manager.strategies.implementations.comment_decomposition.CommentDecompositionStrategy"
+
+example:
+  input: "# validate payment against fraud rules and send confirmation to customer"
+  output: |
+    - "# validate payment against fraud rules"
+    - "# send confirmation to customer"
