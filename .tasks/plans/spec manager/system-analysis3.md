@@ -151,9 +151,10 @@ flowchart TB
 **CLI:** `uv run spec init <run_id> <input_folder>`
 
 **Outputs:**
-- `spec_snapshot/` - Immutable copy of input specs
-- `manifest/files.json` - File manifest with stable IDs
-- `state.json` - Workspace state
+
+* `spec_snapshot/` - Immutable copy of input specs
+* `manifest/files.json` - File manifest with stable IDs
+* `state.json` - Workspace state
 
 ### Phase 1: Sectionization
 
@@ -164,9 +165,9 @@ flowchart TB
 **Agents:** `glm-section-span-lister`, `glm-section-map-builder`, `glm-terms-per-section`
 
 **Outputs:**
-- `manifest/sections/{file_id}.sections.json`
-- `manifest/atoms/{file_id}.atoms.jsonl`
-- `manifest/terms/{file_id}.terms.json`
+* `manifest/sections/{file_id}.sections.json`
+* `manifest/atoms/{file_id}.atoms.jsonl`
+* `manifest/terms/{file_id}.terms.json`
 
 ### Phase 2: Summarization
 
@@ -177,7 +178,7 @@ flowchart TB
 **Agent:** `glm-file-what-summarizer`
 
 **Outputs:**
-- `summaries/{file_id}.what.md`
+* `summaries/{file_id}.what.md`
 
 ### Phase 3: Library Synthesis
 
@@ -188,10 +189,10 @@ flowchart TB
 **Agents:** `opus-library-synthesizer`, `glm-library-overlap-resolver`
 
 **Outputs:**
-- `libraries/LIB-####/charter.md`
-- `libraries/LIB-####/evidence.json`
-- `libraries/LIB-####/events.jsonl`
-- `libraries/library_index.md`
+* `libraries/LIB-####/charter.md`
+* `libraries/LIB-####/evidence.json`
+* `libraries/LIB-####/events.jsonl`
+* `libraries/library_index.md`
 
 ### Phase 4: Evidence Expansion
 
@@ -202,7 +203,7 @@ flowchart TB
 **Agents:** `glm-library-evidence-mapper`, `glm-library-relevance-classifier`
 
 **Outputs:**
-- Updated `libraries/LIB-####/evidence.json`
+* Updated `libraries/LIB-####/evidence.json`
 
 ### Phase 5: Spec Building
 
@@ -213,10 +214,11 @@ flowchart TB
 **Agents:** `glm-library-spec-integrator`, `chatgpt-library-spec-gap-judge`
 
 **Outputs:**
-- `libraries/LIB-####/spec.md`
-- `libraries/LIB-####/gaps.md`
-- `libraries/LIB-####/gap_queue.json`
-- `libraries/LIB-####/decisions.md`
+
+* `libraries/LIB-####/spec.md`
+* `libraries/LIB-####/gaps.md`
+* `libraries/LIB-####/gap_queue.json`
+* `libraries/LIB-####/decisions.md`
 
 ### Phase 6: Spec Stabilization
 
@@ -225,9 +227,10 @@ flowchart TB
 **CLI:** `uv run spec spec stabilize-specs <run_id>`
 
 **Outputs:**
-- `libraries/LIB-####/spec_index.json`
-- `libraries/LIB-####/id_counters.json`
-- `libraries/LIB-####/decisions_index.json`
+
+* `libraries/LIB-####/spec_index.json`
+* `libraries/LIB-####/id_counters.json`
+* `libraries/LIB-####/decisions_index.json`
 
 ### Phase 7-10: Quality Assurance
 
@@ -236,58 +239,62 @@ flowchart TB
 **Agents:** `opus-alignment-checker`, `opus-overview-writer`, `chatgpt-qa-evaluator`
 
 **Outputs:**
-- `reports/alignment_report.md`
-- `reports/overview.md`
-- `reports/qa_evaluation.md`
+
+* `reports/alignment_report.md`
+* `reports/overview.md`
+* `reports/qa_evaluation.md`
 
 ### Phase 11-13: Architecture
 
 **Phases:** Architecture Proposal, Selection, Mapping
 
 **CLI:**
-- `uv run spec spec propose-architectures <run_id>`
-- `uv run spec spec select-architecture <run_id>`
-- `uv run spec spec map-libraries <run_id>`
+
+* `uv run spec spec propose-architectures <run_id>`
+* `uv run spec spec select-architecture <run_id>`
+* `uv run spec spec map-libraries <run_id>`
 
 **Agents:** `opus-architecture-proposer`, `chatgpt-architecture-tradeoff-judge`, `glm-architecture-mapper`
 
 **Outputs:**
-- `architecture/candidates/arch_*.md`
-- `architecture/selected.md`
-- `architecture/rejected.md`
-- `architecture/mapping.md`
+
+* `architecture/candidates/arch_*.md`
+* `architecture/selected.md`
+* `architecture/rejected.md`
+* `architecture/mapping.md`
 
 ### Phase 14-16: Interfaces & Quality
 
 **Phases:** Library Structure Review, Interfaces, Quality Gates
 
 **CLI:**
-- `uv run spec spec review-structure <run_id>`
-- `uv run spec spec build-interfaces <run_id>`
-- `uv run spec spec quality-gates <run_id>`
+* `uv run spec spec review-structure <run_id>`
+* `uv run spec spec build-interfaces <run_id>`
+* `uv run spec spec quality-gates <run_id>`
 
 **Agents:** `chatgpt-library-boundary-judge`, `opus-interface-contract-writer`
 
 **Outputs:**
-- `reports/review_actions.json`
-- `workspace/indexes/edge_list.json`
-- `workspace/indexes/interface_index.json`
-- `libraries/LIB-####/interfaces/EDGE-*.md`
+* `reports/review_actions.json`
+* `workspace/indexes/edge_list.json`
+* `workspace/indexes/interface_index.json`
+* `libraries/LIB-####/interfaces/EDGE-*.md`
 
 ### Phase 17-19: Tasks & Implementation
 
 **CLI:**
-- `uv run spec spec plan-tasks <run_id>`
-- `uv run spec spec implement <run_id>`
-- `uv run spec spec finalize-run <run_id>`
+* `uv run spec spec plan-tasks <run_id>`
+* `uv run spec spec implement <run_id>`
+* `uv run spec spec finalize-run <run_id>`
 
 **Agents:** `opus-task-planner`, `chatgpt-task-plan-judge`
 
 **Outputs:**
-- `tasks/TASK-####/task.json`
-- `tasks/TASK-####/task.md`
-- `tasks/TASK-####/patch.diff`
-- `workspace/indexes/trace_index.json`
+
+* `tasks/TASK-####/task.json`
+* `tasks/TASK-####/task.md`
+* `tasks/TASK-####/patch.diff`
+* `workspace/indexes/trace_index.json`
 
 ---
 
@@ -409,7 +416,7 @@ flowchart TB
 
 ### Complete Directory Tree
 
-```
+```text
 runs/<run_id>/
 ├── state.json                    # Workspace state
 ├── spec_snapshot/                # Immutable input copy
@@ -559,6 +566,7 @@ erDiagram
 ### Atoms (`*.atoms.jsonl`)
 
 Each line is a JSON object:
+
 ```json
 {"atom_id":"ATOM-F0001-L0001","line_no":1,"section_id":"SEC-F0001-0001","sha256":"...","text":"# Overview"}
 ```
@@ -716,7 +724,7 @@ flowchart TB
 
 ### New Format (Phase 1+)
 
-```
+```text
 [spec_snapshot/<relpath>::<section_id>]
 ```
 
@@ -724,7 +732,7 @@ Example: `[spec_snapshot/alpha.md::SEC-F0001-0002]`
 
 ### EVID Citation Format
 
-```
+```text
 [EVID-F####-R####-L#-L#]
 ```
 
@@ -880,33 +888,33 @@ uv run spec qa lint-contracts
 
 ### 1. Immutability
 
-- `spec_snapshot/` created once, never modified
-- Content hashes detect drift
-- All processing references immutable snapshot
+* `spec_snapshot/` created once, never modified
+* Content hashes detect drift
+* All processing references immutable snapshot
 
 ### 2. Stable IDs
 
-- File UIDs persist across runs (ALG-CORE-0001)
-- Content-based revision tracking (ALG-CORE-0002)
-- Deterministic element ID allocation via fingerprints
+* File UIDs persist across runs (ALG-CORE-0001)
+* Content-based revision tracking (ALG-CORE-0002)
+* Deterministic element ID allocation via fingerprints
 
 ### 3. Evidence Grounding
 
-- All derived elements MUST have `evidence_atom_ids`
-- Many-to-many relationships with confidence scores
-- Full lineage tracking for transformations
+* All derived elements MUST have `evidence_atom_ids`
+* Many-to-many relationships with confidence scores
+* Full lineage tracking for transformations
 
 ### 4. Gap-Driven Convergence
 
-- Iterative refinement until gaps close
-- Stagnation detection via SHA-256 hash comparison
-- Maximum iteration limits prevent infinite loops
+* Iterative refinement until gaps close
+* Stagnation detection via SHA-256 hash comparison
+* Maximum iteration limits prevent infinite loops
 
 ### 5. Multi-Model Strategy
 
-- GLM for high-volume extraction (fast, cheap)
-- Opus for complex reasoning (high quality)
-- ChatGPT for judging and evaluation (reliable)
+* GLM for high-volume extraction (fast, cheap)
+* Opus for complex reasoning (high quality)
+* ChatGPT for judging and evaluation (reliable)
 
 ---
 
@@ -928,15 +936,15 @@ uv run spec qa lint-contracts
 
 The Spec Manager implements a comprehensive specification management system with:
 
-- **19 workflow phases** from initialization to implementation
-- **30+ LLM agents** across 3 model families (GLM, Opus, ChatGPT)
-- **Full provenance tracking** with lineage graphs and atom-level membership
-- **100% coverage guarantee** through surgical decomposition
-- **Compliance gating** at phase transitions (90% threshold)
-- **4-tier trace indexes** from atoms through tasks to patches
-- **Gap-driven convergence** with stagnation detection
+* **19 workflow phases** from initialization to implementation
+* **30+ LLM agents** across 3 model families (GLM, Opus, ChatGPT)
+* **Full provenance tracking** with lineage graphs and atom-level membership
+* **100% coverage guarantee** through surgical decomposition
+* **Compliance gating** at phase transitions (90% threshold)
+* **4-tier trace indexes** from atoms through tasks to patches
+* **Gap-driven convergence** with stagnation detection
 
 The system transforms unstructured markdown specifications into:
-- Structured library specifications with stable element IDs
-- Executable implementation tasks with dependency ordering
-- Complete traceability from source lines to implementation patches
+* Structured library specifications with stable element IDs
+* Executable implementation tasks with dependency ordering
+* Complete traceability from source lines to implementation patches

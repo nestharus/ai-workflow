@@ -184,9 +184,9 @@ class TestRevisionRegistry:
     def test_revision_entry_stores_sha256(self) -> None:
         """RevisionEntry stores content hash."""
         registry = RevisionRegistry()
-        registry.allocate("F0001", "abcdef123456")
+        registry.allocate("F0001", "0" * 64)
         revisions = registry.get_all_revisions("F0001")
-        assert revisions[0].sha256 == "abcdef123456"
+        assert revisions[0].sha256 == "0" * 64
 
     def test_revision_entry_has_created_at_timestamp(self) -> None:
         """RevisionEntry has ISO8601 timestamp."""
@@ -248,7 +248,7 @@ class TestRevisionEntry:
         entry = RevisionEntry(
             rev_id="R0001",
             file_uid="F0001",
-            sha256="abc123def456" * 5 + "ab",
+            sha256="0" * 64,
             created_at="2024-01-15T10:30:00",
         )
         data = entry.to_dict()

@@ -140,7 +140,7 @@ class TestSaveLoadRoundTrip:
                     test_file="test_payment.py",
                     test_function="test_valid_payment",
                     pin_func_id="PFUNC-0001",
-                    signature_hash="abc123def456",
+                    signature_hash="test_hash_0001",
                     signature_text="test_valid_payment|arg:amount:float",
                     recorded_at="2024-01-01T00:00:00Z",
                 ),
