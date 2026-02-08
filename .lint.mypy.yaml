@@ -11,3 +11,4 @@ included_paths:
   - "tools/**/*.py"
   # Exclude test files - mypy checking of tests is handled separately
   - "!scripts/tests/**/*.py"
+  - "!scripts/spec_manager/tests/**/*.py"
