@@ -17,7 +17,6 @@ in ``compliance.promotion.orchestrator``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from spec_manager.compliance.promotion.config import GateId, PromotionGateConfig
@@ -48,7 +47,9 @@ class PromotionResult:
             "success": self.success,
             "promoted_atoms": self.promoted_atoms,
             "skipped_atoms": self.skipped_atoms,
-            "compliance_result": self.compliance_result.to_dict() if self.compliance_result else None,
+            "compliance_result": self.compliance_result.to_dict()
+            if self.compliance_result
+            else None,
             "pin_ids_created": self.pin_ids_created,
             "errors": self.errors,
         }
@@ -207,10 +208,7 @@ class PromotionEngine:
                 for store_id in vs.store_ids:
                     store_owners.setdefault(store_id, []).append(vs.slice_id)
 
-            violations = {
-                sid: owners for sid, owners in store_owners.items()
-                if len(owners) > 1
-            }
+            violations = {sid: owners for sid, owners in store_owners.items() if len(owners) > 1}
             if violations:
                 result = ComplianceGateResult(
                     passed=False,
@@ -219,7 +217,8 @@ class PromotionEngine:
                     tests_pass=result.tests_pass,
                     call_graph_connected=result.call_graph_connected,
                     store_monogamy=False,
-                    errors=result.errors + [
+                    errors=result.errors
+                    + [
                         f"Store {sid} owned by multiple slices: {', '.join(owners)}"
                         for sid, owners in violations.items()
                     ],

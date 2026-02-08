@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
-from spec_manager.refinement.wrappers.token_manager import TokenBudget, TokenManager
-
+from spec_manager.refinement.wrappers.token_manager import TokenManager
 
 # Tasks where Opus excels
 OPUS_PREFERRED_TASKS = [
@@ -213,7 +212,9 @@ def identify_refinement_needs(output: dict[str, Any]) -> list[str]:
         if not params:
             refinement_areas.append(f"Function '{func.get('name')}' missing parameter details")
         elif all(isinstance(p, str) and ":" not in p for p in params):
-            refinement_areas.append(f"Function '{func.get('name')}' parameters lack type annotations")
+            refinement_areas.append(
+                f"Function '{func.get('name')}' parameters lack type annotations"
+            )
 
     # Check for missing error handling
     if "error_handling" not in output and "key_functions" in output:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -25,6 +24,7 @@ class TestResults:
         integration_tests_total: Total integration tests.
         details: Per-test results.
     """
+
     total: int = 0
     passed: int = 0
     failed: int = 0
@@ -62,13 +62,13 @@ class TestRunner:
         if extra_pythonpath:
             existing = env.get("PYTHONPATH", "")
             additions = os.pathsep.join(extra_pythonpath)
-            env["PYTHONPATH"] = (
-                f"{additions}{os.pathsep}{existing}" if existing else additions
-            )
+            env["PYTHONPATH"] = f"{additions}{os.pathsep}{existing}" if existing else additions
 
         # Run pytest with verbose output for per-test parsing
         cmd = [
-            "uv", "run", "pytest",
+            "uv",
+            "run",
+            "pytest",
             str(test_dir),
             "-v",
             "--tb=short",

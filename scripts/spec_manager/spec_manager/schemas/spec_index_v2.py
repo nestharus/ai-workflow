@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, field_validator
@@ -73,9 +73,7 @@ class SpecIndexV2(BaseModel):
     atom_to_elements: dict[str, list[str]] = Field(default_factory=dict)
     element_to_atoms: dict[str, list[str]] = Field(default_factory=dict)
     relations: list[dict] = Field(default_factory=list)  # RelationEdge dicts
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def get_elements_for_atom(self, atom_id: str) -> list[str]:
         """Get all element IDs that cite a specific atom.
@@ -133,9 +131,7 @@ class SpecIndexV2(BaseModel):
         Returns:
             List of element data dicts for this library
         """
-        return [
-            elem for elem in self.elements.values() if elem.get("lib_id") == lib_id
-        ]
+        return [elem for elem in self.elements.values() if elem.get("lib_id") == lib_id]
 
     def get_elements_by_kind(self, kind: str) -> list[dict]:
         """Get all elements of a specific kind.
@@ -156,9 +152,7 @@ class SpecIndexV2(BaseModel):
         """
         total_atoms = len(self.atom_to_elements)
         total_elements = len(self.elements)
-        covered_atoms = sum(
-            1 for atoms in self.atom_to_elements.values() if atoms
-        )
+        covered_atoms = sum(1 for atoms in self.atom_to_elements.values() if atoms)
 
         return {
             "total_atoms": total_atoms,
@@ -166,14 +160,12 @@ class SpecIndexV2(BaseModel):
             "covered_atoms": covered_atoms,
             "coverage_ratio": covered_atoms / total_atoms if total_atoms > 0 else 0.0,
             "avg_elements_per_atom": (
-                sum(len(elems) for elems in self.atom_to_elements.values())
-                / total_atoms
+                sum(len(elems) for elems in self.atom_to_elements.values()) / total_atoms
                 if total_atoms > 0
                 else 0.0
             ),
             "avg_atoms_per_element": (
-                sum(len(atoms) for atoms in self.element_to_atoms.values())
-                / total_elements
+                sum(len(atoms) for atoms in self.element_to_atoms.values()) / total_elements
                 if total_elements > 0
                 else 0.0
             ),
@@ -182,7 +174,7 @@ class SpecIndexV2(BaseModel):
 
 def build_spec_index(
     libraries: list[Library],
-    elements: list["DerivedElement"],
+    elements: list[DerivedElement],
 ) -> SpecIndexV2:
     """Build a SpecIndexV2 from libraries and elements (ALG-SPEC-0003).
 
@@ -306,5 +298,5 @@ def convert_legacy_spec_index(
         atom_to_elements=dict(atom_to_elements),
         element_to_atoms=element_to_atoms,
         relations=[],
-        created_at=legacy_index.get("generated_at", datetime.now(timezone.utc).isoformat()),
+        created_at=legacy_index.get("generated_at", datetime.now(UTC).isoformat()),
     )

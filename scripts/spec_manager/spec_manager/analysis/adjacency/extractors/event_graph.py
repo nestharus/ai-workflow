@@ -9,7 +9,6 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ..graph import AdjacencyGraph, EdgeSignal, NodeInfo, SignalType
 
@@ -83,7 +82,7 @@ def extract_event_graph(
     all_endpoints: list[EventEndpoint] = []
 
     for path in source_paths:
-        if not path.exists() or not path.suffix == ".py":
+        if not path.exists() or path.suffix != ".py":
             continue
         try:
             source = path.read_text(encoding="utf-8")
@@ -155,9 +154,7 @@ def _get_enclosing_function(
     current = node
     while id(current) in parent_map:
         parent = parent_map[id(current)]
-        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            parts.insert(0, parent.name)
-        elif isinstance(parent, ast.ClassDef):
+        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             parts.insert(0, parent.name)
         current = parent
 
@@ -328,9 +325,7 @@ def _get_qualified_func_name(
     current: ast.AST = func_node
     while id(current) in parent_map:
         parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef):
-            parts.insert(0, parent.name)
-        elif isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             parts.insert(0, parent.name)
         current = parent
 

@@ -6,6 +6,7 @@ against real extraction rather than simulated results.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import tempfile
 import uuid
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceSpec
-from spec_manager.refinement.workspace import Phase, WorkspaceManager
+from spec_manager.refinement.workspace import WorkspaceManager
 
 # Mapping from eval phase names to PDD Phase enum values.
 # The eval uses 8 simplified names; the PDD system uses 11 phases.
@@ -213,10 +214,16 @@ class WorkspaceIntegration:
         return sorted(set(outputs))
 
     # Standard structural headings used in every summary file
-    _STRUCTURAL_HEADINGS = frozenset({
-        "algorithms", "components", "workflows",
-        "candidate responsibilities", "dependencies", "evidence map",
-    })
+    _STRUCTURAL_HEADINGS = frozenset(
+        {
+            "algorithms",
+            "components",
+            "workflows",
+            "candidate responsibilities",
+            "dependencies",
+            "evidence map",
+        }
+    )
 
     def _extract_summarization_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract summary content from summarization phase outputs.
@@ -302,9 +309,10 @@ class WorkspaceIntegration:
                             continue
                         if current_section == "Intent" and stripped:
                             outputs.append(stripped)
-                        elif current_section == "Responsibilities":
-                            if stripped.startswith("- ") or stripped.startswith("* "):
-                                outputs.append(stripped[2:].strip())
+                        elif current_section == "Responsibilities" and (
+                            stripped.startswith("- ") or stripped.startswith("* ")
+                        ):
+                            outputs.append(stripped[2:].strip())
                 except OSError:
                     continue
 
@@ -852,15 +860,13 @@ class WorkspaceIntegration:
 
         for workspace_path in self.created_workspaces:
             if workspace_path.exists():
-                try:
-                    shutil.rmtree(workspace_path)
-                except OSError:
+                with contextlib.suppress(OSError):
                     # Best effort cleanup
-                    pass
+                    shutil.rmtree(workspace_path)
 
         self.created_workspaces.clear()
 
-    def __enter__(self) -> "WorkspaceIntegration":
+    def __enter__(self) -> WorkspaceIntegration:
         """Context manager entry."""
         return self
 

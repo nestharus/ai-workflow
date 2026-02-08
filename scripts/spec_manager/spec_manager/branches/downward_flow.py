@@ -13,7 +13,7 @@ Workflow (design doc Section 6):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .atoms import AtomRegistry
@@ -137,21 +137,16 @@ class DownwardFlowEngine:
         #  might match pin at "services/payment_service.py:PaymentService")
         if not traced_pins:
             for p in self._pin_registry.list_all():
-                if (
-                    issue.location.startswith(p.architectural_location)
-                    or p.architectural_location.startswith(issue.location)
-                ):
+                if issue.location.startswith(
+                    p.architectural_location
+                ) or p.architectural_location.startswith(issue.location):
                     traced_pins.append(p)
                     atom = self._atom_registry.get(p.atom_id)
                     if atom is not None and atom not in traced_atoms:
                         traced_atoms.append(atom)
 
         # Compute confidence based on match quality
-        if traced_pins:
-            # Direct match = 1.0, prefix match = 0.7
-            confidence = 1.0 if exact_match else 0.7
-        else:
-            confidence = 0.0
+        confidence = (1.0 if exact_match else 0.7) if traced_pins else 0.0
 
         # Suggest fix location
         suggested_fix: str | None = None

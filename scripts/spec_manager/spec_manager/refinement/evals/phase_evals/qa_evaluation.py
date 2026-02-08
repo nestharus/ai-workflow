@@ -6,11 +6,8 @@ against ground truth expectations.
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -94,10 +91,12 @@ def compute_qa_evaluation_state_hash(result: QAEvaluationResult) -> str:
     Returns:
         16-character hex digest.
     """
-    content = "|".join([
-        ",".join(sorted(result.findings)),
-        ",".join(sorted(result.detail_items)),
-    ])
+    content = "|".join(
+        [
+            ",".join(sorted(result.findings)),
+            ",".join(sorted(result.detail_items)),
+        ]
+    )
     return LoopDetector.compute_hash(content)
 
 
@@ -125,9 +124,7 @@ def eval_qa_evaluation(
     converged = False
     trajectory: list[float] = []
 
-    expected_items = ground_truth.custom_expectations.get(
-        "expected_detail_items", []
-    )
+    expected_items = ground_truth.custom_expectations.get("expected_detail_items", [])
 
     for iteration in range(1, max_iterations + 1):
         iterations = iteration

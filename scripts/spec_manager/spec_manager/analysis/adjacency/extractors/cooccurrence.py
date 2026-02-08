@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
-from typing import Any
 
 from spec_manager.core.annotations import AnnotationParser
 from spec_manager.core.sections import SectionExtractor

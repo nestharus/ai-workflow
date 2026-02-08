@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -47,7 +47,7 @@ class SignalExchange:
         self._dir.mkdir(parents=True, exist_ok=True)
 
         payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "signals": [self._signal_to_dict(s) for s in signals],
         }
 

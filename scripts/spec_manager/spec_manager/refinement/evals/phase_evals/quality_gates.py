@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -112,13 +110,13 @@ def compute_quality_gates_state_hash(result: QualityGatesResult) -> str:
     Returns:
         16-character hex digest.
     """
-    scores_str = ",".join(
-        f"{k}={v}" for k, v in sorted(result.dimension_scores.items())
+    scores_str = ",".join(f"{k}={v}" for k, v in sorted(result.dimension_scores.items()))
+    content = "|".join(
+        [
+            scores_str,
+            ",".join(sorted(result.element_ids_found)),
+        ]
     )
-    content = "|".join([
-        scores_str,
-        ",".join(sorted(result.element_ids_found)),
-    ])
     return LoopDetector.compute_hash(content)
 
 

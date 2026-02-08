@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector
 from spec_manager.refinement.evals.phase_evals import (
@@ -21,12 +20,12 @@ from spec_manager.refinement.evals.phase_evals.sectionization import (
     compute_section_state_hash,
     extract_sectionization_outputs,
 )
+from spec_manager.refinement.evals.phase_evals.spec_building import (
+    SpecBuildingResult,
+)
 from spec_manager.refinement.evals.phase_evals.synthesis import (
     SynthesisResult,
     compute_synthesis_state_hash,
-)
-from spec_manager.refinement.evals.phase_evals.spec_building import (
-    SpecBuildingResult,
 )
 from spec_manager.refinement.evals.phase_evals.tasks import (
     TasksResult,

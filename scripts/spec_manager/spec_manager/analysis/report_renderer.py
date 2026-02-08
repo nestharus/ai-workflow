@@ -5,7 +5,6 @@ from __future__ import annotations
 from spec_manager.schemas.lineage import (
     AnalysisFileSchema,
     AtomAnalysisEntry,
-    OrphanedArchEntry,
 )
 
 
@@ -81,9 +80,7 @@ def render_analysis_markdown(analysis: AnalysisFileSchema) -> str:
         lines.append("| Atom | File | Reason |")
         lines.append("| --- | --- | --- |")
         for atom in unimplemented:
-            lines.append(
-                f"| {atom.atom_id} | {atom.atom_file} | No architectural imports found |"
-            )
+            lines.append(f"| {atom.atom_id} | {atom.atom_file} | No architectural imports found |")
     lines.append("")
 
     # Orphaned Architecture
@@ -116,10 +113,12 @@ def _render_atom_section(atom: AtomAnalysisEntry) -> list[str]:
         lines.append("| Architectural Location | Projection Type | Confidence |")
         lines.append("| --- | --- | --- |")
         for trace in atom.forward_traces:
-            xform = trace.transformation.value if hasattr(trace.transformation, "value") else str(trace.transformation)
-            lines.append(
-                f"| {trace.to_location} | {xform} | {trace.confidence:.2f} |"
+            xform = (
+                trace.transformation.value
+                if hasattr(trace.transformation, "value")
+                else str(trace.transformation)
             )
+            lines.append(f"| {trace.to_location} | {xform} | {trace.confidence:.2f} |")
     else:
         lines.append("No forward traces.")
     lines.append("")
@@ -128,8 +127,16 @@ def _render_atom_section(atom: AtomAnalysisEntry) -> list[str]:
     lines.append("**Adjacency:**")
     lines.append("")
     if atom.adjacency:
-        co_occ = ", ".join(atom.adjacency.co_occurrence_edges) if atom.adjacency.co_occurrence_edges else "none"
-        store_t = ", ".join(atom.adjacency.store_touch_edges) if atom.adjacency.store_touch_edges else "none"
+        co_occ = (
+            ", ".join(atom.adjacency.co_occurrence_edges)
+            if atom.adjacency.co_occurrence_edges
+            else "none"
+        )
+        store_t = (
+            ", ".join(atom.adjacency.store_touch_edges)
+            if atom.adjacency.store_touch_edges
+            else "none"
+        )
         lines.append(f"- Co-occurrence: [{co_occ}]")
         lines.append(f"- Store-touch: [{store_t}]")
     else:
@@ -142,7 +149,9 @@ def _render_atom_section(atom: AtomAnalysisEntry) -> list[str]:
     if atom.data_flow:
         sig_in = ", ".join(atom.data_flow.signals_in) if atom.data_flow.signals_in else "none"
         sig_out = ", ".join(atom.data_flow.signals_out) if atom.data_flow.signals_out else "none"
-        stores = ", ".join(atom.data_flow.stores_touched) if atom.data_flow.stores_touched else "none"
+        stores = (
+            ", ".join(atom.data_flow.stores_touched) if atom.data_flow.stores_touched else "none"
+        )
         lines.append(f"- Signals in: [{sig_in}]")
         lines.append(f"- Signals out: [{sig_out}]")
         lines.append(f"- Stores touched: [{stores}]")

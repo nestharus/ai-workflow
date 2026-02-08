@@ -9,7 +9,6 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ..graph import AdjacencyGraph, EdgeSignal, NodeInfo, SignalType
 
@@ -46,7 +45,7 @@ def extract_call_graph(
     all_calls: list[CallSite] = []
 
     for path in source_paths:
-        if not path.exists() or not path.suffix == ".py":
+        if not path.exists() or path.suffix != ".py":
             continue
         # Skip test files and __init__.py by default
         if path.name.startswith("test_") or path.name == "__init__.py":
@@ -101,9 +100,7 @@ def _module_prefix(file_path: Path, root_dir: Path | None) -> str:
     return file_path.stem
 
 
-def _extract_functions(
-    tree: ast.Module, file_path: Path, root_dir: Path | None
-) -> list[NodeInfo]:
+def _extract_functions(tree: ast.Module, file_path: Path, root_dir: Path | None) -> list[NodeInfo]:
     """Extract all function/method definitions from an AST."""
     functions: list[NodeInfo] = []
     module = _module_prefix(file_path, root_dir)
@@ -116,7 +113,9 @@ def _extract_functions(
             functions.append(
                 NodeInfo(
                     node_id=qualified_name,
-                    node_type="async_function" if isinstance(node, ast.AsyncFunctionDef) else "function",
+                    node_type="async_function"
+                    if isinstance(node, ast.AsyncFunctionDef)
+                    else "function",
                     file_path=str(file_path),
                     line_number=node.lineno,
                     metadata={"module": module},
@@ -142,18 +141,14 @@ def _get_qualified_name(
     current: ast.AST = func_node
     while id(current) in parent_map:
         parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef):
-            parts.insert(0, parent.name)
-        elif isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             parts.insert(0, parent.name)
         current = parent
 
     return f"{module}.{'.'.join(parts)}"
 
 
-def _extract_calls(
-    tree: ast.Module, file_path: Path, root_dir: Path | None
-) -> list[CallSite]:
+def _extract_calls(tree: ast.Module, file_path: Path, root_dir: Path | None) -> list[CallSite]:
     """Extract all function call sites from an AST."""
     calls: list[CallSite] = []
     module = _module_prefix(file_path, root_dir)

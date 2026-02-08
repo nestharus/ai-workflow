@@ -20,7 +20,6 @@ from spec_manager.strategies.base import (
     Tool,
 )
 
-
 # Vague reference patterns commonly found in pseudocode comments
 _VAGUE_PATTERNS = [
     r"\bthe algorithm\b",
@@ -88,11 +87,7 @@ class TranslationEntityResolutionStrategy(Strategy):
             return False
 
         comment_lower = tc.comment_text.lower()
-        for pattern in _VAGUE_PATTERNS:
-            if re.search(pattern, comment_lower):
-                return True
-
-        return False
+        return any(re.search(pattern, comment_lower) for pattern in _VAGUE_PATTERNS)
 
     def execute(self, context: ProcessingContext) -> StrategyResult:
         """Resolve references using call graph, function signatures, and spec."""
@@ -183,11 +178,12 @@ class TranslationEntityResolutionStrategy(Strategy):
         """Find vague references in a comment."""
         found: list[str] = []
         comment_lower = comment.lower()
-        for pattern in _VAGUE_PATTERNS:
-            for match in re.finditer(pattern, comment_lower):
-                # Get the original-case version from the original comment
-                start, end = match.start(), match.end()
-                found.append(comment[start:end])
+        if any(re.search(pattern, comment_lower) for pattern in _VAGUE_PATTERNS):
+            # Vague references found, extract them with original casing
+            for pattern in _VAGUE_PATTERNS:
+                for match in re.finditer(pattern, comment_lower):
+                    start, end = match.start(), match.end()
+                    found.append(comment[start:end])
         return found
 
     def _resolve_reference(
@@ -214,7 +210,7 @@ class TranslationEntityResolutionStrategy(Strategy):
                 )
                 if result:
                     return str(result)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         # Use call_graph_analyzer tool if available
@@ -227,7 +223,7 @@ class TranslationEntityResolutionStrategy(Strategy):
                 )
                 if result:
                     return str(result)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         # Heuristic resolution: if we have call graph neighbors,

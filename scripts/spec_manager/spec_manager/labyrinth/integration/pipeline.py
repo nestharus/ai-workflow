@@ -12,7 +12,6 @@ from spec_manager.labyrinth.core.worker_pool import WorkerPool
 from spec_manager.labyrinth.engine.executor import RuleExecutor
 from spec_manager.labyrinth.engine.registry import RuleRegistry
 from spec_manager.labyrinth.integration.integration_points import (
-    IntegrationPoint,
     IntegrationPointRegistry,
 )
 from spec_manager.labyrinth.integration.wiring import WiringManager
@@ -105,6 +104,7 @@ class Pipeline:
         if loop is not None and loop.is_running():
             # We're in an async context - use a new thread
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(asyncio.run, self.process(record))
                 return future.result()

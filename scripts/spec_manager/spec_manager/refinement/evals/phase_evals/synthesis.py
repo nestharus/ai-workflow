@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -80,8 +78,7 @@ def extract_synthesis_outputs(manager: WorkspaceManager) -> SynthesisResult:
                 # Count resolved dependencies
                 deps = data.get("dependencies", [])
                 dependencies_resolved += sum(
-                    1 for d in deps
-                    if isinstance(d, dict) and d.get("resolved", False)
+                    1 for d in deps if isinstance(d, dict) and d.get("resolved", False)
                 )
 
             except (json.JSONDecodeError, OSError):
@@ -121,11 +118,13 @@ def compute_synthesis_state_hash(result: SynthesisResult) -> str:
     Returns:
         16-character hex digest.
     """
-    content = "|".join([
-        ",".join(sorted(result.libraries_synthesized)),
-        str(result.functions_defined),
-        str(result.types_defined),
-    ])
+    content = "|".join(
+        [
+            ",".join(sorted(result.libraries_synthesized)),
+            str(result.functions_defined),
+            str(result.types_defined),
+        ]
+    )
     return LoopDetector.compute_hash(content)
 
 

@@ -108,7 +108,7 @@ def extract_store_graph(
     all_touches: list[StoreTouch] = []
 
     for path in source_paths:
-        if not path.exists() or not path.suffix == ".py":
+        if not path.exists() or path.suffix != ".py":
             continue
         try:
             source = path.read_text(encoding="utf-8")
@@ -209,14 +209,14 @@ def _detect_store_touches(
         for pattern in READ_PATTERNS:
             if bare_name.startswith(pattern):
                 access_mode = AccessMode.READ
-                store_name_from_naming = bare_name[len(pattern):]
+                store_name_from_naming = bare_name[len(pattern) :]
                 break
 
         if access_mode is None:
             for pattern in WRITE_PATTERNS:
                 if bare_name.startswith(pattern):
                     access_mode = AccessMode.WRITE
-                    store_name_from_naming = bare_name[len(pattern):]
+                    store_name_from_naming = bare_name[len(pattern) :]
                     break
 
         if access_mode is not None and store_name_from_naming:
@@ -253,9 +253,7 @@ def _get_qualified_name(
     current: ast.AST = func_node
     while id(current) in parent_map:
         parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef):
-            parts.insert(0, parent.name)
-        elif isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             parts.insert(0, parent.name)
         current = parent
 
@@ -285,10 +283,7 @@ def _extract_type_name(annotation: ast.expr) -> str | None:
 
 def _is_store_type(type_name: str) -> bool:
     """Check if a type name indicates a store."""
-    for hint in STORE_TYPE_HINTS:
-        if hint.lower() in type_name.lower():
-            return True
-    return False
+    return any(hint.lower() in type_name.lower() for hint in STORE_TYPE_HINTS)
 
 
 def _derive_store_name_from_type(type_name: str, param_name: str) -> str:
@@ -299,9 +294,7 @@ def _derive_store_name_from_type(type_name: str, param_name: str) -> str:
     return type_name.lower()
 
 
-def _classify_store_type(
-    store_name: str, context_hints: dict[str, Any] | None = None
-) -> StoreType:
+def _classify_store_type(store_name: str, context_hints: dict[str, Any] | None = None) -> StoreType:
     """Classify a store into Type A/B/C based on naming and context.
 
     Heuristic:
@@ -376,16 +369,8 @@ def _build_store_adjacency(
         for i, f1 in enumerate(functions):
             for f2 in functions[i + 1 :]:
                 # Get access modes for both functions
-                f1_modes = {
-                    t.access_mode.value
-                    for t in store_touches
-                    if t.function_name == f1
-                }
-                f2_modes = {
-                    t.access_mode.value
-                    for t in store_touches
-                    if t.function_name == f2
-                }
+                f1_modes = {t.access_mode.value for t in store_touches if t.function_name == f1}
+                f2_modes = {t.access_mode.value for t in store_touches if t.function_name == f2}
 
                 store_type = store_touches[0].store_type
 

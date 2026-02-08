@@ -19,7 +19,7 @@ O(n) scans are acceptable.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .atoms import AtomRegistry
@@ -274,9 +274,7 @@ class PinRegistry:
             "pins": {pid: p.to_dict() for pid, p in self._pins.items()},
             "next_pin_number": self._next_pin_number,
         }
-        self._layout.pin_registry_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8"
-        )
+        self._layout.pin_registry_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     @classmethod
     def load(cls, layout: BranchLayout) -> PinRegistry:

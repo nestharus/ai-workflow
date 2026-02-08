@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -80,9 +79,7 @@ class HollowedSpec(BaseModel):
     schema_version: str = "1.0"
     lib_id: str
     spec_hash: str
-    hollowed_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    hollowed_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     sections: list[HollowedSection] = Field(default_factory=list)
     paragraphs: dict[str, HollowedParagraph] = Field(default_factory=dict)
     entity_index: dict[str, list[str]] = Field(default_factory=dict)

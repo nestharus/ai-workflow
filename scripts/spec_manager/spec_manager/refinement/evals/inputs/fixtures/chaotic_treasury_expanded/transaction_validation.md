@@ -1,0 +1,7 @@
+# Transaction Validation
+
+The TransactionValidator sits at the ingestion boundary and enforces two critical checks before any instruction enters the settlement pipeline. First, schema validation: every incoming instruction must conform to the settlement payload schema (see [settlement_processing.md](settlement_processing.md) for the JSON definition) and any instruction missing a required field or carrying an invalid currency code is rejected immediately with a `validation.rejected` event. Second, deduplication: instructions with identical `(counterparty_id, value_date, currency_pair, notional, direction)` tuples arriving within a 5-second window are treated as duplicates and the second copy is silently dropped after publishing a `validation.duplicate` event on the EventPipeline for traceability.
+
+The validator uses a Bloom filter with a false-positive rate of 0.1% for the initial deduplication check and falls back to an exact hash-table lookup when the Bloom filter signals a potential duplicate — this two-stage approach is an implementation optimisation, not a functional requirement. The 5-second dedup window is aligned to the wall clock rather than instruction timestamps to avoid clock-skew issues between upstream systems.
+
+If the reference-data service is unavailable during validation, the validator must queue the instruction in a retry buffer and attempt revalidation every 10 seconds for up to 2 minutes; if the reference-data service does not recover within that window the instruction is rejected with a `service.unavailable` reason.

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 
 from spec_manager.refinement.hollowed_spec.extractor import hollow_out_spec
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex, build_evidence_index
+from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 from spec_manager.refinement.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)

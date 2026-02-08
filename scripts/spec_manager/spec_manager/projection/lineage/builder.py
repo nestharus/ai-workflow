@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.schemas.pin_functions import ProjectionType
 from spec_manager.projection.lineage.import_graph import ImportEdge, ImportGraph
 from spec_manager.projection.lineage.table import ProjectionLineageTable
+from spec_manager.schemas.pin_functions import ProjectionType
 
 
 @dataclass
@@ -85,9 +84,7 @@ class LineageBuilder:
     ) -> None:
         self.import_graph = import_graph
         self.atoms = atoms
-        self._atoms_by_function: dict[str, AtomDefinition] = {
-            a.function_name: a for a in atoms
-        }
+        self._atoms_by_function: dict[str, AtomDefinition] = {a.function_name: a for a in atoms}
         self._atoms_by_module: dict[str, list[AtomDefinition]] = {}
         for atom in atoms:
             self._atoms_by_module.setdefault(atom.module_path, []).append(atom)
@@ -113,11 +110,9 @@ class LineageBuilder:
             atom = self._atoms_by_function.get(import_edge.imported_name)
             if atom is None:
                 continue
-            atoms_per_file.setdefault(import_edge.importer_file, []).append(
-                (import_edge, atom)
-            )
+            atoms_per_file.setdefault(import_edge.importer_file, []).append((import_edge, atom))
 
-        for file_path, atom_imports in atoms_per_file.items():
+        for _file_path, atom_imports in atoms_per_file.items():
             if len(atom_imports) > 1:
                 # Multiple atoms imported in the same file: SMEAR
                 for import_edge, atom in atom_imports:
@@ -128,9 +123,7 @@ class LineageBuilder:
                         confidence=0.8,
                         details={
                             "import_line": import_edge.line_no,
-                            "co_imported_atoms": [
-                                a.atom_id for _, a in atom_imports if a != atom
-                            ],
+                            "co_imported_atoms": [a.atom_id for _, a in atom_imports if a != atom],
                         },
                     )
             else:
@@ -173,12 +166,13 @@ class LineageBuilder:
         """
         pattern = self._detect_handler_pattern(importer_context)
 
-        if pattern == "event_handler":
-            return ProjectionType.EVENT_BRIDGE, 0.9
-        elif pattern == "middleware":
-            return ProjectionType.MIDDLEWARE_WRAP, 0.9
-        elif pattern == "retry":
-            return ProjectionType.RETRY_DECORATE, 0.9
+        pattern_mapping = {
+            "event_handler": (ProjectionType.EVENT_BRIDGE, 0.9),
+            "middleware": (ProjectionType.MIDDLEWARE_WRAP, 0.9),
+            "retry": (ProjectionType.RETRY_DECORATE, 0.9),
+        }
+        if pattern in pattern_mapping:
+            return pattern_mapping[pattern]
 
         # Default: direct import = pass_through
         return ProjectionType.PASS_THROUGH, 1.0
@@ -211,7 +205,7 @@ class LineageBuilder:
             Pattern name or None.
         """
         path = Path(file_path)
-        if not path.exists() or not path.suffix == ".py":
+        if not path.exists() or path.suffix != ".py":
             return None
 
         try:
@@ -278,11 +272,10 @@ def compute_signature_hash(file_path: str, function_name: str) -> str | None:
         return None
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == function_name:
-                sig_parts = _extract_signature_parts(node)
-                sig_str = "|".join(sig_parts)
-                return hashlib.md5(sig_str.encode()).hexdigest()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
+            sig_parts = _extract_signature_parts(node)
+            sig_str = "|".join(sig_parts)
+            return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
 
     return None
 

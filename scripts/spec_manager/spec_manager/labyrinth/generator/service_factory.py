@@ -7,7 +7,6 @@ import random
 from spec_manager.labyrinth.generator.level_config import LevelConfig
 from spec_manager.labyrinth.integration.wiring import SideEffectChain
 
-
 SERVICE_NAMES = ["audit_service", "notification_service", "metrics_service"]
 
 
@@ -18,9 +17,7 @@ class ServiceFactory:
         self._config = config
         self._rng = rng
 
-    def generate_chains(
-        self, available_topics: list[str]
-    ) -> list[SideEffectChain]:
+    def generate_chains(self, available_topics: list[str]) -> list[SideEffectChain]:
         """Generate side-effect chains for the configured level.
 
         Args:
@@ -51,11 +48,13 @@ class ServiceFactory:
                 elif svc == "metrics_service":
                     expected.append("metrics_updated")
 
-            chains.append(SideEffectChain(
-                chain_id=chain_id,
-                trigger_topic=topic,
-                services=services,
-                expected_log_entries=expected,
-            ))
+            chains.append(
+                SideEffectChain(
+                    chain_id=chain_id,
+                    trigger_topic=topic,
+                    services=services,
+                    expected_log_entries=expected,
+                )
+            )
 
         return chains

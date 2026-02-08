@@ -6,11 +6,10 @@ each pin-function, enabling audit trails for layer promotion.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -156,7 +155,7 @@ def update_provenance_from_registry(
     Returns:
         Updated ProvenanceRegistry.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     updated = ProvenanceRegistry(
         schema_version=existing_provenance.schema_version,
         records=dict(existing_provenance.records),
@@ -167,17 +166,19 @@ def update_provenance_from_registry(
 
         if existing is None:
             # New function: create provenance record
-            updated.upsert(AtomProvenance(
-                pin_func_id=pin_func.pin_func_id,
-                function_name=pin_func.function_name,
-                file_path=pin_func.file_path,
-                introduced_by=modifier,
-                modified_by=[],
-                source_location="",
-                content_hash=pin_func.content_hash,
-                created_at=now,
-                last_modified_at=now,
-            ))
+            updated.upsert(
+                AtomProvenance(
+                    pin_func_id=pin_func.pin_func_id,
+                    function_name=pin_func.function_name,
+                    file_path=pin_func.file_path,
+                    introduced_by=modifier,
+                    modified_by=[],
+                    source_location="",
+                    content_hash=pin_func.content_hash,
+                    created_at=now,
+                    last_modified_at=now,
+                )
+            )
         elif existing.content_hash != pin_func.content_hash:
             # Content changed: record modification
             existing.add_modification(modifier)
@@ -231,12 +232,14 @@ def check_provenance_complete(
                 issues.append("Missing source_location")
 
         if issues:
-            findings.append({
-                "pin_func_id": pin_func.pin_func_id,
-                "function_name": pin_func.function_name,
-                "file_path": pin_func.file_path,
-                "issues": issues,
-            })
+            findings.append(
+                {
+                    "pin_func_id": pin_func.pin_func_id,
+                    "function_name": pin_func.function_name,
+                    "file_path": pin_func.file_path,
+                    "issues": issues,
+                }
+            )
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000

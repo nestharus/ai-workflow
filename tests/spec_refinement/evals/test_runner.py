@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from spec_manager.refinement.evals.inputs.ground_truth import GroundTruth, PhaseGroundTruth
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceRule, SequenceSpec
 from spec_manager.refinement.evals.runner import (
@@ -15,10 +14,7 @@ from spec_manager.refinement.evals.runner import (
     EvalState,
 )
 
-
-FIXTURES_DIR = Path(
-    "scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures"
-)
+FIXTURES_DIR = Path("scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures")
 
 
 class TestEvalConfig:

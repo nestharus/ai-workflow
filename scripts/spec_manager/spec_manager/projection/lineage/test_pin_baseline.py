@@ -10,7 +10,7 @@ import ast
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -62,9 +62,7 @@ class TestPinBaselineStore:
     created_at: str = ""
     updated_at: str = ""
 
-    def get_baseline(
-        self, test_file: str, test_function: str
-    ) -> TestSignatureBaseline | None:
+    def get_baseline(self, test_file: str, test_function: str) -> TestSignatureBaseline | None:
         """Find a baseline entry by test file and function name.
 
         Args:
@@ -92,7 +90,7 @@ def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
     Returns:
         A populated TestPinBaselineStore.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     baselines: list[TestSignatureBaseline] = []
     seen: set[tuple[str, str]] = set()
 
@@ -105,12 +103,8 @@ def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
         # Compute signature hash for the test function
         # For class-qualified names like "TestFoo.test_method", we need
         # to find the method inside the class
-        sig_hash = _compute_test_signature_hash(
-            assoc.test_file, assoc.test_function
-        )
-        sig_text = _extract_test_signature_text(
-            assoc.test_file, assoc.test_function
-        )
+        sig_hash = _compute_test_signature_hash(assoc.test_file, assoc.test_function)
+        sig_text = _extract_test_signature_text(assoc.test_file, assoc.test_function)
 
         if sig_hash is None:
             logger.warning(
@@ -187,7 +181,7 @@ def update_baseline(
     Returns:
         Tuple of (updated store, list of change descriptions).
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     changes: list[str] = []
 
     # Build a lookup of existing baselines
@@ -216,17 +210,13 @@ def update_baseline(
                     )
         else:
             existing.baselines.append(new_bl)
-            changes.append(
-                f"Added new baseline for {new_bl.test_function} in {new_bl.test_file}"
-            )
+            changes.append(f"Added new baseline for {new_bl.test_function} in {new_bl.test_file}")
 
     existing.updated_at = now
     return existing, changes
 
 
-def _compute_test_signature_hash(
-    file_path: str, test_function: str
-) -> str | None:
+def _compute_test_signature_hash(file_path: str, test_function: str) -> str | None:
     """Compute signature hash for a test function, handling class-qualified names.
 
     For names like "TestClass.test_method", finds the method inside the class.
@@ -242,9 +232,7 @@ def _compute_test_signature_hash(
     if "." in test_function:
         # Class-qualified name: "ClassName.method_name"
         class_name, method_name = test_function.split(".", 1)
-        return _compute_class_method_signature_hash(
-            file_path, class_name, method_name
-        )
+        return _compute_class_method_signature_hash(file_path, class_name, method_name)
     else:
         return compute_signature_hash(file_path, test_function)
 
@@ -277,18 +265,18 @@ def _compute_class_method_signature_hash(
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if item.name == method_name:
-                        sig_parts = _extract_signature_parts(item)
-                        sig_str = "|".join(sig_parts)
-                        return hashlib.md5(sig_str.encode()).hexdigest()
+                if (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == method_name
+                ):
+                    sig_parts = _extract_signature_parts(item)
+                    sig_str = "|".join(sig_parts)
+                    return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
 
     return None
 
 
-def _extract_test_signature_text(
-    file_path: str, test_function: str
-) -> str:
+def _extract_test_signature_text(file_path: str, test_function: str) -> str:
     """Extract human-readable signature text for a test function.
 
     Args:
@@ -333,14 +321,18 @@ def _find_function_node(
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and node.name == class_name:
                 for item in node.body:
-                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        if item.name == method_name:
-                            return item
+                    if (
+                        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item.name == method_name
+                    ):
+                        return item
     else:
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == test_function:
-                    return node
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == test_function
+            ):
+                return node
 
     return None
 
@@ -373,9 +365,7 @@ def _store_from_dict(data: dict[str, Any]) -> TestPinBaselineStore:
     """
     return TestPinBaselineStore(
         schema_version=data.get("schema_version", "1.0"),
-        baselines=[
-            TestSignatureBaseline(**bl) for bl in data.get("baselines", [])
-        ],
+        baselines=[TestSignatureBaseline(**bl) for bl in data.get("baselines", [])],
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
     )

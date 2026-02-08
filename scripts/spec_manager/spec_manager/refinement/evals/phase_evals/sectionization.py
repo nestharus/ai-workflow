@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus

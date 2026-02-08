@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -20,6 +20,7 @@ class ModelOutput:
         duration_ms: Execution time in milliseconds.
         success: Whether the model completed without errors.
     """
+
     model_name: str
     diff: str = ""
     stdout: str = ""
@@ -32,9 +33,7 @@ class ModelOutput:
 class ModelRunner(Protocol):
     """Protocol for model runners."""
 
-    def invoke(
-        self, spec_text: str, codebase_path: Path, workspace: Path
-    ) -> ModelOutput:
+    def invoke(self, spec_text: str, codebase_path: Path, workspace: Path) -> ModelOutput:
         """Invoke the model with a spec and codebase.
 
         Args:

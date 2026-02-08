@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from spec_manager.labyrinth.engine.rule import CompositeRule, Rule
 
 
@@ -53,9 +51,7 @@ class RuleRegistry:
         if rule is not None:
             group = getattr(rule, "group", "default")
             if group in self._groups:
-                self._groups[group] = [
-                    rid for rid in self._groups[group] if rid != rule_id
-                ]
+                self._groups[group] = [rid for rid in self._groups[group] if rid != rule_id]
 
     def clear(self) -> None:
         """Remove all rules."""

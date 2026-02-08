@@ -21,7 +21,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _TOP_LEVEL_BULLET_RE = re.compile(r"^(?P<marker>[-*+])\s+(?P<text>.*)$")
 
 
@@ -42,7 +41,6 @@ def split_top_level_list_items(markdown: str) -> list[SplitItem]:
     A "top-level" item is a bullet marker at column 0.
     Indented lines belong to the current top-level item.
     """
-
     lines = _normalize_newlines(markdown).split("\n")
     items: list[SplitItem] = []
     current_lines: list[str] = []

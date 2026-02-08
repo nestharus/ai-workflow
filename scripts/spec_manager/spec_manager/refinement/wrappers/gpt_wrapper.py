@@ -19,8 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from spec_manager.refinement.wrappers.token_manager import TokenBudget, TokenManager
-
+from spec_manager.refinement.wrappers.token_manager import TokenManager
 
 # Strict output format templates for GPT
 GPT_STRICT_OUTPUT_FORMATS = {
@@ -35,7 +34,10 @@ GPT_STRICT_OUTPUT_FORMATS = {
                         "requirement_id": {"type": "string"},
                         "text": {"type": "string"},
                         "category": {"type": "string"},
-                        "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+                        "priority": {
+                            "type": "string",
+                            "enum": ["critical", "high", "medium", "low"],
+                        },
                         "verification_method": {"type": "string"},
                     },
                     "required": ["requirement_id", "text", "category"],

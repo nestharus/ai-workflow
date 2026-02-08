@@ -12,7 +12,7 @@ break graph consistency (no orphaned nodes, no dangling references).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from spec_manager.analysis.adjacency.graph import AdjacencyGraph
@@ -111,9 +111,7 @@ def validate_operation(
                 # If the neighbor is ONLY connected to the entity being
                 # removed, it will become orphaned
                 neighbor_connections = adjacency_graph.all_neighbors(neighbor_id)
-                other_connections = [
-                    n for n, _ in neighbor_connections if n != entity_id
-                ]
+                other_connections = [n for n, _ in neighbor_connections if n != entity_id]
                 if not other_connections and neighbor_id not in op.entities:
                     errors.append(
                         f"Removing '{entity_id}' would orphan '{neighbor_id}' "
@@ -133,10 +131,9 @@ def validate_operation(
         if len(sources) < 2:
             errors.append("MERGE operation requires at least 2 source units.")
 
-    if op.op_type == "split":
+    if op.op_type == "split" and not op.entities:
         # Must have entities to split
-        if not op.entities:
-            errors.append("SPLIT operation requires at least one entity.")
+        errors.append("SPLIT operation requires at least one entity.")
 
     return errors
 
@@ -146,7 +143,7 @@ def validate_operation(
 
 def _propose_for_overlap(issue: CouplingIssue) -> list[RefinementOperation]:
     """Propose operations for an overlap issue."""
-    all_units = [issue.grouping_unit] + issue.related_units
+    all_units = [issue.grouping_unit, *issue.related_units]
 
     if len(all_units) == 2:
         # Two units sharing an entity -> MOVE to the primary unit
@@ -186,10 +183,7 @@ def _propose_for_divergence(issue: CouplingIssue) -> list[RefinementOperation]:
         RefinementOperation(
             op_type="split",
             source=issue.grouping_unit,
-            target=[
-                f"{issue.grouping_unit}_split_{i}"
-                for i in range(len(issue.entities))
-            ],
+            target=[f"{issue.grouping_unit}_split_{i}" for i in range(len(issue.entities))],
             entities=issue.entities,
             rationale=(
                 f"Unit '{issue.grouping_unit}' has disconnected clusters.  "

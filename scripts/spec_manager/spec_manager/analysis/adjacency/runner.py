@@ -8,9 +8,8 @@ and produces a report.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from .detector import (
     AdjacencyReport,
@@ -158,8 +157,6 @@ def save_report(report: AdjacencyReport, config: AdjacencyAnalysisConfig) -> Pat
     if config.output_format == "markdown":
         output_path.write_text(report.to_markdown(), encoding="utf-8")
     else:
-        output_path.write_text(
-            json.dumps(report.to_dict(), indent=2), encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
 
     return output_path

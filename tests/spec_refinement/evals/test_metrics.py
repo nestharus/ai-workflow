@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from spec_manager.refinement.evals.metrics import (
     ConvergenceAnalysis,
     DetailCaptureMetrics,
@@ -258,7 +257,7 @@ class TestDetailCaptureMetrics:
                 actual_count=12,
                 matched_count=8,
                 recall=0.8,
-                precision=8/12,
+                precision=8 / 12,
             ),
             iterations=3,
             converged=True,

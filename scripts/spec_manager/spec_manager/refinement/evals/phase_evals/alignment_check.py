@@ -6,11 +6,8 @@ and intent preservation against ground truth.
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -101,10 +98,12 @@ def compute_alignment_check_state_hash(result: AlignmentCheckResult) -> str:
     Returns:
         16-character hex digest.
     """
-    content = "|".join([
-        ",".join(sorted(result.analysis_items)),
-        ",".join(sorted(result.drift_findings)),
-    ])
+    content = "|".join(
+        [
+            ",".join(sorted(result.analysis_items)),
+            ",".join(sorted(result.drift_findings)),
+        ]
+    )
     return LoopDetector.compute_hash(content)
 
 
@@ -133,8 +132,8 @@ def eval_alignment_check(
     trajectory: list[float] = []
 
     expected_items = (
-        ground_truth.custom_expectations.get("expected_analysis_items", []) +
-        ground_truth.expected_requirements
+        ground_truth.custom_expectations.get("expected_analysis_items", [])
+        + ground_truth.expected_requirements
     )
 
     for iteration in range(1, max_iterations + 1):
@@ -145,9 +144,7 @@ def eval_alignment_check(
         actual_items = result.analysis_items + result.drift_findings
 
         # Score against ground truth
-        score = score_detail_capture(
-            expected_items, actual_items, fuzzy_threshold=fuzzy_threshold
-        )
+        score = score_detail_capture(expected_items, actual_items, fuzzy_threshold=fuzzy_threshold)
 
         trajectory.append(score.recall)
 

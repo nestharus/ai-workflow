@@ -7,8 +7,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from spec_manager.refinement.workspace.manager import WorkspaceManager
-from spec_manager.refinement.workspace.state import Phase, PhaseStatus
 from spec_manager.refinement.workflows.reports import (
     generate_compliance_report,
     generate_coverage_report,
@@ -19,6 +17,8 @@ from spec_manager.refinement.workflows.trace_indexes import (
     build_trace_indexes,
     validate_trace_indexes,
 )
+from spec_manager.refinement.workspace.manager import WorkspaceManager
+from spec_manager.refinement.workspace.state import Phase, PhaseStatus
 
 logger = logging.getLogger(__name__)
 

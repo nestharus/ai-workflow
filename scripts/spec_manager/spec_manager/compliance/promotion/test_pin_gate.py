@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from spec_manager.compliance.promotion.config import GateId, GateMode, GateSpec
+from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.projection.lineage.test_pin_checker import (
     check_test_pin_alignment,
@@ -60,29 +60,30 @@ def check_test_pin_alignment_gate(
     # Build findings
     findings: list[dict[str, object]] = []
     for drift in result.drift_items:
-        findings.append({
-            "drift_kind": drift.drift_kind.value,
-            "pin_func_id": drift.edge.from_unit,
-            "expected": drift.expected,
-            "actual": drift.actual,
-            "severity": drift.severity,
-        })
+        findings.append(
+            {
+                "drift_kind": drift.drift_kind.value,
+                "pin_func_id": drift.edge.from_unit,
+                "expected": drift.expected,
+                "actual": drift.actual,
+                "severity": drift.severity,
+            }
+        )
 
     # Determine pass/fail
     has_drift = len(result.drift_items) > 0
-    below_threshold = (
-        gate_spec.threshold > 0.0
-        and result.test_coverage_ratio < gate_spec.threshold
-    )
+    below_threshold = gate_spec.threshold > 0.0 and result.test_coverage_ratio < gate_spec.threshold
 
     passed = not has_drift and not below_threshold
 
     if below_threshold:
-        findings.append({
-            "coverage_below_threshold": True,
-            "test_coverage_ratio": result.test_coverage_ratio,
-            "required_threshold": gate_spec.threshold,
-        })
+        findings.append(
+            {
+                "coverage_below_threshold": True,
+                "test_coverage_ratio": result.test_coverage_ratio,
+                "required_threshold": gate_spec.threshold,
+            }
+        )
 
     # Build summary
     if passed:

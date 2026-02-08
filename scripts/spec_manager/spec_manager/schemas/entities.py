@@ -121,7 +121,7 @@ class EntityTag(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_evidence_linkage(self) -> "EntityTag":
+    def validate_evidence_linkage(self) -> EntityTag:
         """Validate that the tag has some form of evidence linkage."""
         if not self.evidence_id and not self.atom_ids:
             raise ValueError("EntityTag must have either evidence_id or atom_ids")

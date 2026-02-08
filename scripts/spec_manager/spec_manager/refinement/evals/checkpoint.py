@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.evals.loop_detector import LoopDetector
-from spec_manager.refinement.evals.metrics import DetailCaptureMetrics, PhaseMetrics
+from spec_manager.refinement.evals.metrics import PhaseMetrics
 
 
 @dataclass

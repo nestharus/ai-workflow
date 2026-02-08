@@ -4,8 +4,7 @@ from spec_manager.labyrinth.engine.conditions import (
     ConditionOperator,
     LogicOperator,
 )
-from spec_manager.labyrinth.engine.rule import Rule, CompositeRule, CompositionMode
-from spec_manager.labyrinth.core.record import InputRecord
+from spec_manager.labyrinth.engine.rule import CompositeRule, CompositionMode, Rule
 from spec_manager.labyrinth.integration.integration_points import IntegrationPoint
 from spec_manager.labyrinth.integration.wiring import SideEffectChain
 

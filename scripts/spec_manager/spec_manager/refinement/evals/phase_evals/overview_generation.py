@@ -6,11 +6,8 @@ content against ground truth expectations.
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -89,10 +86,12 @@ def compute_overview_generation_state_hash(
     Returns:
         16-character hex digest.
     """
-    content = "|".join([
-        ",".join(sorted(result.overview_elements)),
-        ",".join(sorted(result.prose_sections)),
-    ])
+    content = "|".join(
+        [
+            ",".join(sorted(result.overview_elements)),
+            ",".join(sorted(result.prose_sections)),
+        ]
+    )
     return LoopDetector.compute_hash(content)
 
 
@@ -123,9 +122,7 @@ def eval_overview_generation(
     converged = False
     trajectory: list[float] = []
 
-    expected_items = ground_truth.custom_expectations.get(
-        "expected_overview_elements", []
-    )
+    expected_items = ground_truth.custom_expectations.get("expected_overview_elements", [])
 
     for iteration in range(1, max_iterations + 1):
         iterations = iteration

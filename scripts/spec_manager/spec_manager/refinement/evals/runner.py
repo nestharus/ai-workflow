@@ -22,6 +22,7 @@ from spec_manager.refinement.evals.logger import EvalLogger
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
 from spec_manager.refinement.evals.metrics import (
     DetailCaptureMetrics,
+    DetailScore,
     PhaseMetrics,
     analyze_convergence,
     score_detail_capture,
@@ -540,9 +541,7 @@ class EvalRunner:
 
         # Phase execution with convergence tracking
         actual_items: list[str] = []
-        score = score_detail_capture(
-            expected_items, [], fuzzy_threshold=self.config.fuzzy_match_threshold
-        )
+        score = self._score_items(expected_items, [], phase=phase)
 
         # Real workflows run once per phase (the workflow itself handles any
         # internal iteration).  The eval iteration loop only makes sense for
@@ -560,11 +559,7 @@ class EvalRunner:
                 actual_items = self._simulate_extraction(state, phase, iteration)
 
             # Score this iteration
-            score = score_detail_capture(
-                expected_items,
-                actual_items,
-                fuzzy_threshold=self.config.fuzzy_match_threshold,
-            )
+            score = self._score_items(expected_items, actual_items, phase=phase)
 
             # Track convergence
             convergence_ratio = score.recall
@@ -816,6 +811,33 @@ class EvalRunner:
 
         # Return a subset of expected items to simulate extraction
         return expected[:num_to_return]
+
+    def _score_items(
+        self,
+        expected: list[str],
+        actual: list[str],
+        *,
+        phase: str = "",
+    ) -> DetailScore:
+        """Score expected vs actual using judge or fuzzy matching."""
+        if self.config.use_judge:
+            from spec_manager.refinement.evals.judge_scorer import (
+                score_detail_capture_with_judge,
+            )
+
+            workspace = self.config.output_dir / "judge_workspace"
+            workspace.mkdir(parents=True, exist_ok=True)
+            return score_detail_capture_with_judge(
+                expected,
+                actual,
+                workspace=workspace,
+                phase=phase,
+            )
+        return score_detail_capture(
+            expected,
+            actual,
+            fuzzy_threshold=self.config.fuzzy_match_threshold,
+        )
 
     def _get_expected_items_for_phase(
         self,

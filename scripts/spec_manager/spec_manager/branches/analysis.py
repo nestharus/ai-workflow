@@ -16,7 +16,7 @@ canonical ``analysis.adjacency.graph.AdjacencyGraph``.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -65,7 +65,9 @@ class AnalysisArtifact:
         """Deserialize from dictionary."""
         return cls(
             atom_id=data["atom_id"],
-            architectural_imports=[PinProjection.from_dict(p) for p in data["architectural_imports"]],
+            architectural_imports=[
+                PinProjection.from_dict(p) for p in data["architectural_imports"]
+            ],
             projection_types={k: ProjectionType(v) for k, v in data["projection_types"].items()},
             adjacencies=data.get("adjacencies", []),
             data_flow_in=data.get("data_flow_in", []),
@@ -103,9 +105,7 @@ class AnalysisReport:
             atoms=[AnalysisArtifact.from_dict(a) for a in data["atoms"]],
             orphaned_architectural=data.get("orphaned_architectural", []),
             disconnected_subgraphs=data.get("disconnected_subgraphs", []),
-            store_touch_edges=[
-                (e[0], e[1], e[2]) for e in data.get("store_touch_edges", [])
-            ],
+            store_touch_edges=[(e[0], e[1], e[2]) for e in data.get("store_touch_edges", [])],
         )
 
 
@@ -130,9 +130,10 @@ def _build_adjacency_graph(
     # Add co-occurrence edges from slices
     for vs in slices.values():
         for i, aid_a in enumerate(vs.atom_ids):
-            for aid_b in vs.atom_ids[i + 1:]:
+            for aid_b in vs.atom_ids[i + 1 :]:
                 graph.add_edge(
-                    aid_a, aid_b,
+                    aid_a,
+                    aid_b,
                     EdgeSignal(SignalType.CO_OCCURRENCE, 1.0),
                 )
 
@@ -140,7 +141,8 @@ def _build_adjacency_graph(
     for store_id, touching_atoms in store_atom_map.items():
         for aid in touching_atoms:
             graph.add_edge(
-                aid, store_id,
+                aid,
+                store_id,
                 EdgeSignal(SignalType.STORE_TOUCH, 1.0),
             )
 
@@ -260,9 +262,7 @@ class AnalysisGenerator:
             "generated_at": report.generated_at,
             "store_touch_edges": [list(e) for e in report.store_touch_edges],
             "disconnected_subgraphs": report.disconnected_subgraphs,
-            "per_atom_adjacencies": {
-                a.atom_id: a.adjacencies for a in report.atoms
-            },
+            "per_atom_adjacencies": {a.atom_id: a.adjacencies for a in report.atoms},
         }
 
         path.write_text(json.dumps(graph, indent=2), encoding="utf-8")

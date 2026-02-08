@@ -52,7 +52,7 @@ class EvidenceIndex:
     by_section: dict[str, list[str]] = field(default_factory=dict)
 
     @classmethod
-    def build_from_ranges(cls, ranges: list[EvidenceRange]) -> "EvidenceIndex":
+    def build_from_ranges(cls, ranges: list[EvidenceRange]) -> EvidenceIndex:
         """Build an index from a list of EvidenceRange objects.
 
         Args:

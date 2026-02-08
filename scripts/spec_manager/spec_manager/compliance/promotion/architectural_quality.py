@@ -10,7 +10,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +88,7 @@ def _ast_similarity(node_a: ast.AST, node_b: ast.AST) -> float:
 
     # Use sequence matcher for structural comparison
     from difflib import SequenceMatcher
+
     return SequenceMatcher(None, norm_a, norm_b).ratio()
 
 
@@ -155,9 +156,7 @@ def check_no_inlined_atom_logic(
     """
     start_time = time.monotonic()
     similarity_threshold = gate_spec.params.get("similarity_threshold", 0.8)
-    fingerprint_overlap_threshold = gate_spec.params.get(
-        "fingerprint_overlap_threshold", 0.6
-    )
+    fingerprint_overlap_threshold = gate_spec.params.get("fingerprint_overlap_threshold", 0.6)
 
     # Build map of pin-function content hashes -> pin_func_id
     pin_hashes: dict[str, str] = {}
@@ -181,9 +180,7 @@ def check_no_inlined_atom_logic(
                 pfid = pin_func_id_by_name[func_name]
                 pin_func_nodes[pfid] = node
                 end_line = node.end_lineno or node.lineno
-                pin_func_fingerprints[pfid] = _get_line_fingerprints(
-                    source, node.lineno, end_line
-                )
+                pin_func_fingerprints[pfid] = _get_line_fingerprints(source, node.lineno, end_line)
 
     # Scan architectural files
     all_findings: list[dict[str, Any]] = []
@@ -196,15 +193,17 @@ def check_no_inlined_atom_logic(
             # Strategy 1: Exact body match
             arch_hash = _hash_function_body(arch_source, arch_node)
             if arch_hash in pin_hashes:
-                all_findings.append({
-                    "arch_file": str(arch_file),
-                    "arch_line_start": arch_node.lineno,
-                    "arch_line_end": arch_end,
-                    "matching_pin_func_id": pin_hashes[arch_hash],
-                    "similarity_score": 1.0,
-                    "detection_method": "exact_match",
-                    "arch_function_name": arch_node.name,
-                })
+                all_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_node.lineno,
+                        "arch_line_end": arch_end,
+                        "matching_pin_func_id": pin_hashes[arch_hash],
+                        "similarity_score": 1.0,
+                        "detection_method": "exact_match",
+                        "arch_function_name": arch_node.name,
+                    }
+                )
                 continue  # No need to check other strategies
 
             # Strategy 2: AST structural similarity
@@ -217,21 +216,21 @@ def check_no_inlined_atom_logic(
                     best_match_id = pfid
 
             if best_similarity >= similarity_threshold:
-                all_findings.append({
-                    "arch_file": str(arch_file),
-                    "arch_line_start": arch_node.lineno,
-                    "arch_line_end": arch_end,
-                    "matching_pin_func_id": best_match_id,
-                    "similarity_score": best_similarity,
-                    "detection_method": "ast_similarity",
-                    "arch_function_name": arch_node.name,
-                })
+                all_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_node.lineno,
+                        "arch_line_end": arch_end,
+                        "matching_pin_func_id": best_match_id,
+                        "similarity_score": best_similarity,
+                        "detection_method": "ast_similarity",
+                        "arch_function_name": arch_node.name,
+                    }
+                )
                 continue
 
             # Strategy 3: Line fingerprint overlap
-            arch_fps = _get_line_fingerprints(
-                arch_source, arch_node.lineno, arch_end
-            )
+            arch_fps = _get_line_fingerprints(arch_source, arch_node.lineno, arch_end)
             if not arch_fps:
                 continue
 
@@ -241,15 +240,17 @@ def check_no_inlined_atom_logic(
                 overlap = len(arch_fps & pin_fps)
                 overlap_ratio = overlap / len(arch_fps)
                 if overlap_ratio >= fingerprint_overlap_threshold:
-                    all_findings.append({
-                        "arch_file": str(arch_file),
-                        "arch_line_start": arch_node.lineno,
-                        "arch_line_end": arch_end,
-                        "matching_pin_func_id": pfid,
-                        "similarity_score": overlap_ratio,
-                        "detection_method": "fingerprint_overlap",
-                        "arch_function_name": arch_node.name,
-                    })
+                    all_findings.append(
+                        {
+                            "arch_file": str(arch_file),
+                            "arch_line_start": arch_node.lineno,
+                            "arch_line_end": arch_end,
+                            "matching_pin_func_id": pfid,
+                            "similarity_score": overlap_ratio,
+                            "detection_method": "fingerprint_overlap",
+                            "arch_function_name": arch_node.name,
+                        }
+                    )
                     break
 
     passed = len(all_findings) == 0
@@ -305,10 +306,7 @@ def check_function_recomposition(
         sig = pf.signature
         if "(" in sig and ")" in sig:
             params_str = sig[sig.index("(") + 1 : sig.rindex(")")]
-            params = [
-                p.strip() for p in params_str.split(",")
-                if p.strip() and p.strip() != "self"
-            ]
+            params = [p.strip() for p in params_str.split(",") if p.strip() and p.strip() != "self"]
             pin_func_signatures[pf.function_name] = len(params)
 
     findings: list[dict[str, Any]] = []
@@ -357,27 +355,27 @@ def check_function_recomposition(
         if check_dead_imports:
             unused = imported_pin_names - called_names
             for name in unused:
-                findings.append({
-                    "arch_file": str(arch_file),
-                    "issue_type": "dead_import",
-                    "pin_func_name": name,
-                    "pin_func_id": pin_func_names[name],
-                    "message": (
-                        f"Pin-function '{name}' is imported but never called"
-                    ),
-                })
+                findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "issue_type": "dead_import",
+                        "pin_func_name": name,
+                        "pin_func_id": pin_func_names[name],
+                        "message": (f"Pin-function '{name}' is imported but never called"),
+                    }
+                )
 
         # Check for shadowing
         for name in shadowed_names:
-            findings.append({
-                "arch_file": str(arch_file),
-                "issue_type": "shadowed_import",
-                "pin_func_name": name,
-                "pin_func_id": pin_func_names[name],
-                "message": (
-                    f"Local variable shadows imported pin-function '{name}'"
-                ),
-            })
+            findings.append(
+                {
+                    "arch_file": str(arch_file),
+                    "issue_type": "shadowed_import",
+                    "pin_func_name": name,
+                    "pin_func_id": pin_func_names[name],
+                    "message": (f"Local variable shadows imported pin-function '{name}'"),
+                }
+            )
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start_time) * 1000

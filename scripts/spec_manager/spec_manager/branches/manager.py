@@ -14,12 +14,10 @@ Integrates all branch subsystems behind a single entry point:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from .analysis import AnalysisGenerator, AnalysisReport
 from .atoms import AtomRegistry
 from .collapse import CollapseEngine, CollapseResult
-from .compliance import ComplianceChecker, ComplianceGateResult
 from .downward_flow import ArchitecturalIssue, DownwardFlowEngine, DownwardTraceResult
 from .layout import BranchLayout
 from .pins import PinRegistry

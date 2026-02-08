@@ -237,8 +237,7 @@ class PinChangePropagator:
                     f"'{loc}' (projection: {proj}) will fail to import"
                 )
             return (
-                f"Signature of '{func}' changed; "
-                f"'{loc}' (projection: {proj}) may fail at call site"
+                f"Signature of '{func}' changed; '{loc}' (projection: {proj}) may fail at call site"
             )
 
         if urgency == "auto_propagated":
@@ -269,9 +268,7 @@ def convert_propagation_to_drift(report: PropagationReport) -> list[DriftItem]:
 
     for item in report.propagation_items:
         # Map urgency to drift_type
-        if item.review_urgency == "breaking_change":
-            drift_type = "MISMATCH"
-        elif item.review_urgency == "review_required":
+        if item.review_urgency == "breaking_change" or item.review_urgency == "review_required":
             drift_type = "MISMATCH"
         else:
             drift_type = "PLAN_ONLY"

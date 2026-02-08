@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import ast
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.pin_coverage import PinCoverageReport
 from spec_manager.compliance.promotion.result import GateCheckResult
-
 
 # Category classification heuristics based on function name patterns
 _CATEGORY_PATTERNS: list[tuple[list[str], str]] = [
@@ -182,16 +181,18 @@ def find_introduced_algorithms(
 
             category = _classify_category(qualified_name, file_str)
 
-            results.append(IntroducedAlgorithm(
-                function_name=qualified_name,
-                file_path=file_str,
-                line_start=node.lineno,
-                line_end=end_lineno,
-                has_spec_comments=spec_count > 0,
-                spec_comment_count=spec_count,
-                has_docstring=has_docstring,
-                category=category,
-            ))
+            results.append(
+                IntroducedAlgorithm(
+                    function_name=qualified_name,
+                    file_path=file_str,
+                    line_start=node.lineno,
+                    line_end=end_lineno,
+                    has_spec_comments=spec_count > 0,
+                    spec_comment_count=spec_count,
+                    has_docstring=has_docstring,
+                    category=category,
+                )
+            )
 
     return results
 
@@ -231,23 +232,24 @@ def check_introduced_algorithm_specs(
         issues: list[str] = []
         if algo.spec_comment_count < min_spec_comments:
             issues.append(
-                f"Missing spec comments (found {algo.spec_comment_count}, "
-                f"need {min_spec_comments})"
+                f"Missing spec comments (found {algo.spec_comment_count}, need {min_spec_comments})"
             )
         if require_docstring and not algo.has_docstring:
             issues.append("Missing docstring")
 
         if issues:
-            findings.append({
-                "function_name": algo.function_name,
-                "file_path": algo.file_path,
-                "line_start": algo.line_start,
-                "line_end": algo.line_end,
-                "category": algo.category,
-                "issues": issues,
-                "spec_comment_count": algo.spec_comment_count,
-                "has_docstring": algo.has_docstring,
-            })
+            findings.append(
+                {
+                    "function_name": algo.function_name,
+                    "file_path": algo.file_path,
+                    "line_start": algo.line_start,
+                    "line_end": algo.line_end,
+                    "category": algo.category,
+                    "issues": issues,
+                    "spec_comment_count": algo.spec_comment_count,
+                    "has_docstring": algo.has_docstring,
+                }
+            )
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000

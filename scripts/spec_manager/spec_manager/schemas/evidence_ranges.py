@@ -48,13 +48,11 @@ class EvidenceRange(BaseModel):
     tags: set[str] = Field(default_factory=set)
 
     @model_validator(mode="after")
-    def validate_evidence_id_format(self) -> "EvidenceRange":
+    def validate_evidence_id_format(self) -> EvidenceRange:
         """Validate evidence_id format and consistency with fields."""
         match = EVIDENCE_ID_PATTERN.fullmatch(self.evidence_id)
         if not match:
-            raise ValueError(
-                "evidence_id must match EVID-{file_uid}-{rev_id}-L{start}-L{end}"
-            )
+            raise ValueError("evidence_id must match EVID-{file_uid}-{rev_id}-L{start}-L{end}")
         if match.group("file_uid") != self.file_uid:
             raise ValueError("evidence_id file_uid must match file_uid field")
         if match.group("rev_id") != self.rev_id:
@@ -62,14 +60,14 @@ class EvidenceRange(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_line_range(self) -> "EvidenceRange":
+    def validate_line_range(self) -> EvidenceRange:
         """Ensure end_line >= start_line."""
         if self.end_line < self.start_line:
             raise ValueError("end_line must be >= start_line")
         return self
 
     @model_validator(mode="after")
-    def validate_atom_ids_count(self) -> "EvidenceRange":
+    def validate_atom_ids_count(self) -> EvidenceRange:
         """Ensure atom_ids count matches line range."""
         expected = self.end_line - self.start_line + 1
         if len(self.atom_ids) != expected:

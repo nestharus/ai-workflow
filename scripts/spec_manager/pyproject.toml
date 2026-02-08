@@ -23,6 +23,9 @@ build-backend = "hatchling.build"
 # Use project-local venv
 managed = true
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

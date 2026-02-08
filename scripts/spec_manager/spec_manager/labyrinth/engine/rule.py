@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from spec_manager.labyrinth.core.record import InputRecord, OutputRecord
 from spec_manager.labyrinth.engine.conditions import ConditionGroup
@@ -12,6 +13,7 @@ from spec_manager.labyrinth.engine.conditions import ConditionGroup
 
 class CompositionMode(str, Enum):
     """How sub-rules are composed."""
+
     SEQUENTIAL = "sequential"
     PARALLEL = "parallel"
     CONDITIONAL = "conditional"
@@ -35,6 +37,7 @@ class Rule:
         topics: Bus topics this rule subscribes to.
         output_topic: Topic to publish results to.
     """
+
     rule_id: str
     name: str
     group: str = ""
@@ -75,6 +78,7 @@ class CompositeRule:
         sub_rules: List of Rule or CompositeRule instances.
         conditions: Optional top-level conditions.
     """
+
     rule_id: str
     name: str
     mode: CompositionMode = CompositionMode.SEQUENTIAL
@@ -157,6 +161,7 @@ class RuleChain:
         chain_id: Unique identifier for the chain.
         rules: Ordered list of rules.
     """
+
     chain_id: str
     rules: list[Rule | CompositeRule] = field(default_factory=list)
 

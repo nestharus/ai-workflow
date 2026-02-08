@@ -150,9 +150,7 @@ def hollow_out_spec(lib_id: str, spec_content: str) -> HollowedSpec:
         paragraph_ids: list[str] = []
 
         # Split body into paragraphs at blank-line boundaries
-        body_paragraphs = _split_into_paragraphs(
-            raw_sec["body_lines"], raw_sec["body_start_line"]
-        )
+        body_paragraphs = _split_into_paragraphs(raw_sec["body_lines"], raw_sec["body_start_line"])
 
         for para_text, line_start, line_end in body_paragraphs:
             para_ordinal += 1
@@ -251,10 +249,7 @@ def _parse_sections(content: str) -> list[dict[str, Any]]:
 
         # Determine body range: from line after heading to next heading or end
         body_start = line_idx + 1
-        if i + 1 < len(heading_positions):
-            body_end = heading_positions[i + 1][0]
-        else:
-            body_end = len(lines)
+        body_end = heading_positions[i + 1][0] if i + 1 < len(heading_positions) else len(lines)
 
         body_lines = lines[body_start:body_end]
 
@@ -324,16 +319,14 @@ def _classify_paragraph(text: str) -> ParagraphKind:
     stripped = text.strip()
 
     # Check for code block
-    if stripped.startswith("```") or stripped.startswith("    ") and "\n" in stripped:
+    if stripped.startswith("```") or (stripped.startswith("    ") and "\n" in stripped):
         return ParagraphKind.CODE_BLOCK
 
     # Check for table (pipes with header separator)
     lines = stripped.split("\n")
     if len(lines) >= 2:
         has_pipes = all("|" in line for line in lines)
-        has_separator = any(
-            re.match(r"^\s*\|?[\s\-:|]+\|", line) for line in lines
-        )
+        has_separator = any(re.match(r"^\s*\|?[\s\-:|]+\|", line) for line in lines)
         if has_pipes and has_separator:
             return ParagraphKind.TABLE
 
@@ -345,8 +338,7 @@ def _classify_paragraph(text: str) -> ParagraphKind:
     bullet_lines = [
         line
         for line in lines
-        if line.strip().startswith(("-", "*", "+"))
-        or re.match(r"^\s*\d+\.", line.strip())
+        if line.strip().startswith(("-", "*", "+")) or re.match(r"^\s*\d+\.", line.strip())
     ]
     if bullet_lines and len(bullet_lines) >= len(lines) * 0.5:
         return ParagraphKind.BULLET_LIST

@@ -7,15 +7,13 @@ Sparse specs systematically remove information to test ambiguity detection.
 from __future__ import annotations
 
 import random
-from typing import Any
 
 from spec_manager.labyrinth.engine.conditions import (
     Condition,
     ConditionGroup,
-    ConditionOperator,
     LogicOperator,
 )
-from spec_manager.labyrinth.engine.rule import CompositeRule, CompositionMode, Rule
+from spec_manager.labyrinth.engine.rule import CompositeRule, Rule
 from spec_manager.labyrinth.integration.integration_points import IntegrationPoint
 from spec_manager.labyrinth.integration.wiring import SideEffectChain
 
@@ -54,7 +52,9 @@ class DenseSpecGenerator:
         lines.append("")
         lines.append("The system uses an async message bus for pub/sub communication.")
         lines.append("Rules are executed in a thread pool and dispatch results via bus topics.")
-        lines.append("Side-effect services (audit, notification, metrics) subscribe to rule output topics.")
+        lines.append(
+            "Side-effect services (audit, notification, metrics) subscribe to rule output topics."
+        )
         lines.append("")
         lines.append(f"**Bus Topics:** {len(topics)}")
         lines.append(f"**Integration Points:** {len(integration_points)}")
@@ -91,17 +91,26 @@ class DenseSpecGenerator:
                 lines.append(f"### {rule.rule_id}: {rule.name}")
                 lines.append(f"- **Group:** {rule.group}")
                 lines.append(f"- **Conditions:** {self._format_conditions(rule.conditions)}")
-                lines.append(f"- **Dependencies:** {', '.join(rule.dependencies) if rule.dependencies else 'none'}")
+                lines.append(
+                    f"- **Dependencies:** "
+                    f"{', '.join(rule.dependencies) if rule.dependencies else 'none'}"
+                )
                 lines.append(f"- **Input Topic:** {', '.join(rule.topics)}")
                 lines.append(f"- **Output Topic:** {rule.output_topic}")
 
                 # Generate output specification
                 if rule.transform is not None:
                     from spec_manager.labyrinth.core.record import InputRecord
-                    sample = InputRecord(record_id="sample", data={"amount": 5000, "type": "INVOICE", "currency": "USD"})
+
+                    sample = InputRecord(
+                        record_id="sample",
+                        data={"amount": 5000, "type": "INVOICE", "currency": "USD"},
+                    )
                     try:
                         output = rule.transform(sample)
-                        output_str = ", ".join(f"{k}={v}" for k, v in output.items() if not k.startswith("_"))
+                        output_str = ", ".join(
+                            f"{k}={v}" for k, v in output.items() if not k.startswith("_")
+                        )
                         lines.append(f"- **Output:** {output_str}")
                     except Exception:
                         lines.append("- **Output:** (computed at runtime)")
@@ -207,7 +216,9 @@ class SparseSpecGenerator:
             # Strategy 1: Remove specific conditions
             if len(group_rules) <= 4:
                 for rule in group_rules:
-                    lines.append(f"- **{rule.name}**: Should handle {group_name} records appropriately")
+                    lines.append(
+                        f"- **{rule.name}**: Should handle {group_name} records appropriately"
+                    )
             else:
                 # Strategy 4: Merge related rules into paragraphs
                 lines.append(
@@ -228,7 +239,9 @@ class SparseSpecGenerator:
         # Strategy 3: Vague side effects
         lines.append("## Side Effects")
         lines.append("")
-        lines.append("The system includes audit logging, notification services, and metrics tracking.")
+        lines.append(
+            "The system includes audit logging, notification services, and metrics tracking."
+        )
         lines.append("These services should be properly triggered when rules execute.")
         lines.append("")
 

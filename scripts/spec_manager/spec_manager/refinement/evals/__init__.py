@@ -18,7 +18,7 @@ from spec_manager.refinement.evals.inputs.sequence_spec import (
     SequenceSpec,
     load_sequence_spec,
 )
-from spec_manager.refinement.evals.logger import EvalLogger, EvalLogEntry
+from spec_manager.refinement.evals.logger import EvalLogEntry, EvalLogger
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
 from spec_manager.refinement.evals.metrics import (
     ConvergenceAnalysis,

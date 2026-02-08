@@ -1,0 +1,9 @@
+# Notification and Audit
+
+The AuditNotification service serves two intertwined purposes: it maintains the immutable audit trail and it routes notifications to the appropriate operational teams. Every audit write must complete within 50ms to avoid back-pressure on the settlement pipeline, and the service uses an append-only data store optimised for sequential writes to meet this target. Each audit snapshot includes the settlement identifier, both counterparty identifiers, the gross and net amounts, the applied FX rate, the value date, the UTC timestamp of the event, and the risk assessment summary produced by the RiskEngine at the time of processing.
+
+Notifications are routed based on the event type: compliance-related events such as regulatory holds and suspicious-transaction flags are sent via email to the compliance inbox; risk events including margin calls and concentration breaches are pushed to the risk dashboard in real-time; operational events such as reconciliation breaks and dead-letter arrivals are delivered to the operations Slack channel via a webhook integration.
+
+The service must guarantee that every audit entry is written before the corresponding notification is dispatched, ensuring that if an operator investigates an alert the audit record is already available for inspection. In the event of a write failure the service must retry with the same idempotency key and must not dispatch the notification until the write succeeds.
+
+The notification subsystem supports batching for high-volume periods, consolidating up to 50 individual alerts into a single digest message if more than 20 alerts accumulate within a 60-second window, to prevent alert fatigue among operations staff. Each digest must include the total settlement count, aggregate notional value, and a list of affected counterparties so that recipients can triage without opening individual alerts.

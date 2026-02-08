@@ -7,7 +7,6 @@ interactive specification refinement.
 
 from __future__ import annotations
 
-import json
 import random
 import re
 from typing import Any
@@ -46,26 +45,28 @@ class SteeringScriptGenerator:
         # Generate ambiguities for integration points
         for ip in integration_points:
             counter += 1
-            ambiguities.append({
-                "ambiguity_id": f"AMB-{counter:03d}",
-                "trigger_patterns": [
-                    f"integration.*point.*{re.escape(ip.point_id)}",
-                    f"where.*register.*{re.escape(ip.name)}",
-                    "where.*rule.*register",
-                ],
-                "question_patterns": [
-                    f"where.*{re.escape(ip.point_id)}",
-                    f"register.*{re.escape(ip.topic)}",
-                ],
-                "response": (
-                    f"Rules should register at {ip.point_id}, "
-                    f"subscribing to '{ip.topic}', at position {ip.position}"
-                    + (f", after {', '.join(ip.after_rules)}" if ip.after_rules else "")
-                    + f". Required rules: {', '.join(ip.required_rules)}."
-                ),
-                "clarifies_rules": list(ip.required_rules),
-                "clarifies_integration_points": [ip.point_id],
-            })
+            ambiguities.append(
+                {
+                    "ambiguity_id": f"AMB-{counter:03d}",
+                    "trigger_patterns": [
+                        f"integration.*point.*{re.escape(ip.point_id)}",
+                        f"where.*register.*{re.escape(ip.name)}",
+                        "where.*rule.*register",
+                    ],
+                    "question_patterns": [
+                        f"where.*{re.escape(ip.point_id)}",
+                        f"register.*{re.escape(ip.topic)}",
+                    ],
+                    "response": (
+                        f"Rules should register at {ip.point_id}, "
+                        f"subscribing to '{ip.topic}', at position {ip.position}"
+                        + (f", after {', '.join(ip.after_rules)}" if ip.after_rules else "")
+                        + f". Required rules: {', '.join(ip.required_rules)}."
+                    ),
+                    "clarifies_rules": list(ip.required_rules),
+                    "clarifies_integration_points": [ip.point_id],
+                }
+            )
 
         # Generate ambiguities for rule conditions
         for rule in rules:
@@ -76,47 +77,52 @@ class SteeringScriptGenerator:
 
             counter += 1
             cond_desc = self._describe_conditions(rule.conditions)
-            ambiguities.append({
-                "ambiguity_id": f"AMB-{counter:03d}",
-                "trigger_patterns": [
-                    f"condition.*{re.escape(rule.name)}",
-                    f"when.*{re.escape(rule.name)}.*fire",
-                    f"handle.*{re.escape(rule.group)}.*appropriately",
-                ],
-                "question_patterns": [
-                    f"condition.*{re.escape(rule.rule_id)}",
-                    f"when.*{re.escape(rule.name)}",
-                ],
-                "response": (
-                    f"Rule {rule.rule_id} ({rule.name}) should fire when: {cond_desc}. "
-                    f"Dependencies: {', '.join(rule.dependencies) if rule.dependencies else 'none'}."
-                ),
-                "clarifies_rules": [rule.rule_id],
-                "clarifies_integration_points": [],
-            })
+            ambiguities.append(
+                {
+                    "ambiguity_id": f"AMB-{counter:03d}",
+                    "trigger_patterns": [
+                        f"condition.*{re.escape(rule.name)}",
+                        f"when.*{re.escape(rule.name)}.*fire",
+                        f"handle.*{re.escape(rule.group)}.*appropriately",
+                    ],
+                    "question_patterns": [
+                        f"condition.*{re.escape(rule.rule_id)}",
+                        f"when.*{re.escape(rule.name)}",
+                    ],
+                    "response": (
+                        f"Rule {rule.rule_id} ({rule.name}) should fire when: {cond_desc}. "
+                        f"Dependencies: "
+                        f"{', '.join(rule.dependencies) if rule.dependencies else 'none'}."
+                    ),
+                    "clarifies_rules": [rule.rule_id],
+                    "clarifies_integration_points": [],
+                }
+            )
 
         # Generate ambiguities for side-effect chains
         for chain in chains:
             counter += 1
-            ambiguities.append({
-                "ambiguity_id": f"AMB-{counter:03d}",
-                "trigger_patterns": [
-                    f"side.*effect.*{re.escape(chain.chain_id)}",
-                    f"service.*{re.escape(chain.trigger_topic)}",
-                    "logging.*notification.*exist",
-                ],
-                "question_patterns": [
-                    f"chain.*{re.escape(chain.chain_id)}",
-                    f"trigger.*{re.escape(chain.trigger_topic)}",
-                ],
-                "response": (
-                    f"Chain {chain.chain_id} triggers on topic '{chain.trigger_topic}'. "
-                    f"Services: {', '.join(chain.services)}. "
-                    f"Expected log entries: {', '.join(chain.expected_log_entries)}."
-                ),
-                "clarifies_rules": [],
-                "clarifies_integration_points": [],
-            })
+            ambiguities.append(
+                {
+                    "ambiguity_id": f"AMB-{counter:03d}",
+                    "trigger_patterns": [
+                        f"side.*effect.*{re.escape(chain.chain_id)}",
+                        f"service.*{re.escape(chain.trigger_topic)}",
+                        "logging.*notification.*exist",
+                    ],
+                    "question_patterns": [
+                        f"chain.*{re.escape(chain.chain_id)}",
+                        f"trigger.*{re.escape(chain.trigger_topic)}",
+                    ],
+                    "response": (
+                        f"Chain {chain.chain_id} triggers on topic '{chain.trigger_topic}'. "
+                        f"Services: {', '.join(chain.services)}. "
+                        f"Expected log entries: {', '.join(chain.expected_log_entries)}."
+                    ),
+                    "clarifies_rules": [],
+                    "clarifies_integration_points": [],
+                }
+            )
 
         return {
             "level": level,

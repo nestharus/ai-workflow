@@ -19,8 +19,7 @@ extraction, and body hashing to the canonical
 from __future__ import annotations
 
 import ast
-import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,25 +33,78 @@ from .types import AtomDescriptor, AtomKind
 
 # Keywords that suggest architectural/infrastructure patterns
 # (unique to collapse context -- not in the canonical extractor)
-_ARCH_INDICATORS = frozenset({
-    "route", "router", "middleware", "handler", "endpoint",
-    "retry", "circuit_breaker", "timeout", "rate_limit",
-    "decorator", "wrapper", "proxy", "adapter", "factory",
-    "dispatch", "subscribe", "publish", "emit", "on_event",
-    "service", "controller", "view", "api", "http",
-    "request", "response", "status_code", "header",
-    "async", "await", "asyncio", "coroutine",
-    "logging", "logger", "log",
-})
+_ARCH_INDICATORS = frozenset(
+    {
+        "route",
+        "router",
+        "middleware",
+        "handler",
+        "endpoint",
+        "retry",
+        "circuit_breaker",
+        "timeout",
+        "rate_limit",
+        "decorator",
+        "wrapper",
+        "proxy",
+        "adapter",
+        "factory",
+        "dispatch",
+        "subscribe",
+        "publish",
+        "emit",
+        "on_event",
+        "service",
+        "controller",
+        "view",
+        "api",
+        "http",
+        "request",
+        "response",
+        "status_code",
+        "header",
+        "async",
+        "await",
+        "asyncio",
+        "coroutine",
+        "logging",
+        "logger",
+        "log",
+    }
+)
 
 # Keywords that suggest a function interacts with stores/persistence
-_STORE_INDICATORS = frozenset({
-    "database", "db", "sql", "query", "cursor", "session",
-    "redis", "cache", "queue", "file", "write", "read",
-    "save", "load", "persist", "store", "fetch", "insert",
-    "update", "delete", "commit", "rollback", "transaction",
-    "open", "close", "connect", "connection",
-})
+_STORE_INDICATORS = frozenset(
+    {
+        "database",
+        "db",
+        "sql",
+        "query",
+        "cursor",
+        "session",
+        "redis",
+        "cache",
+        "queue",
+        "file",
+        "write",
+        "read",
+        "save",
+        "load",
+        "persist",
+        "store",
+        "fetch",
+        "insert",
+        "update",
+        "delete",
+        "commit",
+        "rollback",
+        "transaction",
+        "open",
+        "close",
+        "connect",
+        "connection",
+    }
+)
 
 
 @dataclass
@@ -106,10 +158,12 @@ class CollapseEngine:
 
     def __init__(self, layout: BranchLayout) -> None:
         self._layout = layout
-        self._extractor = AtomFunctionExtractor(ExtractionConfig(
-            require_docstring=False,
-            max_function_lines=999,
-        ))
+        self._extractor = AtomFunctionExtractor(
+            ExtractionConfig(
+                require_docstring=False,
+                max_function_lines=999,
+            )
+        )
 
     def collapse(self, source_dir: Path) -> CollapseResult:
         """Collapse an existing codebase to Layer 1.
@@ -172,12 +226,14 @@ class CollapseEngine:
                                 kind = self._classify_function(class_node, py_file, source)
                                 qualified_name = f"{node.name}.{class_node.name}"
                                 if kind is None:
-                                    architectural_remnants.append(
-                                        f"{rel_path}:{qualified_name}"
-                                    )
+                                    architectural_remnants.append(f"{rel_path}:{qualified_name}")
                                 else:
                                     descriptor = self._extract_atom(
-                                        class_node, py_file, source, source_dir, kind,
+                                        class_node,
+                                        py_file,
+                                        source,
+                                        source_dir,
+                                        kind,
                                         qualified_name=qualified_name,
                                     )
                                     if kind == AtomKind.ALGORITHM:
@@ -210,7 +266,9 @@ class CollapseEngine:
         )
 
     def _classify_function(
-        self, func_node: ast.FunctionDef | ast.AsyncFunctionDef, module_path: Path,
+        self,
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+        module_path: Path,
         source: str = "",
     ) -> AtomKind | None:
         """Classify a function as algorithm, store, shape, or architectural.
@@ -232,9 +290,12 @@ class CollapseEngine:
         body_lower = body_source.lower()
 
         # Skip private/dunder methods
-        if func_name.startswith("__") and func_name.endswith("__"):
-            if func_name not in ("__init__",):
-                return None
+        if (
+            func_name.startswith("__")
+            and func_name.endswith("__")
+            and func_name not in ("__init__",)
+        ):
+            return None
 
         # Check for architectural patterns first (they take priority)
         arch_score = 0
@@ -260,9 +321,7 @@ class CollapseEngine:
         if isinstance(func_node, ast.AsyncFunctionDef):
             if store_score > arch_score:
                 return AtomKind.STORE
-            if arch_score >= 2:
-                return None
-            if arch_score > 0:
+            if arch_score >= 2 or arch_score > 0:
                 return None
 
         # Classification logic
@@ -334,9 +393,12 @@ class CollapseEngine:
         if not body:
             return body
         first = body[0]
-        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
-            if isinstance(first.value.value, str):
-                return body[1:]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            return body[1:]
         return body
 
     @staticmethod

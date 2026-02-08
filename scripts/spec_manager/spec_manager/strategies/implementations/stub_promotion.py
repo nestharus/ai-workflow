@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from spec_manager.core.provenance import TrackedUnit, UnitType
+from spec_manager.core.provenance import TrackedUnit
 from spec_manager.strategies.base import (
     ProcessingContext,
     Strategy,
@@ -173,9 +173,7 @@ class StubPromotionStrategy(Strategy):
             # Create augmented units with gathered context
             for unit in context.units:
                 augmented_content = (
-                    unit.content
-                    + "\n\n[Stub promotion context]:\n"
-                    + "\n".join(context_pieces)
+                    unit.content + "\n\n[Stub promotion context]:\n" + "\n".join(context_pieces)
                 )
                 new_unit = unit.derive(
                     augmented_content,

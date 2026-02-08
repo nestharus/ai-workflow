@@ -9,14 +9,12 @@ from pathlib import Path
 
 from spec_manager.labyrinth.generator.labyrinth_builder import LabyrinthBuilder
 from spec_manager.refinement.evals.baselines.config import BaselineConfig
-from spec_manager.refinement.evals.baselines.model_runners.base import ModelOutput, ModelRunner
 from spec_manager.refinement.evals.baselines.model_runners.glm_runner import GLMRunner
 from spec_manager.refinement.evals.baselines.model_runners.gpt_runner import GPTRunner
 from spec_manager.refinement.evals.baselines.model_runners.opus_runner import OpusRunner
 from spec_manager.refinement.evals.baselines.results.baseline_result import BaselineResult
 from spec_manager.refinement.evals.baselines.scoring.scorer import BaselineScorer
 from spec_manager.refinement.evals.baselines.scoring.test_runner import TestRunner
-
 
 RUNNERS: dict[str, type] = {
     "glm": GLMRunner,
@@ -153,7 +151,7 @@ class BaselineHarness:
 
         # Step 1: Build labyrinth (still need tests + structure)
         labyrinth_dir = workspace / "labyrinth"
-        instance = self._builder.build_and_save(
+        self._builder.build_and_save(
             level=self._config.level,
             seed=self._config.seed,
             output_dir=labyrinth_dir,

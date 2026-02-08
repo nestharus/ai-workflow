@@ -42,7 +42,6 @@ from spec_manager.core.evidence_pointers import (  # noqa: F401
 )
 from spec_manager.core.json_extraction import (
     _extract_json_payload,
-    _infer_extraction_method,
     _record_json_extraction_evidence,
 )
 

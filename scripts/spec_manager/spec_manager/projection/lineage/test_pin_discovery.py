@@ -10,7 +10,7 @@ from __future__ import annotations
 import ast
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -102,7 +102,7 @@ def discover_test_pin_associations(
 
     return TestPinMap(
         associations=associations,
-        scan_timestamp=datetime.now(timezone.utc).isoformat(),
+        scan_timestamp=datetime.now(UTC).isoformat(),
         test_roots_scanned=unique_roots,
     )
 
@@ -133,12 +133,7 @@ def _scan_test_file(
     # Step 1: Walk imports to find which pin-function names are imported
     imported_pins: dict[str, str] = {}  # local_name -> pin_func_id
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                local_name = alias.asname if alias.asname else alias.name
-                if alias.name in name_to_pin:
-                    imported_pins[local_name] = name_to_pin[alias.name]
-        elif isinstance(node, ast.Import):
+        if isinstance(node, ast.ImportFrom | ast.Import):
             for alias in node.names:
                 local_name = alias.asname if alias.asname else alias.name
                 if alias.name in name_to_pin:
@@ -152,37 +147,42 @@ def _scan_test_file(
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
             # Class-based tests
             for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if item.name.startswith("test_"):
-                        qualified_name = f"{node.name}.{item.name}"
-                        assocs = _find_associations_in_function(
-                            item,
-                            qualified_name,
-                            file_str,
-                            imported_pins,
-                            name_to_pin,
-                        )
-                        associations.extend(assocs)
-
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("test_"):
-                # Check if this is a top-level test function (not inside a class)
-                # We already handle class-based tests above, so skip if parent is a class
-                # Since ast.walk doesn't give parent info, we check by looking at module body
-                if _is_top_level_function(tree, node):
+                if isinstance(
+                    item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ) and item.name.startswith("test_"):
+                    qualified_name = f"{node.name}.{item.name}"
                     assocs = _find_associations_in_function(
-                        node,
-                        node.name,
+                        item,
+                        qualified_name,
                         file_str,
                         imported_pins,
                         name_to_pin,
                     )
                     associations.extend(assocs)
 
+        elif (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+            and _is_top_level_function(tree, node)
+        ):
+            # Check if this is a top-level test function (not inside a class)
+            # We already handle class-based tests above, so skip if parent is a class
+            # Since ast.walk doesn't give parent info, we check by looking at module body
+            assocs = _find_associations_in_function(
+                node,
+                node.name,
+                file_str,
+                imported_pins,
+                name_to_pin,
+            )
+            associations.extend(assocs)
+
     return associations
 
 
-def _is_top_level_function(tree: ast.Module, func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _is_top_level_function(
+    tree: ast.Module, func_node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> bool:
     """Check if a function node is at the top level of the module (not inside a class).
 
     Args:
@@ -192,10 +192,7 @@ def _is_top_level_function(tree: ast.Module, func_node: ast.FunctionDef | ast.As
     Returns:
         True if the function is at module level.
     """
-    for node in tree.body:
-        if node is func_node:
-            return True
-    return False
+    return any(node is func_node for node in tree.body)
 
 
 def _find_associations_in_function(
@@ -232,9 +229,7 @@ def _find_associations_in_function(
                 if pin_id not in seen_pins:
                     seen_pins.add(pin_id)
                     # Resolve the original function name from pin_id
-                    pin_func_name = _resolve_pin_func_name(
-                        pin_id, called_name, name_to_pin
-                    )
+                    pin_func_name = _resolve_pin_func_name(pin_id, called_name, name_to_pin)
                     associations.append(
                         TestPinAssociation(
                             test_file=file_str,

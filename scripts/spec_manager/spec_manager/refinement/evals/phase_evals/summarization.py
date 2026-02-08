@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -102,11 +100,13 @@ def compute_summarization_state_hash(result: SummarizationResult) -> str:
     Returns:
         16-character hex digest.
     """
-    content = "|".join([
-        ",".join(sorted(result.summaries_generated)),
-        str(result.key_points_extracted),
-        ",".join(sorted(result.topics_identified)),
-    ])
+    content = "|".join(
+        [
+            ",".join(sorted(result.summaries_generated)),
+            str(result.key_points_extracted),
+            ",".join(sorted(result.topics_identified)),
+        ]
+    )
     return LoopDetector.compute_hash(content)
 
 
@@ -135,10 +135,7 @@ def eval_summarization(
     trajectory: list[float] = []
 
     # Combine expected elements for comparison
-    expected_items = (
-        ground_truth.expected_elements +
-        ground_truth.expected_requirements
-    )
+    expected_items = ground_truth.expected_elements + ground_truth.expected_requirements
 
     for iteration in range(1, max_iterations + 1):
         iterations = iteration

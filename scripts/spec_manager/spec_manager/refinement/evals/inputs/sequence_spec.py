@@ -197,6 +197,11 @@ class SequenceSpec:
 def load_sequence_spec(path: Path) -> SequenceSpec:
     """Load a sequence spec from a YAML or JSON file.
 
+    Supports two layouts:
+    1. Inline: sections and ground_truth embedded in the same file.
+    2. External: ``sections_dir`` points to a directory of .md files,
+       ``ground_truth_path`` points to a separate YAML with expectations.
+
     Args:
         path: Path to the spec file.
 
@@ -222,7 +227,39 @@ def load_sequence_spec(path: Path) -> SequenceSpec:
     if not isinstance(data, dict):
         raise TypeError(f"Invalid spec file format: expected dict, got {type(data)}")
 
+    base_dir = path.parent
+
+    # Load sections from external directory if specified
+    sections_dir = data.get("sections_dir")
+    if sections_dir and "sections" not in data:
+        sections_path = base_dir / sections_dir
+        if sections_path.is_dir():
+            data["sections"] = _load_sections_from_dir(sections_path)
+
+    # Load ground truth from external file if specified
+    gt_path_str = data.get("ground_truth_path")
+    if gt_path_str and "ground_truth" not in data:
+        gt_path = base_dir / gt_path_str
+        if gt_path.exists():
+            gt_content = gt_path.read_text(encoding="utf-8")
+            gt_data = yaml.safe_load(gt_content)
+            if isinstance(gt_data, dict):
+                data["ground_truth"] = gt_data
+
     return SequenceSpec.from_dict(data)
+
+
+def _load_sections_from_dir(directory: Path) -> dict[str, str]:
+    """Load section content from a directory of markdown files.
+
+    Each .md file becomes a section keyed by its stem uppercased.
+    E.g. ``settlement_processing.md`` -> ``SETTLEMENT_PROCESSING``.
+    """
+    sections: dict[str, str] = {}
+    for md_file in sorted(directory.glob("*.md")):
+        key = md_file.stem.upper()
+        sections[key] = md_file.read_text(encoding="utf-8")
+    return sections
 
 
 def load_sequence_specs_from_dir(directory: Path) -> list[SequenceSpec]:

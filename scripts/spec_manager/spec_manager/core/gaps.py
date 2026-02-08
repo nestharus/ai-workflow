@@ -25,7 +25,9 @@ Evidence categories (invariant-driven):
 
 from __future__ import annotations
 
+import logging
 import re
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,6 +39,8 @@ from typing import Any, ClassVar
 from .annotations import AnnotationParser
 from .ids import IdValidator
 from .sections import SectionExtractor
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Evidence Data Structures (Detector Output)
@@ -146,18 +150,17 @@ class FormatComplianceDetector:
                     )
 
             # Check for unescaped LaTeX
-            if re.search(r"(?<!\\)\$[^$]+\$", line):
+            if re.search(r"(?<!\\)\$[^$]+\$", line) and "\\" not in line:
                 # Could be intentional, so just info
-                if "\\" not in line:
-                    gaps.append(
-                        DetectorFinding(
-                            detector="format_violation",
-                            severity=Severity.INFO,
-                            message="Possible unescaped LaTeX",
-                            location=f"{file_path}:{line_num}",
-                            details={"line": line.strip()},
-                        )
+                gaps.append(
+                    DetectorFinding(
+                        detector="format_violation",
+                        severity=Severity.INFO,
+                        message="Possible unescaped LaTeX",
+                        location=f"{file_path}:{line_num}",
+                        details={"line": line.strip()},
                     )
+                )
 
         return gaps
 
@@ -219,7 +222,7 @@ class DuplicateDetector:
             headers[normalized].append((line_num, text))
 
         # Flag duplicates
-        for normalized, occurrences in headers.items():
+        for occurrences in headers.values():
             if len(occurrences) > 1:
                 # Check if exact duplicates or near-duplicates
                 texts = [t for _, t in occurrences]
@@ -236,7 +239,10 @@ class DuplicateDetector:
                         severity=severity,
                         message=msg,
                         location=file_path,
-                        details={"lines": [l for l, _ in occurrences], "texts": texts},
+                        details={
+                            "lines": [line_num for line_num, _ in occurrences],
+                            "texts": texts,
+                        },
                     )
                 )
 
@@ -257,8 +263,7 @@ class UndefinedFunctionDetector:
     not definitive failure conditions.
     """
 
-    # DEFAULT Built-in functions to ignore - CONFIGURABLE VIA YAML (Gap 12 fix)
-    DEFAULT_BUILTINS = {
+    DEFAULT_BUILTINS: ClassVar[set[str]] = {
         "if",
         "else",
         "for",
@@ -299,7 +304,7 @@ class UndefinedFunctionDetector:
     }
 
     # DEFAULT Categories for undefined functions - CONFIGURABLE VIA YAML (Gap 12 fix)
-    DEFAULT_CATEGORIES = {
+    DEFAULT_CATEGORIES: ClassVar[dict[str, str]] = {
         "PATTERN_": "PATTERN",
         "FIELD_": "FIELD",
         "EMBED_": "EMBED",
@@ -345,9 +350,9 @@ class UndefinedFunctionDetector:
                 if "exclude_builtins" in uf_config:
                     self.builtins -= set(uf_config["exclude_builtins"])
 
-        except Exception:
+        except Exception as e:
             # Config load failure is non-fatal - use defaults
-            pass
+            logger.debug(f"Failed to load config from {config_path}: {e}")
 
     def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect undefined function calls in pseudocode.
@@ -480,7 +485,10 @@ class SequenceAnalyzer:
                         message=msg,
                         location=file_path,
                         element_id=f"Algorithm {num}",
-                        details={"lines": [l for l, _ in occurrences], "previews": previews},
+                        details={
+                            "lines": [line_num for line_num, _ in occurrences],
+                            "previews": previews,
+                        },
                     )
                 )
 
@@ -684,7 +692,12 @@ class ProofChainDetector:
     Output is grouped by patch (which patch introduced broken chains).
     """
 
-    def __init__(self, llm_client=None) -> None:
+    def __init__(self, llm_client: Any = None) -> None:
+        """Initialize detector with optional LLM for inference.
+
+        Args:
+            llm_client: Optional LLM client for prose inference
+        """
         self._llm = llm_client
 
     def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
@@ -777,11 +790,16 @@ class ProofChainDetector:
                     evidence.append(
                         DetectorFinding(
                             severity=Severity.WARNING,
-                            message=f"{alg_id} has no explicit claim references, but LLM infers possible claims",
+                            message=(
+                                f"{alg_id} has no explicit claim references, but LLM infers possible claims"
+                            ),
                             location=file_path,
                             element_id=alg_id,
                             detector="proof_chain",
-                            details={"inferred_claims": inferred_claims, "method": "llm_inference"},
+                            details={
+                                "inferred_claims": inferred_claims,
+                                "method": "llm_inference",
+                            },
                         )
                     )
                 else:
@@ -975,7 +993,12 @@ class ProseFragmentInferenceDetector:
     Outputs DetectorFinding with confidence scores, linking back to source text.
     """
 
-    def __init__(self, llm_client=None) -> None:
+    def __init__(self, llm_client: Any = None) -> None:
+        """Initialize detector with optional LLM for inference.
+
+        Args:
+            llm_client: Optional LLM client for prose inference
+        """
         self._llm = llm_client
 
     def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
@@ -1153,8 +1176,9 @@ Output as JSON list: [{{"type": "...", "confidence": 0.X, "text": "...", "struct
                         },
                     )
                 )
-        except Exception:
+        except Exception as e:
             pass  # LLM failures are non-fatal
+            logger.debug(f"LLM inference failed: {e}")
 
         return evidence
 
@@ -1245,7 +1269,7 @@ class InferredClaimPromotionStrategy:
 class UncertaintyDetector:
     """Detects unresolved uncertainty markers in content."""
 
-    UNCERTAINTY_PATTERNS = [
+    UNCERTAINTY_PATTERNS: ClassVar[list[tuple[re.Pattern[str], str]]] = [
         (re.compile(r"\?(?:\s|$)", re.MULTILINE), "question"),
         (re.compile(r"\bTODO\b", re.IGNORECASE), "todo"),
         (re.compile(r"\bTBD\b", re.IGNORECASE), "tbd"),
@@ -1705,7 +1729,7 @@ class GapSynthesizer:
                 file_part = e.location.split(":")[0] if ":" in e.location else e.location
                 by_file[file_part].append(e)
 
-            for file_part, file_evidence in by_file.items():
+            for _file_part, file_evidence in by_file.items():
                 gap = self._create_gap(file_evidence, None)
                 gaps.append(gap)
 
@@ -2121,6 +2145,11 @@ def detect_gaps(
     Returns:
         List of gap records (dicts)
     """
+    warnings.warn(
+        "detect_gaps() is deprecated. Use UnifiedGapDetector instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     gaps = []
 
     # Detect undefined references
@@ -2737,12 +2766,11 @@ def _detect_cohesion_issues(content: str, registry, libraries_dir: Path) -> list
         lib_a = id_to_library.get(id_a)
         for ref in refs_a:
             lib_b = id_to_library.get(ref)
-            if lib_a and lib_b and lib_a != lib_b:
+            if lib_a and lib_b and lib_a != lib_b and id_a in reference_graph.get(ref, set()):
                 # Check if ref also references id_a (bidirectional)
-                if id_a in reference_graph.get(ref, set()):
-                    pair = tuple(sorted([id_a, ref]))
-                    if pair not in cross_lib_clusters:
-                        cross_lib_clusters.append(pair)
+                pair = tuple(sorted([id_a, ref]))
+                if pair not in cross_lib_clusters:
+                    cross_lib_clusters.append(pair)
 
     for id_a, id_b in cross_lib_clusters:
         lib_a = id_to_library.get(id_a)
@@ -2806,7 +2834,7 @@ def _detect_pin_gaps(content: str, artifact_root: Path | None) -> list[dict[str,
         r"^D\d+$",
     ]
 
-    for id_value, section in result.sections.items():
+    for id_value, _section in result.sections.items():
         is_implementation = any(re.match(pattern, id_value) for pattern in implementation_patterns)
         if is_implementation and id_value not in pinned_sections:
             gaps.append(
@@ -2830,6 +2858,11 @@ def format_gaps_md(gaps: list[dict[str, Any]]) -> str:
 
     Uses IDs for stable references instead of line numbers which change.
     """
+    warnings.warn(
+        "format_gaps_md() is deprecated. Use UnifiedGapDetector.format_gaps_md() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     lines = [
         "# Gaps and Proof Obligations",
         "",

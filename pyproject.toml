@@ -293,6 +293,32 @@ convention = "google"
     "ANN",       # Type annotations not needed in test helpers
     "F401",      # Conditionally unused imports
 ]
+"scripts/spec_manager/tests/**/*.py" = [
+    "S101",      # Allow assert statements
+    "S104",      # Allow binding to all interfaces
+    "S105",      # Allow hardcoded passwords in test fixtures
+    "S106",      # Allow hardcoded passwords in function args
+    "S108",      # Allow insecure temp file usage
+    "S603",      # Allow subprocess without shell=True
+    "S608",      # Allow SQL with string formatting
+    "D",         # Skip docstring requirements
+    "TCH003", "TC001", "TC002",  # Allow runtime type imports
+    "TRY003",    # Allow inline exception messages
+    "ANN401",    # Allow Any type annotations
+    "E402",      # Allow late imports (after sys.path manipulation)
+    "E501",      # Line length in test data strings
+    "W293",      # Blank line whitespace in test data strings
+    "ANN",       # Type annotations not needed in test helpers
+    "F401",      # Conditionally unused imports
+    "RUF059",    # Unpacked variables never used (test setup)
+    "RUF043",    # Pattern metacharacters in test assertions
+    "B017",      # Blind exception assertions are acceptable in tests
+    "B011",      # assert False is acceptable for pytest.raises fallback
+    "S110", "S112",  # try-except-pass acceptable in test setup
+    "E741",      # Ambiguous variable names in test fixtures (l, O, I)
+    "F821",      # Undefined names in test assertions (intentional undefined references)
+    "SIM105", "SIM110",  # Simplification not required in tests
+]
 
 # Production: Minimal ignores for technical requirements
 "**/__init__.py" = ["D104"]
@@ -323,6 +349,8 @@ convention = "google"
 "scripts/tasks/**/*.py" = ["ANN401"]
 "scripts/planner/**/*.py" = ["ANN401"]
 "scripts/spec_refinement/qa/**/*.py" = ["ANN401"]  # QA validators need flexible JSON payloads
+"scripts/spec_manager/spec_manager/**/*.py" = ["ANN401", "D"]  # ANN401: flexible type signatures; D: docstrings deferred to codebase maturity
+"scripts/spec_manager/spec_manager/core/gaps.py" = ["ANN001", "E501", "S311", "S112"]  # Complex type inference module with domain-specific long lines
 "scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
 
 # Scripts: S103 for world-writable socket permissions (security: host/container user isolation)

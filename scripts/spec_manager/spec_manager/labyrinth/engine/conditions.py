@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from spec_manager.labyrinth.core.record import InputRecord
 
 
 class ConditionOperator(str, Enum):
     """Operators for comparing field values."""
+
     EQ = "eq"
     NEQ = "neq"
     GT = "gt"
@@ -23,6 +24,7 @@ class ConditionOperator(str, Enum):
 
 class LogicOperator(str, Enum):
     """Logical operators for combining conditions."""
+
     AND = "and"
     OR = "or"
 
@@ -36,6 +38,7 @@ class Condition:
         operator: Comparison operator.
         value: Value to compare against.
     """
+
     field_name: str
     operator: ConditionOperator
     value: Any
@@ -75,6 +78,7 @@ class ConditionGroup:
         logic: How to combine the conditions (AND/OR).
         conditions: List of Condition or ConditionGroup instances.
     """
+
     logic: LogicOperator = LogicOperator.AND
     conditions: list[Condition | ConditionGroup] = field(default_factory=list)
 

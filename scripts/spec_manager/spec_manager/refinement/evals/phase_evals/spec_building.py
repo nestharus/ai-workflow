@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -104,7 +102,9 @@ def extract_spec_building_outputs(manager: WorkspaceManager) -> SpecBuildingResu
                     if isinstance(constraint, str):
                         constraints_identified.add(constraint)
                     elif isinstance(constraint, dict):
-                        constraint_text = constraint.get("description") or constraint.get("constraint")
+                        constraint_text = constraint.get("description") or constraint.get(
+                            "constraint"
+                        )
                         if constraint_text:
                             constraints_identified.add(constraint_text)
 
@@ -148,11 +148,13 @@ def compute_spec_building_state_hash(result: SpecBuildingResult) -> str:
     Returns:
         16-character hex digest.
     """
-    content = "|".join([
-        ",".join(sorted(result.requirements_captured)),
-        ",".join(sorted(result.citations_found)),
-        ",".join(sorted(result.decisions_made)),
-    ])
+    content = "|".join(
+        [
+            ",".join(sorted(result.requirements_captured)),
+            ",".join(sorted(result.citations_found)),
+            ",".join(sorted(result.decisions_made)),
+        ]
+    )
     return LoopDetector.compute_hash(content)
 
 
@@ -182,9 +184,9 @@ def eval_spec_building(
 
     # Combine expected items for comprehensive scoring
     expected_items = (
-        ground_truth.expected_requirements +
-        ground_truth.expected_citations +
-        ground_truth.expected_decisions
+        ground_truth.expected_requirements
+        + ground_truth.expected_citations
+        + ground_truth.expected_decisions
     )
 
     for iteration in range(1, max_iterations + 1):
@@ -194,11 +196,7 @@ def eval_spec_building(
         result = extract_spec_building_outputs(manager)
 
         # Combine actual items for scoring
-        actual_items = (
-            result.requirements_captured +
-            result.citations_found +
-            result.decisions_made
-        )
+        actual_items = result.requirements_captured + result.citations_found + result.decisions_made
 
         # Score against ground truth
         score = score_detail_capture(
@@ -224,9 +222,9 @@ def eval_spec_building(
     # Final scoring
     final_result = extract_spec_building_outputs(manager)
     final_actual = (
-        final_result.requirements_captured +
-        final_result.citations_found +
-        final_result.decisions_made
+        final_result.requirements_captured
+        + final_result.citations_found
+        + final_result.decisions_made
     )
     final_score = score_detail_capture(
         expected_items,

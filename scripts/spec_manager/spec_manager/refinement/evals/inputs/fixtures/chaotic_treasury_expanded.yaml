@@ -1,0 +1,27 @@
+# Manifest for the expanded treasury spec.
+# Sections are loaded from chaotic_treasury_expanded/*.md
+# Ground truth is loaded from chaotic_treasury_expanded_ground_truth.yaml
+
+spec_id: chaotic_treasury_expanded
+title: Treasury Settlement Engine (Expanded Complexity)
+description: |
+  Extended version of the chaotic treasury spec with additional
+  complexity dimensions including cross-system invariants, transaction
+  validation, deployment configuration, invariant traps, and format
+  diversity. Multi-file spec with cross-references between documents.
+
+complexity_score: 12
+tags:
+  - chaotic
+  - prose
+  - treasury
+  - multi-library
+  - integration
+  - cross-references
+  - format-diversity
+  - invariant-traps
+
+sections_dir: chaotic_treasury_expanded
+ground_truth_path: chaotic_treasury_expanded_ground_truth.yaml
+
+rules: []

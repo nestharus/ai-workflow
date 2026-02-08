@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from typing import Any
 
 from .layout import BranchLayout
@@ -105,9 +104,7 @@ class AtomRegistry:
         data: dict[str, Any] = {
             "atoms": {aid: desc.to_dict() for aid, desc in self._atoms.items()},
         }
-        self._layout.atom_registry_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8"
-        )
+        self._layout.atom_registry_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     @classmethod
     def load(cls, layout: BranchLayout) -> AtomRegistry:

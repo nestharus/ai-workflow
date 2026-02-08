@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -73,16 +74,12 @@ class AsyncMessageBus:
 
         await asyncio.gather(*tasks)
 
-    async def _safe_dispatch(
-        self, sub: Subscription, topic: str, payload: dict[str, Any]
-    ) -> None:
+    async def _safe_dispatch(self, sub: Subscription, topic: str, payload: dict[str, Any]) -> None:
         """Dispatch to a subscriber with error handling."""
         try:
             await sub.handler(topic, payload)
         except Exception:
-            logger.exception(
-                "Handler error (subscriber=%s, topic=%s)", sub.subscriber_id, topic
-            )
+            logger.exception("Handler error (subscriber=%s, topic=%s)", sub.subscriber_id, topic)
 
     def get_subscriber_count(self, topic: str) -> int:
         """Return the number of subscribers for a topic."""

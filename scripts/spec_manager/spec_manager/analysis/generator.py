@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -148,9 +148,7 @@ def generate_analysis_file(
     total_atoms = len(atoms)
     implemented = sum(1 for a in atoms if not a.is_unimplemented)
     unimplemented = total_atoms - implemented
-    pass_through_count = sum(
-        1 for e in lineage_edges if e.transformation == "pass_through"
-    )
+    pass_through_count = sum(1 for e in lineage_edges if e.transformation == "pass_through")
     wrap_count = sum(1 for e in lineage_edges if e.transformation == "wrap")
     smear_count = sum(1 for e in lineage_edges if e.transformation == "smear")
     introduction_count = len(orphaned)
@@ -166,7 +164,7 @@ def generate_analysis_file(
         "total_lineage_edges": len(lineage_edges),
     }
 
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
 
     return AnalysisFileSchema(
         run_id=run_id,

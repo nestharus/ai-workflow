@@ -14,8 +14,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from spec_manager.schemas.pin_functions import ProjectionType
 from spec_manager.projection.lineage.table import ProjectionLineageTable
+from spec_manager.schemas.pin_functions import ProjectionType
 
 
 @dataclass

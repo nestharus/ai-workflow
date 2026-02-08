@@ -18,10 +18,11 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
-from spec_manager.refinement.wrappers.token_manager import TokenBudget, TokenManager, estimate_tokens
-
+from spec_manager.refinement.wrappers.token_manager import (
+    TokenManager,
+)
 
 # Task size limits for GLM
 GLM_TASK_SIZE_LIMITS = {
@@ -142,7 +143,9 @@ def extract_json_from_text(text: str) -> dict[str, Any] | list[Any] | None:
 
     # Try finding JSON-like structure
     # Look for { ... } or [ ... ]
-    json_match = re.search(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}|\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\])", text, re.DOTALL)
+    json_match = re.search(
+        r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}|\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\])", text, re.DOTALL
+    )
     if json_match:
         try:
             return json.loads(json_match.group(1))

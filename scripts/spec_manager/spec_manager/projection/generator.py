@@ -9,9 +9,9 @@ Phase 7 Work Item 1: Projection Generation with Pins
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from spec_manager.schemas.projection import (
     Pin,
@@ -50,8 +50,8 @@ class ProjectionGenerator:
 
     def generate_plan(
         self,
-        libraries: list["Library"],
-        elements: list["DerivedElement"],
+        libraries: list[Library],
+        elements: list[DerivedElement],
         projection_id: str | None = None,
     ) -> ProjectionArtifact:
         """Generate a plan.md projection from libraries and elements.
@@ -67,7 +67,7 @@ class ProjectionGenerator:
         self.reset_pin_counter()
 
         if projection_id is None:
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             projection_id = f"PROJ-PLAN-{timestamp}"
 
         lines: list[str] = []
@@ -78,8 +78,8 @@ class ProjectionGenerator:
         header = "# Plan\n\n"
         if self.policy.include_metadata:
             header += f"<!-- projection_id: {projection_id} -->\n"
-            header += f"<!-- generated_at: {datetime.now(timezone.utc).isoformat()} -->\n"
-            header += f"<!-- generated_from: LIBRARIES -->\n\n"
+            header += f"<!-- generated_at: {datetime.now(UTC).isoformat()} -->\n"
+            header += "<!-- generated_from: LIBRARIES -->\n\n"
 
         lines.append(header)
         current_offset += len(header)
@@ -103,9 +103,7 @@ class ProjectionGenerator:
         else:
             # Flat list of elements
             for elem in sorted(elements, key=lambda x: x.elem_id):
-                elem_content, elem_pins = self._generate_element_section(
-                    elem, current_offset
-                )
+                elem_content, elem_pins = self._generate_element_section(elem, current_offset)
                 lines.append(elem_content)
                 pins.extend(elem_pins)
                 current_offset += len(elem_content)
@@ -120,11 +118,9 @@ class ProjectionGenerator:
             pins=pins,
         )
 
-    def _group_by_library(
-        self, elements: list["DerivedElement"]
-    ) -> dict[str, list["DerivedElement"]]:
+    def _group_by_library(self, elements: list[DerivedElement]) -> dict[str, list[DerivedElement]]:
         """Group elements by library ID."""
-        groups: dict[str, list["DerivedElement"]] = {}
+        groups: dict[str, list[DerivedElement]] = {}
         for elem in elements:
             lib_id = elem.lib_id
             if lib_id not in groups:
@@ -134,8 +130,8 @@ class ProjectionGenerator:
 
     def _generate_library_section(
         self,
-        library: "Library",
-        elements: list["DerivedElement"],
+        library: Library,
+        elements: list[DerivedElement],
         offset: int,
     ) -> tuple[str, list[Pin]]:
         """Generate content for a library section.
@@ -174,9 +170,7 @@ class ProjectionGenerator:
 
         # Elements in this library
         for elem in sorted(elements, key=lambda x: x.elem_id):
-            elem_content, elem_pins = self._generate_element_section(
-                elem, current_offset
-            )
+            elem_content, elem_pins = self._generate_element_section(elem, current_offset)
             lines.append(elem_content)
             pins.extend(elem_pins)
             current_offset += len(elem_content)
@@ -185,7 +179,7 @@ class ProjectionGenerator:
 
     def _generate_element_section(
         self,
-        element: "DerivedElement",
+        element: DerivedElement,
         offset: int,
     ) -> tuple[str, list[Pin]]:
         """Generate content for an element.
@@ -224,8 +218,8 @@ class ProjectionGenerator:
 
 
 def generate_plan_from_libraries(
-    libraries: list["Library"],
-    elements: list["DerivedElement"],
+    libraries: list[Library],
+    elements: list[DerivedElement],
     policy: ProjectionPolicy | None = None,
 ) -> ProjectionArtifact:
     """Generate a plan.md projection from libraries (ALG-PROJ-0001).
@@ -293,6 +287,6 @@ def load_projection_pins(pins_path: Path) -> list[Pin]:
 __all__ = [
     "ProjectionGenerator",
     "generate_plan_from_libraries",
-    "save_projection",
     "load_projection_pins",
+    "save_projection",
 ]

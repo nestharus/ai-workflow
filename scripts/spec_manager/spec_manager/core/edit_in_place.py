@@ -20,10 +20,8 @@ import hashlib
 import io
 import re
 import tokenize
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
 
 # =============================================================================
 # Plan 1: Core Data Structures
@@ -163,7 +161,7 @@ class ProjectTranslationState:
 
 _INFRASTRUCTURE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^#\s*type:\s*ignore"),  # type: ignore[...]
-    re.compile(r"^#\s*noqa"),  # noqa: E501
+    re.compile(r"^#\s*noqa"),
     re.compile(r"^#\s*pragma:\s*no\s*cover"),  # pragma: no cover
     re.compile(r"^#\s*pylint:\s*(disable|enable)"),  # pylint directives
     re.compile(r"^#\s*fmt:\s*(on|off)"),  # black/ruff format directives
@@ -366,9 +364,8 @@ def _is_stub_body(body: list[ast.stmt]) -> tuple[bool, str | None]:
                 if isinstance(stmt.exc, ast.Call) and isinstance(stmt.exc.func, ast.Name):
                     if stmt.exc.func.id == "NotImplementedError":
                         continue
-                elif isinstance(stmt.exc, ast.Name):
-                    if stmt.exc.id == "NotImplementedError":
-                        continue
+                elif isinstance(stmt.exc, ast.Name) and stmt.exc.id == "NotImplementedError":
+                    continue
             return False, None
         else:
             return False, None
@@ -380,7 +377,11 @@ def _is_stub_body(body: list[ast.stmt]) -> tuple[bool, str | None]:
     first = effective_body[0]
     if isinstance(first, ast.Pass):
         return True, "pass"
-    elif isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and first.value.value is ...:
+    elif (
+        isinstance(first, ast.Expr)
+        and isinstance(first.value, ast.Constant)
+        and first.value.value is ...
+    ):
         return True, "ellipsis"
     elif isinstance(first, ast.Raise):
         return True, "not_implemented"
@@ -525,11 +526,7 @@ def analyze_functions(
             docstring = _get_docstring(node.body)
 
             # Find spec comments within this function's line range
-            func_comments = [
-                c
-                for c in comments
-                if node.lineno <= c.line <= end_line
-            ]
+            func_comments = [c for c in comments if node.lineno <= c.line <= end_line]
 
             # Determine translation state
             state = _determine_translation_state(node, func_comments, is_stub)
@@ -626,10 +623,7 @@ def analyze_file(filepath: str) -> FileTranslationState:
         func_line_ranges.append((func.line_start, func.line_end))
 
     def _is_inside_function(line: int) -> bool:
-        for start, end in func_line_ranges:
-            if start <= line <= end:
-                return True
-        return False
+        return any(start <= line <= end for start, end in func_line_ranges)
 
     # Module-level spec comments: SPEC or TODO kind and not inside any function
     module_comments = [

@@ -5,14 +5,11 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any
-
-from spec_manager.schemas.hollowed_spec import HollowedParagraph
-
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 
 # Reuse the same stop words filter from the extractor
-from spec_manager.refinement.hollowed_spec.extractor import _STOP_WORDS, _ENTITY_REF_RE
+from spec_manager.refinement.hollowed_spec.extractor import _ENTITY_REF_RE, _STOP_WORDS
+from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+from spec_manager.schemas.hollowed_spec import HollowedParagraph
 
 _WORD_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 

@@ -35,12 +35,10 @@ class TagItem(BaseModel):
     body: str
 
     @model_validator(mode="after")
-    def validate_evidence_or_existing(self) -> "TagItem":
+    def validate_evidence_or_existing(self) -> TagItem:
         """Validate that new items have evidence."""
         if self.existing_elem_id is None and not self.evidence_atom_ids:
-            raise ValueError(
-                "New items (without existing_elem_id) must have evidence_atom_ids"
-            )
+            raise ValueError("New items (without existing_elem_id) must have evidence_atom_ids")
         return self
 
 
@@ -113,8 +111,6 @@ class TagIndexDelta(BaseModel):
                     f"Relation references unknown from_local_id: {relation.from_local_id}"
                 )
             if relation.to_local_id not in local_ids:
-                errors.append(
-                    f"Relation references unknown to_local_id: {relation.to_local_id}"
-                )
+                errors.append(f"Relation references unknown to_local_id: {relation.to_local_id}")
 
         return errors

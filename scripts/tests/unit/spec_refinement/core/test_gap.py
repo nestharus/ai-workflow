@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from spec_manager.core.gaps import Severity
-from spec_manager.refinement.core.gap import (
+from spec_manager.core.gap import (
     Gap,
     GapEvidence,
     GapSynthesizer,
@@ -16,6 +15,7 @@ from spec_manager.refinement.core.gap import (
     format_gap_table,
     parse_gaps_markdown,
 )
+from spec_manager.core.gaps import Severity
 
 
 def _make_evidence(

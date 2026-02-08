@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from spec_manager.core.gap import Gap, GapEvidence, GapType
+from spec_manager.core.gap_queue import GapQueue
 from spec_manager.core.gaps import Severity
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
-from spec_manager.refinement.core.gap_queue import GapQueue
 
 
 def _make_gap(gap_id: str, status: str = "open") -> Gap:

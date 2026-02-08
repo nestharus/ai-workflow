@@ -16,7 +16,6 @@ semantic matching at eval time.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,9 +51,7 @@ _NORMATIVE_PATTERNS: list[re.Pattern[str]] = [
     # Settlement date references (T-1, T+0, T+2)
     re.compile(r"\bT[+-]\d+\b"),
     re.compile(r"\b(?:must|shall|required|guarantee[ds]?)\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:threshold|limit|cap(?:ped)?|tolerance|window|band)\b", re.IGNORECASE
-    ),
+    re.compile(r"\b(?:threshold|limit|cap(?:ped)?|tolerance|window|band)\b", re.IGNORECASE),
     re.compile(
         r"\b(?:exceed|breach|trigger|block|reject|escalat|purg|retain)\b",
         re.IGNORECASE,
@@ -143,9 +140,7 @@ class ProseExtractor:
             "sections_found": len(sections),
             "libraries_found": len(libraries),
             "libraries": [lib.name for lib in libraries.values()],
-            "total_requirements": sum(
-                len(lib.requirements) for lib in libraries.values()
-            ),
+            "total_requirements": sum(len(lib.requirements) for lib in libraries.values()),
         }
 
     # ------------------------------------------------------------------
@@ -213,9 +208,7 @@ class ProseExtractor:
     # Library identification
     # ------------------------------------------------------------------
 
-    def _identify_libraries(
-        self, sections: dict[str, str]
-    ) -> dict[str, LibraryInfo]:
+    def _identify_libraries(self, sections: dict[str, str]) -> dict[str, LibraryInfo]:
         """Identify libraries using a section-first approach.
 
         For each non-OVERVIEW section, finds the best-matching CamelCase
@@ -246,7 +239,7 @@ class ProseExtractor:
                     counter[n] = counter.get(n, 0) + 1
                 section_local_names[label] = counter
 
-        non_overview_labels = [l for l in sections if l != "OVERVIEW"]
+        non_overview_labels = [section for section in sections if section != "OVERVIEW"]
 
         # For each non-OVERVIEW section, find the best library name
         libraries: dict[str, LibraryInfo] = {}
@@ -255,24 +248,18 @@ class ProseExtractor:
 
         for label in non_overview_labels:
             # Strategy 1: match section name to an OVERVIEW CamelCase entity
-            best = self._best_candidate_for_section(
-                label, candidates - used_names
-            )
+            best = self._best_candidate_for_section(label, candidates - used_names)
 
             # Strategy 2: most frequent CamelCase in this section (not yet used)
             if not best:
                 local = section_local_names.get(label, {})
-                available = {
-                    n: c for n, c in local.items() if n not in used_names
-                }
+                available = {n: c for n, c in local.items() if n not in used_names}
                 if available:
                     best = max(available, key=lambda n: available[n])
 
             # Strategy 3: match against all CamelCase names
             if not best:
-                best = self._best_candidate_for_section(
-                    label, all_candidates - used_names
-                )
+                best = self._best_candidate_for_section(label, all_candidates - used_names)
 
             if best:
                 lib_counter += 1
@@ -286,9 +273,7 @@ class ProseExtractor:
         return libraries
 
     @staticmethod
-    def _best_candidate_for_section(
-        section_label: str, candidates: set[str]
-    ) -> str | None:
+    def _best_candidate_for_section(section_label: str, candidates: set[str]) -> str | None:
         """Find the CamelCase candidate that best matches a section label.
 
         Splits both into word stems and counts 4-char prefix matches.
@@ -313,9 +298,7 @@ class ProseExtractor:
             for sec_word in section_words:
                 sec_prefix = sec_word[:4]
                 for cand_word in cand_words:
-                    if cand_word.startswith(sec_prefix) or sec_word.startswith(
-                        cand_word[:4]
-                    ):
+                    if cand_word.startswith(sec_prefix) or sec_word.startswith(cand_word[:4]):
                         score += 1
                         break
 

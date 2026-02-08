@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .evidence_ranges import EVIDENCE_ID_PATTERN, EVID_CITATION_PATTERN
+from .evidence_ranges import EVID_CITATION_PATTERN, EVIDENCE_ID_PATTERN
 
 # Pattern to extract EVID from bracketed citation
 _EVID_EXTRACT_PATTERN = re.compile(r"\[(EVID-F\d{4}-R\d{4}-L\d+-L\d+)\]")

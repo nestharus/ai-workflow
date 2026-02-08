@@ -16,7 +16,6 @@ from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
-
 # Default marker comment that classifies a function as an introduction
 _DEFAULT_INTRODUCTION_MARKERS = ["# @introduced", "# @infrastructure"]
 
@@ -87,13 +86,15 @@ def _extract_functions_from_file(file_path: Path) -> list[dict[str, Any]]:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     end_line = item.end_lineno or item.lineno
                     body_lines = lines[item.lineno - 1 : end_line]
-                    results.append({
-                        "name": item.name,
-                        "qualified_name": f"{class_name}.{item.name}",
-                        "line": item.lineno,
-                        "is_method": True,
-                        "body_source_lines": body_lines,
-                    })
+                    results.append(
+                        {
+                            "name": item.name,
+                            "qualified_name": f"{class_name}.{item.name}",
+                            "line": item.lineno,
+                            "is_method": True,
+                            "body_source_lines": body_lines,
+                        }
+                    )
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # Skip nested functions inside classes (handled above)
             parent_is_class = False
@@ -108,13 +109,15 @@ def _extract_functions_from_file(file_path: Path) -> list[dict[str, Any]]:
 
             end_line = node.end_lineno or node.lineno
             body_lines = lines[node.lineno - 1 : end_line]
-            results.append({
-                "name": node.name,
-                "qualified_name": node.name,
-                "line": node.lineno,
-                "is_method": False,
-                "body_source_lines": body_lines,
-            })
+            results.append(
+                {
+                    "name": node.name,
+                    "qualified_name": node.name,
+                    "line": node.lineno,
+                    "is_method": False,
+                    "body_source_lines": body_lines,
+                }
+            )
 
     return results
 
@@ -191,36 +194,39 @@ def build_pin_coverage_report(
             is_introduction = False
             introduction_has_spec = False
 
-            if arch_location in introduction_edges:
+            if arch_location in introduction_edges or (
+                not has_pin
+                and (
+                    _is_infrastructure_path(file_str)
+                    or _has_introduction_marker(
+                        func_info.get("body_source_lines", []),
+                        markers,
+                    )
+                )
+            ):
                 is_introduction = True
-            elif not has_pin:
-                # Check file path and markers
-                if _is_infrastructure_path(file_str):
-                    is_introduction = True
-                elif _has_introduction_marker(
-                    func_info.get("body_source_lines", []),
-                    markers,
-                ):
-                    is_introduction = True
 
             # If it is an introduction, check for spec comments
             if is_introduction:
                 body_lines = func_info.get("body_source_lines", [])
                 spec_comments = [
-                    line for line in body_lines
+                    line
+                    for line in body_lines
                     if line.strip().startswith("#") and not line.strip().startswith("#!")
                 ]
                 introduction_has_spec = len(spec_comments) > 0
 
-            items.append(PinCoverageItem(
-                arch_location=arch_location,
-                arch_file_path=file_str,
-                arch_line=func_info["line"],
-                has_pin=has_pin,
-                pin_func_ids=pin_func_ids,
-                is_introduction=is_introduction,
-                introduction_has_spec=introduction_has_spec,
-            ))
+            items.append(
+                PinCoverageItem(
+                    arch_location=arch_location,
+                    arch_file_path=file_str,
+                    arch_line=func_info["line"],
+                    has_pin=has_pin,
+                    pin_func_ids=pin_func_ids,
+                    is_introduction=is_introduction,
+                    introduction_has_spec=introduction_has_spec,
+                )
+            )
 
     total = len(items)
     pinned = sum(1 for item in items if item.has_pin)
@@ -280,12 +286,14 @@ def check_pin_coverage(
     findings: list[dict[str, Any]] = []
     for item in report.items:
         if not item.has_pin and not item.is_introduction:
-            findings.append({
-                "arch_location": item.arch_location,
-                "arch_file_path": item.arch_file_path,
-                "arch_line": item.arch_line,
-                "reason": "No pin-function import and not classified as introduction",
-            })
+            findings.append(
+                {
+                    "arch_location": item.arch_location,
+                    "arch_file_path": item.arch_file_path,
+                    "arch_line": item.arch_line,
+                    "reason": "No pin-function import and not classified as introduction",
+                }
+            )
 
     passed = report.coverage_ratio >= threshold
     duration = (time.monotonic() - start) * 1000

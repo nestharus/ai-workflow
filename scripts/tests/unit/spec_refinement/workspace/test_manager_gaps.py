@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from spec_manager.core.gap import Gap, GapEvidence, GapType
 from spec_manager.core.gaps import Severity
-from spec_manager.refinement.core.gap import Gap, GapEvidence, GapType
 from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.refinement.workspace.state import Phase
 

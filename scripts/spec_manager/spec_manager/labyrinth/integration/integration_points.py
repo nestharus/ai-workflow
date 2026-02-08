@@ -8,7 +8,6 @@ point topology.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass
@@ -24,6 +23,7 @@ class IntegrationPoint:
         required_rules: Rule IDs that MUST be registered here.
         after_rules: Rules that must execute before this point.
     """
+
     point_id: str
     name: str
     topic: str

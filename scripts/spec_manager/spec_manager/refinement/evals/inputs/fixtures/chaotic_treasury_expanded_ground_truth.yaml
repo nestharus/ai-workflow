@@ -1,0 +1,163 @@
+# Ground truth for chaotic_treasury_expanded
+# Authoritative expected outputs for each eval phase.
+# 52 requirements across 8 libraries, 10 sections, complexity 12.
+# Written BEFORE spec prose to prevent contamination.
+# Includes side-effect requirements and logging constraints from original spec.
+
+spec_id: chaotic_treasury_expanded
+
+sectionization:
+  expected_sections:
+    - OVERVIEW
+    - SETTLEMENT_PROCESSING
+    - RISK_ENGINE
+    - RECONCILIATION_SERVICE
+    - EVENT_PIPELINE
+    - REGULATORY_COMPLIANCE
+    - NOTIFICATION_AND_AUDIT
+    - TRANSACTION_VALIDATION
+    - CROSS_SYSTEM_INVARIANTS
+    - DEPLOYMENT_AND_OPERATIONS
+
+summarization:
+  expected_libraries:
+    - Settlement netting and gross processing with FX conversion
+    - Counterparty credit exposure and margin call management
+    - Ledger reconciliation with tolerance-based break detection
+    - Pub/sub event distribution with dead-letter handling
+    - Regulatory reporting windows and hold-period enforcement
+    - Immutable audit trail with routed notifications
+    - Transaction schema validation and deduplication
+    - Cross-system invariants for rate freshness, finality, and correlation
+
+library_synthesis:
+  expected_libraries:
+    - SettlementProcessor
+    - RiskEngine
+    - ReconciliationService
+    - EventPipeline
+    - RegulatoryCompliance
+    - AuditNotification
+    - TransactionValidator
+    - CrossSystemInvariants
+  expected_requirements:
+    # --- Original 30 (from chaotic_treasury) ---
+    - Settlement instructions must contain counterparty ID, value date, currency pair, and notional amount
+    - Netting threshold is $1,000,000 for same counterparty and value date
+    - Instructions at or above netting threshold are processed gross
+    - FX conversion uses ECB reference rate captured at T-1 with EUR triangulation fallback
+    - Counterparty credit limit capped at $50M
+    - Exposure calculated across T+0 to T+2 window
+    - Margin call issued when exposure reaches 80% of limit
+    - No single counterparty may exceed 25% of total exposure
+    - Tier-1 override bypasses credit cap and concentration limit
+    - Reconciliation matching on exact amount, counterparty, and value date
+    - Domestic tolerance band of 0.01%
+    - Cross-border tolerance band of 0.05%
+    - Breaks below $1,000 are auto-resolved
+    - Event ordering guaranteed within topic partition
+    - Exponential backoff retry at 1s, 4s, 16s
+    - Dead-letter queue after 3 failed attempts
+    - Dead-letter events purged after 90 days
+    - Event payloads must not exceed 256 KB
+    - Settlements above $10M reported within 15 minutes
+    - Cross-border settlements above $5M subject to 24-hour hold
+    - Transactions above $25M flagged as suspicious
+    - Audit writes must complete within 50ms
+    - Notification routing by event type to email, dashboard, or Slack
+    - Audit entry written before notification dispatch
+    - Audit snapshot emitted on settlement confirmation
+    - Exposure snapshots published to audit every five minutes
+    - Structuring detection aggregates sub-threshold transactions against $10M reporting threshold
+    - Regulatory reports retained for seven years
+    - Unmatched reconciliation entries escalated after seven business days
+    - Notification batching consolidates alerts during high-volume periods
+    # --- New 15 (expanded) ---
+    - Netting batches cannot exceed 500 instructions
+    - Confirmed settlements are final and cannot be reversed
+    - Duplicate instructions within 5-second window are dropped
+    - FX rates older than 6 hours trigger a staleness alert
+    - Dead-letter events must appear in daily regulatory summary
+    - Counterparty suspended 30 minutes after 10 consecutive risk failures
+    - Reconciliation breaks on held settlements escalated immediately to compliance
+    - All events must carry correlation ID from originating instruction
+    - Validation retries every 10 seconds for up to 2 minutes when reference-data unavailable
+    - Finality violations rejected and logged as audit events
+    - Consumer acknowledgement timeout is 30 seconds
+    - Transactional publishing rolls back all events on partial failure
+    - Duplicate counterparty acknowledgements suppressed
+    - Notification digest includes settlement count, total notional, and counterparty list
+    - Schema validation rejects instructions with invalid currency codes
+    # --- Side-effect and logging requirements (7) ---
+    - Failed validation emits settlement.rejected event
+    - Settlement confirmation publishes settlement.confirmed event on event bus
+    - Risk breach publishes risk.breach event and triggers dashboard notification
+    - Reconciliation breaks publish reconciliation.break events on EventPipeline
+    - Audit write failure retries with same idempotency key, no notification until write succeeds
+    - Netted instructions carry both original constituent amounts and calculated net in payload
+    - Processor tags instructions exceeding regulatory threshold for RegulatoryCompliance pickup
+
+spec_building:
+  expected_requirements:
+    # --- Original 30 (from chaotic_treasury) ---
+    - Settlement instructions must contain counterparty ID, value date, currency pair, and notional amount
+    - Netting threshold is $1,000,000 for same counterparty and value date
+    - Instructions at or above netting threshold are processed gross
+    - FX conversion uses ECB reference rate captured at T-1 with EUR triangulation fallback
+    - Counterparty credit limit capped at $50M
+    - Exposure calculated across T+0 to T+2 window
+    - Margin call issued when exposure reaches 80% of limit
+    - No single counterparty may exceed 25% of total exposure
+    - Tier-1 override bypasses credit cap and concentration limit
+    - Reconciliation matching on exact amount, counterparty, and value date
+    - Domestic tolerance band of 0.01%
+    - Cross-border tolerance band of 0.05%
+    - Breaks below $1,000 are auto-resolved
+    - Event ordering guaranteed within topic partition
+    - Exponential backoff retry at 1s, 4s, 16s
+    - Dead-letter queue after 3 failed attempts
+    - Dead-letter events purged after 90 days
+    - Event payloads must not exceed 256 KB
+    - Settlements above $10M reported within 15 minutes
+    - Cross-border settlements above $5M subject to 24-hour hold
+    - Transactions above $25M flagged as suspicious
+    - Audit writes must complete within 50ms
+    - Notification routing by event type to email, dashboard, or Slack
+    - Audit entry written before notification dispatch
+    - Audit snapshot emitted on settlement confirmation
+    - Exposure snapshots published to audit every five minutes
+    - Structuring detection aggregates sub-threshold transactions against $10M reporting threshold
+    - Regulatory reports retained for seven years
+    - Unmatched reconciliation entries escalated after seven business days
+    - Notification batching consolidates alerts during high-volume periods
+    # --- New 15 (expanded) ---
+    - Netting batches cannot exceed 500 instructions
+    - Confirmed settlements are final and cannot be reversed
+    - Duplicate instructions within 5-second window are dropped
+    - FX rates older than 6 hours trigger a staleness alert
+    - Dead-letter events must appear in daily regulatory summary
+    - Counterparty suspended 30 minutes after 10 consecutive risk failures
+    - Reconciliation breaks on held settlements escalated immediately to compliance
+    - All events must carry correlation ID from originating instruction
+    - Validation retries every 10 seconds for up to 2 minutes when reference-data unavailable
+    - Finality violations rejected and logged as audit events
+    - Consumer acknowledgement timeout is 30 seconds
+    - Transactional publishing rolls back all events on partial failure
+    - Duplicate counterparty acknowledgements suppressed
+    - Notification digest includes settlement count, total notional, and counterparty list
+    - Schema validation rejects instructions with invalid currency codes
+    # --- Side-effect and logging requirements (7) ---
+    - Failed validation emits settlement.rejected event
+    - Settlement confirmation publishes settlement.confirmed event on event bus
+    - Risk breach publishes risk.breach event and triggers dashboard notification
+    - Reconciliation breaks publish reconciliation.break events on EventPipeline
+    - Audit write failure retries with same idempotency key, no notification until write succeeds
+    - Netted instructions carry both original constituent amounts and calculated net in payload
+    - Processor tags instructions exceeding regulatory threshold for RegulatoryCompliance pickup
+  expected_elements: []
+  expected_decisions:
+    - Tier-1 override vs risk cap conflict resolution
+
+overall_requirements_count: 52
+overall_elements_count: 52
+convergence_iterations_max: 20

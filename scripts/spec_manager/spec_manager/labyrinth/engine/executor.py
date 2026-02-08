@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any
 
 from spec_manager.labyrinth.core.bus import AsyncMessageBus
 from spec_manager.labyrinth.core.event_log import EventLog
 from spec_manager.labyrinth.core.record import InputRecord, OutputRecord
 from spec_manager.labyrinth.core.worker_pool import WorkerPool
 from spec_manager.labyrinth.engine.registry import RuleRegistry
-from spec_manager.labyrinth.engine.rule import CompositeRule, Rule
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +33,7 @@ class RuleExecutor:
         self._worker_pool = worker_pool or WorkerPool()
         self._results: dict[str, list[OutputRecord]] = {}
 
-    async def execute_rule(
-        self, rule_id: str, record: InputRecord
-    ) -> OutputRecord | None:
+    async def execute_rule(self, rule_id: str, record: InputRecord) -> OutputRecord | None:
         """Execute a single rule by ID against an input record.
 
         Args:
@@ -77,11 +72,14 @@ class RuleExecutor:
             # Publish result to the bus
             output_topic = getattr(rule, "output_topic", "")
             if output_topic:
-                await self._bus.publish(output_topic, {
-                    "rule_id": rule_id,
-                    "record_id": record.record_id,
-                    "output": result.data,
-                })
+                await self._bus.publish(
+                    output_topic,
+                    {
+                        "rule_id": rule_id,
+                        "record_id": record.record_id,
+                        "output": result.data,
+                    },
+                )
 
             # Store result
             if record.record_id not in self._results:
@@ -96,9 +94,7 @@ class RuleExecutor:
 
         return result
 
-    async def execute_all(
-        self, record: InputRecord
-    ) -> list[OutputRecord]:
+    async def execute_all(self, record: InputRecord) -> list[OutputRecord]:
         """Execute all registered rules against an input record.
 
         Respects dependency ordering.

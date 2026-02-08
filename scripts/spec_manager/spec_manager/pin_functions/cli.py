@@ -12,10 +12,8 @@ import sys
 from pathlib import Path
 
 from spec_manager.pin_functions.orchestrator import (
-    PinFunctionConfig,
     PinFunctionOrchestrator,
 )
-from spec_manager.projection.pin_propagation import convert_propagation_to_drift
 
 
 def setup_pin_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -55,15 +53,20 @@ def setup_pin_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p_test_check.add_argument("--project-root", default=".", help="Project root directory")
     p_test_check.add_argument(
-        "--test-root", action="append", default=None,
+        "--test-root",
+        action="append",
+        default=None,
         help="Test directory to scan (repeatable, default: tests/)",
     )
     p_test_check.add_argument(
-        "--update-baseline", action="store_true",
+        "--update-baseline",
+        action="store_true",
         help="Update the baseline after checking",
     )
     p_test_check.add_argument(
-        "--format", choices=["json", "text"], default="text",
+        "--format",
+        choices=["json", "text"],
+        default="text",
         help="Output format",
     )
 
@@ -106,7 +109,7 @@ def _cmd_pin_scan(args: argparse.Namespace) -> int:
     if getattr(args, "format", "text") == "json":
         print(registry.model_dump_json(indent=2))
     else:
-        print(f"Pin-function scan complete:")
+        print("Pin-function scan complete:")
         print(f"  Pin-functions found: {len(registry.pin_functions)}")
         print(f"  Import edges found: {len(registry.import_edges)}")
         print(f"  Registry saved: {save_path}")
@@ -197,10 +200,7 @@ def _cmd_pin_query(args: argparse.Namespace) -> int:
 
         print(f"Importers of '{args.function}' ({len(edges)}):")
         for edge in edges:
-            print(
-                f"  - {edge.arch_location} ({edge.projection_type}, "
-                f"line {edge.arch_line})"
-            )
+            print(f"  - {edge.arch_location} ({edge.projection_type}, line {edge.arch_line})")
         return 0
 
     if args.arch_file:

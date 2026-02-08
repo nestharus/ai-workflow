@@ -10,7 +10,7 @@ import hashlib
 import json
 import textwrap
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from spec_manager.analysis.ast_extractor import (
@@ -80,13 +80,9 @@ class PinFunctionOrchestrator:
                 all_candidates.extend(candidates)
 
         # Also scan the project root for annotated functions
-        root_candidates = self._extractor.extract_from_directory(
-            self._project_root, recursive=True
-        )
+        root_candidates = self._extractor.extract_from_directory(self._project_root, recursive=True)
         # Avoid duplicates
-        seen_keys: set[str] = {
-            f"{c.file_path}:{c.function_name}" for c in all_candidates
-        }
+        seen_keys: set[str] = {f"{c.file_path}:{c.function_name}" for c in all_candidates}
         for c in root_candidates:
             key = f"{c.file_path}:{c.function_name}"
             if key not in seen_keys:
@@ -108,7 +104,7 @@ class PinFunctionOrchestrator:
             schema_version="1.0",
             pin_functions=pin_functions,
             import_edges=import_edges,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
 
         return registry
@@ -212,7 +208,7 @@ class PinFunctionOrchestrator:
         lines: list[str] = []
         lines.append("# Pin-Function Analysis Report")
         lines.append("")
-        lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+        lines.append(f"Generated: {datetime.now(UTC).isoformat()}")
         lines.append("")
 
         # Summary
@@ -223,9 +219,7 @@ class PinFunctionOrchestrator:
 
         shape_count = sum(1 for pf in registry.pin_functions if pf.is_shape)
         lines.append(f"- Shape functions (pure): {shape_count}")
-        lines.append(
-            f"- Impure functions: {len(registry.pin_functions) - shape_count}"
-        )
+        lines.append(f"- Impure functions: {len(registry.pin_functions) - shape_count}")
         lines.append("")
 
         # Pin-functions
@@ -245,9 +239,7 @@ class PinFunctionOrchestrator:
             if importers:
                 lines.append(f"- Importers ({len(importers)}):")
                 for edge in importers:
-                    lines.append(
-                        f"  - {edge.arch_location} ({edge.projection_type})"
-                    )
+                    lines.append(f"  - {edge.arch_location} ({edge.projection_type})")
             lines.append("")
 
         # Projection type distribution
@@ -255,9 +247,7 @@ class PinFunctionOrchestrator:
         lines.append("")
         type_counts: dict[str, int] = {}
         for edge in registry.import_edges:
-            type_counts[edge.projection_type] = (
-                type_counts.get(edge.projection_type, 0) + 1
-            )
+            type_counts[edge.projection_type] = type_counts.get(edge.projection_type, 0) + 1
         for pt, count in sorted(type_counts.items()):
             lines.append(f"- {pt}: {count}")
         lines.append("")
@@ -266,9 +256,7 @@ class PinFunctionOrchestrator:
 
     # --- Private helpers ---
 
-    def _candidates_to_pin_functions(
-        self, candidates: list[AtomCandidate]
-    ) -> list[PinFunction]:
+    def _candidates_to_pin_functions(self, candidates: list[AtomCandidate]) -> list[PinFunction]:
         """Convert AtomCandidate objects to PinFunction schemas.
 
         Args:

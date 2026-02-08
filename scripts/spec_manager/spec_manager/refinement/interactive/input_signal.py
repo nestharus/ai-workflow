@@ -8,20 +8,22 @@ make informed decisions.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 
-SIGNAL_TYPES = frozenset({
-    "ambiguity",
-    "missing_implementation",
-    "conflict",
-    "undefined_boundary",
-    "no_evidence",
-    "tradeoff_needed",
-})
+SIGNAL_TYPES = frozenset(
+    {
+        "ambiguity",
+        "missing_implementation",
+        "conflict",
+        "undefined_boundary",
+        "no_evidence",
+        "tradeoff_needed",
+    }
+)
 
 SEVERITY_LEVELS = frozenset({"blocking", "degraded", "informational"})
 
@@ -75,7 +77,7 @@ class InputSignal:
     options: list[str] = field(default_factory=list)
     confidence: float = 0.5
     severity: str = "blocking"
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_ambiguity(self) -> Ambiguity:
         """Convert this signal to a legacy ``Ambiguity`` object."""

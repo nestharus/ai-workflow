@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
 
-from spec_manager.refinement.hollowed_spec.searcher import EvidenceSearcher, SearchResult
 from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+from spec_manager.refinement.hollowed_spec.searcher import EvidenceSearcher, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +56,7 @@ class AdjacencyContext:
         """Return all evidence across all categories, deduplicated."""
         seen: set[str] = set()
         results: list[SearchResult] = []
-        for result in (
-            self.adjacent_evidence
-            + self.store_touch_evidence
-            + self.call_graph_evidence
-        ):
+        for result in self.adjacent_evidence + self.store_touch_evidence + self.call_graph_evidence:
             key = f"{result.lib_id}:{result.paragraph.paragraph_id}"
             if key not in seen:
                 seen.add(key)
@@ -104,17 +99,15 @@ class AdjacencyScanner:
         entity_refs = _ENTITY_REF_RE.findall(section_content)
         entity_refs = sorted(set(entity_refs))
 
-        adjacent = self._find_entity_co_occurrences(
-            entity_refs, lib_id
-        )[:max_results_per_signal]
+        adjacent = self._find_entity_co_occurrences(entity_refs, lib_id)[:max_results_per_signal]
 
-        store_touch = self._find_store_touch_overlaps(
-            section_content, lib_id
-        )[:max_results_per_signal]
+        store_touch = self._find_store_touch_overlaps(section_content, lib_id)[
+            :max_results_per_signal
+        ]
 
-        call_graph = self._find_call_graph_neighbors(
-            section_content, lib_id
-        )[:max_results_per_signal]
+        call_graph = self._find_call_graph_neighbors(section_content, lib_id)[
+            :max_results_per_signal
+        ]
 
         return AdjacencyContext(
             target_lib_id=lib_id,

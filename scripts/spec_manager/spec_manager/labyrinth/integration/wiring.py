@@ -7,7 +7,6 @@ through topic subscriptions and chain definitions, not direct calls.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from spec_manager.labyrinth.core.bus import AsyncMessageBus
 from spec_manager.labyrinth.core.event_log import EventLog
@@ -26,6 +25,7 @@ class SideEffectChain:
         services: Ordered list of service names to invoke.
         expected_log_entries: EventLog entry types that must appear (for testing).
     """
+
     chain_id: str
     trigger_topic: str
     services: list[str] = field(default_factory=list)
@@ -49,7 +49,9 @@ class WiringManager:
         self._chains: dict[str, SideEffectChain] = {}
         self._services: dict[str, AuditService | NotificationService | MetricsService] = {}
 
-    def register_service(self, name: str, service: AuditService | NotificationService | MetricsService) -> None:
+    def register_service(
+        self, name: str, service: AuditService | NotificationService | MetricsService
+    ) -> None:
         """Register a named service."""
         self._services[name] = service
 

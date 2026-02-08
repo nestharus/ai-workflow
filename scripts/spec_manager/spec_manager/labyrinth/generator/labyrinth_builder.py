@@ -43,6 +43,7 @@ class LabyrinthInstance:
         ground_truth: Ground truth data for verification.
         output_dir: Directory where files were written (if saved).
     """
+
     level: int
     seed: int
     config: LevelConfig
@@ -76,7 +77,7 @@ class LabyrinthBuilder:
             LabyrinthInstance with all generated artifacts.
         """
         config = get_level_config(level)
-        rng = random.Random(seed)
+        rng = random.Random(seed)  # noqa: S311
 
         # Generate rules
         rule_factory = RuleFactory(config, rng)
@@ -156,6 +157,7 @@ class LabyrinthBuilder:
 
         if output_dir is None:
             from spec_manager.core.project_root import resolve_from_root
+
             output_dir = resolve_from_root("runs", "labyrinth", f"L{level}_s{seed}")
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -187,9 +189,7 @@ class LabyrinthBuilder:
 
         # Save conftest
         test_gen = TestGenerator()
-        (tests_dir / "conftest.py").write_text(
-            test_gen.generate_conftest(level), encoding="utf-8"
-        )
+        (tests_dir / "conftest.py").write_text(test_gen.generate_conftest(level), encoding="utf-8")
 
         # Save rule manifest
         rule_manifest = self._build_rule_manifest(instance)
@@ -208,7 +208,6 @@ class LabyrinthBuilder:
     ) -> dict[str, Any]:
         """Generate ground truth data for test verification."""
         from spec_manager.labyrinth.core.record import InputRecord
-        from spec_manager.labyrinth.generator.rule_factory import FIELD_VALUES
 
         rule_tests: list[dict[str, Any]] = []
 
@@ -228,15 +227,17 @@ class LabyrinthBuilder:
             sample = InputRecord(record_id="gt", data=matching_input)
             try:
                 expected = rule.transform(sample)
-            except Exception:
+            except Exception:  # noqa: S112
                 continue
 
-            rule_tests.append({
-                "rule_id": rule.rule_id,
-                "input": matching_input,
-                "expected_output": {k: v for k, v in expected.items() if not k.startswith("_")},
-                "should_fire": True,
-            })
+            rule_tests.append(
+                {
+                    "rule_id": rule.rule_id,
+                    "input": matching_input,
+                    "expected_output": {k: v for k, v in expected.items() if not k.startswith("_")},
+                    "should_fire": True,
+                }
+            )
 
         # Generate chain test cases
         # Find rules that publish to each chain's trigger topic
@@ -255,11 +256,14 @@ class LabyrinthBuilder:
             else:
                 # No rule publishes to this topic; use generic input
                 trigger_input = {"amount": 5000, "type": "INVOICE", "currency": "USD"}
-            chain_tests.append({
-                "chain_id": chain.chain_id,
-                "trigger_input": trigger_input or {"amount": 5000, "type": "INVOICE", "currency": "USD"},
-                "expected_log_types": list(chain.expected_log_entries),
-            })
+            chain_tests.append(
+                {
+                    "chain_id": chain.chain_id,
+                    "trigger_input": trigger_input
+                    or {"amount": 5000, "type": "INVOICE", "currency": "USD"},
+                    "expected_log_types": list(chain.expected_log_entries),
+                }
+            )
 
         return {
             "level": rules[0].rule_id.split("-")[1] if rules else "L0",
@@ -270,9 +274,7 @@ class LabyrinthBuilder:
             "total_rules": len(rules),
         }
 
-    def _generate_matching_input(
-        self, rule: Rule, rng: random.Random
-    ) -> dict[str, Any] | None:
+    def _generate_matching_input(self, rule: Rule, rng: random.Random) -> dict[str, Any] | None:
         """Generate input data that should match the rule's conditions."""
         from spec_manager.labyrinth.engine.conditions import (
             Condition,
