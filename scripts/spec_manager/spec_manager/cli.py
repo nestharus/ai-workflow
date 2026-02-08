@@ -3,19 +3,26 @@
 Usage:
     uv run spec <command> [options]
 
-Commands:
+PDD orchestration (primary):
+    run                 Run the full PDD pipeline (phases 0-10)
+    phase               Run a specific PDD design phase (0-10)
+    extract             Phase 0: extract input to PDD format
+
+Module CLIs (standalone PDD modules):
+    scan-source         Scan Python source for spec comments/stubs
+    branches *          Branch lifecycle management
+    pin *               Pin-function management
+    plan-v2 *           Algorithmic planning operations
+    generate-analysis   Generate analysis file
+    adjacency           Run adjacency detection analysis
+    coverage *          Entity coverage gap analysis
+    eval *              Evaluation framework
+
+Legacy:
     refine              Run spec refinement (interactive or auto mode)
     ambiguities list    List detected ambiguities
     evidence-store *    Evidence store management
-    adjacency           Run adjacency detection analysis
-    generate-analysis   Generate analysis file
-    scan-source         Scan Python source for spec comments/stubs
-    branches *          Branch lifecycle management
     phase-02            Run Phase 2 clean/compose/compliance workflow
-    pin *               Pin-function management
-    eval *              Evaluation framework
-    plan-v2 *           Algorithmic planning operations
-    coverage *          Entity coverage gap analysis
 """
 
 from __future__ import annotations
@@ -34,6 +41,116 @@ def _resolve_spec_folder(raw_path: str) -> Path:
     if p.is_absolute():
         return p
     return resolve_from_root(raw_path)
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run the full PDD pipeline (phases 0-10)."""
+    from spec_manager.orchestration.pdd_orchestrator import PDD_PHASE_ORDER, PddOrchestrator
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    run_id = args.run_id
+    input_folder = Path(args.input) if args.input else Path.cwd()
+
+    print(f"PDD pipeline: run_id={run_id}")
+    print(f"  Input: {input_folder}")
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=input_folder)
+    if not manager.is_initialized:
+        manager.initialize()
+
+    orchestrator = PddOrchestrator(manager)
+    summary = orchestrator.run()
+
+    completed = summary.get("completed", [])
+    failed = summary.get("failed", [])
+    skipped = summary.get("skipped", [])
+
+    print(f"\nPDD pipeline finished for run {run_id}:")
+    if completed:
+        print(f"  Completed: {', '.join(completed)}")
+    if skipped:
+        print(f"  Skipped (already done): {', '.join(skipped)}")
+    if failed:
+        print(f"  Failed: {', '.join(failed)}")
+        return 1
+
+    total = len(PDD_PHASE_ORDER)
+    done = len(completed) + len(skipped)
+    print(f"  Progress: {done}/{total} phases")
+    return 0
+
+
+def cmd_phase(args: argparse.Namespace) -> int:
+    """Run a specific PDD design phase (0-10)."""
+    from spec_manager.orchestration.pdd_orchestrator import PDD_PHASE_ORDER, PddOrchestrator
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    phase_number = args.phase_number
+    if phase_number < 0 or phase_number > 10:
+        print(f"Invalid phase number: {phase_number}. Must be 0-10.", file=sys.stderr)
+        return 1
+
+    phase = PDD_PHASE_ORDER[phase_number]
+    run_id = args.run_id
+    input_folder = Path(args.input) if args.input else Path.cwd()
+
+    print(f"PDD phase {phase_number} ({phase.value}): run_id={run_id}")
+    print(f"  Input: {input_folder}")
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=input_folder)
+    if not manager.is_initialized:
+        manager.initialize()
+
+    orchestrator = PddOrchestrator(manager)
+    try:
+        outputs = orchestrator.run_phase(phase)
+        print(f"\nPhase {phase_number} ({phase.value}) completed.")
+        if outputs:
+            for key, value in outputs.items():
+                print(f"  {key}: {value}")
+        return 0
+    except NotImplementedError as exc:
+        print(f"\nPhase {phase_number} ({phase.value}) not yet implemented: {exc}")
+        return 1
+    except Exception as exc:
+        print(f"\nPhase {phase_number} ({phase.value}) failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_extract(args: argparse.Namespace) -> int:
+    """Phase 0: extract input to PDD format.
+
+    This is an alias for ``phase 0``.  Phase 0 is designed but not yet
+    implemented -- the command reports this clearly.
+    """
+    from spec_manager.orchestration.pdd_orchestrator import PDD_PHASE_ORDER, PddOrchestrator
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    input_path = Path(args.path) if args.path else Path.cwd()
+    run_id = args.run_id
+
+    print(f"PDD extraction (phase 0): run_id={run_id}")
+    print(f"  Input: {input_path}")
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=input_path)
+    if not manager.is_initialized:
+        manager.initialize()
+
+    orchestrator = PddOrchestrator(manager)
+    phase = PDD_PHASE_ORDER[0]  # Phase.EXTRACTION
+    try:
+        outputs = orchestrator.run_phase(phase)
+        print("\nExtraction completed.")
+        if outputs:
+            for key, value in outputs.items():
+                print(f"  {key}: {value}")
+        return 0
+    except NotImplementedError as exc:
+        print(f"\nExtraction not yet implemented: {exc}")
+        return 1
+    except Exception as exc:
+        print(f"\nExtraction failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_refine(args: argparse.Namespace) -> int:
@@ -663,6 +780,65 @@ def main() -> int:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # ── PDD orchestration commands ──────────────────────────────────
+
+    # run - full PDD pipeline
+    p_run = subparsers.add_parser(
+        "run",
+        help="Run the full PDD pipeline (phases 0-10)",
+    )
+    p_run.add_argument(
+        "run_id",
+        nargs="?",
+        default=None,
+        help="Run identifier (auto-generated if omitted)",
+    )
+    p_run.add_argument(
+        "--input",
+        help="Path to input spec folder",
+    )
+
+    # phase - run a specific PDD phase
+    p_phase = subparsers.add_parser(
+        "phase",
+        help="Run a specific PDD design phase (0-10)",
+    )
+    p_phase.add_argument(
+        "phase_number",
+        type=int,
+        help="Phase number (0-10)",
+    )
+    p_phase.add_argument(
+        "run_id",
+        nargs="?",
+        default=None,
+        help="Run identifier (auto-generated if omitted)",
+    )
+    p_phase.add_argument(
+        "--input",
+        help="Path to input spec folder",
+    )
+
+    # extract - alias for phase 0
+    p_extract = subparsers.add_parser(
+        "extract",
+        help="Phase 0: extract input to PDD format",
+    )
+    p_extract.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Path to input spec (default: current directory)",
+    )
+    p_extract.add_argument(
+        "--run-id",
+        dest="run_id",
+        default=None,
+        help="Run identifier (auto-generated if omitted)",
+    )
+
+    # ── Legacy / module commands ────────────────────────────────────
+
     # phase-02
     p_phase_02 = subparsers.add_parser(
         "phase-02",
@@ -860,7 +1036,17 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    # Auto-generate run_id for PDD commands when not provided
+    if args.command in ("run", "phase", "extract"):
+        if getattr(args, "run_id", None) is None:
+            from datetime import datetime
+
+            args.run_id = datetime.now().strftime("pdd-%Y%m%d-%H%M%S")
+
     commands = {
+        "run": cmd_run,
+        "phase": cmd_phase,
+        "extract": cmd_extract,
         "phase-02": cmd_phase_02,
         "refine": cmd_refine,
         "adjacency": cmd_adjacency,

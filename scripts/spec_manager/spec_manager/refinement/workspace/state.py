@@ -23,8 +23,27 @@ class PhaseStatus(Enum):
 
 
 class Phase(Enum):
-    """Spec refinement workflow phases."""
+    """PDD execution phases and legacy refinement phases.
 
+    The PDD phases (0-10) are the primary execution model.  The legacy
+    refinement phases are retained for backward compatibility with
+    persisted workspace state files.
+    """
+
+    # ── PDD execution phases (primary) ──────────────────────────────
+    EXTRACTION = "extraction"  # Phase 0
+    STRUCTURE_DISCOVERY = "structure"  # Phase 1
+    DECOMPOSITION = "decomposition"  # Phase 2
+    COMPLIANCE_CLEAN = "compliance"  # Phase 3
+    LIBRARY_DISCOVERY = "library"  # Phase 4
+    SPEC_BUILD = "spec_build"  # Phase 5
+    CROSS_LIBRARY = "cross_library"  # Phase 6
+    PROJECTION_SYNC = "projection"  # Phase 7
+    TASK_PLANNING = "task_planning"  # Phase 8
+    IMPLEMENTATION = "implementation"  # Phase 9
+    CONTINUOUS_QA = "continuous_qa"  # Phase 10
+
+    # ── Legacy refinement phases (kept for state migration) ─────────
     INIT = "init"
     SECTIONIZATION = "sectionization"
     SUMMARIZATION = "summarization"
@@ -43,7 +62,6 @@ class Phase(Enum):
     INTERFACES = "interfaces"
     QUALITY_GATES = "quality_gates"
     TASKS = "tasks"
-    IMPLEMENTATION = "implementation"
     AUDIT = "audit"
     EDIT_IN_PLACE = "edit_in_place"
     BRANCH_INIT = "branch_init"

@@ -14,8 +14,15 @@ from typing import Any
 def _fuzzy_ratio(a: str, b: str) -> float:
     """Compute fuzzy similarity ratio between two strings.
 
-    Uses SequenceMatcher for a simple but effective similarity measure
-    that handles word reordering and minor variations.
+    Uses max of SequenceMatcher ratio and token-containment score.
+    Token containment checks what fraction of the shorter string's
+    significant tokens (4+ chars) appear in the longer string, using
+    4-character prefix matching for morphological tolerance (e.g.
+    "writes"/"write", "issued"/"issues").
+
+    This handles the common case where expected items are short
+    distilled descriptions and actual items are longer prose sentences
+    containing the same information.
 
     Args:
         a: First string.
@@ -29,7 +36,27 @@ def _fuzzy_ratio(a: str, b: str) -> float:
     # Normalize strings for comparison
     a_normalized = " ".join(a.lower().split())
     b_normalized = " ".join(b.lower().split())
-    return SequenceMatcher(None, a_normalized, b_normalized).ratio()
+
+    seq_ratio = SequenceMatcher(None, a_normalized, b_normalized).ratio()
+
+    # Token containment: fraction of shorter's significant tokens in longer
+    a_tokens = set(a_normalized.split())
+    b_tokens = set(b_normalized.split())
+    if len(a_tokens) <= len(b_tokens):
+        shorter_tokens, longer_tokens = a_tokens, b_tokens
+    else:
+        shorter_tokens, longer_tokens = b_tokens, a_tokens
+
+    # Use 4-char prefix matching on significant tokens (4+ chars)
+    sig_shorter = {t for t in shorter_tokens if len(t) >= 4}
+    if sig_shorter:
+        longer_prefixes = {t[:4] for t in longer_tokens if len(t) >= 4}
+        matches = sum(1 for t in sig_shorter if t[:4] in longer_prefixes)
+        containment = matches / len(sig_shorter)
+    else:
+        containment = 0.0
+
+    return max(seq_ratio, containment)
 
 
 @dataclass

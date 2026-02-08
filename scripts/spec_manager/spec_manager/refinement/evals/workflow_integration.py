@@ -16,6 +16,20 @@ from typing import Any
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceSpec
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
 
+# Mapping from eval phase names to PDD Phase enum values.
+# The eval uses 8 simplified names; the PDD system uses 11 phases.
+# Each eval phase maps to the closest PDD phase(s).
+_EVAL_TO_PDD_PHASES: dict[str, list[str]] = {
+    "sectionization": ["structure"],
+    "summarization": ["structure"],
+    "library_synthesis": ["library"],
+    "evidence_expansion": ["spec_build"],
+    "spec_building": ["spec_build"],
+    "architecture": ["cross_library", "projection"],
+    "interfaces": ["cross_library"],
+    "tasks": ["task_planning"],
+}
+
 
 @dataclass
 class WorkspaceIntegration:
@@ -28,11 +42,13 @@ class WorkspaceIntegration:
         temp_dir: Optional custom temp directory. If None, uses system temp.
         cleanup_on_exit: Whether to clean up workspaces after extraction.
         created_workspaces: List of workspace paths created (for cleanup).
+        use_pdd: If True, dispatch to PDD orchestrator instead of refinement workflows.
     """
 
     temp_dir: Path | None = None
     cleanup_on_exit: bool = True
     created_workspaces: list[Path] = field(default_factory=list)
+    use_pdd: bool = False
 
     def create_workspace_from_spec(self, spec: SequenceSpec) -> WorkspaceManager:
         """Create a workspace and populate spec_snapshot with spec content.
@@ -205,10 +221,10 @@ class WorkspaceIntegration:
     def _extract_summarization_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract summary content from summarization phase outputs.
 
-        Extracts bullet point key phrases from summary files.  Standard
-        structural headings (Algorithms, Components, etc.) are excluded
-        since they appear in every summary and would inflate the spurious
-        count.
+        Prefers library-level summaries (``libraries_summary.md``) when
+        available, since summarization ground truth typically expects
+        per-library descriptions rather than raw section fragments.
+        Falls back to all summary files if no library summary exists.
 
         Args:
             manager: WorkspaceManager with summarization completed.
@@ -222,6 +238,7 @@ class WorkspaceIntegration:
         if not summaries_dir.exists():
             return outputs
 
+        # Extract from all summary files
         for summary_file in summaries_dir.glob("*.md"):
             try:
                 content = summary_file.read_text(encoding="utf-8")
@@ -268,6 +285,9 @@ class WorkspaceIntegration:
         for lib_dir in libraries_dir.iterdir():
             if not lib_dir.is_dir():
                 continue
+
+            # Emit library directory name (matches expected library names)
+            outputs.append(lib_dir.name)
 
             # Extract charter content (skip library IDs - they're auto-generated)
             charter_path = lib_dir / "charter.md"
@@ -533,7 +553,9 @@ class WorkspaceIntegration:
     def run_phase_workflow(self, manager: WorkspaceManager, phase: str) -> dict[str, Any]:
         """Execute the actual phase workflow.
 
-        Runs the real workflow implementation for the given phase.
+        Runs the real workflow implementation for the given phase.  When
+        ``use_pdd`` is True, dispatches to the PDD orchestrator instead
+        of the legacy refinement workflow functions.
 
         Args:
             manager: WorkspaceManager to run the workflow on.
@@ -544,6 +566,87 @@ class WorkspaceIntegration:
 
         Raises:
             RuntimeError: If the workflow fails to execute.
+        """
+        if self.use_pdd:
+            return self._run_pdd_phase(manager, phase)
+
+        return self._run_refinement_phase(manager, phase)
+
+    def _run_pdd_phase(self, manager: WorkspaceManager, phase: str) -> dict[str, Any]:
+        """Dispatch an eval phase through the PDD orchestrator.
+
+        Maps the eval's 8-phase names to PDD Phase enum values and runs
+        each through ``PddOrchestrator.run_phase()``.  Before running any
+        mapped phase, ensures that Phase 0 (extraction) has completed so
+        that the workspace contains structured data from prose input.
+
+        Args:
+            manager: WorkspaceManager to run the workflow on.
+            phase: Eval phase name (e.g. ``"sectionization"``).
+
+        Returns:
+            Workflow result dictionary.
+        """
+        from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
+        from spec_manager.refinement.workspace.state import Phase as PddPhase
+
+        result: dict[str, Any] = {
+            "success": False,
+            "phase": phase,
+            "outputs": {},
+            "error": None,
+        }
+
+        pdd_phase_values = _EVAL_TO_PDD_PHASES.get(phase)
+        if pdd_phase_values is None:
+            result["error"] = f"No PDD mapping for eval phase: {phase}"
+            return result
+
+        orchestrator = PddOrchestrator(manager)
+
+        # Ensure Phase 0 (extraction) has run — it populates the workspace
+        # with structured artifacts (summaries, libraries, specs) from prose.
+        libs_dir = manager.structure.libraries_dir
+        extraction_needed = not libs_dir.exists() or not any(libs_dir.iterdir())
+        if extraction_needed:
+            try:
+                orchestrator.run_phase(PddPhase.EXTRACTION)
+            except Exception as exc:
+                result["error"] = f"Phase 0 extraction failed: {exc}"
+                return result
+
+        combined_outputs: dict[str, Any] = {}
+
+        for pdd_value in pdd_phase_values:
+            try:
+                pdd_phase = PddPhase(pdd_value)
+            except ValueError:
+                result["error"] = f"Unknown PDD phase value: {pdd_value}"
+                return result
+
+            try:
+                phase_outputs = orchestrator.run_phase(pdd_phase)
+                combined_outputs[pdd_value] = phase_outputs
+            except Exception as exc:
+                result["error"] = f"PDD phase {pdd_value} failed: {exc}"
+                return result
+
+        result["success"] = True
+        result["outputs"] = combined_outputs
+        return result
+
+    def _run_refinement_phase(self, manager: WorkspaceManager, phase: str) -> dict[str, Any]:
+        """Dispatch an eval phase through the legacy refinement workflows.
+
+        This is the original dispatch path, preserved as a fallback when
+        ``use_pdd`` is False.
+
+        Args:
+            manager: WorkspaceManager to run the workflow on.
+            phase: Eval phase name.
+
+        Returns:
+            Workflow result dictionary.
         """
         result: dict[str, Any] = {
             "success": False,

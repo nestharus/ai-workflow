@@ -64,6 +64,8 @@ class EvalConfig:
     workspace_temp_dir: Path | None = None
     sparse: bool = False
     resolve_ambiguities: bool = False
+    use_judge: bool = False
+    use_pdd: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -80,6 +82,8 @@ class EvalConfig:
             "workspace_temp_dir": str(self.workspace_temp_dir) if self.workspace_temp_dir else None,
             "sparse": self.sparse,
             "resolve_ambiguities": self.resolve_ambiguities,
+            "use_judge": self.use_judge,
+            "use_pdd": self.use_pdd,
         }
 
 
@@ -677,6 +681,7 @@ class EvalRunner:
             state.workspace_integration = WorkspaceIntegration(
                 temp_dir=self.config.workspace_temp_dir,
                 cleanup_on_exit=True,
+                use_pdd=self.config.use_pdd,
             )
 
         # Create workspace manager if not already done

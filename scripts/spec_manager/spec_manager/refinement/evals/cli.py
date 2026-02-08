@@ -48,6 +48,9 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
         Exit code.
     """
     # Build config from args
+    # Default to PDD; --refinement flag switches to legacy refinement pipeline
+    use_pdd = not getattr(args, "refinement", False)
+
     config = EvalConfig(
         spec_ids=args.spec_ids if args.spec_ids else None,
         checkpoint_dir=Path(args.checkpoint_dir)
@@ -62,6 +65,8 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
         use_real_workflows=getattr(args, "use_real_workflows", False),
         sparse=getattr(args, "sparse", False),
         resolve_ambiguities=getattr(args, "resolve_ambiguities", False),
+        use_judge=getattr(args, "judge", False),
+        use_pdd=use_pdd,
     )
 
     fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else _default_fixtures_dir()
@@ -74,7 +79,9 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
 
         signal_resolver = create_resolver(mode=eval_mode)
 
+    pipeline_label = "PDD orchestrator" if config.use_pdd else "refinement pipeline (legacy)"
     print("Running evaluation with config:")
+    print(f"  Pipeline: {pipeline_label}")
     print(f"  Fixtures: {fixtures_dir}")
     print(f"  Output: {config.output_dir}")
     print(f"  Checkpoint: {config.checkpoint_dir}")
@@ -88,6 +95,8 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
         print(f"  Mode: {eval_mode}")
     if config.resolve_ambiguities:
         print("  Resolve ambiguities: enabled")
+    if config.use_judge:
+        print("  Scoring: LLM judge (semantic)")
 
     # Create and run
     runner = EvalRunner(config, fixtures_dir=fixtures_dir, signal_resolver=signal_resolver)
@@ -348,6 +357,16 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         "--resolve-ambiguities",
         action="store_true",
         help="Enable post-phase ambiguity resolution during evaluation",
+    )
+    p_run.add_argument(
+        "--judge",
+        action="store_true",
+        help="Use LLM judge for semantic scoring instead of fuzzy matching",
+    )
+    p_run.add_argument(
+        "--refinement",
+        action="store_true",
+        help="Use legacy refinement pipeline instead of PDD orchestrator (default: PDD)",
     )
 
     # eval resume
@@ -790,6 +809,16 @@ def main() -> int:
         "--resolve-ambiguities",
         action="store_true",
         help="Enable post-phase ambiguity resolution during evaluation",
+    )
+    p_run.add_argument(
+        "--judge",
+        action="store_true",
+        help="Use LLM judge for semantic scoring instead of fuzzy matching",
+    )
+    p_run.add_argument(
+        "--refinement",
+        action="store_true",
+        help="Use legacy refinement pipeline instead of PDD orchestrator (default: PDD)",
     )
 
     # eval resume
