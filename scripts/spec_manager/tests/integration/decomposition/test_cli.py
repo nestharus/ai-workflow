@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_manager.spec_manager.decomposition.workspace import (
+from spec_manager.decomposition.workspace import (
     init_workspace,
     load_state,
     save_state,
@@ -60,7 +59,7 @@ class TestCreateInvestigationStaging:
 
     def test_creates_investigation_directory(self, initialized_workspace: Path):
         """Test that create_investigation_staging creates entity directory."""
-        from scripts.spec_manager.spec_manager.decomposition.workspace import (
+        from spec_manager.decomposition.workspace import (
             create_investigation_staging,
         )
 
@@ -72,7 +71,7 @@ class TestCreateInvestigationStaging:
 
     def test_creates_investigation_files(self, initialized_workspace: Path):
         """Test that investigation files are created for each original file."""
-        from scripts.spec_manager.spec_manager.decomposition.workspace import (
+        from spec_manager.decomposition.workspace import (
             create_investigation_staging,
         )
 
@@ -87,7 +86,7 @@ class TestResolveOriginalCopy:
 
     def test_resolves_by_source_path(self, initialized_workspace: Path, sample_spec: Path):
         """Test resolving by original source path."""
-        from scripts.spec_manager.spec_manager.decomposition.workspace import resolve_original_copy
+        from spec_manager.decomposition.workspace import resolve_original_copy
 
         result = resolve_original_copy(initialized_workspace, str(sample_spec))
 
@@ -97,7 +96,7 @@ class TestResolveOriginalCopy:
 
     def test_returns_none_for_unknown_file(self, initialized_workspace: Path):
         """Test returns None for unknown source file."""
-        from scripts.spec_manager.spec_manager.decomposition.workspace import resolve_original_copy
+        from spec_manager.decomposition.workspace import resolve_original_copy
 
         result = resolve_original_copy(initialized_workspace, "/nonexistent/file.md")
 
@@ -109,7 +108,7 @@ class TestResolveDiscoveryStaging:
 
     def test_resolves_by_source_path(self, initialized_workspace: Path, sample_spec: Path):
         """Test resolving by original source path."""
-        from scripts.spec_manager.spec_manager.decomposition.workspace import (
+        from spec_manager.decomposition.workspace import (
             resolve_discovery_staging,
         )
 
@@ -121,7 +120,7 @@ class TestResolveDiscoveryStaging:
 
     def test_returns_none_for_unknown_file(self, initialized_workspace: Path):
         """Test returns None for unknown source file."""
-        from scripts.spec_manager.spec_manager.decomposition.workspace import (
+        from spec_manager.decomposition.workspace import (
             resolve_discovery_staging,
         )
 
@@ -137,8 +136,8 @@ class TestProcessInvestigationRequiresEntity:
         """Test that process-investigation fails for non-existent entity."""
         import argparse
 
-        from scripts.spec_manager.spec_manager.decomposition.cli import cmd_process_investigation
-        from scripts.spec_manager.spec_manager.decomposition.workspace import (
+        from spec_manager.decomposition.cli import cmd_process_investigation
+        from spec_manager.decomposition.workspace import (
             create_investigation_staging,
         )
 
@@ -173,7 +172,7 @@ class TestProcessInvestigationRequiresEntity:
         save_state(initialized_workspace, state)
 
         # Entity index is empty so entity won't be found
-        from scripts.spec_manager.spec_manager.decomposition.entity_index import load_entity_index
+        from spec_manager.decomposition.entity_index import load_entity_index
 
         entity_index = load_entity_index(initialized_workspace)
         assert entity_name not in [info.get("name") for info in entity_index.values()]
@@ -196,11 +195,11 @@ class TestLineRedaction:
 
     def test_remove_lines_marks_as_extracted(self, initialized_workspace: Path, sample_spec: Path):
         """Test that remove_lines marks lines as extracted."""
-        from scripts.spec_manager.spec_manager.decomposition.staging import (
+        from spec_manager.decomposition.staging import (
             get_remaining_lines,
             remove_lines,
         )
-        from scripts.spec_manager.spec_manager.decomposition.workspace import (
+        from spec_manager.decomposition.workspace import (
             resolve_discovery_staging,
         )
 

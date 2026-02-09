@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_manager.spec_manager.decomposition.staging import (
+from spec_manager.decomposition.staging import (
     collect_and_remove_snippets,
     create_staging_file,
     embed_id_at_line,

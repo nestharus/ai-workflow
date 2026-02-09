@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.spec_manager.spec_manager.decomposition.execution import (
+from spec_manager.decomposition.execution import (
     Gap,
     Ledger,
     SpecEntry,

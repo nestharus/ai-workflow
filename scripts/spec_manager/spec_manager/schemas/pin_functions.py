@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ProjectionType(str, Enum):
@@ -25,7 +25,7 @@ class ProjectionType(str, Enum):
     - Novel: INTRODUCTION
     """
 
-    PASS_THROUGH = "pass_through"  # Architecture imports and calls atom directly
+    PASS_THROUGH = "pass_through"  # Architecture imports and calls atom directly  # noqa: S105
     EVENT_BRIDGE = "event_bridge"  # Atom wrapped in event handler
     MIDDLEWARE_WRAP = "middleware_wrap"  # Atom wrapped in middleware layer
     RETRY_DECORATE = "retry_decorate"  # Atom wrapped with retry/resilience
@@ -50,6 +50,37 @@ COARSE_GROUP: dict[ProjectionType, str] = {
 def coarse_group(pt: ProjectionType) -> str:
     """Return the coarse group name for a fine-grained projection type."""
     return COARSE_GROUP[pt]
+
+
+class PinFunctionSchema(BaseModel):
+    """Schema for validating pin-function mapping data (pin -> atom -> arch).
+
+    Used to validate pin-function definitions at input boundaries.
+    """
+
+    pin_id: str
+    atom_id: str
+    architectural_location: str
+    projection_type: str
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    wrapper_hash: str | None = None
+
+    @field_validator("pin_id")
+    @classmethod
+    def validate_pin_id(cls, v: str) -> str:
+        import re
+
+        if not re.match(r"^PIN-\d{4}$", v):
+            raise ValueError("pin_id must match PIN-#### format")
+        return v
+
+    @field_validator("projection_type")
+    @classmethod
+    def validate_projection_type(cls, v: str) -> str:
+        allowed = {"pass_through", "projection", "aggregation", "introduction"}
+        if v not in allowed:
+            raise ValueError(f"projection_type must be one of {sorted(allowed)}")
+        return v
 
 
 class PinFunction(BaseModel):
@@ -128,6 +159,7 @@ __all__ = [
     "MicroAddress",
     "PinFunction",
     "PinFunctionRegistry",
+    "PinFunctionSchema",
     "ProjectionType",
     "coarse_group",
 ]

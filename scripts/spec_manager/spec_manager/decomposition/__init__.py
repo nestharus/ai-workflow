@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from scripts.spec_manager.spec_manager.decomposition.entity_index import (
+from spec_manager.decomposition.entity_index import (
     add_entity_to_index,
     add_source_to_entity,
     check_rediscovery,
     load_entity_index,
     save_entity_index,
 )
-from scripts.spec_manager.spec_manager.decomposition.extract import (
+from spec_manager.decomposition.extract import (
     append_evidence_to_entity,
     create_discovered_entity_document,
     create_rich_relation_document,
@@ -17,8 +17,8 @@ from scripts.spec_manager.spec_manager.decomposition.extract import (
     extract_entity_to_document,
     extract_relation_to_document,
 )
-from scripts.spec_manager.spec_manager.decomposition.finalize import finalize_output
-from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+from spec_manager.decomposition.finalize import finalize_output
+from spec_manager.decomposition.id_generator import (
     IDType,
     generate_id,
     get_ids_by_type,
@@ -26,8 +26,8 @@ from scripts.spec_manager.spec_manager.decomposition.id_generator import (
     load_id_map,
     save_id_map,
 )
-from scripts.spec_manager.spec_manager.decomposition.recompose import recompose
-from scripts.spec_manager.spec_manager.decomposition.staging import (
+from spec_manager.decomposition.recompose import recompose
+from spec_manager.decomposition.staging import (
     collect_and_remove_snippets,
     create_staging_file,
     embed_id_at_line,
@@ -41,8 +41,8 @@ from scripts.spec_manager.spec_manager.decomposition.staging import (
     remove_lines,
     write_snippet_staging_file,
 )
-from scripts.spec_manager.spec_manager.decomposition.tagging import tag_facts
-from scripts.spec_manager.spec_manager.decomposition.workspace import (
+from spec_manager.decomposition.tagging import tag_facts
+from spec_manager.decomposition.workspace import (
     create_investigation_staging,
     init_workspace,
     list_discovery_staging_files,
@@ -53,50 +53,43 @@ from scripts.spec_manager.spec_manager.decomposition.workspace import (
 )
 
 __all__ = [
-    # Entity Index
+    "IDType",
     "add_entity_to_index",
     "add_source_to_entity",
-    "check_rediscovery",
-    "load_entity_index",
-    "save_entity_index",
-    # Extraction
     "append_evidence_to_entity",
+    "check_rediscovery",
+    "collect_and_remove_snippets",
     "create_discovered_entity_document",
+    "create_investigation_staging",
     "create_rich_relation_document",
+    "create_staging_file",
+    "embed_id_at_line",
     "extract_context_to_document",
     "extract_entity_to_document",
     "extract_relation_to_document",
-    # Finalization
     "finalize_output",
-    # ID generation
-    "IDType",
-    "generate_id",
-    "get_ids_by_type",
-    "get_source_lines",
-    "load_id_map",
-    "save_id_map",
-    # Staging
-    "collect_and_remove_snippets",
-    "create_staging_file",
-    "embed_id_at_line",
     "format_content_for_agent",
+    "generate_id",
     "get_embedded_ids",
+    "get_ids_by_type",
     "get_line_content",
     "get_marked_snippets",
     "get_remaining_lines",
-    "is_file_empty",
-    "mark_relation_snippet",
-    "remove_lines",
-    "write_snippet_staging_file",
-    # Tagging & recomposition
-    "recompose",
-    "tag_facts",
-    # Workspace
-    "create_investigation_staging",
+    "get_source_lines",
     "init_workspace",
+    "is_file_empty",
     "list_discovery_staging_files",
+    "load_entity_index",
+    "load_id_map",
     "load_state",
+    "mark_relation_snippet",
+    "recompose",
+    "remove_lines",
     "resolve_discovery_staging",
     "resolve_original_copy",
+    "save_entity_index",
+    "save_id_map",
     "save_state",
+    "tag_facts",
+    "write_snippet_staging_file",
 ]

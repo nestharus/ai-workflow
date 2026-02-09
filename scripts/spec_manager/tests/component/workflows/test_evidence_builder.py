@@ -271,7 +271,7 @@ class TestBuildEvidenceGraph:
         ]
         sections1 = FileSections(file_id=file_uid, sections=section_spans1, total_lines=2)
         evidence_ranges1, _ = build_evidence_ranges_from_spans(file_uid, rev_id, atoms1, sections1)
-        build_evidence_graph(atoms1, evidence_ranges1, section_spans1)
+        graph1 = build_evidence_graph(atoms1, evidence_ranges1, section_spans1)
 
         # Extend with more atoms
         atoms2 = [make_atom(file_uid, rev_id, i, "SEC-002") for i in range(3, 5)]

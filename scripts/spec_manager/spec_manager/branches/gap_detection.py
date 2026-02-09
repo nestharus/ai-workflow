@@ -59,6 +59,7 @@ class GapItem:
 
 # ---- Adapter helpers ----
 
+
 def _comment_gap_to_gap_item(cg: CommentGap) -> GapItem:
     """Convert a canonical CommentGap to the branches GapItem format."""
     return GapItem(
@@ -69,12 +70,23 @@ def _comment_gap_to_gap_item(cg: CommentGap) -> GapItem:
     )
 
 
+_STUB_TYPE_LABELS: dict[str, str] = {
+    "pass": "pass",
+    "ellipsis": "Ellipsis",
+    "not_implemented": "NotImplementedError",
+}
+
+
 def _stub_to_gap_item(sf: StubFunction) -> GapItem:
     """Convert a canonical StubFunction to the branches GapItem format."""
+    if sf.has_docstring and sf.stub_type == "pass":
+        label = "docstring only"
+    else:
+        label = _STUB_TYPE_LABELS.get(sf.stub_type, sf.stub_type)
     return GapItem(
         file=sf.file_path,
         line=sf.line,
-        text=f"Stub function: {sf.name} ({sf.stub_type})",
+        text=f"Stub function: {sf.name} ({label})",
         gap_type="stub_function",
     )
 
@@ -145,17 +157,20 @@ class GapDetector:
             return gaps
 
         for node in ast.walk(tree):
-            if isinstance(node, ast.Raise) and node.exc is not None:
-                if isinstance(node.exc, ast.Call) and isinstance(node.exc.func, ast.Name):
-                    if node.exc.func.id == "RuntimeError":
-                        gaps.append(
-                            GapItem(
-                                file=str(filepath),
-                                line=node.lineno,
-                                text="RuntimeError placeholder",
-                                gap_type="runtime_error",
-                            )
-                        )
+            if (
+                isinstance(node, ast.Raise)
+                and isinstance(node.exc, ast.Call)
+                and isinstance(node.exc.func, ast.Name)
+                and node.exc.func.id == "RuntimeError"
+            ):
+                gaps.append(
+                    GapItem(
+                        file=str(filepath),
+                        line=node.lineno,
+                        text="RuntimeError placeholder",
+                        gap_type="runtime_error",
+                    )
+                )
 
         return gaps
 

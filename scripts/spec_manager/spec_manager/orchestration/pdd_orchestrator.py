@@ -26,13 +26,11 @@ the PDD members.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 from spec_manager.refinement.workspace.state import Phase, PhaseStatus
-
-if TYPE_CHECKING:
-    from spec_manager.orchestration.infrastructure import PddInfrastructure
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +78,8 @@ class PddOrchestrator:
     def __init__(
         self,
         manager: WorkspaceManager,
-        infrastructure: PddInfrastructure | None = None,
     ) -> None:
         self.manager = manager
-        self._infrastructure: PddInfrastructure | None = infrastructure
         self._phase_runners: dict[Phase, str] = {
             Phase.EXTRACTION: "_run_extraction",
             Phase.STRUCTURE_DISCOVERY: "_run_structure_discovery",
@@ -97,15 +93,6 @@ class PddOrchestrator:
             Phase.IMPLEMENTATION: "_run_implementation",
             Phase.CONTINUOUS_QA: "_run_continuous_qa",
         }
-
-    @property
-    def infrastructure(self) -> PddInfrastructure:
-        """Lazy-init infrastructure if not provided at construction time."""
-        if self._infrastructure is None:
-            from spec_manager.orchestration.infrastructure import PddInfrastructure
-
-            self._infrastructure = PddInfrastructure(self.manager)
-        return self._infrastructure
 
     # ------------------------------------------------------------------
     # Public API
@@ -154,9 +141,9 @@ class PddOrchestrator:
             try:
                 self.run_phase(pdd_phase)
                 completed.append(pdd_phase.value)
-            except Exception as exc:
+            except Exception:
                 failed.append(pdd_phase.value)
-                logger.error("Phase %s failed: %s", pdd_phase.value, exc)
+                logger.exception("Phase %s failed", pdd_phase.value)
                 if stop_on_failure:
                     break
 
@@ -208,22 +195,79 @@ class PddOrchestrator:
     # ------------------------------------------------------------------
 
     def _run_extraction(self) -> dict[str, Any]:
-        """Phase 0: Extraction.
+        """Phase 0: Routing-based restructuring.
 
-        Converts arbitrary prose input into the PDD workspace format.
-        Uses mechanical markdown parsing and regex-based entity detection
-        (no LLM calls).
+        Converts freeform prose input into the PDD workspace format using
+        LLM-driven routing (NOT regex, NOT extraction).
 
-        Produces:
-        - ``summaries/*.md`` — section-level bullet-point summaries
-        - ``libraries/*/charter.md`` — library charters
-        - ``libraries/*/spec.md`` — extracted requirements
-        - ``libraries/*/evidence/*.md`` — evidence mappings
+        Steps:
+        1. Summarize source files (LLM, for routing decisions only)
+        2. Discover libraries from summaries (LLM)
+        3. Route source spans to destinations (LLM + reimplementation test)
+        4. Check coverage (deterministic)
+        5. Assemble output by verbatim copy (deterministic)
+
+        After Phase 0 completes, its output is installed into the workspace
+        structure (libraries/, summaries/, system/) so downstream phases and
+        extraction methods can find it.
         """
-        from spec_manager.orchestration.extraction import ProseExtractor
+        from spec_manager.intake import run_phase0
 
-        extractor = ProseExtractor(self.manager)
-        return extractor.extract()
+        source_dir = self.manager.structure.spec_snapshot_dir
+        output_dir = self.manager.workspace_path / "phase0_output"
+        result = run_phase0(source_dir, output_dir)
+
+        # Install Phase 0 output into workspace structure
+        self._install_phase0_output(output_dir)
+
+        return result
+
+    def _install_phase0_output(self, phase0_dir: Path) -> None:
+        """Copy Phase 0 assembled output into the workspace directory structure.
+
+        Phase 0 writes to its own output directory. The workspace structure
+        (libraries/, summaries/, system/) is where extraction methods and
+        downstream phases look for content. This bridge copies the output
+        into those locations.
+        """
+        import shutil
+
+        # Install assembled library directories
+        phase0_libs = phase0_dir / "libraries"
+        if phase0_libs.exists():
+            for lib_dir in sorted(phase0_libs.iterdir()):
+                if lib_dir.is_dir():
+                    dest = self.manager.structure.libraries_dir / lib_dir.name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(lib_dir, dest)
+
+        # Install system-level constraints
+        phase0_system = phase0_dir / "system"
+        if phase0_system.exists():
+            system_dest = self.manager.structure.root / "system"
+            if system_dest.exists():
+                shutil.rmtree(system_dest)
+            shutil.copytree(phase0_system, system_dest)
+
+        # Install per-file summaries
+        phase0_summaries = phase0_dir / "summaries"
+        if phase0_summaries.exists():
+            for summary_file in phase0_summaries.glob("*.json"):
+                dest = self.manager.structure.summaries_dir / summary_file.name
+                shutil.copy2(summary_file, dest)
+
+        # Install libraries.json (library definitions with names)
+        libraries_json = phase0_dir / "libraries.json"
+        if libraries_json.exists():
+            dest = self.manager.structure.root / "libraries.json"
+            shutil.copy2(libraries_json, dest)
+
+        # Install route_table.jsonl
+        route_table = phase0_dir / "route_table.jsonl"
+        if route_table.exists():
+            dest = self.manager.structure.root / "route_table.jsonl"
+            shutil.copy2(route_table, dest)
 
     def _run_structure_discovery(self) -> dict[str, Any]:
         """Phase 1: AST-based function/class/import extraction.
@@ -237,6 +281,7 @@ class PddOrchestrator:
         all_files = self.manager.get_all_files()
         parsed_count = 0
         errors: list[str] = []
+        per_file_results: list[dict[str, Any]] = []
 
         for file_id, file_path in all_files.items():
             if not file_path.exists():
@@ -246,9 +291,7 @@ class PddOrchestrator:
                 continue
             try:
                 code_file = parse_file(str(file_path))
-                # Store results via workspace manager
-                self.manager.write_agent_output(
-                    ws_phase,
+                per_file_results.append(
                     {
                         "file_id": file_id,
                         "functions": len(code_file.functions),
@@ -260,6 +303,12 @@ class PddOrchestrator:
             except Exception as exc:
                 errors.append(f"Failed to parse {file_path}: {exc}")
 
+        # Write all per-file results as a single aggregate output
+        self.manager.write_agent_output(
+            ws_phase,
+            {"files": per_file_results},
+        )
+
         return {
             "files_parsed": parsed_count,
             "total_files": len(all_files),
@@ -267,39 +316,46 @@ class PddOrchestrator:
         }
 
     def _run_decomposition(self) -> dict[str, Any]:
-        """Phase 2: Comment insertion, reverse translation.
+        """Phase 2: Reverse translation of functions to pseudocode.
 
-        Calls ``planning.inserter.plan_insertions()`` and
-        ``planning.reverser.reverse_translate()`` to decompose the
-        codebase into annotated algorithmic units.
+        Calls ``planning.reverser.reverse_translate()`` for each function
+        in each file to produce pseudocode annotations describing the
+        implementation.
+
+        Note: ``plan_insertions()`` is a directed operation requiring a
+        user-provided intention string, so it is not called in batch mode.
         """
-        from spec_manager.planning.inserter import plan_insertions
+        from spec_manager.planning.code_parser import parse_file
         from spec_manager.planning.reverser import reverse_translate
 
         all_files = self.manager.get_all_files()
-        insertion_count = 0
         reversal_count = 0
+        functions_processed = 0
         errors: list[str] = []
 
-        for file_id, file_path in all_files.items():
+        for _file_id, file_path in all_files.items():
             if not file_path.exists() or file_path.suffix != ".py":
                 continue
             try:
-                content = file_path.read_text(encoding="utf-8")
-                insertions = plan_insertions(content, str(file_path))
-                insertion_count += len(insertions)
+                code_file = parse_file(str(file_path))
             except Exception as exc:
-                errors.append(f"Insertion planning failed for {file_path}: {exc}")
+                errors.append(f"Parse failed for {file_path}: {exc}")
+                continue
 
-            try:
-                reverse_result = reverse_translate(str(file_path))
-                reversal_count += 1 if reverse_result else 0
-            except Exception as exc:
-                errors.append(f"Reverse translation failed for {file_path}: {exc}")
+            for func in code_file.functions:
+                try:
+                    reverse_plan = reverse_translate(code_file, func.name)
+                    functions_processed += 1
+                    if reverse_plan.generated_comments:
+                        reversal_count += 1
+                except Exception as exc:
+                    errors.append(
+                        f"Reverse translation failed for {func.name} in {file_path}: {exc}"
+                    )
 
         return {
-            "insertions_planned": insertion_count,
-            "files_reversed": reversal_count,
+            "functions_processed": functions_processed,
+            "functions_with_comments": reversal_count,
             "errors": errors,
         }
 
@@ -312,17 +368,17 @@ class PddOrchestrator:
         from spec_manager.compliance.detection.orchestrator import scan_executable_gaps
 
         all_files = self.manager.get_all_files()
-        filepaths = [
-            str(fp) for fp in all_files.values()
-            if fp.exists() and fp.suffix == ".py"
-        ]
-        project_root = str(self.manager.structure.root)
+        filepaths = [fp for fp in all_files.values() if fp.exists() and fp.suffix == ".py"]
+        project_root = self.manager.structure.root
 
         try:
-            gaps = scan_executable_gaps(filepaths, project_root, config={})
+            report = scan_executable_gaps(filepaths, project_root)
             return {
-                "gaps_found": len(gaps),
+                "gaps_found": len(report.all_evidence),
+                "comment_gaps": len(report.comment_gaps),
+                "stub_gaps": len(report.stub_gaps),
                 "files_scanned": len(filepaths),
+                "scan_duration_ms": report.scan_duration_ms,
             }
         except Exception as exc:
             return {
@@ -334,46 +390,75 @@ class PddOrchestrator:
     def _run_library_discovery(self) -> dict[str, Any]:
         """Phase 4: Branch initialization, atom registry, slice navigation.
 
-        Calls ``branches.manager.BranchManager.initialize()`` on the
-        workspace run root to set up the branch organization system.
+        1. Initializes the branch directory structure via
+           ``BranchManager.initialize()``.
+        2. Runs the ``CollapseEngine`` against the spec snapshot to extract
+           atoms (algorithms, stores, shapes) from Python files and
+           register them in the atom registry.
         """
         branch_mgr = self.manager.branches
-        if not branch_mgr.is_initialized():
-            issues = branch_mgr.initialize()
-        else:
-            issues = []
+        issues = branch_mgr.initialize() if not branch_mgr.is_initialized() else []
+
+        # Collapse the codebase into Layer 1 atoms
+        source_dir = self.manager.structure.spec_snapshot_dir
+        collapse_result = branch_mgr.collapse_codebase(source_dir)
+
+        # Register all extracted atoms and persist
+        all_descriptors = (
+            collapse_result.extracted_atoms
+            + collapse_result.extracted_stores
+            + collapse_result.extracted_shapes
+        )
+        for descriptor in all_descriptors:
+            branch_mgr.register_atom(descriptor)
+        branch_mgr.atom_registry.save()
 
         return {
             "branch_initialized": True,
             "init_issues": issues,
+            "atoms_extracted": len(collapse_result.extracted_atoms),
+            "stores_extracted": len(collapse_result.extracted_stores),
+            "shapes_extracted": len(collapse_result.extracted_shapes),
+            "architectural_remnants": len(collapse_result.architectural_remnants),
+            "collapse_warnings": collapse_result.warnings,
         }
 
     def _run_spec_build(self) -> dict[str, Any]:
         """Phase 5: Pin-function extraction + promotion workflow.
 
-        Calls ``pin_functions.orchestrator.PinFunctionOrchestrator.scan()``
-        for pin extraction and uses ``branches.promotion.PromotionEngine``
-        for the promotion workflow.
+        1. Scans the workspace for pin functions via
+           ``PinFunctionOrchestrator.scan()``.
+        2. Persists the ``PinFunctionRegistry`` to the registry path.
         """
+        import json
+
         from spec_manager.pin_functions.orchestrator import PinFunctionOrchestrator
 
-        project_root = str(self.manager.structure.root)
-        orchestrator = PinFunctionOrchestrator(project_root)
+        project_root = self.manager.structure.root
+        pin_orchestrator = PinFunctionOrchestrator(project_root)
 
-        try:
-            scan_result = orchestrator.scan()
-        except Exception as exc:
-            scan_result = {"error": str(exc), "pins_found": 0}
+        registry = pin_orchestrator.scan()
+
+        # Persist the registry to disk
+        registry_path = pin_orchestrator.registry_path
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(
+            json.dumps(registry.model_dump(), indent=2),
+            encoding="utf-8",
+        )
 
         return {
-            "pin_scan": scan_result,
+            "pins_found": len(registry.pin_functions),
+            "import_edges": len(registry.import_edges),
+            "registry_path": str(registry_path),
         }
 
     def _run_cross_library(self) -> dict[str, Any]:
         """Phase 6: Adjacency graph and disconnected component detection.
 
-        Calls ``analysis.adjacency.runner.run_adjacency_analysis()`` to
-        build the cross-library adjacency graph.
+        Runs ``run_adjacency_analysis()`` against workspace source files
+        to build a unified adjacency graph (call, event, store,
+        cooccurrence) and detect disconnected components.
         """
         from spec_manager.analysis.adjacency.runner import (
             AdjacencyAnalysisConfig,
@@ -382,51 +467,118 @@ class PddOrchestrator:
 
         root = self.manager.structure.root
         config = AdjacencyAnalysisConfig(
-            source_dirs=[root],
+            source_dirs=[self.manager.structure.spec_snapshot_dir],
             spec_dirs=[root],
         )
-        try:
-            report = run_adjacency_analysis(config)
-            return {
-                "disconnected_components": len(report.disconnected_components)
-                if hasattr(report, "disconnected_components")
-                else 0,
-            }
-        except Exception as exc:
-            return {"error": str(exc)}
+        report = run_adjacency_analysis(config)
+        return {
+            "total_nodes": report.total_nodes,
+            "total_edges": report.total_edges,
+            "num_components": report.num_components,
+            "disconnected_warnings": len(report.disconnected_warnings),
+            "signal_type_counts": report.signal_type_counts,
+        }
 
     def _run_projection_sync(self) -> dict[str, Any]:
         """Phase 7: L2 generation, drift detection, pin propagation.
 
-        Calls ``projection.generator.ProjectionGenerator.generate_plan()``
-        to create/update projection plans.
+        Reads libraries from ``libraries.json`` (Phase 0 output) and
+        elements from per-library ``spec_index.json`` files, then calls
+        ``ProjectionGenerator.generate_plan()`` to produce plan.md.
         """
+        import json
+
         from spec_manager.projection.generator import ProjectionGenerator
+        from spec_manager.schemas.derived_elements import DerivedElement
+        from spec_manager.schemas.spec_index_v2 import Library
+
+        # 1. Load libraries from libraries.json (written by Phase 0)
+        libraries: list[Library] = []
+        libraries_json = self.manager.structure.root / "libraries.json"
+        if libraries_json.exists():
+            try:
+                data = json.loads(libraries_json.read_text(encoding="utf-8"))
+                for lib_data in data.get("libraries", []):
+                    lib_id = lib_data.get("lib_id", "")
+                    libraries.append(
+                        Library(
+                            lib_id=lib_id,
+                            name=lib_data.get("name", lib_id),
+                            description=lib_data.get("description", ""),
+                        )
+                    )
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Failed to read libraries.json: %s", exc)
+
+        # 2. Load elements from per-library spec_index.json files
+        elements: list[DerivedElement] = []
+        lib_dirs = self.manager.get_all_libraries_recursive()
+        for lib_id, lib_path in lib_dirs.items():
+            spec_index_path = lib_path / "spec_index.json"
+            if not spec_index_path.exists():
+                continue
+            try:
+                spec_data = json.loads(spec_index_path.read_text(encoding="utf-8"))
+                for elem_data in spec_data.get("elements", []):
+                    elements.append(
+                        DerivedElement(
+                            elem_id=elem_data.get("element_id", elem_data.get("elem_id", "")),
+                            kind=elem_data.get("kind", "REQ"),
+                            lib_id=lib_id if lib_id.startswith("LIB-") else f"LIB-{lib_id}",
+                            title=elem_data.get("title", ""),
+                            body=elem_data.get("text", elem_data.get("body", "")),
+                            evidence_atom_ids=elem_data.get("evidence_atom_ids", ["ATOM-0000"]),
+                        )
+                    )
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Failed to read spec_index.json for %s: %s", lib_id, exc)
+
+        if not libraries:
+            return {
+                "libraries_found": 0,
+                "elements_found": len(elements),
+                "note": "No libraries.json found — Phase 0 output may not be installed.",
+            }
 
         generator = ProjectionGenerator()
-        try:
-            plan = generator.generate_plan()
-            return {"projection_plan": str(plan) if plan else "empty"}
-        except Exception as exc:
-            return {"error": str(exc)}
+        artifact = generator.generate_plan(libraries=libraries, elements=elements)
+        return {
+            "projection_id": artifact.projection_id,
+            "libraries_found": len(libraries),
+            "elements_found": len(elements),
+            "pins_generated": len(artifact.pins),
+        }
 
     def _run_task_planning(self) -> dict[str, Any]:
         """Phase 8: Planning integration and gap bridge.
 
-        Calls ``planning.workflow.run_planning_v2_phase()`` with the
-        current run context.
+        Gathers target Python files from the workspace snapshot and
+        compliance gap descriptions as intentions, then calls
+        ``run_planning_v2_phase()`` to produce insertion plans.
         """
         from spec_manager.planning.workflow import run_planning_v2_phase
 
-        try:
-            result = run_planning_v2_phase(
-                run_id=self.manager.run_id,
-                target_files=[],
-                intentions=[],
-            )
-            return {"planning_result": result}
-        except Exception as exc:
-            return {"error": str(exc)}
+        # Gather target files from workspace snapshot
+        all_files = self.manager.get_all_files()
+        target_files = [str(fp) for fp in all_files.values() if fp.exists() and fp.suffix == ".py"]
+
+        # Derive intentions from Phase 3 compliance gap descriptions
+        phase3_result = self.manager.state.phases.get(Phase.COMPLIANCE_CLEAN.value)
+        intentions: list[str] = []
+        if phase3_result and phase3_result.outputs:
+            gap_count = phase3_result.outputs.get("gaps_found", 0)
+            if gap_count > 0:
+                intentions.append(
+                    f"Resolve {gap_count} executable gaps found during compliance scan"
+                )
+
+        result = run_planning_v2_phase(
+            run_id=self.manager.run_id,
+            target_files=target_files,
+            intentions=intentions,
+            evidence_dir=self.manager.structure.root,
+        )
+        return {"planning_result": result}
 
     def _run_implementation(self) -> dict[str, Any]:
         """Phase 9: Edit-in-place analysis with compliance promotion gating.
@@ -448,20 +600,19 @@ class PddOrchestrator:
     def _run_continuous_qa(self) -> dict[str, Any]:
         """Phase 10: Strategy evolution, eval framework, and refinement engine.
 
-        Uses ``strategies.evolution.StrategyEvolutionPipeline`` for
-        continuous quality improvement and ``refinement_engine`` for
-        coupling/cohesion detection and restructuring.
+        1. Initializes ``StrategyRegistry`` and enables the
+           ``StrategyEvolutionPipeline`` for continuous quality improvement.
+        2. Runs the ``refinement_engine`` for coupling/cohesion detection
+           and restructuring.
         """
-        from spec_manager.strategies.evolution import StrategyEvolutionPipeline
+        from spec_manager.strategies.registry import StrategyRegistry
 
         outputs: dict[str, Any] = {}
 
-        try:
-            pipeline = StrategyEvolutionPipeline()
-            outputs["pipeline_initialized"] = True
-            outputs["pipeline_type"] = type(pipeline).__name__
-        except Exception as exc:
-            outputs["pipeline_error"] = str(exc)
+        registry = StrategyRegistry()
+        registry.enable_evolution()
+        outputs["pipeline_initialized"] = True
+        outputs["strategies_registered"] = len(registry.definitions)
 
         # Run the refinement engine as the core of continuous QA
         refinement_result = self._run_refinement_engine()
@@ -506,9 +657,7 @@ class PddOrchestrator:
         unsliced: set[str] = set()
         for atom in all_atoms:
             if atom.vertical_slice:
-                slice_entities.setdefault(atom.vertical_slice, set()).add(
-                    atom.atom_id
-                )
+                slice_entities.setdefault(atom.vertical_slice, set()).add(atom.atom_id)
             else:
                 unsliced.add(atom.atom_id)
 

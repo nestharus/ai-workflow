@@ -118,6 +118,9 @@ def _classify_stub(
         stmts = stmts[1:]
 
     if not stmts:
+        # Docstring-only function is a stub (no implementation body)
+        if has_docstring:
+            return "pass", has_docstring
         return None, has_docstring
 
     if len(stmts) != 1:

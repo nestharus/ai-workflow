@@ -3,8 +3,27 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+from spec_manager.core.project_root import get_project_root
 from spec_manager.refinement.cli import main
 from spec_manager.refinement.workspace import Phase, WorkspaceManager
+
+
+@pytest.fixture(autouse=True)
+def _mock_project_root(monkeypatch):
+    """Mock get_project_root to return /repo under pyfakefs."""
+    get_project_root.cache_clear()
+    monkeypatch.setattr(
+        "spec_manager.core.project_root.get_project_root",
+        lambda: Path("/repo"),
+    )
+    # Also patch the import in workspace.manager where it's used
+    monkeypatch.setattr(
+        "spec_manager.refinement.workspace.manager.resolve_from_root",
+        lambda *parts: Path("/repo").joinpath(*parts),
+    )
+    yield
+    get_project_root.cache_clear()
 
 
 def _setup_initialized_workspace(fs, monkeypatch, run_id: str = "run1") -> WorkspaceManager:

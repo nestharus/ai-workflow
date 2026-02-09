@@ -118,38 +118,29 @@ def cmd_phase(args: argparse.Namespace) -> int:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    """Phase 0: extract input to PDD format.
+    """Phase 0: Route freeform prose into PDD format.
 
-    This is an alias for ``phase 0``.  Phase 0 is designed but not yet
-    implemented -- the command reports this clearly.
+    Uses LLM-driven routing (summarize, discover libraries, route spans,
+    check coverage, assemble verbatim output).
     """
-    from spec_manager.orchestration.pdd_orchestrator import PDD_PHASE_ORDER, PddOrchestrator
-    from spec_manager.refinement.workspace.manager import WorkspaceManager
+    from spec_manager.intake import run_phase0
 
     input_path = Path(args.path) if args.path else Path.cwd()
     run_id = args.run_id
+    output_dir = Path.cwd() / "runs" / run_id / "phase0_output"
 
-    print(f"PDD extraction (phase 0): run_id={run_id}")
+    print(f"PDD routing (phase 0): run_id={run_id}")
     print(f"  Input: {input_path}")
+    print(f"  Output: {output_dir}")
 
-    manager = WorkspaceManager(run_id=run_id, input_folder=input_path)
-    if not manager.is_initialized:
-        manager.initialize()
-
-    orchestrator = PddOrchestrator(manager)
-    phase = PDD_PHASE_ORDER[0]  # Phase.EXTRACTION
     try:
-        outputs = orchestrator.run_phase(phase)
-        print("\nExtraction completed.")
-        if outputs:
-            for key, value in outputs.items():
-                print(f"  {key}: {value}")
+        outputs = run_phase0(input_path, output_dir)
+        print("\nPhase 0 routing completed.")
+        for key, value in outputs.items():
+            print(f"  {key}: {value}")
         return 0
-    except NotImplementedError as exc:
-        print(f"\nExtraction not yet implemented: {exc}")
-        return 1
     except Exception as exc:
-        print(f"\nExtraction failed: {exc}", file=sys.stderr)
+        print(f"\nPhase 0 routing failed: {exc}", file=sys.stderr)
         return 1
 
 
@@ -1037,11 +1028,10 @@ def main() -> int:
     args = parser.parse_args()
 
     # Auto-generate run_id for PDD commands when not provided
-    if args.command in ("run", "phase", "extract"):
-        if getattr(args, "run_id", None) is None:
-            from datetime import datetime
+    if args.command in ("run", "phase", "extract") and getattr(args, "run_id", None) is None:
+        from datetime import datetime
 
-            args.run_id = datetime.now().strftime("pdd-%Y%m%d-%H%M%S")
+        args.run_id = datetime.now().strftime("pdd-%Y%m%d-%H%M%S")
 
     commands = {
         "run": cmd_run,

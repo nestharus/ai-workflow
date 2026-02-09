@@ -13,12 +13,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+from spec_manager.decomposition.id_generator import (
     IDType,
     load_id_map,
     save_id_map,
 )
-from scripts.spec_manager.spec_manager.decomposition.workspace import resolve_original_copy
+from spec_manager.decomposition.workspace import resolve_original_copy
 
 
 def _skip_header_lines(lines: list[str]) -> int:
@@ -37,15 +37,23 @@ def _sha256_text(text: str) -> str:
 
 def _next_fact_id(existing: dict[str, Any]) -> str:
     max_n = 0
+    prefix = f"{IDType.FACT.value}-"
     for fid in existing:
-        if not isinstance(fid, str) or not fid.startswith(f"{IDType.FACT.value}-"):
+        if not isinstance(fid, str) or not fid.startswith(prefix):
             continue
-        try:
-            n = int(fid.split("-", 1)[1])
-        except Exception:
+        suffix = fid[len(prefix) :]
+        if not suffix.isdigit():
             continue
-        max_n = max(max_n, n)
+        max_n = max(max_n, int(suffix))
     return f"{IDType.FACT.value}-{max_n + 1:03d}"
+
+
+def _read_utf8_lines(path: Path) -> list[str] | None:
+    """Read a file as UTF-8, returning lines or None on failure."""
+    try:
+        return path.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _read_source_line_from_original_copy(
@@ -63,9 +71,8 @@ def _read_source_line_from_original_copy(
     candidate_paths = [p for p in [original_copy, Path(source_file)] if p and Path(p).exists()]
 
     for path in candidate_paths:
-        try:
-            content_lines = Path(path).read_text(encoding="utf-8").split("\n")
-        except Exception:
+        content_lines = _read_utf8_lines(Path(path))
+        if content_lines is None:
             continue
 
         start = _skip_header_lines(content_lines)

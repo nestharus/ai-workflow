@@ -1,12 +1,13 @@
 """Per-phase eval tests for the treasury spec against PDD extraction.
 
-Runs Phase 0 (ProseExtractor) against the expanded treasury spec fixtures,
-extracts actual outputs per eval phase, and scores against ground truth
-using both fuzzy string matching and the LLM judge (when API is available).
+Runs Phase 0 (routing-based intake) against the expanded treasury spec
+fixtures, extracts actual outputs per eval phase, and scores against ground
+truth using both fuzzy string matching and the LLM judge (when available).
 
-These are REAL evals, not simulations. The ProseExtractor runs mechanically
-(no LLM calls) so these tests are deterministic and fast. The LLM judge
-is used at scoring time to evaluate semantic equivalence.
+These are REAL evals, not simulations. Phase 0 uses LLM agents for
+summarization, library discovery, and routing — API access is required.
+The LLM judge is additionally used at scoring time to evaluate semantic
+equivalence.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from spec_manager.refinement.evals.inputs.ground_truth import GroundTruth, PhaseGroundTruth
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceSpec, load_sequence_spec
 from spec_manager.refinement.evals.metrics import DetailScore, score_detail_capture
@@ -66,6 +66,9 @@ def _try_judge_score(
     except Exception as exc:
         logger.warning("LLM judge unavailable for %s: %s", phase, exc)
         return None
+
+
+pytestmark = pytest.mark.llm_required
 
 
 @pytest.fixture(scope="module")
@@ -153,8 +156,7 @@ class TestSectionizationEval:
         score = score_detail_capture(expected, actual, fuzzy_threshold=0.6)
 
         logger.info(
-            "Sectionization fuzzy: recall=%.1f%% precision=%.1f%% "
-            "(%d/%d matched, %d actual)",
+            "Sectionization fuzzy: recall=%.1f%% precision=%.1f%% (%d/%d matched, %d actual)",
             score.recall * 100,
             score.precision * 100,
             score.matched_count,
@@ -217,8 +219,7 @@ class TestSummarizationEval:
         score = score_detail_capture(expected, actual, fuzzy_threshold=0.4)
 
         logger.info(
-            "Summarization fuzzy: recall=%.1f%% precision=%.1f%% "
-            "(%d/%d matched, %d actual)",
+            "Summarization fuzzy: recall=%.1f%% precision=%.1f%% (%d/%d matched, %d actual)",
             score.recall * 100,
             score.precision * 100,
             score.matched_count,
@@ -280,14 +281,14 @@ class TestLibrarySynthesisEval:
 
         # Filter actual outputs to CamelCase names only (not responsibilities)
         import re
+
         camel_re = re.compile(r"^[A-Z][a-z]+(?:[A-Z][a-z0-9]+)+$")
         actual_names = [item for item in actual if camel_re.match(item)]
 
         score = score_detail_capture(expected_names, actual_names, fuzzy_threshold=0.8)
 
         logger.info(
-            "Library names fuzzy: recall=%.1f%% precision=%.1f%% "
-            "(%d/%d matched, %d actual names)",
+            "Library names fuzzy: recall=%.1f%% precision=%.1f%% (%d/%d matched, %d actual names)",
             score.recall * 100,
             score.precision * 100,
             score.matched_count,
@@ -313,8 +314,7 @@ class TestLibrarySynthesisEval:
         score = score_detail_capture(expected_reqs, actual, fuzzy_threshold=0.4)
 
         logger.info(
-            "Library requirements fuzzy: recall=%.1f%% precision=%.1f%% "
-            "(%d/%d matched, %d actual)",
+            "Library requirements fuzzy: recall=%.1f%% precision=%.1f%% (%d/%d matched, %d actual)",
             score.recall * 100,
             score.precision * 100,
             score.matched_count,
@@ -378,8 +378,7 @@ class TestSpecBuildingEval:
         score = score_detail_capture(expected, actual, fuzzy_threshold=0.4)
 
         logger.info(
-            "Spec building fuzzy: recall=%.1f%% precision=%.1f%% "
-            "(%d/%d matched, %d actual)",
+            "Spec building fuzzy: recall=%.1f%% precision=%.1f%% (%d/%d matched, %d actual)",
             score.recall * 100,
             score.precision * 100,
             score.matched_count,
@@ -495,8 +494,7 @@ class TestOverallEval:
         overall_precision = total_matched / max(1, total_actual)
 
         logger.info(
-            "Overall fuzzy: recall=%.1f%% precision=%.1f%% "
-            "(%d/%d matched, %d actual)",
+            "Overall fuzzy: recall=%.1f%% precision=%.1f%% (%d/%d matched, %d actual)",
             overall_recall * 100,
             overall_precision * 100,
             total_matched,
@@ -505,8 +503,7 @@ class TestOverallEval:
         )
 
         assert overall_recall >= 0.2, (
-            f"Overall recall too low: {overall_recall:.1%} "
-            f"({total_matched}/{total_expected})"
+            f"Overall recall too low: {overall_recall:.1%} ({total_matched}/{total_expected})"
         )
 
     def test_overall_requirements_count(

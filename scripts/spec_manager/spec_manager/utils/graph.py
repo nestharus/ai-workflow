@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.spec_manager.spec_manager.decomposition.entity_index import load_entity_index
-from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+from spec_manager.decomposition.entity_index import load_entity_index
+from spec_manager.decomposition.id_generator import (
     IDType,
     get_ids_by_type,
     load_id_map,

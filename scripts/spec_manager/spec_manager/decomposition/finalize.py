@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+from spec_manager.decomposition.id_generator import (
     IDType,
     get_ids_by_type,
     load_id_map,
 )
-from scripts.spec_manager.spec_manager.decomposition.staging import get_staged_from_path
+from spec_manager.decomposition.staging import get_staged_from_path
 
 
 def _skip_header_lines(content_lines: list[str]) -> int:
@@ -135,7 +135,8 @@ def _generate_relations_doc(workspace: Path, output_dir: Path, id_map: dict) -> 
             sources = id_map.get(rel_id, [])
             for edge in _relation_edges(sources):
                 lines.append(
-                    f"{edge.get('from', '?')} --[{edge.get('type', '?')}]--> {edge.get('to', '?')}  ({rel_id})"
+                    f"{edge.get('from', '?')} --[{edge.get('type', '?')}]--> "
+                    f"{edge.get('to', '?')}  ({rel_id})"
                 )
         lines.append("```")
         lines.append("")

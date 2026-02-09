@@ -331,11 +331,15 @@ class CollapseEngine:
         if store_score >= 2:
             return AtomKind.STORE
 
+        # Functions with multi-step logic are algorithms even if pure
+        body = self._strip_docstring(func_node.body)
+        if len(body) >= 2:
+            return AtomKind.ALGORITHM
+
         if is_shape:
             return AtomKind.SHAPE
 
-        # Default to algorithm for functions with some logic
-        body = self._strip_docstring(func_node.body)
+        # Single-statement functions with some logic default to algorithm
         if len(body) >= 1:
             return AtomKind.ALGORITHM
 

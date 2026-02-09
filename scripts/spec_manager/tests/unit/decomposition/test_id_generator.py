@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.spec_manager.spec_manager.decomposition.id_generator import (
+from spec_manager.decomposition.id_generator import (
     IDType,
     generate_id,
     get_ids_by_type,

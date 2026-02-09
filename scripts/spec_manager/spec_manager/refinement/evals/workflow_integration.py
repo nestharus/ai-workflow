@@ -7,6 +7,7 @@ against real extraction rather than simulated results.
 from __future__ import annotations
 
 import contextlib
+import re
 import shutil
 import tempfile
 import uuid
@@ -95,27 +96,37 @@ class WorkspaceIntegration:
     def _write_spec_to_input_folder(self, spec: SequenceSpec, input_folder: Path) -> None:
         """Write spec sections to the input folder as markdown files.
 
+        When the spec has named sections (e.g. treasury spec with 10
+        source files), each section is written as an individual .md file
+        at the root of ``input_folder``.  Phase 0 globs ``**/*.md`` and
+        processes each file independently, so writing a combined file
+        alongside the individual files would cause every paragraph to be
+        processed twice.
+
+        When the spec has no sections (simple specs), the combined
+        markdown is written as a single file.
+
         Args:
             spec: The sequence spec containing sections.
             input_folder: Directory to write files to.
         """
-        # Write the full spec as a single markdown file
-        main_file = input_folder / f"{spec.spec_id}.md"
-        main_file.write_text(spec.to_markdown(), encoding="utf-8")
+        if spec.sections:
+            # Write individual section files at root level.
+            # Phase 0 expects one .md file per source section.
+            for section_label, content in spec.sections.items():
+                filename = f"{section_label.lower().replace(' ', '_')}.md"
+                section_file = input_folder / filename
+                section_file.write_text(content, encoding="utf-8")
+        else:
+            # No sections — write the full spec as a single file
+            main_file = input_folder / f"{spec.spec_id}.md"
+            main_file.write_text(spec.to_markdown(), encoding="utf-8")
 
-        # Also write individual section files for finer-grained testing
-        sections_dir = input_folder / "sections"
-        sections_dir.mkdir(exist_ok=True)
-
-        for section_label, content in spec.sections.items():
-            section_file = sections_dir / f"{section_label.lower().replace(' ', '_')}.md"
-            section_file.write_text(
-                f"# {section_label}\n\n{content}\n",
-                encoding="utf-8",
-            )
-
-        # Write rules as a separate file
-        if spec.rules:
+        # Write rules only when they exist and aren't already embedded
+        # in section content.  For specs loaded from sections_dir, the
+        # rules are part of the section prose and writing a separate
+        # rules.md would duplicate content.
+        if spec.rules and not spec.sections:
             rules_file = input_folder / "rules.md"
             rules_lines = ["# Rules\n"]
             for rule in spec.rules:
@@ -169,8 +180,10 @@ class WorkspaceIntegration:
     def _extract_sectionization_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract section labels from sectionization phase outputs.
 
-        Only extracts human-readable section labels, not generated IDs
-        (like SEC-F0001-0001) which would inflate the count vs ground truth.
+        Supports two formats:
+        1. Legacy refinement: manifest sections.json or per-file .sections.json
+        2. Phase 0: source file stems from summary JSON files (e.g.
+           settlement_processing.json -> SETTLEMENT_PROCESSING)
 
         Args:
             manager: WorkspaceManager with sectionization completed.
@@ -187,14 +200,12 @@ class WorkspaceIntegration:
         if sections_json.exists():
             try:
                 data = json.loads(sections_json.read_text(encoding="utf-8"))
-                # sections.json is {file_id: [section_labels, ...]}
                 for _file_id, section_labels in data.items():
                     if isinstance(section_labels, list):
                         outputs.extend(section_labels)
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # If aggregated sections found, use those (avoid duplicates from per-file)
         if outputs:
             return sorted(set(outputs))
 
@@ -210,6 +221,18 @@ class WorkspaceIntegration:
                             outputs.append(label)
                 except (json.JSONDecodeError, OSError):
                     continue
+
+        if outputs:
+            return sorted(set(outputs))
+
+        # Phase 0 fallback: derive section labels from summary file stems.
+        # Phase 0 produces summaries/*.json where each file stem corresponds
+        # to a source section (e.g. settlement_processing -> SETTLEMENT_PROCESSING).
+        summaries_dir = manager.structure.summaries_dir
+        if summaries_dir.exists():
+            for summary_file in summaries_dir.glob("*.json"):
+                label = summary_file.stem.upper()
+                outputs.append(label)
 
         return sorted(set(outputs))
 
@@ -228,10 +251,10 @@ class WorkspaceIntegration:
     def _extract_summarization_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract summary content from summarization phase outputs.
 
-        Prefers library-level summaries (``libraries_summary.md``) when
-        available, since summarization ground truth typically expects
-        per-library descriptions rather than raw section fragments.
-        Falls back to all summary files if no library summary exists.
+        Supports two formats:
+        1. Legacy refinement: markdown summary files with bullet points
+        2. Phase 0: libraries.json with library descriptions, or JSON
+           summary files with per-file summaries
 
         Args:
             manager: WorkspaceManager with summarization completed.
@@ -239,84 +262,252 @@ class WorkspaceIntegration:
         Returns:
             List of summary strings.
         """
-        outputs: list[str] = []
-        summaries_dir = manager.structure.summaries_dir
+        import json
 
-        if not summaries_dir.exists():
+        outputs: list[str] = []
+
+        # Phase 0 path: read library descriptions from libraries.json.
+        # Summarization ground truth expects per-library descriptions.
+        libraries_json = manager.structure.root / "libraries.json"
+        if libraries_json.exists():
+            try:
+                data = json.loads(libraries_json.read_text(encoding="utf-8"))
+                for lib in data.get("libraries", []):
+                    desc = lib.get("description", "")
+                    if desc:
+                        outputs.append(desc)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        if outputs:
             return outputs
 
-        # Extract from all summary files
-        for summary_file in summaries_dir.glob("*.md"):
-            try:
-                content = summary_file.read_text(encoding="utf-8")
-                for line in content.splitlines():
-                    stripped = line.strip()
-                    # Skip structural headings (always the same across files)
-                    if stripped.startswith("## "):
-                        continue
-                    # Skip top-level file summary header
-                    if stripped.startswith("# "):
-                        continue
-                    # Extract bullet points - take the key phrase before any pipe
-                    if stripped.startswith("- ") or stripped.startswith("* "):
-                        text = stripped[2:].strip()
-                        # Strip "| Evidence: ..." and "| Description ..." suffixes
-                        if " | " in text:
-                            text = text.split(" | ")[0].strip()
-                        if text and len(text) > 5:
-                            outputs.append(text)
-            except OSError:
-                continue
+        # Phase 0 fallback: read per-file summaries from JSON
+        summaries_dir = manager.structure.summaries_dir
+        if summaries_dir.exists():
+            for summary_file in summaries_dir.glob("*.json"):
+                try:
+                    data = json.loads(summary_file.read_text(encoding="utf-8"))
+                    summary_text = data.get("summary", "")
+                    if summary_text:
+                        outputs.append(summary_text)
+                except (json.JSONDecodeError, OSError):
+                    continue
+
+        if outputs:
+            return outputs
+
+        # Legacy refinement path: read from markdown summary files
+        if summaries_dir.exists():
+            for summary_file in summaries_dir.glob("*.md"):
+                try:
+                    content = summary_file.read_text(encoding="utf-8")
+                    for line in content.splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("## ") or stripped.startswith("# "):
+                            continue
+                        if stripped.startswith("- ") or stripped.startswith("* "):
+                            text = stripped[2:].strip()
+                            if " | " in text:
+                                text = text.split(" | ")[0].strip()
+                            if text and len(text) > 5:
+                                outputs.append(text)
+                except OSError:
+                    continue
 
         return outputs
 
     def _extract_library_synthesis_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract library definitions from library synthesis phase outputs.
 
-        Extracts charter intents and responsibility bullet points (not
-        auto-generated library IDs like LIB-0001 which would inflate
-        spurious counts).
+        Supports two formats:
+        1. Legacy refinement: charter.md files with Intent/Responsibilities
+        2. Phase 0: libraries.json with library names, plus assembled
+           markdown files with requirement text
 
         Args:
             manager: WorkspaceManager with library synthesis completed.
 
         Returns:
-            List of library-related strings (intents, responsibilities).
+            List of library-related strings (names, intents, requirements).
         """
+        import json
+
         outputs: list[str] = []
         libraries_dir = manager.structure.libraries_dir
 
         if not libraries_dir.exists():
             return outputs
 
+        # Phase 0 path: read library names from libraries.json
+        libraries_json = manager.structure.root / "libraries.json"
+        if libraries_json.exists():
+            try:
+                data = json.loads(libraries_json.read_text(encoding="utf-8"))
+                for lib in data.get("libraries", []):
+                    name = lib.get("name", "")
+                    if name:
+                        outputs.append(name)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Check if this is Phase 0 format (library dirs contain details/
+        # subdirectories, not charter.md)
+        has_phase0_format = False
         for lib_dir in libraries_dir.iterdir():
-            if not lib_dir.is_dir():
-                continue
+            if lib_dir.is_dir() and (lib_dir / "details").is_dir():
+                has_phase0_format = True
+                break
 
-            # Emit library directory name (matches expected library names)
-            outputs.append(lib_dir.name)
-
-            # Extract charter content (skip library IDs - they're auto-generated)
-            charter_path = lib_dir / "charter.md"
-            if charter_path.exists():
-                try:
-                    content = charter_path.read_text(encoding="utf-8")
-                    current_section = ""
-                    for line in content.splitlines():
-                        stripped = line.strip()
-                        if stripped.startswith("## ") or stripped.startswith("#### "):
-                            current_section = stripped.lstrip("#").strip()
-                            continue
-                        if current_section == "Intent" and stripped:
-                            outputs.append(stripped)
-                        elif current_section == "Responsibilities" and (
-                            stripped.startswith("- ") or stripped.startswith("* ")
-                        ):
-                            outputs.append(stripped[2:].strip())
-                except OSError:
+        if has_phase0_format:
+            # Phase 0: extract requirement text from assembled files.
+            # Each file has entries like:
+            #   ([=ALG-LIB-01-001])
+            #   <!-- source: file.md:3-3 -->
+            #   [verbatim source text]
+            has_library_names = libraries_json.exists()
+            for lib_dir in libraries_dir.iterdir():
+                if not lib_dir.is_dir():
                     continue
+                # If no library names from libraries.json, use dir name
+                if not has_library_names:
+                    outputs.append(lib_dir.name)
+                outputs.extend(self._extract_phase0_requirements(lib_dir))
+        else:
+            # Legacy refinement path: charter.md files
+            for lib_dir in libraries_dir.iterdir():
+                if not lib_dir.is_dir():
+                    continue
+                outputs.append(lib_dir.name)
+                charter_path = lib_dir / "charter.md"
+                if charter_path.exists():
+                    try:
+                        content = charter_path.read_text(encoding="utf-8")
+                        current_section = ""
+                        for line in content.splitlines():
+                            stripped = line.strip()
+                            if stripped.startswith("## ") or stripped.startswith("#### "):
+                                current_section = stripped.lstrip("#").strip()
+                                continue
+                            if current_section == "Intent" and stripped:
+                                outputs.append(stripped)
+                            elif current_section == "Responsibilities" and (
+                                stripped.startswith("- ") or stripped.startswith("* ")
+                            ):
+                                outputs.append(stripped[2:].strip())
+                    except OSError:
+                        continue
 
         return outputs
+
+    # Pseudocode keywords that start a line of code, not prose.
+    _PSEUDOCODE_STARTS = frozenset({"FOR ", "IF ", "WHILE ", "ELSE", "END", "RETURN ", "ALERT("})
+
+    @staticmethod
+    def _is_structured_line(line: str) -> bool:
+        """Return True if *line* is structured content, not prose.
+
+        Detects YAML config lines (``key: value`` with lowercase keys),
+        JSON fragments (quoted key-value pairs), pseudocode, and
+        indented assignment expressions.
+        """
+        # Indented YAML-style config: "  key_name: value"
+        if line != line.lstrip() and ": " in line:
+            key = line.lstrip().split(":")[0]
+            if key == key.lower() and key.replace("_", "").isalpha():
+                return True
+
+        # JSON object fragments: "  \"key\": value"
+        stripped = line.strip()
+        if stripped.startswith('"') and '": ' in stripped:
+            return True
+
+        # Indented assignment: "    var = expr"
+        return bool(line != line.lstrip() and " = " in line)
+
+    # Sentence boundary: period followed by space and uppercase letter.
+    _SENTENCE_SPLIT_RE: re.Pattern[str] | None = None
+
+    @classmethod
+    def _get_sentence_split_re(cls) -> re.Pattern[str]:
+        if cls._SENTENCE_SPLIT_RE is None:
+            cls._SENTENCE_SPLIT_RE = re.compile(r"(?<=\.)\s+(?=[A-Z])")
+        return cls._SENTENCE_SPLIT_RE
+
+    def _extract_phase0_requirements(self, lib_dir: Path) -> list[str]:
+        """Extract requirement text from Phase 0 assembled markdown files.
+
+        Phase 0 produces files with this structure::
+
+            ([=ALG-LIB-01-001])
+            <!-- source: file.md:3-3 -->
+            [verbatim source text paragraph]
+
+        We extract the source text paragraphs, skipping element ID markers,
+        source comments, code-fenced blocks (mermaid, YAML, JSON), pseudocode
+        lines, and YAML config snippets.
+
+        Long paragraphs are split at sentence boundaries so that each
+        extracted item is closer to a single requirement, which improves
+        greedy matching accuracy.
+
+        Args:
+            lib_dir: Path to a library directory (e.g. libraries/LIB-01/).
+
+        Returns:
+            List of requirement text strings.
+        """
+        requirements: list[str] = []
+        split_re = self._get_sentence_split_re()
+
+        # Collect all .md files in the library directory and subdirectories
+        for md_file in sorted(lib_dir.rglob("*.md")):
+            try:
+                content = md_file.read_text(encoding="utf-8")
+                in_code_fence = False
+
+                for line in content.splitlines():
+                    stripped = line.strip()
+
+                    # Track code fences (```mermaid, ```yaml, ```json, etc.)
+                    if stripped.startswith("```"):
+                        in_code_fence = not in_code_fence
+                        continue
+                    if in_code_fence:
+                        continue
+
+                    # Skip headers, element IDs, source comments, empty lines
+                    if not stripped:
+                        continue
+                    if stripped.startswith("#"):
+                        continue
+                    if stripped.startswith("([="):
+                        continue
+                    if stripped.startswith("<!--"):
+                        continue
+
+                    # Skip pseudocode lines
+                    if any(stripped.startswith(kw) for kw in self._PSEUDOCODE_STARTS):
+                        continue
+
+                    # Skip structured content (YAML configs, JSON, assignments)
+                    if self._is_structured_line(line):
+                        continue
+
+                    # Split long paragraphs at sentence boundaries to get
+                    # finer-grained items for scoring.
+                    if len(stripped) > 200:
+                        sentences = split_re.split(stripped)
+                        for sentence in sentences:
+                            sentence = sentence.strip()
+                            if len(sentence) > 15:
+                                requirements.append(sentence)
+                    elif len(stripped) > 15:
+                        requirements.append(stripped)
+            except OSError:
+                continue
+
+        return requirements
 
     def _extract_evidence_expansion_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract evidence mappings from evidence expansion phase outputs.
@@ -357,9 +548,12 @@ class WorkspaceIntegration:
     def _extract_spec_building_outputs(self, manager: WorkspaceManager) -> list[str]:
         """Extract requirements from spec building phase outputs.
 
-        Strips evidence citation pointers (``[spec_snapshot/...]``) from
-        bullet items so the remaining text can be fuzzy-matched against
-        ground truth requirements.
+        Supports two formats:
+        1. Legacy refinement: spec.md files with bullet-point requirements
+        2. Phase 0: assembled markdown files (analysis.md, constraints.md,
+           details/*.md) with verbatim source text paragraphs
+
+        Also reads system-level constraints from system/constraints.md.
 
         Args:
             manager: WorkspaceManager with spec building completed.
@@ -367,8 +561,6 @@ class WorkspaceIntegration:
         Returns:
             List of requirement strings.
         """
-        import re
-
         citation_re = re.compile(r"\[spec_snapshot/[^\]]+\]")
 
         outputs: list[str] = []
@@ -377,24 +569,43 @@ class WorkspaceIntegration:
         if not libraries_dir.exists():
             return outputs
 
+        # Check if this is Phase 0 format
+        has_phase0_format = False
         for lib_dir in libraries_dir.iterdir():
-            if not lib_dir.is_dir():
-                continue
+            if lib_dir.is_dir() and (lib_dir / "details").is_dir():
+                has_phase0_format = True
+                break
 
-            spec_path = lib_dir / "spec.md"
-            if spec_path.exists():
-                try:
-                    content = spec_path.read_text(encoding="utf-8")
-                    for line in content.splitlines():
-                        stripped = line.strip()
-                        if stripped.startswith("- ") or stripped.startswith("* "):
-                            text = stripped[2:].strip()
-                            # Remove citation pointers
-                            text = citation_re.sub("", text).strip()
-                            if text and len(text) > 10:
-                                outputs.append(text)
-                except OSError:
+        if has_phase0_format:
+            # Phase 0: extract from all assembled files
+            for lib_dir in libraries_dir.iterdir():
+                if not lib_dir.is_dir():
                     continue
+                outputs.extend(self._extract_phase0_requirements(lib_dir))
+
+            # Also include system-level constraints (reuse same filtering)
+            system_dir = manager.structure.root / "system"
+            if system_dir.exists():
+                outputs.extend(self._extract_phase0_requirements(system_dir))
+        else:
+            # Legacy refinement path: spec.md files
+            for lib_dir in libraries_dir.iterdir():
+                if not lib_dir.is_dir():
+                    continue
+
+                spec_path = lib_dir / "spec.md"
+                if spec_path.exists():
+                    try:
+                        content = spec_path.read_text(encoding="utf-8")
+                        for line in content.splitlines():
+                            stripped = line.strip()
+                            if stripped.startswith("- ") or stripped.startswith("* "):
+                                text = stripped[2:].strip()
+                                text = citation_re.sub("", text).strip()
+                                if text and len(text) > 10:
+                                    outputs.append(text)
+                    except OSError:
+                        continue
 
         return outputs
 
@@ -588,6 +799,9 @@ class WorkspaceIntegration:
         mapped phase, ensures that Phase 0 (extraction) has completed so
         that the workspace contains structured data from prose input.
 
+        Phase 0 is run through the orchestrator (not directly) so that
+        its output is properly installed into the workspace structure.
+
         Args:
             manager: WorkspaceManager to run the workflow on.
             phase: Eval phase name (e.g. ``"sectionization"``).
@@ -597,6 +811,7 @@ class WorkspaceIntegration:
         """
         from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
         from spec_manager.refinement.workspace.state import Phase as PddPhase
+        from spec_manager.refinement.workspace.state import PhaseStatus
 
         result: dict[str, Any] = {
             "success": False,
@@ -612,32 +827,45 @@ class WorkspaceIntegration:
 
         orchestrator = PddOrchestrator(manager)
 
-        # Ensure Phase 0 (extraction) has run — it populates the workspace
-        # with structured artifacts (summaries, libraries, specs) from prose.
-        libs_dir = manager.structure.libraries_dir
-        extraction_needed = not libs_dir.exists() or not any(libs_dir.iterdir())
-        if extraction_needed:
+        # Ensure Phase 0 (extraction) has completed. Run it through the
+        # orchestrator so output is installed into the workspace structure.
+        extraction_phase = manager.state.phases.get(PddPhase.EXTRACTION.value)
+        extraction_done = (
+            extraction_phase is not None and extraction_phase.status == PhaseStatus.COMPLETED
+        )
+        if not extraction_done:
             try:
                 orchestrator.run_phase(PddPhase.EXTRACTION)
             except Exception as exc:
                 result["error"] = f"Phase 0 extraction failed: {exc}"
                 return result
 
+        # Check if this is a prose-only spec (no Python files in the
+        # workspace).  PDD phases 1-10 are code/AST-oriented and expect
+        # Python source files.  For prose specs, Phase 0 output is the
+        # complete structured representation — skip mapped code phases.
+        has_python = (
+            any(manager.structure.spec_snapshot_dir.rglob("*.py"))
+            if manager.structure.spec_snapshot_dir.exists()
+            else False
+        )
+
         combined_outputs: dict[str, Any] = {}
 
-        for pdd_value in pdd_phase_values:
-            try:
-                pdd_phase = PddPhase(pdd_value)
-            except ValueError:
-                result["error"] = f"Unknown PDD phase value: {pdd_value}"
-                return result
+        if has_python:
+            for pdd_value in pdd_phase_values:
+                try:
+                    pdd_phase = PddPhase(pdd_value)
+                except ValueError:
+                    result["error"] = f"Unknown PDD phase value: {pdd_value}"
+                    return result
 
-            try:
-                phase_outputs = orchestrator.run_phase(pdd_phase)
-                combined_outputs[pdd_value] = phase_outputs
-            except Exception as exc:
-                result["error"] = f"PDD phase {pdd_value} failed: {exc}"
-                return result
+                try:
+                    phase_outputs = orchestrator.run_phase(pdd_phase)
+                    combined_outputs[pdd_value] = phase_outputs
+                except Exception as exc:
+                    result["error"] = f"PDD phase {pdd_value} failed: {exc}"
+                    return result
 
         result["success"] = True
         result["outputs"] = combined_outputs

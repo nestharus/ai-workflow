@@ -18,10 +18,14 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Element ID patterns for different kinds
-# Format: {KIND}-LIB-{lib_seq:04d}-{seq:04d}
-# e.g., DTL-LIB-0001-0001, CON-LIB-0001-0001, ANL-LIB-0001-0001
+# Format: {KIND}-LIB-{lib_seq:04d}-{seq:04d} (or 2-digit seq for FLOW)
+# e.g., REQ-LIB-0001-0001, FLOW-LIB-0002-01, ALG-LIB-0001-0001
 _ELEMENT_ID_PATTERN = re.compile(
     r"^(?:"
+    r"REQ-LIB-\d{4}-\d{4}|"  # Requirements
+    r"FLOW-LIB-\d{4}-\d{2}|"  # Flows (2-digit sequence)
+    r"INV-LIB-\d{4}-\d{4}|"  # Invariants
+    r"DEC-LIB-\d{4}-\d{4}|"  # Decisions
     r"DTL-LIB-\d{4}-\d{4}|"  # Details
     r"CON-LIB-\d{4}-\d{4}|"  # Constraints
     r"ANL-LIB-\d{4}-\d{4}|"  # Analyses
@@ -37,7 +41,20 @@ _ELEMENT_ID_PATTERN = re.compile(
 _LIB_ID_PATTERN = re.compile(r"^LIB-\d{4}$")
 
 # Derived element kinds
-DerivedElementKind = Literal["DTL", "CON", "ANL", "OVW", "ALG", "DS", "NOTE", "GAP"]
+DerivedElementKind = Literal[
+    "REQ",
+    "FLOW",
+    "INV",
+    "DEC",
+    "DTL",
+    "CON",
+    "ANL",
+    "OVW",
+    "ALG",
+    "DS",
+    "NOTE",
+    "GAP",
+]
 
 # Element status states
 ElementStatus = Literal["DRAFT", "ACTIVE", "NON_AUTHORITATIVE", "QUARANTINED", "DEPRECATED"]
@@ -170,6 +187,9 @@ def allocate_element_id(
     # Extract lib sequence from lib_id (e.g., "0001" from "LIB-0001")
     lib_seq = lib_id.split("-")[1]
 
+    # FLOW uses 2-digit sequence, all other kinds use 4-digit
+    seq_width = 2 if kind == "FLOW" else 4
+
     # Find max sequence for this kind+lib combination
     prefix = f"{kind}-LIB-{lib_seq}-"
     max_seq = 0
@@ -182,7 +202,7 @@ def allocate_element_id(
             except ValueError:
                 continue
 
-    return f"{kind}-LIB-{lib_seq}-{max_seq + 1:04d}"
+    return f"{kind}-LIB-{lib_seq}-{max_seq + 1:0{seq_width}d}"
 
 
 def validate_element_references(

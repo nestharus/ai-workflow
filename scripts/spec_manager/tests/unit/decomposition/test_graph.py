@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_manager.spec_manager.utils.graph import (
+from spec_manager.utils.graph import (
     build_dependency_graph,
     find_cycles,
     generate_mermaid_diagram,

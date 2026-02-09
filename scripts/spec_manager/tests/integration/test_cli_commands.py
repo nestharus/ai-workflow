@@ -9,8 +9,6 @@ Tests:
 from __future__ import annotations
 
 import argparse
-import tempfile
-import warnings
 from pathlib import Path
 
 
@@ -74,51 +72,23 @@ class TestCLIProjectCommand:
 class TestOrchestratorDeprecation:
     """Test WorkflowOrchestrator deprecation warnings."""
 
-    def test_run_method_deprecation(self) -> None:
-        """Test that WorkflowOrchestrator.run() emits warning."""
-        from spec_manager.workflow.orchestrator import WorkflowOrchestrator
+    def test_pdd_orchestrator_exists(self) -> None:
+        """Test that PddOrchestrator is importable."""
+        from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
-            # Create minimal spec structure
-            (tmppath / "plan.md").write_text("# Test Plan\n")
-            (tmppath / "libraries").mkdir()
-            (tmppath / "libraries" / "test.md").write_text("# Test Library\n")
-
-            orchestrator = WorkflowOrchestrator(tmppath)
-
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-
-                # Call run() - it may fail but we only care about the warning
-                try:
-                    orchestrator.run()
-                except Exception:
-                    pass  # We only care about the warning
-
-                # Check for deprecation warning
-                deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-                assert len(deprecation_warnings) >= 1
-                warning_msg = str(deprecation_warnings[0].message).lower()
-                assert "deprecated" in warning_msg
-                assert "refinement cli" in warning_msg or "run" in warning_msg
+        assert PddOrchestrator is not None
 
 
 class TestCLICommandMapping:
     """Test CLI command mapping matches design spec."""
 
     def test_design_commands_mapped(self) -> None:
-        """Test design commands from 16_CLI_SCRIPTS.md are mapped."""
-
-        # Import legacy CLI
+        """Test design commands from CLI are mapped."""
         from spec_manager import cli
 
-        # Check commands dict
-        # Note: The actual commands dict is in main()
-        # We verify module loads and has expected structure
-        assert hasattr(cli, "cmd_discover")
-        assert hasattr(cli, "cmd_stage")
         assert hasattr(cli, "cmd_run")
+        assert hasattr(cli, "cmd_phase")
+        assert hasattr(cli, "cmd_extract")
 
     def test_refinement_commands_mapped(self) -> None:
         """Test refinement CLI has expected commands."""

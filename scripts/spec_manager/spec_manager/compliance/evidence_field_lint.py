@@ -50,6 +50,8 @@ EVIDENCE_FIELD_NAMES = frozenset(
         "citations",
         "source_evidence",
         "supporting_evidence",
+        "spec_ref",
+        "spec_refs",
     }
 )
 
@@ -141,7 +143,9 @@ def scan_evidence_fields(
             for key, val in value.items():
                 field_path = f"{path}.{key}" if path else key
                 is_evidence = is_evidence_field(key)
-                _scan_value(val, field_path, is_evidence, parent_field=key if is_evidence else parent_field)
+                _scan_value(
+                    val, field_path, is_evidence, parent_field=key if is_evidence else parent_field
+                )
 
     _scan_value(artifact, "")
     return errors, warnings
@@ -169,9 +173,7 @@ def _check_evidence_value(
     # Check for legacy citation patterns
     for pattern in LEGACY_CITATION_PATTERNS:
         if pattern.search(value):
-            errors.append(
-                f"{path}: Legacy citation format in evidence field: '{value}'"
-            )
+            errors.append(f"{path}: Legacy citation format in evidence field: '{value}'")
             return
 
     # Generic non-EVID value
@@ -257,9 +259,7 @@ def _lint_markdown_evidence(content: str) -> list[str]:
                 # Check if it's a legacy pattern
                 is_legacy = any(p.search(citation) for p in LEGACY_CITATION_PATTERNS)
                 if is_legacy or not inner.startswith("EVID-"):
-                    errors.append(
-                        f"Non-EVID citation in evidence field: {citation}"
-                    )
+                    errors.append(f"Non-EVID citation in evidence field: {citation}")
 
     return errors
 
@@ -301,9 +301,7 @@ def scan_for_forbidden_output_signatures(
     # Check for legacy citations that should be EVID
     for pattern in LEGACY_CITATION_PATTERNS:
         for match in pattern.finditer(text):
-            errors.append(
-                f"{context}: Legacy citation found (should be EVID): {match.group(0)}"
-            )
+            errors.append(f"{context}: Legacy citation found (should be EVID): {match.group(0)}")
 
     # Check for derived artifact references
     for pattern in DERIVED_ARTIFACT_PATTERNS:
@@ -312,8 +310,6 @@ def scan_for_forbidden_output_signatures(
             start = max(0, match.start() - 20)
             end = min(len(text), match.end() + 20)
             context_text = text[start:end].replace("\n", " ")
-            warnings.append(
-                f"{context}: Derived artifact reference: '...{context_text}...'"
-            )
+            warnings.append(f"{context}: Derived artifact reference: '...{context_text}...'")
 
     return errors, warnings

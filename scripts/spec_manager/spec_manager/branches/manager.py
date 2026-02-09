@@ -47,8 +47,8 @@ class BranchManager:
 
     def __init__(self, run_root: Path) -> None:
         self._layout = BranchLayout(run_root)
-        self._atom_registry = AtomRegistry(self._layout)
-        self._pin_registry = PinRegistry(self._layout)
+        self._atom_registry = AtomRegistry.load(self._layout)
+        self._pin_registry = PinRegistry.load(self._layout)
         self._slice_navigator = SliceNavigator(
             self._layout, self._atom_registry, self._pin_registry
         )

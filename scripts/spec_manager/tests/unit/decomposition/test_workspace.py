@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_manager.spec_manager.decomposition.workspace import (
+from spec_manager.decomposition.workspace import (
     init_workspace,
     load_state,
     save_state,

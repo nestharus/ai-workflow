@@ -5,109 +5,231 @@
 Make sure everything is implemented correctly, nothing is extra, and
 consolidate/remove old processes.
 
-**Expected state when done**: See `EXPECTED_STATE.md`
-
-**Completed**
+### Completed
 
 * [x] Extract shared infrastructure from refinement/ to core/ (8 modules extracted)
 * [x] Delete legacy dead code (workflow/, workspace/, staging/, discovery/, merging/, verification/)
-* [x] Remove remaining cross-contamination (schemas→refinement, compliance→refinement)
+* [x] Remove remaining cross-contamination (schemas->refinement, compliance->refinement)
 * [x] Verify all PDD modules are complete and match their plans (11 plans + 5 refactors)
 * [x] All CLI commands work (spec + spec-manager entry points)
 * [x] Clean up dead imports, orphaned code, unused re-exports
-* [x] All 700 tests pass
-* [x] Phase 0 extraction design (format-aware intake, coverage tracking, pre-structured input, classifier design)
 * [x] PDD orchestrator (phases 0-10) with Phase enum
 * [x] CLI exposes PDD operations as primary commands (run, phase, extract)
-* [x] Eval framework supports PDD and refinement pipelines (--pdd default, --refinement flag)
+* [x] Eval framework supports PDD and refinement pipelines
 * [x] Continuous library refinement engine (detector, operations, executor)
 * [x] Infrastructure integration (signal resolver, ambiguity detection, evidence search)
 * [x] LLM judge scorer for semantic eval scoring
-* [x] All 721 tests pass
+* [x] All 2195 tests pass
 
-## Phase 2: QA & Eval Debugging (COMPLETE)
+## Phase 2: QA & Phase 0 Debugging (COMPLETE)
 
-Run QA with evals on each step to debug the entire process.
+Step-by-step debugging of Phase 0 intake pipeline against treasury spec.
 
-**Findings**: See `PHASE2_QA_FINDINGS.md`
+### Completed
 
-**Completed**:
-* [x] Run eval framework step-by-step through each phase
-* [x] Check for hardcoding and reward hacking in tests — assessed as acceptable mock patterns
-* [x] Check for actual bugs, failures, and friction points
-* [x] Fix eval stagnation bug (false cycling detection for single-pass phases)
-* [x] Fix contract lint (0 errors, was 44 — scoped checks + missing agents)
-* [x] Create missing agent definitions (2 agents for library review workflow)
-* [x] All 700 tests pass
+* [x] Phase 0 intake module (`intake/`) implemented per PHASE0_RESEARCH_RESPONSE.md
+  * Step 1: Summarize (LLM, routing hints only)
+  * Step 2: Discover libraries = propose skeletons (LLM)
+  * Step 3: Route source spans to destinations (LLM + reimplementation test)
+  * Step 4: Coverage check (deterministic + LLM noise classification)
+  * Step 5: Assemble output by verbatim copy (deterministic)
 
-## Phase 3: Treasury Eval (CURRENT)
+* [x] ProseExtractor (unauthorized regex-based extraction) removed
+* [x] 4 LLM agent definitions created (spec-intake-summarize, spec-intake-discover-libraries, spec-intake-route, spec-intake-coverage-filter)
+* [x] 9 silent-default bugs fixed (all converted to raise ValueError)
+* [x] JSON retry logic in all LLM-calling steps
+* [x] Cross-system invariants handled as system-level constraints (not a library)
+* [x] Rediscovery feedback loop for unroutable content
+* [x] All 2195 tests pass
 
-Run a complete end-to-end evaluation against the chaotic treasury spec
-and score it.
+## QA Methodology (applies to ALL phases)
 
-**Target**: 100% score from the LLM judge
-**Eval target**: `chaotic_treasury.yaml` (30 rules, 6 libraries, complexity 9)
-**Baseline**: Raw LLMs get 87% capture and 100% precision
-**Previous**: 97.2% recall (refinement pipeline, toy math fixtures — meaningless)
+### Step-by-Step Eval with Root Cause Analysis
 
-### Phase 0 extraction: IMPLEMENTED
+The eval process runs each pipeline step individually, inspects the output,
+fixes bugs, and re-runs until the step passes. Only then does it advance
+to the next step. This is NOT a full pipeline run with a judge — it is
+manual step-by-step debugging.
 
-Phase 0 extraction converts prose specs to PDD workspace format.
-Implementation: `spec_manager/orchestration/extraction.py` (ProseExtractor)
+#### Process per step
 
-**Current eval scores (fuzzy matching at 0.6 threshold):**
-- **Sectionization**: 100% recall, 100% precision (7/7)
-- **Summarization**: 66.7% recall (4/6) — 2 need LLM summarization
-- **Library synthesis**: 83.3% recall (30/36) — vocabulary mismatches
-- **Spec building**: 83.3% recall (25/30) — split requirements, vocabulary
-- **Overall**: 83.5% recall, 33.5% precision
+1. **Run the step** against the treasury spec in an isolated workspace
+2. **Inspect the output** — read actual LLM responses, check structure,
+   verify content quality
+3. **If a bug is found**:
+   a. **Root cause analysis** — trace the bug to its origin. Don't fix
+      the symptom. Ask: why did this happen? What assumption was wrong?
+   b. **Assess blast radius** — if you change X, what else depends on X?
+      Does the ground truth need updating? Do other steps break? Do agent
+      definitions need changes? Do tests need updating?
+   c. **Fix the root cause** — implement the proper solution. No silent
+      defaults. No shortcuts. No overloading concepts. No reward hacking.
+   d. **Propagate consequences** — update all affected files: ground truth,
+      agent definitions, tests, other pipeline steps, types, schemas.
+   e. **Re-run the step** from scratch to verify the fix
+   f. **If the fix introduced new failures**, go back to step 3
+4. **When the step passes**, advance to the next step
+5. **If a later step reveals a problem in an earlier step**, go back and
+   fix the earlier step, then re-run all steps from that point forward
 
-Remaining gap to 100% requires LLM judge (already implemented, needs API access):
-- Vocabulary mismatches ("bypasses" vs "allow to proceed")
-- Split requirements (two facts in one sentence → one match consumed)
-- Library descriptions need LLM-level topic summarization
+#### Anti-patterns (DO NOT)
 
-### Treasury spec complexity scaling
+* **DO NOT run all steps in one go** — you miss bugs that cascade
+* **DO NOT use silent defaults** — if LLM output is invalid, raise an error.
+  Silent defaults hide bugs and are a form of reward hacking.
 
-Instead of evaluating Workflow Engine 3 (which cannot be scored — no
-ground truth exists), scale the treasury spec to capture WE3's failure
-modes:
-- Multi-file web with cross-references
-- Invariant trap examples (MUST that are really algorithms)
-- Format diversity (Mermaid, YAML, inline JSON, pseudocode)
-- Scattered requirements across sections
-- Implicit constraints requiring inference
+* **DO NOT overload concepts** — e.g. don't create a library called "SYSTEM"
+  to hold system-level constraints. System constraints are not a library.
 
-**Ground truth scales in parallel** — every new rule/constraint must have
-a corresponding expected output. Spec and ground truth are written
-together, not sequentially.
+* **DO NOT skip blast radius analysis** — changing what a "library" means
+  affects ground truth, agent definitions, validation code, assembly code,
+  coverage code, tests, and CLI output.
 
-### Reward hacking prevention
+* **DO NOT fabricate solutions** — e.g. don't make the routing agent propose
+  libraries when the library discoverer is the one that discovers libraries.
+  Use the right component for the right job.
 
-During treasury eval iteration, the spec manager's own code could game
-scores by adding stopwords, TF-IDF weights, NLP heuristics, or fuzzy
-matching tricks. Red flags:
-- Adding stopword lists or TF-IDF weighting
-- NLP-based fuzzy matching for extraction
-- Confidence thresholds that can be tuned to match ground truth
-- Any statistical/probabilistic approach to classification
+* **DO NOT note bugs without fixing them** — every bug found must be fixed
+  before moving on.
 
-PDD resists this by design (mechanical/AST-based, not statistical).
-Strategy evolution must NOT access eval ground truth.
+* **DO NOT retry past problems** — if the LLM returns Chinese text, the fix
+  is telling the agent to respond in English, not adding a retry loop (though
+  JSON parse retries for malformed output ARE appropriate since that's
+  non-deterministic LLM behavior, not a systematic agent instruction issue).
+
+#### When you hit an ambiguity or design gap
+
+If something is undefined, underspecified, or seems brittle/strange — do NOT
+guess or invent a solution. Instead:
+
+1. **Write a research prompt** modeled after `PHASE0_RESEARCH_PROMPT.md`
+2. **Include all context**: what the system does, what the constraints are,
+   what prior designs exist, what specific question needs answering, and
+   what options you've considered
+3. **Present it to the user** — they will get an answer (possibly from
+   external research)
+4. **Record the answer** as a `*_RESEARCH_RESPONSE.md` file alongside the
+   prompt for future sessions to reference
+
+This is how Phase 0's routing algorithm was designed — a research prompt
+produced the three required operators (routing unit, routing ledger,
+invariant test) that no amount of guessing would have found.
+
+---
+
+## Phase 3: Wire PDD Orchestrator to Real Modules (CURRENT)
+
+**The Problem**: The PDD orchestrator phases 1-10 are thin scaffolding that
+only does structural analysis (counting, classifying, building indexes).
+The 11 plan modules are built and tested but the orchestrator doesn't USE
+them. Phase 0 (intake) is the only phase that does real work.
+
+### What Each Phase Does vs Should Do
+
+| Phase | Currently Does | Should Do |
+|-------|---------------|-----------|
+| P0 intake | Routing-based restructuring via `intake/` | DONE CORRECTLY |
+| P1 structure | Parses files, counts functions | Entry point for Plan 01 (Edit-in-Place) |
+| P2 decomposition | Marks functions with comments | Plan 03 (Planning) - pseudocode insertion |
+| P3 compliance | Counts gaps/stubs | Plan 05 (Gap Detection) + Plan 08 (Compliance Gating) |
+| P4 library | Counts atoms/stores/shapes | Plan 02 (Pin-Functions) atom extraction |
+| P5 spec_build | Writes pin registry (no promotion) | Plan 04 (Branch Org) - PromotionEngine |
+| P6 cross_library | Builds adjacency graph | Plan 07 (Adjacency Detection) |
+| P7 projection | Reads libraries.json (no drift) | Plan 09 (Lineage) + Plan 11 (Analysis Generator) |
+| P8 task_planning | Counts plans/gaps/adjacencies | Plan 03 (Planning) - actionable plans |
+| P9 implementation | Counts files (no edit-in-place) | Edit-in-Place Engine for code changes |
+| P10 continuous_qa | Creates empty StrategyRegistry | Plan 10 (Strategy Evolution) |
+
+### Design Violation
+
+`_run_refinement_engine()` calls `executor.execute(op)` which MUTATES the
+branch manager. Per design, the refinement engine is analysis-only for
+cohesion/coupling of skeletons (libraries). It should NEVER execute mutations.
+
+### Refinement Engine's Correct Role
+
+* **Phase 0**: Proposes libraries = initial skeletons (via `intake/` module, DONE)
+* **Between phases**: Analyzes cohesion/coupling of skeletons to inform regrouping
+* **NEVER executes mutations**: Only analyzes and reports groupings
 
 ### Work
 
-- [x] Implement Phase 0 extraction (prose → PDD format)
-- [x] Run treasury eval with Phase 0 + PDD pipeline (83.5% recall)
-- [x] Improve fuzzy matching with token containment scoring
-- [x] Add normative patterns for settlement dates (T±N), written-out durations
-- [x] LLM judge scorer infrastructure (implemented, needs API access to test)
-- [ ] Run eval with --judge flag (requires LLM API access)
-- [ ] Iterate until 100% judge score
-- [ ] Scale treasury spec complexity with parallel ground truth
-- [ ] Re-iterate at higher complexity
+* [ ] Fix `_run_refinement_engine()` to be analysis-only (remove executor.execute calls)
+* [ ] Wire P1 to use `core/edit_in_place.py` properly
+* [ ] Wire P2 to use `planning/reverser.py` + `planning/inserter.py`
+* [ ] Wire P3 to use `compliance/detection/orchestrator.py` + `compliance/promotion/`
+* [ ] Wire P4 to use `pin_functions/orchestrator.py` for atom extraction
+* [ ] Wire P5 to use `branches/promotion.py` for PromotionEngine
+* [ ] Wire P6 to use `analysis/adjacency/runner.py` fully
+* [ ] Wire P7 to use `projection/lineage/` + `analysis/generator.py`
+* [ ] Wire P8 to use `planning/workflow.py` for actionable plans
+* [ ] Wire P9 to use `core/edit_in_place.py` for code changes
+* [ ] Wire P10 to use `strategies/evolution.py` for strategy evaluation
+* [ ] Run full pipeline end-to-end against treasury spec
+* [ ] All tests pass
 
-## Phase 4: Production Hardening
+## Phase 4: PDD Lifecycle Orchestration
 
-Final iteration cycle. Run complete pipeline on treasury spec, identify
-and fix remaining issues.
+Wire the 4-phase PDD model from `simpler.md` using existing plan
+implementations. Most capabilities already exist as modules — the work
+is orchestrating them into the lifecycle, not building from scratch.
+
+### simpler.md's 4-Phase Model
+
+**Phase 1 (Build)**: Research → sparse plan → worktree → implement in
+parallel → block on ambiguity → POWER alignment → human review → approve
+
+**Phase 2 (QA)**: Create evals → detect failures → root cause → patch back
+
+**Phase 3 (Architecture)**: Proposals → analysis → choice → refactor
+
+**Phase 4 (Code Quality)**: N reviewers → refactor → merge to main
+
+### What Existing Plans Already Cover
+
+| PDD Lifecycle Step | Plan | Module | Status |
+|--------------------|------|--------|--------|
+| Research / evidence gathering | Plan 06 (Hollowed-Out Spec Evidence) | `refinement/hollowed_spec/` | Implemented |
+| Planning / plan generation | Plan 03 (Planning Module) | `planning/` | Implemented |
+| Implementation / code editing | Plan 01 (Edit-in-Place) | `core/edit_in_place.py` | Implemented |
+| Gap detection | Plan 05 (Executable Gap Detection) | `compliance/detection/` | Implemented |
+| Ambiguity detection | Plan 06 + `refinement/interactive/` | hollowed_spec + interactive | Implemented |
+| Compliance / quality gating | Plan 08 (Compliance Gating) | `compliance/promotion/` | Implemented |
+| Promotion between layers | Plan 04 (Branch Org) | `branches/promotion.py` | Implemented |
+| Architecture analysis | Plan 07 (Adjacency) + Plan 11 (Analysis Gen) | `analysis/` | Implemented |
+| Lineage tracking | Plan 09 (Lineage Tracking) | `projection/lineage/` | Implemented |
+| Strategy evolution | Plan 10 (Strategy Evolution) | `strategies/` | Implemented |
+| Pin-function mapping | Plan 02 (Pin-Functions) | `pin_functions/` | Implemented |
+| Entity coverage | fix-03 (Spec Entity Coverage) | `compliance/coverage/` | Implemented |
+| Test-pin validation | fix-02 (Test-Pin Validation) | `projection/lineage/` | Implemented |
+
+### What's Genuinely Missing (not in any plan)
+
+* [ ] Worktree management (create worktree per library, parallel execution, cleanup)
+* [ ] --auto mode orchestration (multi-model research: Opus + GPT + GLM + firecrawl)
+* [ ] --interactive mode orchestration (ambiguity collection → report → user responds → integrate)
+* [ ] POWER alignment check (Problem→Outcome→What→Evidence→References)
+* [ ] Human review document generation
+* [ ] Human approval loop (iterative adjustment until approval)
+
+### Eval Strategy
+
+Evals run in --interactive mode with Claude supplying answers to ambiguity
+questions. This is the natural test harness — the treasury spec triggers
+ambiguity blocking, Claude resolves it as the "user", and the pipeline
+continues. This tests the full lifecycle end-to-end without requiring a
+human in the loop during automated eval runs.
+
+When answering ambiguity questions, Claude also runs the --auto research
+algorithm (Opus + GPT + GLM + firecrawl) to produce answers. This serves
+double duty: it evaluates the research algorithm's answer quality against
+Claude's own judgment. If the research algorithm produces a bad answer,
+that's a signal to improve the research pipeline — tune prompts, adjust
+model routing, or add missing context. The eval loop becomes a feedback
+mechanism for both the pipeline AND the research algorithm.
+
+## Phase 5: Production Hardening
+
+Final iteration cycle. Run complete pipeline on real specs, identify and
+fix remaining issues. Scale treasury spec complexity with parallel ground
+truth.

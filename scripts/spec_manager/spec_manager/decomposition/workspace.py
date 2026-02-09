@@ -19,7 +19,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from scripts.spec_manager.spec_manager.decomposition.id_generator import save_id_map
+from spec_manager.decomposition.id_generator import save_id_map
 
 
 def _spec_root(spec_path: Path) -> Path:

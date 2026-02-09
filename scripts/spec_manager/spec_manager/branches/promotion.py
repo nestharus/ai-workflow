@@ -196,6 +196,11 @@ class PromotionEngine:
         """
         config = PromotionGateConfig.default()
         config.project_root = str(self._layout.run_root)
+        # Align algorithmic roots with the branches layout directory structure
+        alg_dir = self._layout.algorithmic_dir()
+        config.algorithmic_roots = [
+            str(alg_dir.relative_to(self._layout.run_root)),
+        ]
 
         gate = LayerPromotionGate(config)
         report = gate.run_all_checks()

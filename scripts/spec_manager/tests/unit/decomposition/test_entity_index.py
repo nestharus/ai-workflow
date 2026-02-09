@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_manager.spec_manager.decomposition.entity_index import (
+from spec_manager.decomposition.entity_index import (
     add_entity_to_index,
     add_keywords_to_entity,
     add_source_to_entity,

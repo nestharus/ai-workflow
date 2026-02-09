@@ -1,6 +1,6 @@
 # Ground truth for chaotic_treasury_expanded
 # Authoritative expected outputs for each eval phase.
-# 52 requirements across 8 libraries, 10 sections, complexity 12.
+# 52 requirements across 8 libraries + system constraints, 10 sections, complexity 12.
 # Written BEFORE spec prose to prevent contamination.
 # Includes side-effect requirements and logging constraints from original spec.
 
@@ -28,7 +28,10 @@ summarization:
     - Regulatory reporting windows and hold-period enforcement
     - Immutable audit trail with routed notifications
     - Transaction schema validation and deduplication
-    - Cross-system invariants for rate freshness, finality, and correlation
+    - Settlement pipeline orchestration and cross-library coordination
+    # System constraints (not scored here — system constraints are part of
+    # spec_building requirements, not library descriptions):
+    # - Cross-system invariants for rate freshness, finality, and correlation
 
 library_synthesis:
   expected_libraries:
@@ -39,7 +42,7 @@ library_synthesis:
     - RegulatoryCompliance
     - AuditNotification
     - TransactionValidator
-    - CrossSystemInvariants
+    - SettlementOrchestration
   expected_requirements:
     # --- Original 30 (from chaotic_treasury) ---
     - Settlement instructions must contain counterparty ID, value date, currency pair, and notional amount
@@ -160,4 +163,8 @@ spec_building:
 
 overall_requirements_count: 52
 overall_elements_count: 52
+# Note: CrossSystemInvariants is NOT a library. Cross-system invariants
+# (rate freshness, dead-letter audit, settlement finality, correlation tracing)
+# are system-level constraints with no library assignment. The requirements
+# they represent are still counted in the totals above.
 convergence_iterations_max: 20

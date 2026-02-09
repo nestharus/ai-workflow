@@ -71,6 +71,7 @@ class DetectorFinding:
     element_id: str | None = None  # Related element ID
     detector: str = ""  # Which detector found this
     details: dict[str, Any] = field(default_factory=dict)
+    is_authoritative: bool = True  # False for heuristic/pattern-based findings
 
 
 # =============================================================================

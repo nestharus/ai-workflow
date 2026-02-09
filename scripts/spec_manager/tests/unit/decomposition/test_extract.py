@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from scripts.spec_manager.spec_manager.decomposition.extract import (
+from spec_manager.decomposition.extract import (
     append_evidence_to_entity,
     create_discovered_entity_document,
     create_rich_relation_document,
