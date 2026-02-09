@@ -6,7 +6,7 @@ intent from the source files.
 
 The collapse engine:
 1. Analyzes all source files for function definitions
-2. Classifies each function: algorithm, store, shape, or architecture
+2. Classifies each function via LLM: algorithm, store, shape, or architecture
 3. Extracts algorithms/stores/shapes into atoms/
 4. Records architectural remnants for future projection
 5. Builds initial atom registry
@@ -15,6 +15,8 @@ The collapse engine:
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import re
 import textwrap
 from dataclasses import dataclass
@@ -26,134 +28,7 @@ from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 from .layout import BranchLayout
 from .types import AtomDescriptor, AtomKind
 
-# Known I/O function names that disqualify shape classification
-_IO_FUNCTIONS = frozenset(
-    {
-        "print",
-        "open",
-        "input",
-        "write",
-        "read",
-        "send",
-        "recv",
-        "connect",
-        "execute",
-        "commit",
-        "rollback",
-        "close",
-        "flush",
-    }
-)
-
-# Store-access patterns: attribute names that indicate database/queue/file access
-_STORE_PATTERNS = frozenset(
-    {
-        "session",
-        "cursor",
-        "connection",
-        "db",
-        "database",
-        "cache",
-        "queue",
-        "redis",
-        "store",
-        "repository",
-        "repo",
-    }
-)
-
-# Keywords that suggest architectural/infrastructure patterns
-# (unique to collapse context -- not in the canonical extractor)
-_ARCH_INDICATORS = frozenset(
-    {
-        "route",
-        "router",
-        "middleware",
-        "handler",
-        "endpoint",
-        "retry",
-        "circuit_breaker",
-        "timeout",
-        "rate_limit",
-        "decorator",
-        "wrapper",
-        "proxy",
-        "adapter",
-        "factory",
-        "dispatch",
-        "subscribe",
-        "publish",
-        "emit",
-        "on_event",
-        "service",
-        "controller",
-        "view",
-        "api",
-        "http",
-        "request",
-        "response",
-        "status_code",
-        "header",
-        "async",
-        "await",
-        "asyncio",
-        "coroutine",
-        "logging",
-        "logger",
-        "log",
-    }
-)
-
-# Keywords that suggest a function interacts with stores/persistence
-_STORE_INDICATORS = frozenset(
-    {
-        "database",
-        "db",
-        "sql",
-        "query",
-        "cursor",
-        "session",
-        "redis",
-        "cache",
-        "queue",
-        "file",
-        "write",
-        "read",
-        "save",
-        "load",
-        "persist",
-        "store",
-        "fetch",
-        "insert",
-        "update",
-        "delete",
-        "commit",
-        "rollback",
-        "transaction",
-        "open",
-        "close",
-        "connect",
-        "connection",
-    }
-)
-
-# Regex: match function calls like ``func_name(`` or ``obj.method(``
-_CALL_RE = re.compile(r"\b(\w+)\s*\(")
-
-# Regex: match attribute access like ``obj.attr``
-_ATTR_ACCESS_RE = re.compile(r"\b(\w+)\.(\w+)")
-
-# Regex: match ``global <names>`` or ``nonlocal <names>``
-_GLOBAL_NONLOCAL_RE = re.compile(r"^\s*(?:global|nonlocal)\s+", re.MULTILINE)
-
-# Regex: match ``yield`` or ``yield from``
-_YIELD_RE = re.compile(r"\byield\b")
-
-# Regex: match non-self attribute assignment like ``obj.attr =`` (but not ``self.attr =``)
-_ATTR_ASSIGN_RE = re.compile(r"(\w+)\.(\w+)\s*(?:\+|-)?\s*=")
-
-# Regex: match identifier usage as a standalone name (not attribute access)
-_IDENT_RE = re.compile(r"(?<![.\w])(\w+)(?!\w)")
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -201,9 +76,8 @@ class CollapseEngine:
     4. Record architectural remnants for future projection
     5. Build initial atom registry
 
-    Uses language-agnostic ``analyze_source`` for function discovery, with
-    regex-based helpers for shape detection, store reference detection,
-    signature extraction, and body hashing.
+    Uses language-agnostic ``analyze_source`` for function discovery and
+    LLM-based semantic classification for function categorization.
     """
 
     def __init__(self, layout: BranchLayout) -> None:
@@ -308,9 +182,8 @@ class CollapseEngine:
     ) -> AtomKind | None:
         """Classify a function as algorithm, store, shape, or architectural.
 
-        Uses regex-based helpers for shape detection and store reference
-        detection, combined with the branches-specific ``_ARCH_INDICATORS``
-        check.
+        Uses LLM semantic classification.  Dunder methods (except
+        ``__init__``) are structurally filtered out before the LLM call.
 
         Args:
             func_info: The function info from code analysis.
@@ -320,10 +193,8 @@ class CollapseEngine:
             AtomKind if the function is an atom, None if architectural.
         """
         func_name = func_info.name.lower()
-        body_source = self._get_body_source(func_info, source_lines)
-        body_lower = body_source.lower()
 
-        # Skip private/dunder methods
+        # Skip private/dunder methods (structural filter, not semantic)
         if (
             func_name.startswith("__")
             and func_name.endswith("__")
@@ -331,53 +202,8 @@ class CollapseEngine:
         ):
             return None
 
-        # Check for architectural patterns first (they take priority)
-        arch_score = 0
-        for indicator in _ARCH_INDICATORS:
-            if indicator in func_name or indicator in body_lower:
-                arch_score += 1
-
-        # Check for store patterns
-        store_score = 0
-        for indicator in _STORE_INDICATORS:
-            if indicator in func_name or indicator in body_lower:
-                store_score += 1
-
-        # Shape detection via regex-based analysis
-        is_shape = self._is_shape(func_info, source_lines)
-
-        # Store reference detection via regex-based analysis
-        store_refs = self._detect_store_references(func_info, source_lines)
-        if store_refs:
-            store_score += len(store_refs)
-
-        # Async functions are typically architectural
-        if func_info.is_async:
-            if store_score > arch_score:
-                return AtomKind.STORE
-            if arch_score >= 2 or arch_score > 0:
-                return None
-
-        # Classification logic
-        if arch_score >= 2 and arch_score > store_score:
-            return None  # Architectural
-
-        if store_score >= 2:
-            return AtomKind.STORE
-
-        # Functions with multi-step logic are algorithms even if pure
-        body_stmt_count = self._estimate_body_statements(func_info, source_lines)
-        if body_stmt_count >= 2:
-            return AtomKind.ALGORITHM
-
-        if is_shape:
-            return AtomKind.SHAPE
-
-        # Single-statement functions with some logic default to algorithm
-        if body_stmt_count >= 1:
-            return AtomKind.ALGORITHM
-
-        return AtomKind.SHAPE
+        body_source = self._get_body_source(func_info, source_lines)
+        return _llm_classify(func_info, body_source)
 
     def _extract_atom(
         self,
@@ -502,88 +328,6 @@ class CollapseEngine:
         return stmt_count
 
     @staticmethod
-    def _is_shape(
-        func_info: RawFunctionInfo,
-        source_lines: list[str],
-    ) -> bool:
-        """Determine if a function is a pure shape (no side effects) via regex.
-
-        A shape function has:
-        - No global/nonlocal statements
-        - No attribute assignment on non-self objects
-        - No calls to known I/O functions
-        - No yield/yield from (generators)
-        """
-        start = func_info.start_line - 1
-        end = func_info.end_line
-        if start < 0 or end > len(source_lines):
-            return True
-
-        body_text = "\n".join(source_lines[start:end])
-
-        # Check for global/nonlocal
-        if _GLOBAL_NONLOCAL_RE.search(body_text):
-            return False
-
-        # Check for yield/yield from
-        if _YIELD_RE.search(body_text):
-            return False
-
-        # Check for non-self attribute assignment
-        for match in _ATTR_ASSIGN_RE.finditer(body_text):
-            obj_name = match.group(1)
-            if obj_name != "self":
-                return False
-
-        # Check for calls to known I/O functions
-        for match in _CALL_RE.finditer(body_text):
-            called_name = match.group(1)
-            if called_name in _IO_FUNCTIONS:
-                return False
-            # Also check attribute-style calls like obj.write(...)
-        for match in _ATTR_ACCESS_RE.finditer(body_text):
-            attr_name = match.group(2)
-            # Check if this is a call: attr followed by ``(``
-            end_pos = match.end()
-            rest = body_text[end_pos:].lstrip()
-            if rest.startswith("(") and attr_name in _IO_FUNCTIONS:
-                return False
-
-        return True
-
-    @staticmethod
-    def _detect_store_references(
-        func_info: RawFunctionInfo,
-        source_lines: list[str],
-    ) -> list[str]:
-        """Detect store/database access patterns in a function via regex."""
-        start = func_info.start_line - 1
-        end = func_info.end_line
-        if start < 0 or end > len(source_lines):
-            return []
-
-        body_text = "\n".join(source_lines[start:end])
-
-        store_refs: list[str] = []
-        seen: set[str] = set()
-
-        # Check attribute access: ``obj.attr`` where obj matches store patterns
-        for match in _ATTR_ACCESS_RE.finditer(body_text):
-            obj_name = match.group(1)
-            if obj_name.lower() in _STORE_PATTERNS and obj_name not in seen:
-                seen.add(obj_name)
-                store_refs.append(obj_name)
-
-        # Check standalone identifiers matching store patterns
-        for match in _IDENT_RE.finditer(body_text):
-            name = match.group(1)
-            if name.lower() in _STORE_PATTERNS and name not in seen:
-                seen.add(name)
-                store_refs.append(name)
-
-        return store_refs
-
-    @staticmethod
     def _compute_body_hash(
         func_info: RawFunctionInfo,
         source: str,
@@ -614,3 +358,84 @@ def _reconstruct_signature(func_info: RawFunctionInfo) -> str:
     if func_info.return_annotation:
         sig += f" -> {func_info.return_annotation}"
     return sig
+
+
+# -- LLM-based classification ------------------------------------------------
+
+_CLASSIFY_PROMPT_TEMPLATE = """\
+Classify the following function into exactly ONE of these categories:
+
+- **algorithm**: Contains multi-step business/domain logic, data transformations, \
+computations, or control flow that implements a meaningful procedure.
+- **store**: Interacts with databases, caches, queues, files, or other persistence \
+layers (read/write/connect/commit/rollback).
+- **shape**: A pure data-transformation or accessor with no side effects \
+(e.g. simple return, property, dataclass-like).
+- **architecture**: Infrastructure glue such as middleware, routing, HTTP \
+handlers, retry logic, logging wrappers, decorators, async dispatch, or \
+framework boilerplate.
+
+## Function
+Name: {name}
+Signature: {signature}
+Async: {is_async}
+
+## Body
+```
+{body}
+```
+
+## Output
+Return ONLY a JSON object: {{"classification": "<algorithm|store|shape|architecture>"}}
+"""
+
+_KIND_MAP: dict[str, AtomKind | None] = {
+    "algorithm": AtomKind.ALGORITHM,
+    "store": AtomKind.STORE,
+    "shape": AtomKind.SHAPE,
+    "architecture": None,
+}
+
+
+def _llm_classify(
+    func_info: RawFunctionInfo,
+    body_source: str,
+) -> AtomKind | None:
+    """Classify a single function via LLM.
+
+    On failure, defaults to ``AtomKind.ALGORITHM``.
+
+    Args:
+        func_info: Function metadata.
+        body_source: Full function body source text.
+
+    Returns:
+        AtomKind or None (for architectural).
+    """
+    from spec_manager.refinement.formats import _strip_code_fences
+
+    prompt = _CLASSIFY_PROMPT_TEMPLATE.format(
+        name=func_info.qualified_name,
+        signature=_reconstruct_signature(func_info),
+        is_async=func_info.is_async,
+        body=body_source,
+    )
+
+    try:
+        from spec_manager.core.agent_utils import run_agent
+
+        raw = run_agent(
+            agent_name="collapse-classifier",
+            prompt=prompt,
+            workspace=Path.cwd(),
+        )
+        cleaned = _strip_code_fences(raw)
+        parsed = json.loads(cleaned)
+        label = parsed.get("classification", "").strip().lower()
+        return _KIND_MAP.get(label, AtomKind.ALGORITHM)
+    except Exception:
+        logger.debug(
+            "LLM classification failed for %s; defaulting to ALGORITHM",
+            func_info.qualified_name,
+        )
+        return AtomKind.ALGORITHM

@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING
 
 from spec_manager.projection.lineage.builder import (
     AtomDefinition,
+    RawImportRecord,
     compute_signature_hash,
 )
 from spec_manager.projection.lineage.edges import ProjectionLineageEdge
-from spec_manager.projection.lineage.import_graph import ImportGraph
 from spec_manager.projection.lineage.table import ProjectionLineageTable
 
 if TYPE_CHECKING:
@@ -186,7 +186,7 @@ class PinDriftDetector:
     def detect_import_drift(
         self,
         edge: ProjectionLineageEdge,
-        import_graph: ImportGraph,
+        import_records: list[RawImportRecord],
     ) -> PinDrift | None:
         """Check if an import relationship still resolves.
 
@@ -195,7 +195,7 @@ class PinDriftDetector:
 
         Args:
             edge: The lineage edge to check.
-            import_graph: Current import graph to validate against.
+            import_records: Current import records to validate against.
 
         Returns:
             PinDrift if import is broken, None otherwise.
@@ -205,11 +205,11 @@ class PinDriftDetector:
             return None
 
         # Check if any importer still imports this atom's function
-        importers = import_graph.importers_of(atom.function_name)
-
-        # Look for the specific importer file from the edge
         to_file = edge.to_unit.split(":")[0] if ":" in edge.to_unit else edge.to_unit
-        found = any(ie.importer_file == to_file for ie in importers)
+        found = any(
+            r.imported_name == atom.function_name and r.importer_file == to_file
+            for r in import_records
+        )
 
         if not found:
             return PinDrift(
@@ -247,9 +247,7 @@ class PinDriftDetector:
         drifts: list[PinDrift] = []
 
         for bl in baseline_store.baselines:
-            current_hash = _compute_test_signature_hash(
-                bl.test_file, bl.test_function
-            )
+            current_hash = _compute_test_signature_hash(bl.test_file, bl.test_function)
 
             if current_hash is None:
                 # Test function no longer exists -- create a synthetic edge
@@ -282,9 +280,7 @@ class PinDriftDetector:
 
         return drifts
 
-    def _find_or_create_edge(
-        self, pin_func_id: str
-    ) -> ProjectionLineageEdge | None:
+    def _find_or_create_edge(self, pin_func_id: str) -> ProjectionLineageEdge | None:
         """Find an existing lineage edge for the given pin-function ID.
 
         Searches the lineage table for an edge whose from_unit matches

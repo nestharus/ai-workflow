@@ -16,7 +16,7 @@ implementations elsewhere in the codebase:
 - ``compliance`` -> ``compliance.promotion.algorithmic_gates``
 - ``promotion`` -> ``compliance.promotion.orchestrator``
 - ``analysis`` -> ``analysis.adjacency.graph.AdjacencyGraph``
-- ``collapse`` -> ``analysis.ast_extractor.AtomFunctionExtractor``
+- ``collapse`` -> ``core.code_analysis.analyze_source`` (via pin_functions orchestrator)
 - ``pins`` -> keeps own implementation with documentation pointing to
   ``core.pin_registry.PinRegistryIndex`` for O(1) alternative
 

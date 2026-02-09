@@ -12,7 +12,7 @@ from spec_manager.planning.adjacency import (
     discover_adjacent_details,
     find_store_touches,
 )
-from spec_manager.planning.code_parser import parse_source
+from spec_manager.planning.models import parse_source
 
 # --- Fixtures ---
 

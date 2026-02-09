@@ -125,7 +125,7 @@ class ImportEdge(BaseModel):
     This is a pin-function-to-architecture mapping edge (PFUNC -> arch location).
 
     Not to be confused with:
-    - ``projection.lineage.import_graph.ImportEdge``: a raw Python AST import
+    - ``projection.lineage.builder.RawImportRecord``: a raw import
       relationship (which file imports which name from which module).
     - ``projection.lineage.edges.ProjectionLineageEdge``: a lineage
       transformation edge tracking how atoms map to architecture over time.

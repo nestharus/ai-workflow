@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 from spec_manager.projection.lineage.builder import (
     AtomDefinition,
+    RawImportRecord,
     compute_signature_hash,
 )
 from spec_manager.projection.lineage.drift_detector import (
     DriftKind,
     PinDriftDetector,
 )
-from spec_manager.projection.lineage.import_graph import ImportGraph
 from spec_manager.projection.lineage.table import ProjectionLineageTable
 from spec_manager.schemas.pin_functions import ProjectionType
 
@@ -190,7 +190,7 @@ class TestPinDriftDetector:
         assert sig_drifts[0].severity == "warning"
 
     def test_detect_import_drift(self, atom_file: Path):
-        """Import no longer resolves in current import graph."""
+        """Import no longer resolves in current import records."""
         actual_hash = compute_signature_hash(str(atom_file), "validate_payment")
         atom = _make_atom(
             "validate_payment",
@@ -206,15 +206,14 @@ class TestPinDriftDetector:
             ProjectionType.PASS_THROUGH,
         )
 
-        # Empty import graph = import is broken
-        empty_graph = ImportGraph()
+        # Empty import records = import is broken
         detector = PinDriftDetector(table, [atom])
-        drift = detector.detect_import_drift(edge, empty_graph)
+        drift = detector.detect_import_drift(edge, [])
         assert drift is not None
         assert drift.drift_kind == DriftKind.IMPORT_BROKEN
 
     def test_detect_import_drift_no_drift(self, atom_file: Path):
-        """Import still resolves in current import graph."""
+        """Import still resolves in current import records."""
         actual_hash = compute_signature_hash(str(atom_file), "validate_payment")
         atom = _make_atom(
             "validate_payment",
@@ -230,21 +229,18 @@ class TestPinDriftDetector:
             ProjectionType.PASS_THROUGH,
         )
 
-        # Build an import graph that includes the expected import
-        from spec_manager.projection.lineage.import_graph import ImportEdge
-
-        graph = ImportGraph()
-        graph._add_edge(
-            ImportEdge(
+        # Build import records that include the expected import
+        import_records = [
+            RawImportRecord(
                 importer_file="handler.py",
                 importer_location="handler.py:module-level",
                 imported_name="validate_payment",
                 imported_from_module="test.module",
             )
-        )
+        ]
 
         detector = PinDriftDetector(table, [atom])
-        drift = detector.detect_import_drift(edge, graph)
+        drift = detector.detect_import_drift(edge, import_records)
         assert drift is None
 
     def test_unknown_atom_no_file_drift(self):

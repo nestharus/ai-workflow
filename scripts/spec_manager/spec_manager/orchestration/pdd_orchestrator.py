@@ -7,7 +7,7 @@ execution model defined in EXPECTED_STATE.md.
 Each phase delegates to the corresponding PDD module entry point:
 
     Phase 0  (EXTRACTION)         - intake/ (routing-based restructuring)
-    Phase 1  (STRUCTURE_DISCOVERY) - planning.code_parser + core.edit_in_place
+    Phase 1  (STRUCTURE_DISCOVERY) - planning.models.parse_file + core.edit_in_place
     Phase 2  (DECOMPOSITION)       - planning.reverser (reverse translation)
     Phase 3  (COMPLIANCE_CLEAN)    - compliance.detection.orchestrator + gap queue
     Phase 4  (LIBRARY_DISCOVERY)   - branches.manager (collapse + atom registry)
@@ -289,13 +289,13 @@ class PddOrchestrator:
         """Phase 1: AST structure + edit-in-place gap analysis.
 
         Two-part discovery:
-        1. ``planning.code_parser.parse_file()`` — AST structure (functions,
+        1. ``planning.models.parse_file()`` — AST structure (functions,
            classes, imports) for each Python file.
         2. ``core.edit_in_place.analyze_project()`` — translation state
            (which functions are implemented, which have gaps).
         """
         from spec_manager.core.edit_in_place import analyze_project, find_gaps
-        from spec_manager.planning.code_parser import parse_file
+        from spec_manager.planning.models import parse_file
 
         all_files = self.manager.get_all_files()
         parsed_count = 0
@@ -349,7 +349,7 @@ class PddOrchestrator:
         Note: ``plan_insertions()`` is a directed operation requiring a
         user-provided intention string, so it is not called in batch mode.
         """
-        from spec_manager.planning.code_parser import parse_file
+        from spec_manager.planning.models import parse_file
         from spec_manager.planning.reverser import reverse_translate
 
         all_files = self.manager.get_all_files()
@@ -544,7 +544,7 @@ class PddOrchestrator:
     def _run_projection_sync(self) -> dict[str, Any]:
         """Phase 7: Lineage building, analysis generation, projection sync.
 
-        1. Builds ``ImportGraph`` from workspace Python files.
+        1. Scans import records from workspace Python files.
         2. Builds ``LineageBuilder`` to trace atom→architecture projection.
         3. Runs ``generate_analysis_file()`` for the full analysis artifact.
         4. Runs ``ProjectionGenerator.generate_plan()`` for plan.md.
@@ -554,8 +554,11 @@ class PddOrchestrator:
 
         from spec_manager.analysis.generator import generate_analysis_file, write_analysis_json
         from spec_manager.projection.generator import ProjectionGenerator
-        from spec_manager.projection.lineage.builder import AtomDefinition, LineageBuilder
-        from spec_manager.projection.lineage.import_graph import ImportGraph
+        from spec_manager.projection.lineage.builder import (
+            AtomDefinition,
+            LineageBuilder,
+            scan_imports_from_directory,
+        )
         from spec_manager.projection.lineage.persistence import save_lineage_table
         from spec_manager.schemas.derived_elements import DerivedElement
         from spec_manager.schemas.spec_index_v2 import Library
@@ -563,9 +566,9 @@ class PddOrchestrator:
         root = self.manager.structure.root
         outputs: dict[str, Any] = {}
 
-        # 1. Build import graph from workspace Python files
-        import_graph = ImportGraph.build_from_directory(root)
-        outputs["import_edges"] = len(import_graph.edges)
+        # 1. Scan imports from workspace Python files
+        import_records = scan_imports_from_directory(root)
+        outputs["import_edges"] = len(import_records)
 
         # 2. Build atom definitions from branch manager for lineage tracking
         branch_mgr = self.manager.branches
@@ -584,7 +587,7 @@ class PddOrchestrator:
 
         # 3. Build lineage table (atom → architecture projection)
         if atom_defs:
-            lineage_builder = LineageBuilder(import_graph=import_graph, atoms=atom_defs)
+            lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
             lineage_table = lineage_builder.build_lineage()
             outputs["lineage_edges"] = len(lineage_table.edges)
 

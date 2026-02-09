@@ -3,8 +3,8 @@
 Provides:
 - ProjectionLineageEdge and ProjectionType: Core data model
 - ProjectionLineageTable: Queryable edge collection with forward/backward trace
-- ImportGraph and ImportEdge: Static analysis of Python imports
-- LineageBuilder and AtomDefinition: Bridge import graph to lineage table
+- RawImportRecord and scan helpers: Static analysis of imports
+- LineageBuilder and AtomDefinition: Bridge import records to lineage table
 - DataFlowTracker, SignalSpec, DataFlowHop: Data flow projection tracking
 - PinDriftDetector, DriftKind, PinDrift: Pin target drift detection
 - Persistence utilities: JSON save/load for lineage data
@@ -14,73 +14,71 @@ Imports are lazy to avoid circular import issues.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any
 
 __all__ = [
-    # Edges (Plan 1)
-    "ProjectionLineageEdge",
-    "ProjectionType",
-    # Table (Plan 2)
-    "ProjectionLineageTable",
-    # Import Graph (Plan 3)
-    "ImportEdge",
-    "ImportGraph",
-    # Builder (Plan 4)
     "AtomDefinition",
-    "LineageBuilder",
-    "compute_signature_hash",
-    # Data Flow (Plan 5)
     "DataFlowHop",
     "DataFlowTracker",
-    "SignalSpec",
-    # Drift Detector (Plan 6)
     "DriftKind",
+    "LineageBuilder",
     "PinDrift",
     "PinDriftDetector",
-    # Test-Pin Discovery
+    "ProjectionLineageEdge",
+    "ProjectionLineageTable",
+    "ProjectionType",
+    "RawImportRecord",
+    "SignalSpec",
     "TestPinAssociation",
     "TestPinMap",
+    "compute_signature_hash",
     "discover_test_pin_associations",
-    # Persistence (Plan 7)
-    "load_import_graph",
     "load_lineage_table",
-    "save_import_graph",
     "save_lineage_table",
+    "scan_imports_from_directory",
+    "scan_imports_from_files",
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy import to avoid circular imports."""
     if name in ("ProjectionLineageEdge", "ProjectionType"):
         from spec_manager.projection.lineage.edges import ProjectionLineageEdge
         from spec_manager.schemas.pin_functions import ProjectionType
 
-        return {"ProjectionLineageEdge": ProjectionLineageEdge, "ProjectionType": ProjectionType}[name]
+        return {"ProjectionLineageEdge": ProjectionLineageEdge, "ProjectionType": ProjectionType}[
+            name
+        ]
 
     if name == "ProjectionLineageTable":
         from spec_manager.projection.lineage.table import ProjectionLineageTable
 
         return ProjectionLineageTable
 
-    if name in ("ImportEdge", "ImportGraph"):
-        from spec_manager.projection.lineage.import_graph import (
-            ImportEdge,
-            ImportGraph,
-        )
-
-        return {"ImportEdge": ImportEdge, "ImportGraph": ImportGraph}[name]
-
-    if name in ("AtomDefinition", "LineageBuilder", "compute_signature_hash"):
+    if name in (
+        "AtomDefinition",
+        "LineageBuilder",
+        "RawImportRecord",
+        "compute_signature_hash",
+        "scan_imports_from_directory",
+        "scan_imports_from_files",
+    ):
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
             LineageBuilder,
+            RawImportRecord,
             compute_signature_hash,
+            scan_imports_from_directory,
+            scan_imports_from_files,
         )
 
         return {
             "AtomDefinition": AtomDefinition,
             "LineageBuilder": LineageBuilder,
+            "RawImportRecord": RawImportRecord,
             "compute_signature_hash": compute_signature_hash,
+            "scan_imports_from_directory": scan_imports_from_directory,
+            "scan_imports_from_files": scan_imports_from_files,
         }[name]
 
     if name in ("DataFlowHop", "DataFlowTracker", "SignalSpec"):
@@ -122,18 +120,14 @@ def __getattr__(name: str):
             "discover_test_pin_associations": discover_test_pin_associations,
         }[name]
 
-    if name in ("load_import_graph", "load_lineage_table", "save_import_graph", "save_lineage_table"):
+    if name in ("load_lineage_table", "save_lineage_table"):
         from spec_manager.projection.lineage.persistence import (
-            load_import_graph,
             load_lineage_table,
-            save_import_graph,
             save_lineage_table,
         )
 
         return {
-            "load_import_graph": load_import_graph,
             "load_lineage_table": load_lineage_table,
-            "save_import_graph": save_import_graph,
             "save_lineage_table": save_lineage_table,
         }[name]
 

@@ -1,56 +1,10 @@
 {
-  "total_nodes": 11,
-  "total_edges": 7,
-  "num_components": 6,
+  "total_nodes": 2,
+  "total_edges": 2,
+  "num_components": 1,
   "components": [
     {
       "component_id": 0,
-      "nodes": [
-        "processor.process",
-        "processor.transform",
-        "processor.validate"
-      ],
-      "size": 3,
-      "signal_types_present": [
-        "call"
-      ],
-      "total_internal_weight": 2.0,
-      "classification": "truly_isolated",
-      "classification_reason": "No store or co-occurrence links to other components",
-      "bridge_candidates": []
-    },
-    {
-      "component_id": 1,
-      "nodes": [
-        "events.EventService.handle_event",
-        "events.EventService.publish_event"
-      ],
-      "size": 2,
-      "signal_types_present": [
-        "event"
-      ],
-      "total_internal_weight": 0.8,
-      "classification": "truly_isolated",
-      "classification_reason": "No store or co-occurrence links to other components",
-      "bridge_candidates": []
-    },
-    {
-      "component_id": 2,
-      "nodes": [
-        "processor.read_orders",
-        "processor.write_orders"
-      ],
-      "size": 2,
-      "signal_types_present": [
-        "store_touch"
-      ],
-      "total_internal_weight": 1.0,
-      "classification": "truly_isolated",
-      "classification_reason": "No store or co-occurrence links to other components",
-      "bridge_candidates": []
-    },
-    {
-      "component_id": 3,
       "nodes": [
         "Algorithm 1",
         "Algorithm 2"
@@ -60,53 +14,16 @@
         "co_occurrence"
       ],
       "total_internal_weight": 0.3,
-      "classification": "truly_isolated",
-      "classification_reason": "No store or co-occurrence links to other components",
-      "bridge_candidates": []
-    },
-    {
-      "component_id": 4,
-      "nodes": [
-        "events.EventService.on_order"
-      ],
-      "size": 1,
-      "signal_types_present": [],
-      "total_internal_weight": 0.0,
-      "classification": "suspiciously_isolated",
-      "classification_reason": "Single node 'events.EventService.on_order' with no connections",
-      "bridge_candidates": []
-    },
-    {
-      "component_id": 5,
-      "nodes": [
-        "store:orders"
-      ],
-      "size": 1,
-      "signal_types_present": [],
-      "total_internal_weight": 0.0,
-      "classification": "suspiciously_isolated",
-      "classification_reason": "Single node 'store:orders' with no connections",
+      "classification": null,
+      "classification_reason": "",
       "bridge_candidates": []
     }
   ],
   "signal_type_counts": {
-    "event": 1,
-    "call": 2,
-    "store_touch": 2,
     "co_occurrence": 2
   },
   "signal_type_weights": {
-    "event": 0.8,
-    "call": 2.0,
-    "store_touch": 1.0,
     "co_occurrence": 0.3
   },
-  "disconnected_warnings": [
-    "Component 0: 3 nodes are truly isolated with no connections to other components.",
-    "Component 1: 2 nodes are truly isolated with no connections to other components.",
-    "Component 2: 2 nodes are truly isolated with no connections to other components.",
-    "Component 3: 2 nodes are truly isolated with no connections to other components.",
-    "Component 4: single node events.EventService.on_order has no connections. May be standalone or extraction missed connections.",
-    "Component 5: single node store:orders has no connections. May be standalone or extraction missed connections."
-  ]
+  "disconnected_warnings": []
 }

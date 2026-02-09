@@ -1,14 +1,25 @@
-"""Core data structures for the planning module.
+"""Core data structures and factory functions for the planning module.
 
 Defines the foundational types used across all planning submodules:
 pseudocode comments, insertion points, function info, code files,
 insertion plans, reverse plans, and adjacent details.
+
+Also provides ``parse_source`` / ``parse_file`` factory functions that
+build ``CodeFile`` instances from ``analyze_source()`` output.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+
+from spec_manager.core.code_analysis import (
+    RawCommentInfo,
+    RawFunctionInfo,
+    SourceAnalysis,
+    analyze_source,
+)
 
 
 class CommentKind(str, Enum):
@@ -113,3 +124,362 @@ class AdjacentDetail:
     store_or_event: str | None  # Name of shared store/event if applicable
     has_test_coverage: bool  # Whether the related function has tests
     needs_plan: bool  # Whether this needs its own planning pass
+
+
+# ---------------------------------------------------------------------------
+# Comment classification helpers
+# ---------------------------------------------------------------------------
+
+# Verbs that indicate a PLAN-kind comment (intent to do something)
+_PLAN_VERBS = frozenset(
+    {
+        "validate",
+        "check",
+        "apply",
+        "send",
+        "compute",
+        "calculate",
+        "build",
+        "create",
+        "update",
+        "delete",
+        "remove",
+        "insert",
+        "fetch",
+        "load",
+        "save",
+        "store",
+        "process",
+        "transform",
+        "convert",
+        "parse",
+        "extract",
+        "filter",
+        "merge",
+        "sort",
+        "iterate",
+        "loop",
+        "return",
+        "raise",
+        "emit",
+        "dispatch",
+        "invoke",
+        "call",
+        "initialize",
+        "configure",
+        "register",
+        "normalize",
+        "aggregate",
+        "map",
+        "reduce",
+        "resolve",
+        "determine",
+        "ensure",
+        "verify",
+        "handle",
+        "retry",
+        "propagate",
+        "collect",
+        "accumulate",
+        "generate",
+        "render",
+        "format",
+        "serialize",
+        "deserialize",
+        "encode",
+        "decode",
+        "encrypt",
+        "decrypt",
+        "compress",
+        "decompress",
+        "schedule",
+        "execute",
+        "run",
+        "start",
+        "stop",
+        "reset",
+        "flush",
+        "sync",
+        "wait",
+        "poll",
+        "listen",
+        "subscribe",
+        "publish",
+        "notify",
+        "log",
+        "track",
+        "measure",
+        "allocate",
+        "release",
+        "open",
+        "close",
+        "read",
+        "write",
+        "set",
+        "get",
+    }
+)
+
+# Reverse-translation markers
+_REVERSE_MARKERS = frozenset(
+    {
+        "[reverse-translated]",
+        "reverse-translated:",
+        "reverse translated:",
+        "[reversed]",
+    }
+)
+
+
+def _classify_comment(text: str) -> CommentKind:
+    """Classify a comment as PLAN, REVERSE, or ANNOTATION.
+
+    Args:
+        text: The comment text (stripped of '# ' prefix).
+
+    Returns:
+        CommentKind classification.
+    """
+    lower = text.lower().strip()
+
+    # Check for reverse-translation markers
+    for marker in _REVERSE_MARKERS:
+        if marker in lower:
+            return CommentKind.REVERSE
+
+    # Check for plan verbs at word boundaries
+    words = lower.split()
+    if words:
+        first_word = words[0].rstrip(":")
+        if first_word in _PLAN_VERBS:
+            return CommentKind.PLAN
+
+    # Check for verbs anywhere in the comment (with weaker signal)
+    for word in words:
+        clean = word.strip("(),.:;!?")
+        if clean in _PLAN_VERBS:
+            return CommentKind.PLAN
+
+    return CommentKind.ANNOTATION
+
+
+# ---------------------------------------------------------------------------
+# Conversion helpers: code_analysis types -> planning.models types
+# ---------------------------------------------------------------------------
+
+
+def _parse_qualified_name(qualified_name: str) -> tuple[str | None, str]:
+    """Parse a qualified name into (class_name, function_name).
+
+    Args:
+        qualified_name: e.g. "ClassName.method_name" or "func_name".
+
+    Returns:
+        Tuple of (class_name or None, function_name).
+    """
+    parts = qualified_name.rsplit(".", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return None, parts[0]
+
+
+def _raw_func_to_function_info(
+    raw: RawFunctionInfo,
+    file_path: str,
+    lines: list[str],
+) -> FunctionInfo:
+    """Convert a RawFunctionInfo to a FunctionInfo.
+
+    Args:
+        raw: Function info from code_analysis.
+        file_path: Source file path.
+        lines: Source lines (0-indexed).
+
+    Returns:
+        FunctionInfo for use in the planning module.
+    """
+    class_name, _ = _parse_qualified_name(raw.qualified_name)
+
+    # Compute body_lines from source text
+    body_lines = lines[raw.start_line - 1 : raw.end_line]
+
+    # Compute indent_level from leading spaces at the function's start_line
+    if raw.start_line - 1 < len(lines):
+        line = lines[raw.start_line - 1]
+        indent_level = len(line) - len(line.lstrip())
+    else:
+        indent_level = 0
+
+    return FunctionInfo(
+        name=raw.name,
+        file_path=file_path,
+        start_line=raw.start_line,
+        end_line=raw.end_line,
+        indent_level=indent_level,
+        parameters=list(raw.args),
+        return_annotation=raw.return_annotation,
+        docstring=raw.docstring,
+        body_lines=body_lines,
+        calls=[],  # Adjacency module is being deprecated
+        comments=[],  # Filled in by _assign_comments_to_functions
+        class_name=class_name,
+        decorators=list(raw.decorators),
+    )
+
+
+def _raw_comment_to_pseudocode(
+    raw: RawCommentInfo,
+    file_path: str,
+) -> PseudocodeComment:
+    """Convert a RawCommentInfo to a PseudocodeComment.
+
+    Args:
+        raw: Comment info from code_analysis.
+        file_path: Source file path.
+
+    Returns:
+        PseudocodeComment for use in the planning module.
+    """
+    # Parse enclosing_function for class_name if it contains "."
+    function_name: str | None = None
+    class_name: str | None = None
+    if raw.enclosing_function:
+        class_name, function_name = _parse_qualified_name(raw.enclosing_function)
+
+    kind = _classify_comment(raw.text)
+
+    return PseudocodeComment(
+        file_path=file_path,
+        line_no=raw.line,
+        text=raw.text.strip(),
+        kind=kind,
+        indent_level=raw.col_offset,
+        function_name=function_name,
+        class_name=class_name,
+    )
+
+
+def _assign_comments_to_functions(
+    comments: list[PseudocodeComment],
+    functions: list[FunctionInfo],
+) -> tuple[list[PseudocodeComment], list[PseudocodeComment]]:
+    """Assign comments to their enclosing functions.
+
+    Returns:
+        Tuple of (function_comments, top_level_comments).
+        Function comments have their function_name and class_name filled in.
+    """
+    assigned: list[PseudocodeComment] = []
+    top_level: list[PseudocodeComment] = []
+
+    for comment in comments:
+        found = False
+        for func in functions:
+            if func.start_line <= comment.line_no <= func.end_line:
+                # Re-create with function context (frozen dataclass)
+                assigned.append(
+                    PseudocodeComment(
+                        file_path=comment.file_path,
+                        line_no=comment.line_no,
+                        text=comment.text,
+                        kind=comment.kind,
+                        indent_level=comment.indent_level,
+                        function_name=func.name,
+                        class_name=func.class_name,
+                    )
+                )
+                found = True
+                break
+        if not found:
+            top_level.append(comment)
+
+    return assigned, top_level
+
+
+# ---------------------------------------------------------------------------
+# Factory functions: build CodeFile from source text
+# ---------------------------------------------------------------------------
+
+
+def parse_file(file_path: str) -> CodeFile:
+    """Parse a source file into a CodeFile structure.
+
+    Delegates structural analysis to code_analysis.analyze_source().
+
+    Args:
+        file_path: Absolute path to the source file.
+
+    Returns:
+        CodeFile with functions, comments, imports, and classes.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
+    path = Path(file_path)
+    source = path.read_text(encoding="utf-8")
+    return parse_source(source, file_path)
+
+
+def parse_source(source: str, file_path: str) -> CodeFile:
+    """Parse source code into a CodeFile structure.
+
+    Delegates structural analysis to code_analysis.analyze_source().
+
+    Args:
+        source: Source code string.
+        file_path: Path for attribution in results.
+
+    Returns:
+        CodeFile with functions, comments, imports, and classes.
+    """
+    analysis: SourceAnalysis = analyze_source(source, file_path)
+    lines = source.splitlines()
+
+    # Convert RawFunctionInfo -> FunctionInfo
+    functions: list[FunctionInfo] = []
+    for raw_func in analysis.functions:
+        functions.append(_raw_func_to_function_info(raw_func, file_path, lines))
+
+    # Convert RawCommentInfo -> PseudocodeComment
+    all_comments: list[PseudocodeComment] = []
+    for raw_comment in analysis.comments:
+        all_comments.append(_raw_comment_to_pseudocode(raw_comment, file_path))
+
+    # Assign comments to functions
+    assigned_comments, top_level_comments = _assign_comments_to_functions(all_comments, functions)
+
+    # Group assigned comments by function and rebuild FunctionInfo with comments
+    comments_by_func: dict[str, list[PseudocodeComment]] = {}
+    for comment in assigned_comments:
+        key = f"{comment.class_name or ''}.{comment.function_name}"
+        comments_by_func.setdefault(key, []).append(comment)
+
+    enriched_functions: list[FunctionInfo] = []
+    for func in functions:
+        key = f"{func.class_name or ''}.{func.name}"
+        func_comments = comments_by_func.get(key, [])
+        enriched_functions.append(
+            FunctionInfo(
+                name=func.name,
+                file_path=func.file_path,
+                start_line=func.start_line,
+                end_line=func.end_line,
+                indent_level=func.indent_level,
+                parameters=func.parameters,
+                return_annotation=func.return_annotation,
+                docstring=func.docstring,
+                body_lines=func.body_lines,
+                calls=func.calls,
+                comments=func_comments,
+                class_name=func.class_name,
+                decorators=func.decorators,
+            )
+        )
+
+    return CodeFile(
+        file_path=file_path,
+        functions=enriched_functions,
+        top_level_comments=top_level_comments,
+        imports=[],  # Deprecated: only used for counting in orchestrator
+        classes=[],  # Deprecated: only used for counting in orchestrator
+    )

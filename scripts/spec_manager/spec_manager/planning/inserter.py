@@ -8,14 +8,10 @@ from __future__ import annotations
 
 import json
 import re
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from spec_manager.planning.code_parser import (
-    _find_function,
-    find_insertion_points,
-)
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.planning.models import (
     CodeFile,
     FunctionInfo,
@@ -37,7 +33,7 @@ def plan_insertions(
 
     Steps:
     1. Parse the intention into micro-units via LLM (one comment per logical step)
-    2. Analyze the target function to find valid insertion points
+    2. Analyze the target function to find valid insertionphone insertion points
     3. Match each micro-unit to the best insertion point based on context
     4. Query evidence store for ambiguity resolution if details are unclear
 
@@ -53,7 +49,7 @@ def plan_insertions(
     Raises:
         ValueError: If function_name is not found in the code file.
     """
-    func = _find_function(code_file, function_name)
+    func = next((f for f in code_file.functions if f.name == function_name), None)
     if func is None:
         raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
 
@@ -61,7 +57,7 @@ def plan_insertions(
     micro_units = decompose_intention(intention, func)
 
     # Step 2: Find valid insertion points
-    insertion_points = find_insertion_points(code_file, function_name)
+    insertion_points = _find_insertion_points(code_file, function_name)
 
     # Step 3: Match comments to insertion points
     matched = match_comments_to_insertion_points(micro_units, insertion_points, func)
@@ -172,7 +168,7 @@ def _decompose_via_agent(
     Raises:
         RuntimeError: If the agent invocation fails.
     """
-    from spec_manager.core.agent_utils import run_agent
+    from spec_manager.core.agent_utils import PROJECT_ROOT, run_agent
 
     # Build prompt with function context
     body = "\n".join(function_context.body_lines)
@@ -193,15 +189,8 @@ def _decompose_via_agent(
         f'["validate input parameters", "compute result hash", "store result"]\n'
     )
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
-        f.write(prompt)
-        prompt_path = f.name
-
-    try:
-        result = run_agent(agent_name, prompt_path)
-        return _parse_agent_response(result)
-    finally:
-        Path(prompt_path).unlink(missing_ok=True)
+    result = run_agent(agent_name=agent_name, prompt=prompt, workspace=PROJECT_ROOT)
+    return _parse_agent_response(result)
 
 
 def _parse_agent_response(response: str) -> list[str]:
@@ -216,6 +205,7 @@ def _parse_agent_response(response: str) -> list[str]:
         List of comment strings.
 
     Raises:
+        TypeError: If the response is not a JSON array.
         ValueError: If the response cannot be parsed.
     """
     # Strip code fences
@@ -229,7 +219,7 @@ def _parse_agent_response(response: str) -> list[str]:
         parsed = json.loads(cleaned)
 
     if not isinstance(parsed, list):
-        raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
+        raise TypeError(f"Expected JSON array, got {type(parsed).__name__}")
 
     return [str(item) for item in parsed]
 
@@ -384,3 +374,230 @@ def _find_best_insertion_point(
             best_idx = i
 
     return best_idx
+
+
+# ---------------------------------------------------------------------------
+# Insertion-point discovery (moved from code_parser)
+# ---------------------------------------------------------------------------
+
+
+def _find_insertion_points(code_file: CodeFile, function_name: str) -> list[InsertionPoint]:
+    """Find valid insertion points within a function.
+
+    Insertion points are between statements, respecting control flow.
+    Each point knows its context (what comes before/after).
+
+    Args:
+        code_file: Parsed code file.
+        function_name: Name of the target function.
+
+    Returns:
+        List of InsertionPoint objects.
+
+    Raises:
+        ValueError: If function_name is not found in the code file.
+    """
+    func = next((f for f in code_file.functions if f.name == function_name), None)
+    if func is None:
+        raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
+
+    source = Path(code_file.file_path).read_text(encoding="utf-8")
+    return _find_insertion_points_from_source(source, func, code_file.file_path)
+
+
+def _find_insertion_points_from_source(
+    source: str,
+    func: FunctionInfo,
+    file_path: str,
+) -> list[InsertionPoint]:
+    """Find insertion points within a function from source text.
+
+    Uses analyze_source() for function metadata and line-based heuristics
+    for statement boundary detection.  Language-agnostic.
+
+    Args:
+        source: Full file source.
+        func: Function info.
+        file_path: File path for attribution.
+
+    Returns:
+        List of InsertionPoint objects.
+    """
+    lines = source.splitlines()
+    points: list[InsertionPoint] = []
+
+    # Use analyze_source to locate the function
+    analysis = analyze_source(source, file_path)
+    raw_func = None
+    for rf in analysis.functions:
+        if rf.name == func.name:
+            raw_func = rf
+            break
+    if raw_func is None:
+        return points
+
+    body_indent = func.indent_level + 4  # Standard Python indentation
+
+    # Determine body start: body_start_line from analysis, accounting for docstring
+    body_start = raw_func.body_start_line
+    body_end = raw_func.end_line
+
+    if body_start <= 0 or body_end <= 0:
+        return points
+
+    # Find top-level statement boundaries within the function body.
+    stmt_ranges = _find_statement_ranges(
+        lines, body_start, body_end, body_indent, raw_func.has_docstring
+    )
+
+    if not stmt_ranges:
+        return points
+
+    # --- Start of function body (after docstring or def line) ---
+    first_range = stmt_ranges[0]
+    insert_after_line = first_range[0] - 1
+    if insert_after_line < 1:
+        insert_after_line = raw_func.start_line
+
+    preceding = lines[insert_after_line - 1] if insert_after_line <= len(lines) else ""
+    following = lines[first_range[0] - 1] if first_range[0] <= len(lines) else ""
+
+    points.append(
+        InsertionPoint(
+            file_path=file_path,
+            line_no=insert_after_line,
+            indent_level=body_indent,
+            function_name=func.name,
+            preceding_code=preceding.strip(),
+            following_code=following.strip(),
+            rationale="Start of function body",
+        )
+    )
+
+    # --- Between statements ---
+    for i in range(len(stmt_ranges) - 1):
+        current_end = stmt_ranges[i][1]
+        next_start = stmt_ranges[i + 1][0]
+
+        preceding = lines[current_end - 1] if current_end <= len(lines) else ""
+        following = lines[next_start - 1] if next_start <= len(lines) else ""
+
+        points.append(
+            InsertionPoint(
+                file_path=file_path,
+                line_no=current_end,
+                indent_level=body_indent,
+                function_name=func.name,
+                preceding_code=preceding.strip(),
+                following_code=following.strip(),
+                rationale="Between statements",
+            )
+        )
+
+    # --- End of function body ---
+    last_end = stmt_ranges[-1][1]
+    preceding = lines[last_end - 1] if last_end <= len(lines) else ""
+
+    points.append(
+        InsertionPoint(
+            file_path=file_path,
+            line_no=last_end,
+            indent_level=body_indent,
+            function_name=func.name,
+            preceding_code=preceding.strip(),
+            following_code="",
+            rationale="End of function body",
+        )
+    )
+
+    return points
+
+
+def _find_statement_ranges(
+    lines: list[str],
+    body_start: int,
+    body_end: int,
+    body_indent: int,
+    has_docstring: bool,
+) -> list[tuple[int, int]]:
+    """Identify top-level statement ranges within a function body.
+
+    A statement starts on a line whose indentation equals *body_indent*
+    (the function body indent level).  Continuation lines (deeper indent,
+    blank lines, or lines inside multi-line strings) are folded into the
+    preceding statement.
+
+    Args:
+        lines: All source lines (0-indexed list).
+        body_start: 1-based line where the body begins.
+        body_end: 1-based last line of the function.
+        body_indent: Expected indent level for top-level body statements.
+        has_docstring: Whether to skip a leading docstring.
+
+    Returns:
+        List of (start_line, end_line) tuples, 1-based inclusive.
+    """
+    ranges: list[tuple[int, int]] = []
+    current_start: int | None = None
+    current_end: int | None = None
+
+    # Track whether we're inside a docstring to skip
+    skip_until_line = 0
+    if has_docstring:
+        skip_until_line = _find_docstring_end(lines, body_start)
+
+    for line_no in range(body_start, body_end + 1):
+        if line_no <= skip_until_line:
+            continue
+
+        idx = line_no - 1
+        if idx >= len(lines):
+            break
+
+        line = lines[idx]
+        stripped = line.rstrip()
+
+        if not stripped:
+            continue
+
+        indent = len(line) - len(line.lstrip())
+
+        if indent == body_indent:
+            if current_start is not None:
+                ranges.append((current_start, current_end or current_start))
+            current_start = line_no
+            current_end = line_no
+        elif current_start is not None:
+            current_end = line_no
+
+    if current_start is not None:
+        ranges.append((current_start, current_end or current_start))
+
+    return ranges
+
+
+def _find_docstring_end(lines: list[str], start: int) -> int:
+    """Find the last line of a docstring starting at *start* (1-based).
+
+    Handles single-line and multi-line triple-quoted strings.
+
+    Returns:
+        1-based line number of the docstring's closing line,
+        or *start* if no docstring is found.
+    """
+    idx = start - 1
+    if idx >= len(lines):
+        return start
+
+    line = lines[idx].strip()
+
+    for quote in ('"""', "'''"):
+        if quote in line:
+            if line.count(quote) >= 2:
+                return start
+            for j in range(start, len(lines)):
+                if quote in lines[j].strip() and j > idx:
+                    return j + 1
+            return start
+
+    return start

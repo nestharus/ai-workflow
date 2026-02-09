@@ -17,12 +17,8 @@ from typing import Any
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
+from spec_manager.projection.lineage.builder import scan_imports_from_files
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
-
-_IMPORT_FROM_RE = re.compile(r"^\s*from\s+\S+\s+import\s+(.+)", re.MULTILINE)
-_IMPORT_RE = re.compile(r"^\s*import\s+(.+)", re.MULTILINE)
-_CALL_RE = re.compile(r"\b(\w+)\s*\(")
-_ASSIGN_RE = re.compile(r"^\s*(\w+)\s*=", re.MULTILINE)
 
 
 @dataclass
@@ -292,55 +288,66 @@ def check_function_recomposition(
 
     findings: list[dict[str, Any]] = []
 
+    # Use evidence-based import scanning for all architectural files
+    import_records = scan_imports_from_files(architectural_files)
+
+    # Group import records by file
+    imports_by_file: dict[str, set[str]] = {}
+    for record in import_records:
+        name = record.imported_name
+        if name in pin_func_names:
+            imports_by_file.setdefault(record.importer_file, set()).add(name)
+
     for arch_file in architectural_files:
+        file_str = str(arch_file)
+        imported_pin_names = imports_by_file.get(file_str, set())
+        if not imported_pin_names:
+            continue
+
         try:
             source = arch_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
-        # Find imported pin-function names in this file using regex
-        imported_pin_names: set[str] = set()
-
-        for match in _IMPORT_FROM_RE.finditer(source):
-            names_part = match.group(1)
-            # Handle "from X import a, b, c" and "from X import a as b"
-            for name_segment in names_part.split(","):
-                name_segment = name_segment.strip()
-                if " as " in name_segment:
-                    name = name_segment.split(" as ")[-1].strip()
-                else:
-                    name = name_segment.strip()
-                if name in pin_func_names:
-                    imported_pin_names.add(name)
-
-        for match in _IMPORT_RE.finditer(source):
-            names_part = match.group(1)
-            # Skip "from X import ..." which is already handled
-            if source[match.start() :].lstrip().startswith("from"):
-                continue
-            for name_segment in names_part.split(","):
-                name_segment = name_segment.strip()
-                if " as " in name_segment:
-                    name = name_segment.split(" as ")[-1].strip()
-                else:
-                    # "import foo.bar" -> "bar"
-                    name = name_segment.split(".")[-1].strip()
-                if name in pin_func_names:
-                    imported_pin_names.add(name)
-
-        if not imported_pin_names:
-            continue
-
-        # Find all call sites and assignments using regex
+        # Find all call sites using analyze_source function bodies
+        analysis = analyze_source(source, file_str)
+        lines = source.splitlines()
         called_names: set[str] = set()
-        for match in _CALL_RE.finditer(source):
-            called_names.add(match.group(1))
+        for func in analysis.functions:
+            body_start = func.body_start_line if func.body_start_line > 0 else func.start_line
+            body_end = func.end_line
+            if body_start > 0 and body_end > 0 and body_end <= len(lines):
+                body_text = "\n".join(lines[body_start - 1 : body_end])
+                # Find call-like patterns in body text (acceptable local regex)
+                called_names.update(re.findall(r"\b(\w+)\s*\(", body_text))
 
+        # Also check module-level calls (outside functions)
+        called_names.update(re.findall(r"\b(\w+)\s*\(", source))
+
+        # Find assignments that shadow imported pin-function names
+        # using analyze_source function bodies
         shadowed_names: set[str] = set()
-        for match in _ASSIGN_RE.finditer(source):
-            name = match.group(1)
-            if name in imported_pin_names:
-                shadowed_names.add(name)
+        for func in analysis.functions:
+            body_start = func.body_start_line if func.body_start_line > 0 else func.start_line
+            body_end = func.end_line
+            if body_start > 0 and body_end > 0 and body_end <= len(lines):
+                body_lines = lines[body_start - 1 : body_end]
+                for line in body_lines:
+                    stripped = line.strip()
+                    # Simple assignment detection: "name = ..."
+                    # Skip comparisons (==, !=, <=, >=) and comments
+                    if "=" in stripped and not stripped.startswith("#") and "==" not in stripped:
+                        lhs = stripped.split("=")[0].strip()
+                        # Exclude augmented assignments (+=, -=, etc.)
+                        if (
+                            lhs.isidentifier()
+                            and not stripped.startswith(f"{lhs} +=")
+                            and not stripped.startswith(f"{lhs} -=")
+                            and not stripped.startswith(f"{lhs} *=")
+                            and not stripped.startswith(f"{lhs} /=")
+                            and lhs in imported_pin_names
+                        ):
+                            shadowed_names.add(lhs)
 
         # Check for dead imports
         if check_dead_imports:
@@ -348,7 +355,7 @@ def check_function_recomposition(
             for name in unused:
                 findings.append(
                     {
-                        "arch_file": str(arch_file),
+                        "arch_file": file_str,
                         "issue_type": "dead_import",
                         "pin_func_name": name,
                         "pin_func_id": pin_func_names[name],
@@ -360,7 +367,7 @@ def check_function_recomposition(
         for name in shadowed_names:
             findings.append(
                 {
-                    "arch_file": str(arch_file),
+                    "arch_file": file_str,
                     "issue_type": "shadowed_import",
                     "pin_func_name": name,
                     "pin_func_id": pin_func_names[name],

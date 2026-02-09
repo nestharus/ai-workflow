@@ -14,10 +14,34 @@ import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
-from spec_manager.compliance.detection.stub_scanner import StubFunction
+from spec_manager.branches.gap_detection import StubFunction
 from spec_manager.core.gap import GapEvidence
+
+# ---------------------------------------------------------------------------
+# Abstract interface
+# ---------------------------------------------------------------------------
+
+
+class ExecutableGapDetector(Protocol):
+    """Plugin interface for runtime gap detection strategies.
+
+    Any implementation must be able to probe stub functions and convert
+    the results into ``GapEvidence`` items.
+    """
+
+    def probe_stubs(
+        self,
+        stubs: list[StubFunction],
+        project_root: Path,
+        timeout_seconds: float = 5.0,
+    ) -> list[RuntimeProbeResult]: ...
+
+    def results_to_gap_evidence(
+        self,
+        results: list[RuntimeProbeResult],
+    ) -> list[GapEvidence]: ...
 
 
 @dataclass
@@ -348,3 +372,32 @@ def runtime_results_to_gap_evidence(
             )
         )
     return evidence
+
+
+# ---------------------------------------------------------------------------
+# Concrete implementation
+# ---------------------------------------------------------------------------
+
+
+class SubprocessRuntimeDetector:
+    """Concrete ``ExecutableGapDetector`` that probes stubs via subprocess.
+
+    Delegates to the module-level ``probe_stubs`` and
+    ``runtime_results_to_gap_evidence`` functions.
+    """
+
+    def probe_stubs(
+        self,
+        stubs: list[StubFunction],
+        project_root: Path,
+        timeout_seconds: float = 5.0,
+    ) -> list[RuntimeProbeResult]:
+        """Probe all stub functions via subprocess sandbox."""
+        return probe_stubs(stubs, project_root, timeout_seconds)
+
+    def results_to_gap_evidence(
+        self,
+        results: list[RuntimeProbeResult],
+    ) -> list[GapEvidence]:
+        """Convert runtime probe results to gap evidence."""
+        return runtime_results_to_gap_evidence(results)

@@ -1,8 +1,7 @@
 """Algorithmic planning for prototype-driven development.
 
 Modules:
-- models: Core data structures (PseudocodeComment, InsertionPoint, etc.)
-- code_parser: Python-specific code parser using ast + tokenize
+- models: Core data structures and CodeFile factory (parse_source/parse_file)
 - inserter: Comment insertion engine
 - reverser: Reverse translation engine (code -> pseudocode)
 - adjacency: Call graph analysis and store-touch detection

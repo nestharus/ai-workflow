@@ -81,9 +81,9 @@ class TestScan:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.algorithmic_roots = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         registry = orchestrator.scan()
@@ -98,9 +98,9 @@ class TestScan:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.algorithmic_roots = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         registry = orchestrator.scan()
@@ -110,8 +110,8 @@ class TestScan:
 
     def test_scan_empty_project(self, tmp_path):
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         registry = orchestrator.scan()
@@ -127,9 +127,9 @@ class TestDiff:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
-        config.import_graph.algorithmic_roots = ["atoms"]
+        config.atom_directories = ["atoms"]
+        config.architectural_roots = ["services"]
+        config.algorithmic_roots = ["atoms"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
 
@@ -167,9 +167,9 @@ class TestQuery:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.algorithmic_roots = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         edges = orchestrator.query_importers("validate_payment")
@@ -181,9 +181,9 @@ class TestQuery:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
-        config.import_graph.algorithmic_roots = ["atoms"]
+        config.atom_directories = ["atoms"]
+        config.architectural_roots = ["services"]
+        config.algorithmic_roots = ["atoms"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         edges = orchestrator.query_importers("nonexistent_func")
@@ -194,9 +194,9 @@ class TestQuery:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.algorithmic_roots = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
 
@@ -217,9 +217,9 @@ class TestSaveRegistry:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
-        config.import_graph.algorithmic_roots = ["atoms"]
+        config.atom_directories = ["atoms"]
+        config.architectural_roots = ["services"]
+        config.algorithmic_roots = ["atoms"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         registry = orchestrator.scan()
@@ -237,9 +237,9 @@ class TestSaveRegistry:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
-        config.import_graph.algorithmic_roots = ["atoms"]
+        config.atom_directories = ["atoms"]
+        config.architectural_roots = ["services"]
+        config.algorithmic_roots = ["atoms"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         registry = orchestrator.scan()
@@ -256,9 +256,9 @@ class TestAnalysisFile:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.algorithmic_roots = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         report = orchestrator.generate_analysis_file()
@@ -272,9 +272,9 @@ class TestAnalysisFile:
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.algorithmic_roots = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         report = orchestrator.generate_analysis_file()
@@ -285,8 +285,8 @@ class TestAnalysisFile:
 
     def test_analysis_empty_project(self, tmp_path):
         config = PinFunctionConfig()
-        config.extraction.atom_directories = ["atoms"]
-        config.import_graph.architectural_roots = ["services"]
+        config.atom_directories = ["atoms"]
+        config.architectural_roots = ["services"]
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         report = orchestrator.generate_analysis_file()

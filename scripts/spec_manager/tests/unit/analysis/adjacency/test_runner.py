@@ -100,13 +100,10 @@ class TestRunAdjacencyAnalysis:
         assert report.total_edges >= 0
         assert report.num_components >= 1
 
-    def test_disabled_extractors(self, fixture_dir: Path) -> None:
+    def test_cooccurrence_only(self, fixture_dir: Path) -> None:
         config = AdjacencyAnalysisConfig(
             source_dirs=[fixture_dir / "src"],
             spec_dirs=[fixture_dir / "specs"],
-            include_call_graph=False,
-            include_event_graph=False,
-            include_store_graph=False,
             include_cooccurrence=True,
         )
 
@@ -121,9 +118,6 @@ class TestRunAdjacencyAnalysis:
         config = AdjacencyAnalysisConfig(
             source_dirs=[fixture_dir / "src"],
             spec_dirs=[fixture_dir / "specs"],
-            include_call_graph=False,
-            include_event_graph=False,
-            include_store_graph=False,
             include_cooccurrence=False,
         )
 

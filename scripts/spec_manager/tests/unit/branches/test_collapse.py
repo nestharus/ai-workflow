@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from spec_manager.branches.collapse import CollapseEngine, CollapseResult
@@ -22,8 +23,36 @@ def engine(layout: BranchLayout) -> CollapseEngine:
     return CollapseEngine(layout)
 
 
+def _mock_classify(func_info, body_source):
+    """Deterministic mock for _llm_classify used in tests.
+
+    Maps function names to expected classifications so tests remain
+    deterministic without an actual LLM.
+    """
+    name = func_info.name.lower()
+    # Shape: pure functions with a single return
+    if name in ("add", "multiply", "helper"):
+        return AtomKind.SHAPE
+    # Store: functions that interact with databases/persistence
+    if "database" in name or "save" in name or "db" in body_source.lower():
+        return AtomKind.STORE
+    # Architectural: middleware, retry, routing
+    if "middleware" in name or "retry" in name or "handler" in name:
+        return None
+    # Default: algorithm
+    return AtomKind.ALGORITHM
+
+
+def _patch_llm_classify():
+    """Patch _llm_classify with deterministic mock."""
+    return patch(
+        "spec_manager.branches.collapse._llm_classify",
+        side_effect=_mock_classify,
+    )
+
+
 class TestClassification:
-    """Tests for function classification heuristics."""
+    """Tests for LLM-based function classification."""
 
     def test_classifies_pure_function_as_shape(
         self,
@@ -36,7 +65,8 @@ class TestClassification:
             "def add(a: int, b: int) -> int:\n    return a + b\n",
             encoding="utf-8",
         )
-        result = engine.collapse(src_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(src_dir)
         assert len(result.extracted_shapes) >= 1
         shape_names = [s.function_name for s in result.extracted_shapes]
         assert "add" in shape_names
@@ -55,7 +85,8 @@ class TestClassification:
             "    db.commit()\n",
             encoding="utf-8",
         )
-        result = engine.collapse(src_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(src_dir)
         assert len(result.extracted_stores) >= 1
 
     def test_classifies_middleware_as_architectural(
@@ -75,7 +106,8 @@ class TestClassification:
             "                raise\n",
             encoding="utf-8",
         )
-        result = engine.collapse(src_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(src_dir)
         # Should be classified as architectural remnant
         assert len(result.architectural_remnants) >= 1
 
@@ -94,8 +126,31 @@ class TestClassification:
             "    return result\n",
             encoding="utf-8",
         )
-        result = engine.collapse(src_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(src_dir)
         assert len(result.extracted_atoms) >= 1
+
+    def test_llm_failure_defaults_to_algorithm(
+        self,
+        engine: CollapseEngine,
+        tmp_path: Path,
+    ) -> None:
+        """When the LLM agent fails, _llm_classify defaults to ALGORITHM."""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "utils.py").write_text(
+            "def compute(x):\n    return x * 2\n",
+            encoding="utf-8",
+        )
+        with patch(
+            "spec_manager.core.agent_utils.run_agent",
+            side_effect=RuntimeError("LLM unavailable"),
+        ):
+            result = engine.collapse(src_dir)
+        # _llm_classify catches the exception and returns ALGORITHM
+        assert len(result.extracted_atoms) >= 1
+        atom_names = [a.function_name for a in result.extracted_atoms]
+        assert "compute" in atom_names
 
 
 class TestCollapseWorkflow:
@@ -138,7 +193,8 @@ class TestCollapseWorkflow:
             "        return a * b\n",
             encoding="utf-8",
         )
-        result = engine.collapse(src_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(src_dir)
         # The method should be extracted (either as shape or algorithm)
         all_extracted = result.extracted_atoms + result.extracted_shapes + result.extracted_stores
         assert len(all_extracted) >= 1
@@ -150,7 +206,8 @@ class TestCollapseWorkflow:
             "def helper(x: int) -> int:\n    return x * 2\n",
             encoding="utf-8",
         )
-        result = engine.collapse(src_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(src_dir)
         all_extracted = result.extracted_atoms + result.extracted_shapes + result.extracted_stores
         assert len(all_extracted) >= 1
 
@@ -171,7 +228,8 @@ class TestCollapseWithLabyrinth:
         if not labyrinth_dir.exists():
             pytest.skip("Labyrinth codebase not found")
 
-        result = engine.collapse(labyrinth_dir)
+        with _patch_llm_classify():
+            result = engine.collapse(labyrinth_dir)
 
         # Should find functions across multiple categories
         total = (

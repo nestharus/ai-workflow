@@ -6,7 +6,7 @@ to produce a coverage report identifying gaps in both directions.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from spec_manager.compliance.coverage.matching import (
     match_by_keywords,
@@ -25,6 +25,21 @@ if TYPE_CHECKING:
     from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.schemas.entities import EntitiesArtifact
     from spec_manager.schemas.hollowed_spec import HollowedParagraph
+
+
+# ---------------------------------------------------------------------------
+# Abstract interface
+# ---------------------------------------------------------------------------
+
+
+class CoverageAnalyzer(Protocol):
+    """Plugin interface for entity coverage analysis strategies.
+
+    Any implementation must expose an ``analyze`` method that produces
+    an ``EntityCoverageReport``.
+    """
+
+    def analyze(self) -> EntityCoverageReport: ...
 
 
 class EntityCoverageAnalyzer:

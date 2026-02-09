@@ -23,81 +23,45 @@ def setup_plan_v2_parser(subparsers: Any) -> None:
     Args:
         subparsers: Parent argparse subparsers object.
     """
-    p_plan_v2 = subparsers.add_parser(
-        "plan-v2", help="Algorithmic planning v2 commands"
-    )
-    plan_v2_sub = p_plan_v2.add_subparsers(
-        dest="plan_v2_command", required=True
-    )
+    p_plan_v2 = subparsers.add_parser("plan-v2", help="Algorithmic planning v2 commands")
+    plan_v2_sub = p_plan_v2.add_subparsers(dest="plan_v2_command", required=True)
 
     # insert
-    p_insert = plan_v2_sub.add_parser(
-        "insert", help="Insert pseudocode comments from an intention"
-    )
+    p_insert = plan_v2_sub.add_parser("insert", help="Insert pseudocode comments from an intention")
     p_insert.add_argument("--file", required=True, help="Path to Python file")
-    p_insert.add_argument(
-        "--function", required=True, help="Target function name"
-    )
-    p_insert.add_argument(
-        "--intention", required=True, help="High-level intention text"
-    )
-    p_insert.add_argument(
-        "--evidence-dir", help="Path to spec evidence directory"
-    )
-    p_insert.add_argument(
-        "--apply", action="store_true", help="Write changes to disk"
-    )
+    p_insert.add_argument("--function", required=True, help="Target function name")
+    p_insert.add_argument("--intention", required=True, help="High-level intention text")
+    p_insert.add_argument("--evidence-dir", help="Path to spec evidence directory")
+    p_insert.add_argument("--apply", action="store_true", help="Write changes to disk")
 
     # reverse
     p_reverse = plan_v2_sub.add_parser(
         "reverse", help="Reverse-translate code to pseudocode comments"
     )
     p_reverse.add_argument("--file", required=True, help="Path to Python file")
-    p_reverse.add_argument(
-        "--function", required=True, help="Target function name"
-    )
-    p_reverse.add_argument(
-        "--start-line", type=int, help="Start line (1-based)"
-    )
+    p_reverse.add_argument("--function", required=True, help="Target function name")
+    p_reverse.add_argument("--start-line", type=int, help="Start line (1-based)")
     p_reverse.add_argument("--end-line", type=int, help="End line (1-based)")
-    p_reverse.add_argument(
-        "--apply", action="store_true", help="Write changes to disk"
-    )
+    p_reverse.add_argument("--apply", action="store_true", help="Write changes to disk")
 
     # scan
-    p_scan = plan_v2_sub.add_parser(
-        "scan", help="Scan for gaps (unimplemented comments + stubs)"
-    )
-    p_scan.add_argument(
-        "--directory", required=True, help="Directory to scan"
-    )
+    p_scan = plan_v2_sub.add_parser("scan", help="Scan for gaps (unimplemented comments + stubs)")
+    p_scan.add_argument("--directory", required=True, help="Directory to scan")
     p_scan.add_argument("--json", action="store_true", help="Output as JSON")
 
     # adjacency
-    p_adj = plan_v2_sub.add_parser(
-        "adjacency", help="Discover adjacent details for a function"
-    )
+    p_adj = plan_v2_sub.add_parser("adjacency", help="Discover adjacent details for a function")
     p_adj.add_argument("--file", required=True, help="Path to Python file")
-    p_adj.add_argument(
-        "--function", required=True, help="Target function name"
-    )
-    p_adj.add_argument(
-        "--directory", required=True, help="Directory to build call graph from"
-    )
+    p_adj.add_argument("--function", required=True, help="Target function name")
+    p_adj.add_argument("--directory", required=True, help="Directory to build call graph from")
 
     # decompose
     p_decompose = plan_v2_sub.add_parser(
         "decompose", help="Decompose an intention into micro-units"
     )
-    p_decompose.add_argument(
-        "--intention", required=True, help="High-level intention text"
-    )
-    p_decompose.add_argument(
-        "--file", required=True, help="Path to Python file"
-    )
-    p_decompose.add_argument(
-        "--function", required=True, help="Target function name"
-    )
+    p_decompose.add_argument("--intention", required=True, help="High-level intention text")
+    p_decompose.add_argument("--file", required=True, help="Path to Python file")
+    p_decompose.add_argument("--function", required=True, help="Target function name")
 
 
 def handle_plan_v2_command(args: argparse.Namespace) -> int:
@@ -134,12 +98,12 @@ def cmd_insert(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    from spec_manager.planning.code_parser import parse_file
     from spec_manager.planning.evidence_store import EvidenceStore
     from spec_manager.planning.inserter import (
         apply_insertion_plan,
         plan_insertions,
     )
+    from spec_manager.planning.models import parse_file
 
     file_path = str(Path(args.file).resolve())
 
@@ -197,7 +161,7 @@ def cmd_reverse(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    from spec_manager.planning.code_parser import parse_file
+    from spec_manager.planning.models import parse_file
     from spec_manager.planning.reverser import (
         apply_reverse_plan,
         reverse_translate,
@@ -251,8 +215,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    from spec_manager.planning.code_parser import parse_file
     from spec_manager.planning.gap_bridge import scan_for_gaps
+    from spec_manager.planning.models import parse_file
 
     directory = Path(args.directory).resolve()
     if not directory.is_dir():
@@ -293,7 +257,7 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
         discover_adjacent_details,
         find_store_touches,
     )
-    from spec_manager.planning.code_parser import parse_file
+    from spec_manager.planning.models import parse_file
 
     file_path = str(Path(args.file).resolve())
     directory = Path(args.directory).resolve()
@@ -350,10 +314,7 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
             store_info = f" via {adj.store_or_event}" if adj.store_or_event else ""
             coverage = "tested" if adj.has_test_coverage else "UNTESTED"
             needs = " [NEEDS PLAN]" if adj.needs_plan else ""
-            print(
-                f"  {adj.relationship}: {adj.related_function}"
-                f"{store_info} ({coverage}){needs}"
-            )
+            print(f"  {adj.relationship}: {adj.related_function}{store_info} ({coverage}){needs}")
 
     return 0
 
@@ -367,8 +328,8 @@ def cmd_decompose(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    from spec_manager.planning.code_parser import parse_file
     from spec_manager.planning.inserter import decompose_intention
+    from spec_manager.planning.models import parse_file
 
     file_path = str(Path(args.file).resolve())
 

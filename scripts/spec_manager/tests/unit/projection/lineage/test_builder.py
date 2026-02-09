@@ -8,9 +8,9 @@ import pytest
 from spec_manager.projection.lineage.builder import (
     AtomDefinition,
     LineageBuilder,
+    RawImportRecord,
     compute_signature_hash,
 )
-from spec_manager.projection.lineage.import_graph import ImportEdge, ImportGraph
 from spec_manager.schemas.pin_functions import ProjectionType
 
 
@@ -30,14 +30,14 @@ def _make_atom(
     )
 
 
-def _make_import_edge(
+def _make_import_record(
     importer_file: str,
     imported_name: str,
     imported_from_module: str = "atoms",
     line_no: int = 1,
-) -> ImportEdge:
-    """Helper to create an ImportEdge with defaults."""
-    return ImportEdge(
+) -> RawImportRecord:
+    """Helper to create a RawImportRecord with defaults."""
+    return RawImportRecord(
         importer_file=importer_file,
         importer_location=f"{importer_file}:module-level",
         imported_name=imported_name,
@@ -105,12 +105,10 @@ def retry_file(tmp_path: Path) -> Path:
 class TestLineageBuilder:
     def test_direct_import_classified_as_pass_through(self, plain_file: Path):
         """Direct function call = PASS_THROUGH."""
-        graph = ImportGraph()
-        edge = _make_import_edge(str(plain_file), "validate_payment")
-        graph._add_edge(edge)
+        records = [_make_import_record(str(plain_file), "validate_payment")]
 
         atoms = [_make_atom("validate_payment", "validate_payment")]
-        builder = LineageBuilder(graph, atoms)
+        builder = LineageBuilder(records, atoms)
         table = builder.build_lineage()
 
         assert len(table.edges) == 1
@@ -119,12 +117,10 @@ class TestLineageBuilder:
 
     def test_event_handler_classified_as_event_bridge(self, handler_file: Path):
         """Import in handler class = EVENT_BRIDGE."""
-        graph = ImportGraph()
-        edge = _make_import_edge(str(handler_file), "validate_payment")
-        graph._add_edge(edge)
+        records = [_make_import_record(str(handler_file), "validate_payment")]
 
         atoms = [_make_atom("validate_payment", "validate_payment")]
-        builder = LineageBuilder(graph, atoms)
+        builder = LineageBuilder(records, atoms)
         table = builder.build_lineage()
 
         assert len(table.edges) == 1
@@ -133,12 +129,10 @@ class TestLineageBuilder:
 
     def test_middleware_classified_as_middleware_wrap(self, middleware_file: Path):
         """Import in middleware class = MIDDLEWARE_WRAP."""
-        graph = ImportGraph()
-        edge = _make_import_edge(str(middleware_file), "calc_tax")
-        graph._add_edge(edge)
+        records = [_make_import_record(str(middleware_file), "calc_tax")]
 
         atoms = [_make_atom("calc_tax", "calc_tax")]
-        builder = LineageBuilder(graph, atoms)
+        builder = LineageBuilder(records, atoms)
         table = builder.build_lineage()
 
         assert len(table.edges) == 1
@@ -146,12 +140,10 @@ class TestLineageBuilder:
 
     def test_retry_classified_as_retry_decorate(self, retry_file: Path):
         """Import in retry-decorated function = RETRY_DECORATE."""
-        graph = ImportGraph()
-        edge = _make_import_edge(str(retry_file), "validate_payment")
-        graph._add_edge(edge)
+        records = [_make_import_record(str(retry_file), "validate_payment")]
 
         atoms = [_make_atom("validate_payment", "validate_payment")]
-        builder = LineageBuilder(graph, atoms)
+        builder = LineageBuilder(records, atoms)
         table = builder.build_lineage()
 
         assert len(table.edges) == 1
@@ -160,12 +152,10 @@ class TestLineageBuilder:
 
     def test_no_matching_atom_skipped(self, plain_file: Path):
         """Imports not matching any atom are ignored."""
-        graph = ImportGraph()
-        edge = _make_import_edge(str(plain_file), "unknown_function")
-        graph._add_edge(edge)
+        records = [_make_import_record(str(plain_file), "unknown_function")]
 
         atoms = [_make_atom("validate_payment", "validate_payment")]
-        builder = LineageBuilder(graph, atoms)
+        builder = LineageBuilder(records, atoms)
         table = builder.build_lineage()
 
         assert len(table.edges) == 0
@@ -183,15 +173,16 @@ class TestLineageBuilder:
             encoding="utf-8",
         )
 
-        graph = ImportGraph()
-        graph._add_edge(_make_import_edge(str(f), "validate_payment"))
-        graph._add_edge(_make_import_edge(str(f), "calc_tax"))
+        records = [
+            _make_import_record(str(f), "validate_payment"),
+            _make_import_record(str(f), "calc_tax"),
+        ]
 
         atoms = [
             _make_atom("validate_payment", "validate_payment"),
             _make_atom("calc_tax", "calc_tax"),
         ]
-        builder = LineageBuilder(graph, atoms)
+        builder = LineageBuilder(records, atoms)
         table = builder.build_lineage()
 
         assert len(table.edges) == 2
@@ -202,17 +193,15 @@ class TestLineageBuilder:
     def test_confidence_scoring(self, handler_file: Path, plain_file: Path):
         """Direct import = 1.0, handler patterns = 0.9."""
         # Direct import (plain file)
-        graph1 = ImportGraph()
-        graph1._add_edge(_make_import_edge(str(plain_file), "validate_payment"))
+        records1 = [_make_import_record(str(plain_file), "validate_payment")]
         atoms = [_make_atom("validate_payment", "validate_payment")]
-        builder1 = LineageBuilder(graph1, atoms)
+        builder1 = LineageBuilder(records1, atoms)
         table1 = builder1.build_lineage()
         assert table1.edges[0].confidence == 1.0
 
         # Handler pattern
-        graph2 = ImportGraph()
-        graph2._add_edge(_make_import_edge(str(handler_file), "validate_payment"))
-        builder2 = LineageBuilder(graph2, atoms)
+        records2 = [_make_import_record(str(handler_file), "validate_payment")]
+        builder2 = LineageBuilder(records2, atoms)
         table2 = builder2.build_lineage()
         assert table2.edges[0].confidence == 0.9
 

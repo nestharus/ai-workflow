@@ -1,14 +1,11 @@
-"""Tests for lineage persistence and workspace manager integration."""
+"""Tests for lineage persistence."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from spec_manager.projection.lineage.import_graph import ImportEdge, ImportGraph
 from spec_manager.projection.lineage.persistence import (
-    load_import_graph,
     load_lineage_table,
-    save_import_graph,
     save_lineage_table,
 )
 from spec_manager.projection.lineage.table import ProjectionLineageTable
@@ -56,61 +53,9 @@ class TestLineageTablePersistence:
             assert orig.details == rest.details
             assert orig.pin_id == rest.pin_id
 
-
-class TestImportGraphPersistence:
-    def test_import_graph_persistence_roundtrip(self, tmp_path: Path):
-        """Write and read back preserves all edges."""
-        graph = ImportGraph()
-        graph._add_edge(
-            ImportEdge(
-                importer_file="/a/consumer.py",
-                importer_location="/a/consumer.py:module-level",
-                imported_name="validate_payment",
-                imported_from_module="atoms",
-                imported_from_file="/a/atoms.py",
-                line_no=5,
-                is_direct=True,
-            )
-        )
-        graph._add_edge(
-            ImportEdge(
-                importer_file="/a/consumer.py",
-                importer_location="/a/consumer.py:module-level",
-                imported_name="calc_tax",
-                imported_from_module="atoms",
-                imported_from_file="/a/atoms.py",
-                line_no=6,
-                is_direct=True,
-            )
-        )
-
-        path = tmp_path / "import_graph.json"
-        save_import_graph(graph, path)
-        assert path.exists()
-
-        restored = load_import_graph(path)
-        assert len(restored.edges) == 2
-
-        # Verify indexes are rebuilt
-        assert len(restored.importers_of("validate_payment")) == 1
-        assert len(restored.importers_of("calc_tax")) == 1
-        assert len(restored.imports_in("/a/consumer.py")) == 2
-
-        # Verify edge data
-        for orig, rest in zip(graph.edges, restored.edges, strict=False):
-            assert orig.importer_file == rest.importer_file
-            assert orig.imported_name == rest.imported_name
-            assert orig.imported_from_module == rest.imported_from_module
-            assert orig.line_no == rest.line_no
-
     def test_save_creates_parent_directories(self, tmp_path: Path):
         """Save functions create parent directories if they don't exist."""
         deep_path = tmp_path / "a" / "b" / "c" / "lineage.json"
         table = ProjectionLineageTable()
         save_lineage_table(table, deep_path)
         assert deep_path.exists()
-
-        deep_graph_path = tmp_path / "x" / "y" / "graph.json"
-        graph = ImportGraph()
-        save_import_graph(graph, deep_graph_path)
-        assert deep_graph_path.exists()

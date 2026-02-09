@@ -1,0 +1,20 @@
+Classify the following function into exactly ONE of these categories:
+
+- **algorithm**: Contains multi-step business/domain logic, data transformations, computations, or control flow that implements a meaningful procedure.
+- **store**: Interacts with databases, caches, queues, files, or other persistence layers (read/write/connect/commit/rollback).
+- **shape**: A pure data-transformation or accessor with no side effects (e.g. simple return, property, dataclass-like).
+- **architecture**: Infrastructure glue such as middleware, routing, HTTP handlers, retry logic, logging wrappers, decorators, async dispatch, or framework boilerplate.
+
+## Function
+Name: helper
+Signature: (x) -> int
+Async: False
+
+## Body
+```
+def helper(x: int) -> int:
+    return x * 2
+```
+
+## Output
+Return ONLY a JSON object: {"classification": "<algorithm|store|shape|architecture>"}

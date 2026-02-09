@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 
@@ -20,6 +20,26 @@ if TYPE_CHECKING:
     from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Abstract interface
+# ---------------------------------------------------------------------------
+
+
+class TestPinDiscoverer(Protocol):
+    """Plugin interface for test-pin association discovery strategies.
+
+    Any implementation must accept a list of test files and a pin-function
+    registry, and return a ``TestPinMap``.
+    """
+
+    def discover(
+        self,
+        test_files: list[Path],
+        registry: PinFunctionRegistry,
+    ) -> TestPinMap: ...
+
 
 # ---------------------------------------------------------------------------
 # Regex patterns for import and call-site extraction
@@ -352,8 +372,31 @@ def _resolve_pin_func_name(
     return local_name
 
 
+# ---------------------------------------------------------------------------
+# Concrete implementation
+# ---------------------------------------------------------------------------
+
+
+class SourceAnalysisTestPinDiscoverer:
+    """Concrete ``TestPinDiscoverer`` using regex and ``analyze_source``.
+
+    Delegates to the module-level ``discover_test_pin_associations``
+    function.
+    """
+
+    def discover(
+        self,
+        test_files: list[Path],
+        registry: PinFunctionRegistry,
+    ) -> TestPinMap:
+        """Discover test-pin associations via source analysis."""
+        return discover_test_pin_associations(test_files, registry)
+
+
 __all__ = [
+    "SourceAnalysisTestPinDiscoverer",
     "TestPinAssociation",
+    "TestPinDiscoverer",
     "TestPinMap",
     "discover_test_pin_associations",
 ]

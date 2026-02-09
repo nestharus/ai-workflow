@@ -16,15 +16,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from spec_manager.compliance.detection.comment_scanner import scan_comments
-from spec_manager.compliance.detection.stub_scanner import scan_stubs
+from spec_manager.branches.gap_detection import scan_comments, scan_stubs
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.core.code_analysis import analyze_source
-
-# Regex patterns for text-based import scanning (used by check_store_monogamy)
-_IMPORT_RE = re.compile(r"^\s*import\s+(.+)", re.MULTILINE)
-_FROM_IMPORT_RE = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)", re.MULTILINE)
+from spec_manager.projection.lineage.builder import scan_imports_from_files
 
 
 def check_no_remaining_comments(
@@ -218,35 +214,7 @@ def check_call_graph_connected(
     start = time.monotonic()
     min_component_size = gate_spec.params.get("min_component_size", 2)
     ignore_patterns: list[str] = gate_spec.params.get("ignore_patterns", [])
-    findings: list[dict[str, Any]] = []
-
-    try:
-        from spec_manager.compliance.detection.call_graph import (
-            build_call_graph,
-        )
-
-        graph = build_call_graph(algorithmic_files, project_root)
-        components = graph.get_connected_components()
-        # Only flag if there are multiple components (disconnected graph)
-        if len(components) > 1:
-            # Sort by size descending, skip the largest (main component)
-            sorted_components = sorted(components, key=len, reverse=True)
-            for component in sorted_components[1:]:
-                filtered = [
-                    name for name in component if not any(pat in name for pat in ignore_patterns)
-                ]
-                if len(filtered) >= min_component_size:
-                    findings.append(
-                        {
-                            "component_size": len(filtered),
-                            "functions": sorted(filtered),
-                        }
-                    )
-    except ImportError:
-        # Plan 05 not yet available, degrade gracefully
-        findings = _build_call_graph_fallback(
-            algorithmic_files, min_component_size, ignore_patterns
-        )
+    findings = _build_call_graph_fallback(algorithmic_files, min_component_size, ignore_patterns)
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -429,59 +397,30 @@ def check_store_monogamy(
         if module_name != "__init__":
             store_modules[module_name] = sf
 
-    # Step 2: For each algorithmic file, find store imports
+    # Step 2: For each algorithmic file, find store imports using evidence-based scanning
     store_importers: dict[str, set[str]] = {name: set() for name in store_modules}
 
-    for f in algorithmic_files:
-        if f in store_files:
-            continue
+    non_store_files = [f for f in algorithmic_files if f not in store_files]
+    import_records = scan_imports_from_files(non_store_files)
 
+    for record in import_records:
+        # Determine vertical slice for the importing file
         try:
-            source = f.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        # Determine vertical slice for this file
-        try:
-            rel = f.relative_to(project_root)
+            rel = Path(record.importer_file).relative_to(project_root)
         except ValueError:
-            rel = f
+            rel = Path(record.importer_file)
         parts = rel.parts
         vertical = "/".join(parts[:vertical_depth]) if len(parts) >= vertical_depth else str(rel)
 
-        # Scan imports using regex
-        for match in _IMPORT_RE.finditer(source):
-            # `import foo, bar.baz` -> extract each module
-            import_text = match.group(1)
-            for segment in import_text.split(","):
-                segment = segment.strip()
-                # Handle `import foo as bar` -> extract `foo`
-                module_part = (
-                    segment.split(" as ")[0].strip() if " as " in segment else segment.strip()
-                )
-                name = module_part.split(".")[-1]
-                if name in store_modules:
-                    store_importers[name].add(vertical)
+        # Check if the imported name matches a store module
+        if record.imported_name in store_modules:
+            store_importers[record.imported_name].add(vertical)
 
-        for match in _FROM_IMPORT_RE.finditer(source):
-            module_path = match.group(1)
-            imported_names = match.group(2)
-
-            # Check if any part of the from-module path matches a store module
-            module_parts = module_path.split(".")
-            for part in module_parts:
-                if part in store_modules:
-                    store_importers[part].add(vertical)
-
-            # Also check the imported names
-            for segment in imported_names.split(","):
-                segment = segment.strip()
-                # Handle `from x import foo as bar` -> extract `foo`
-                imported_name = (
-                    segment.split(" as ")[0].strip() if " as " in segment else segment.strip()
-                )
-                if imported_name in store_modules:
-                    store_importers[imported_name].add(vertical)
+        # Check if any part of the from-module path matches a store module
+        module_parts = record.imported_from_module.split(".")
+        for part in module_parts:
+            if part in store_modules:
+                store_importers[part].add(vertical)
 
     # Step 3: Flag stores accessed by multiple verticals
     for store_name, verticals in store_importers.items():

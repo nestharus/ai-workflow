@@ -447,9 +447,6 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
     config = AdjacencyAnalysisConfig(
         source_dirs=source_dirs,
         spec_dirs=spec_dirs,
-        include_call_graph=not args.no_call_graph,
-        include_event_graph=not args.no_event_graph,
-        include_store_graph=not args.no_store_graph,
         include_cooccurrence=not args.no_cooccurrence,
         output_format=args.format,
         output_path=Path(args.output) if args.output else None,
@@ -1034,21 +1031,6 @@ def main() -> int:
         help="Output file path",
     )
     p_adjacency.add_argument("--json", action="store_true", help="Print JSON to stdout")
-    p_adjacency.add_argument(
-        "--no-call-graph",
-        action="store_true",
-        help="Disable call graph extraction",
-    )
-    p_adjacency.add_argument(
-        "--no-event-graph",
-        action="store_true",
-        help="Disable event graph extraction",
-    )
-    p_adjacency.add_argument(
-        "--no-store-graph",
-        action="store_true",
-        help="Disable store touch graph extraction",
-    )
     p_adjacency.add_argument(
         "--no-cooccurrence",
         action="store_true",

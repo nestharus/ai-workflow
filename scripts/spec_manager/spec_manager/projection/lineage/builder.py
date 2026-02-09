@@ -1,4 +1,4 @@
-"""Lineage builder: bridges import graph to lineage table.
+"""Lineage builder: bridges import records to lineage table.
 
 Infers ProjectionLineageEdge entries from import relationships
 and classifies transformation types based on architectural patterns.
@@ -6,6 +6,7 @@ and classifies transformation types based on architectural patterns.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import re
 from dataclasses import dataclass
@@ -13,9 +14,189 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.code_analysis import analyze_source
-from spec_manager.projection.lineage.import_graph import ImportEdge, ImportGraph
 from spec_manager.projection.lineage.table import ProjectionLineageTable
 from spec_manager.schemas.pin_functions import ProjectionType
+
+# Language-agnostic import patterns (no AST dependency)
+_FROM_IMPORT_RE = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)", re.MULTILINE)
+_IMPORT_RE = re.compile(r"^\s*import\s+(.+)", re.MULTILINE)
+
+
+@dataclass
+class RawImportRecord:
+    """A raw import relationship from static analysis.
+
+    Lightweight record used by LineageBuilder to trace atom-to-architecture
+    projections. Contains the minimum fields needed for lineage building.
+
+    Attributes:
+        importer_file: File that contains the import statement.
+        importer_location: file:class.method or file:module-level.
+        imported_name: The name being imported (function/class).
+        imported_from_module: The module being imported from.
+        line_no: Line number of the import statement.
+    """
+
+    importer_file: str
+    importer_location: str
+    imported_name: str
+    imported_from_module: str
+    line_no: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "importer_file": self.importer_file,
+            "importer_location": self.importer_location,
+            "imported_name": self.imported_name,
+            "imported_from_module": self.imported_from_module,
+            "line_no": self.line_no,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RawImportRecord:
+        """Deserialize from dictionary."""
+        return cls(
+            importer_file=data["importer_file"],
+            importer_location=data["importer_location"],
+            imported_name=data["imported_name"],
+            imported_from_module=data["imported_from_module"],
+            line_no=data.get("line_no", 0),
+        )
+
+
+def scan_imports_from_directory(
+    root_dir: Path,
+    exclude_patterns: list[str] | None = None,
+) -> list[RawImportRecord]:
+    """Scan all Python files in a directory for import statements.
+
+    Uses regex patterns to extract import relationships without
+    requiring language-specific AST parsing.
+
+    Args:
+        root_dir: Root directory to scan.
+        exclude_patterns: Glob patterns to exclude (e.g., ["__pycache__"]).
+
+    Returns:
+        List of RawImportRecord entries found across all files.
+    """
+    if exclude_patterns is None:
+        exclude_patterns = ["__pycache__"]
+
+    records: list[RawImportRecord] = []
+    for py_file in root_dir.rglob("*.py"):
+        skip = False
+        for part in py_file.parts:
+            for pattern in exclude_patterns:
+                if fnmatch.fnmatch(part, pattern):
+                    skip = True
+                    break
+            if skip:
+                break
+        if skip:
+            continue
+        records.extend(_scan_file_imports(py_file))
+    return records
+
+
+def scan_imports_from_files(file_paths: list[Path]) -> list[RawImportRecord]:
+    """Scan specific files for import statements.
+
+    Args:
+        file_paths: List of source file paths to analyze.
+
+    Returns:
+        List of RawImportRecord entries found across all files.
+    """
+    records: list[RawImportRecord] = []
+    for file_path in file_paths:
+        if file_path.suffix == ".py" and file_path.exists():
+            records.extend(_scan_file_imports(file_path))
+    return records
+
+
+def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
+    """Scan a single source file for import statements.
+
+    Uses regex patterns to extract import relationships.
+
+    Args:
+        file_path: Path to source file.
+
+    Returns:
+        List of RawImportRecord entries found in the file.
+    """
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return []
+
+    records: list[RawImportRecord] = []
+    file_str = str(file_path)
+
+    # Build a line-number lookup: map character offset -> line number
+    line_starts: list[int] = [0]
+    for i, ch in enumerate(source):
+        if ch == "\n":
+            line_starts.append(i + 1)
+
+    def _offset_to_lineno(offset: int) -> int:
+        lo, hi = 0, len(line_starts) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if line_starts[mid] <= offset:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo + 1
+
+    for m in _FROM_IMPORT_RE.finditer(source):
+        module = m.group(1)
+        names_str = m.group(2).strip().rstrip("\\")
+        lineno = _offset_to_lineno(m.start())
+        for part in names_str.split(","):
+            part = part.strip()
+            if not part or part.startswith("#") or part == "(":
+                continue
+            part = part.split("#")[0].strip().rstrip(")")
+            if not part:
+                continue
+            tokens = part.split()
+            name = tokens[2] if len(tokens) >= 3 and tokens[1] == "as" else tokens[0]
+            records.append(
+                RawImportRecord(
+                    importer_file=file_str,
+                    importer_location=f"{file_str}:module-level",
+                    imported_name=name,
+                    imported_from_module=module,
+                    line_no=lineno,
+                )
+            )
+
+    for m in _IMPORT_RE.finditer(source):
+        names_str = m.group(1).strip()
+        lineno = _offset_to_lineno(m.start())
+        for part in names_str.split(","):
+            part = part.strip()
+            if not part or part.startswith("#"):
+                continue
+            part = part.split("#")[0].strip()
+            if not part:
+                continue
+            tokens = part.split()
+            name = tokens[2] if len(tokens) >= 3 and tokens[1] == "as" else tokens[0]
+            records.append(
+                RawImportRecord(
+                    importer_file=file_str,
+                    importer_location=f"{file_str}:module-level",
+                    imported_name=name,
+                    imported_from_module=tokens[0],
+                    line_no=lineno,
+                )
+            )
+
+    return records
 
 
 @dataclass
@@ -71,7 +252,7 @@ _RETRY_DECORATORS = {"retry", "retryable", "circuit_breaker", "resilient", "back
 
 
 class LineageBuilder:
-    """Builds ProjectionLineageTable from ImportGraph and atom definitions.
+    """Builds ProjectionLineageTable from import records and atom definitions.
 
     Analyzes import relationships to determine how atoms are projected
     into architectural locations, classifying transformations based on
@@ -80,10 +261,10 @@ class LineageBuilder:
 
     def __init__(
         self,
-        import_graph: ImportGraph,
+        import_records: list[RawImportRecord],
         atoms: list[AtomDefinition],
     ) -> None:
-        self.import_graph = import_graph
+        self.import_records = import_records
         self.atoms = atoms
         self._atoms_by_function: dict[str, AtomDefinition] = {a.function_name: a for a in atoms}
         self._atoms_by_module: dict[str, list[AtomDefinition]] = {}
@@ -95,9 +276,9 @@ class LineageBuilder:
     def build_lineage(self) -> ProjectionLineageTable:
         """Build lineage table by matching imports against known atoms.
 
-        For each import edge in the import graph, checks if the imported
-        name matches a known atom function. If so, classifies the
-        transformation type and creates a lineage edge.
+        For each import record, checks if the imported name matches a
+        known atom function. If so, classifies the transformation type
+        and creates a lineage edge.
 
         Returns:
             Populated ProjectionLineageTable.
@@ -105,46 +286,46 @@ class LineageBuilder:
         table = ProjectionLineageTable()
 
         # Track which atoms appear per importer file to detect smear
-        atoms_per_file: dict[str, list[tuple[ImportEdge, AtomDefinition]]] = {}
+        atoms_per_file: dict[str, list[tuple[RawImportRecord, AtomDefinition]]] = {}
 
-        for import_edge in self.import_graph.edges:
-            atom = self._atoms_by_function.get(import_edge.imported_name)
+        for record in self.import_records:
+            atom = self._atoms_by_function.get(record.imported_name)
             if atom is None:
                 continue
-            atoms_per_file.setdefault(import_edge.importer_file, []).append((import_edge, atom))
+            atoms_per_file.setdefault(record.importer_file, []).append((record, atom))
 
         for _file_path, atom_imports in atoms_per_file.items():
             if len(atom_imports) > 1:
                 # Multiple atoms imported in the same file: SMEAR
-                for import_edge, atom in atom_imports:
+                for record, atom in atom_imports:
                     table.add_edge(
                         from_unit=atom.atom_id,
-                        to_unit=import_edge.importer_location,
+                        to_unit=record.importer_location,
                         transformation=ProjectionType.SMEAR,
                         confidence=0.8,
                         details={
-                            "import_line": import_edge.line_no,
+                            "import_line": record.line_no,
                             "co_imported_atoms": [a.atom_id for _, a in atom_imports if a != atom],
                         },
                     )
             else:
-                import_edge, atom = atom_imports[0]
+                record, atom = atom_imports[0]
                 transformation, confidence = self._classify_transformation(
-                    import_edge, atom, import_edge.importer_file
+                    record, atom, record.importer_file
                 )
                 table.add_edge(
                     from_unit=atom.atom_id,
-                    to_unit=import_edge.importer_location,
+                    to_unit=record.importer_location,
                     transformation=transformation,
                     confidence=confidence,
-                    details={"import_line": import_edge.line_no},
+                    details={"import_line": record.line_no},
                 )
 
         return table
 
     def _classify_transformation(
         self,
-        import_edge: ImportEdge,
+        record: RawImportRecord,
         atom: AtomDefinition,
         importer_context: str,
     ) -> tuple[ProjectionType, float]:
@@ -158,7 +339,7 @@ class LineageBuilder:
         - Default (no pattern match): PASS_THROUGH, confidence=1.0
 
         Args:
-            import_edge: The import relationship.
+            record: The import record.
             atom: The matched atom definition.
             importer_context: File path of the importing module.
 
@@ -198,11 +379,11 @@ class LineageBuilder:
         return result
 
     def _analyze_handler_pattern(self, file_path: str) -> str | None:
-        """Detect handler patterns using analyze_source + regex.
+        """Detect handler patterns using analyze_source and simple line parsing.
 
-        Uses analyze_source for function/decorator detection and regex
-        for class base class detection (class bases are not part of
-        RawFunctionInfo).
+        Uses analyze_source for function/decorator detection and simple
+        line parsing for class base class detection (class bases are not
+        part of RawFunctionInfo).
 
         Args:
             file_path: Path to the source file.
@@ -219,17 +400,20 @@ class LineageBuilder:
         except (UnicodeDecodeError, OSError):
             return None
 
-        # --- Check class base classes via regex ---
-        # Matches: class Foo(Base1, Base2):
-        class_pattern = re.compile(r"^\s*class\s+\w+\s*\(([^)]+)\)\s*:", re.MULTILINE)
-        for match in class_pattern.finditer(source):
-            bases_str = match.group(1)
-            bases = [b.strip().rsplit(".", 1)[-1] for b in bases_str.split(",")]
-            for base_name in bases:
-                if base_name in _EVENT_HANDLER_BASES:
-                    return "event_handler"
-                if base_name in _MIDDLEWARE_BASES:
-                    return "middleware"
+        # --- Check class base classes via line parsing ---
+        for line in source.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("class ") and "(" in stripped and stripped.endswith(":"):
+                # Extract base classes from "class Foo(Base1, Base2):"
+                paren_start = stripped.index("(")
+                paren_end = stripped.rindex(")")
+                bases_str = stripped[paren_start + 1 : paren_end]
+                bases = [b.strip().rsplit(".", 1)[-1] for b in bases_str.split(",")]
+                for base_name in bases:
+                    if base_name in _EVENT_HANDLER_BASES:
+                        return "event_handler"
+                    if base_name in _MIDDLEWARE_BASES:
+                        return "middleware"
 
         # --- Check decorators via analyze_source ---
         analysis = analyze_source(source, file_path)
@@ -312,5 +496,8 @@ def _extract_signature_parts_from_info(func: object) -> list[str]:
 __all__ = [
     "AtomDefinition",
     "LineageBuilder",
+    "RawImportRecord",
     "compute_signature_hash",
+    "scan_imports_from_directory",
+    "scan_imports_from_files",
 ]

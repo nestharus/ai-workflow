@@ -12,7 +12,6 @@ import tempfile
 from pathlib import Path
 
 from spec_manager.core.code_analysis import analyze_source
-from spec_manager.planning.code_parser import _find_function
 from spec_manager.planning.models import (
     CodeFile,
     CommentKind,
@@ -50,7 +49,7 @@ def reverse_translate(
     Raises:
         ValueError: If function_name is not found in the code file.
     """
-    func = _find_function(code_file, function_name)
+    func = next((f for f in code_file.functions if f.name == function_name), None)
     if func is None:
         raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
 
@@ -92,11 +91,12 @@ def reverse_translate_from_source(
     code_lines = lines[actual_start - 1 : actual_end]
     original_code = "\n".join(code_lines)
 
-    # Generate pseudocode comments
+    # Generate pseudocode comments via LLM
     try:
         comment_texts = _generate_pseudocode_comments(code_lines, func)
     except Exception:
-        comment_texts = _generate_pseudocode_comments_heuristic(code_lines, func)
+        # LLM failed — return empty rather than regex heuristic fallback
+        comment_texts = []
 
     # Build PseudocodeComment objects
     body_indent = func.indent_level + 4
@@ -289,151 +289,3 @@ def _strip_code_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return text
-
-
-def _generate_pseudocode_comments_heuristic(
-    code_lines: list[str],
-    function_context: FunctionInfo,
-) -> list[str]:
-    """Heuristic reverse-translation when LLM is not available.
-
-    Groups code lines into logical blocks and generates comments
-    based on regex/heuristic analysis of each block.
-
-    Args:
-        code_lines: Lines of code to reverse.
-        function_context: Function context for hints.
-
-    Returns:
-        List of comment text strings.
-    """
-    comments: list[str] = []
-    current_block: list[str] = []
-
-    for line in code_lines:
-        stripped = line.strip()
-        if not stripped:
-            # Empty line ends a block
-            if current_block:
-                comment = _summarize_code_block(current_block)
-                if comment:
-                    comments.append(comment)
-                current_block = []
-            continue
-
-        # Skip existing comments
-        if stripped.startswith("#"):
-            continue
-
-        current_block.append(stripped)
-
-    # Process remaining block
-    if current_block:
-        comment = _summarize_code_block(current_block)
-        if comment:
-            comments.append(comment)
-
-    if not comments:
-        comments = [f"implement {function_context.name} logic"]
-
-    return comments
-
-
-def _summarize_code_block(block: list[str]) -> str | None:
-    """Summarize a block of code lines into a pseudocode comment.
-
-    Args:
-        block: List of stripped code lines.
-
-    Returns:
-        Summary comment string, or None if block is trivial.
-    """
-    if not block:
-        return None
-
-    first_line = block[0]
-
-    # Return statement
-    if first_line.startswith("return "):
-        return_val = first_line[7:].strip()
-        if return_val:
-            return f"return the {_simplify_expression(return_val)}"
-        return "return result"
-
-    # Assignment
-    if "=" in first_line and not first_line.startswith("if ") and not first_line.startswith("for "):
-        parts = first_line.split("=", 1)
-        var_name = parts[0].strip()
-        if not any(op in var_name for op in ["<", ">", "!", "+"]):
-            return f"compute {_to_readable(var_name)}"
-
-    # For loop
-    if first_line.startswith("for "):
-        match = re.match(r"for\s+\w+\s+in\s+(.+?):", first_line)
-        if match:
-            iterable = match.group(1).strip()
-            return f"iterate over {_simplify_expression(iterable)}"
-
-    # If statement
-    if first_line.startswith("if "):
-        condition = first_line[3:].rstrip(":")
-        return f"check if {_simplify_expression(condition)}"
-
-    # Function call
-    match = re.match(r"(\w+)\s*\(", first_line)
-    if match:
-        func_name = match.group(1)
-        return f"{_to_readable(func_name)}"
-
-    # Method call
-    match = re.match(r"\w+\.(\w+)\s*\(", first_line)
-    if match:
-        method_name = match.group(1)
-        return f"{_to_readable(method_name)}"
-
-    # Raise
-    if first_line.startswith("raise "):
-        return "raise error on invalid state"
-
-    # With statement
-    if first_line.startswith("with "):
-        return "open resource context"
-
-    # Try
-    if first_line.startswith("try:"):
-        return "handle potential errors"
-
-    return f"process {block[0][:40]}"
-
-
-def _simplify_expression(expr: str) -> str:
-    """Simplify a Python expression to readable pseudocode.
-
-    Args:
-        expr: Python expression string.
-
-    Returns:
-        Simplified human-readable string.
-    """
-    # Remove parentheses around simple expressions
-    expr = expr.strip().strip("()")
-    # Truncate long expressions
-    if len(expr) > 50:
-        expr = expr[:47] + "..."
-    return expr
-
-
-def _to_readable(name: str) -> str:
-    """Convert a snake_case or camelCase name to readable text.
-
-    Args:
-        name: Python identifier.
-
-    Returns:
-        Readable text with spaces.
-    """
-    # Handle snake_case
-    result = name.replace("_", " ")
-    # Handle camelCase
-    result = re.sub(r"([a-z])([A-Z])", r"\1 \2", result)
-    return result.lower().strip()

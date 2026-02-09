@@ -25,8 +25,8 @@ class ProjectionLineageEdge:
     Not to be confused with:
     - ``schemas.pin_functions.ImportEdge``: a pin-function-to-architecture
       mapping edge (PFUNC -> arch location with coarse projection type).
-    - ``projection.lineage.import_graph.ImportEdge``: a raw Python AST
-      import relationship (which file imports which name).
+    - ``projection.lineage.builder.RawImportRecord``: a raw import
+      relationship (which file imports which name).
 
     Attributes:
         from_unit: Algorithmic atom ID (pin-function name or atom ID).

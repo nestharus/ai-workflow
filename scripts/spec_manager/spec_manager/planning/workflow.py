@@ -15,11 +15,10 @@ from spec_manager.planning.adjacency import (
     discover_adjacent_details,
     find_store_touches,
 )
-from spec_manager.planning.code_parser import parse_file
 from spec_manager.planning.evidence_store import EvidenceStore
 from spec_manager.planning.gap_bridge import adjacencies_to_gaps, scan_for_gaps
 from spec_manager.planning.inserter import plan_insertions
-from spec_manager.planning.models import CodeFile, InsertionPlan
+from spec_manager.planning.models import CodeFile, InsertionPlan, parse_file
 
 
 def run_planning_v2_phase(

@@ -5,8 +5,8 @@ Detects gaps in algorithmic code mechanically by scanning for:
 - Stub functions (pass, raise NotImplementedError, Ellipsis)
 - Runtime error raises used as placeholders
 
-Delegates comment scanning and stub detection to the canonical modules
-in ``compliance.detection`` (both now use LLM-based code_analysis).
+Comment scanning and stub detection are implemented here using
+``analyze_source`` from ``spec_manager.core.code_analysis``.
 Runtime error detection uses text-based pattern matching.
 """
 
@@ -15,16 +15,257 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from spec_manager.compliance.detection.comment_scanner import (
-    CommentGap,
-    scan_comments,
+from spec_manager.core.code_analysis import analyze_source
+from spec_manager.core.gap import GapEvidence
+
+# ---------------------------------------------------------------------------
+# Comment scanning
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CommentGap:
+    """A comment identified as unimplemented spec."""
+
+    file_path: str
+    line: int
+    col_int: int
+    text: str
+    enclosing_function: str | None
+    is_inline: bool
+
+
+EXCLUDED_PREFIXES: tuple[str, ...] = (
+    "type: ignore",
+    "noqa",
+    "pragma",
+    "fmt:",
+    "pylint:",
+    "mypy:",
+    "pyright:",
+    "ruff:",
+    "isort:",
+    "!",
+    "-*- coding",
 )
-from spec_manager.compliance.detection.stub_scanner import (
-    StubFunction,
-    scan_stubs,
-)
+
+
+def scan_comments(filepath: Path) -> list[CommentGap]:
+    """Scan a source file and return all spec comments.
+
+    Delegates structural analysis to ``analyze_source`` (language-agnostic).
+    Filters out excluded prefixes (type: ignore, noqa, pragma, etc.).
+
+    Args:
+        filepath: Path to the source file.
+
+    Returns:
+        List of CommentGap for each spec comment found.
+    """
+    source = filepath.read_text(encoding="utf-8")
+    analysis = analyze_source(source, str(filepath))
+
+    source_lines = source.splitlines()
+    gaps: list[CommentGap] = []
+
+    for comment in analysis.comments:
+        # Check if it is a shebang
+        if comment.raw.startswith("#!") and comment.line <= 2:
+            continue
+
+        stripped = comment.text
+
+        # Check excluded prefixes
+        skip = False
+        for prefix in EXCLUDED_PREFIXES:
+            if stripped.lower().startswith(prefix.lower()):
+                skip = True
+                break
+        if skip:
+            continue
+
+        # Skip empty comments
+        if not stripped:
+            continue
+
+        # Determine if inline (code before the comment on the same line)
+        is_inline = False
+        if comment.line <= len(source_lines):
+            line_text = source_lines[comment.line - 1]
+            before_comment = line_text[: comment.col_offset].strip()
+            if before_comment:
+                is_inline = True
+
+        gaps.append(
+            CommentGap(
+                file_path=str(filepath),
+                line=comment.line,
+                col_int=comment.col_offset,
+                text=stripped,
+                enclosing_function=comment.enclosing_function,
+                is_inline=is_inline,
+            )
+        )
+
+    return gaps
+
+
+def comments_to_gap_evidence(comments: list[CommentGap]) -> list[GapEvidence]:
+    """Convert CommentGap list to GapEvidence for gap synthesis.
+
+    Each CommentGap becomes a GapEvidence with:
+        invariant_family = "executable_comment"
+        detector = "comment_scanner"
+        location = "{file_path}:{line}"
+        description = comment text
+        details = {"enclosing_function": ..., "is_inline": ...}
+
+    Args:
+        comments: List of CommentGap from scan_comments.
+
+    Returns:
+        List of GapEvidence objects.
+    """
+    evidence: list[GapEvidence] = []
+    for comment in comments:
+        details: dict[str, Any] = {
+            "enclosing_function": comment.enclosing_function,
+            "is_inline": comment.is_inline,
+        }
+        evidence.append(
+            GapEvidence(
+                invariant_family="executable_comment",
+                description=comment.text,
+                details=details,
+                confidence=1.0,
+                location=f"{comment.file_path}:{comment.line}",
+                detector="comment_scanner",
+            )
+        )
+    return evidence
+
+
+# ---------------------------------------------------------------------------
+# Stub scanning
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StubFunction:
+    """A function identified as a stub (not implemented)."""
+
+    file_path: str
+    line: int
+    end_line: int
+    name: str
+    stub_type: Literal["pass", "ellipsis", "not_implemented"]
+    has_docstring: bool
+    args: list[str]
+    return_annotation: str | None
+
+
+def _map_stub_reason(reason: str | None) -> Literal["pass", "ellipsis", "not_implemented"]:
+    """Map a ``stub_reason`` from code analysis to a stub_type literal.
+
+    The analyzer may return various reason strings depending on the backend
+    (LLM or AST test double).  This function normalises them into the three
+    canonical categories used by ``StubFunction.stub_type``.
+    """
+    if reason is None:
+        return "pass"
+    lower = reason.lower()
+    if "ellipsis" in lower or reason == "...":
+        return "ellipsis"
+    if "notimplemented" in lower.replace(" ", "").replace("_", ""):
+        return "not_implemented"
+    # "pass", "placeholder", or any other unknown reason
+    return "pass"
+
+
+def scan_stubs(filepath: Path) -> list[StubFunction]:
+    """Scan a source file and return all stub functions.
+
+    Uses ``analyze_source()`` from ``spec_manager.core.code_analysis`` to
+    perform language-agnostic structural analysis, then filters for functions
+    whose ``is_stub`` flag is ``True``.
+
+    Handles both top-level functions and methods within classes.
+    Qualified names use ``ClassName.method_name`` format.
+
+    Args:
+        filepath: Path to the source file.
+
+    Returns:
+        List of StubFunction for each stub found.
+    """
+    try:
+        source = filepath.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    analysis = analyze_source(source, str(filepath))
+
+    stubs: list[StubFunction] = []
+    for func in analysis.functions:
+        if not func.is_stub:
+            continue
+        stubs.append(
+            StubFunction(
+                file_path=str(filepath),
+                line=func.start_line,
+                end_line=func.end_line,
+                name=func.qualified_name,
+                stub_type=_map_stub_reason(func.stub_reason),
+                has_docstring=func.has_docstring,
+                args=list(func.args),
+                return_annotation=func.return_annotation,
+            )
+        )
+    return stubs
+
+
+def stubs_to_gap_evidence(stubs: list[StubFunction]) -> list[GapEvidence]:
+    """Convert StubFunction list to GapEvidence for gap synthesis.
+
+    Each StubFunction becomes a GapEvidence with:
+        invariant_family = "executable_stub"
+        detector = "stub_scanner"
+        location = "{file_path}:{line}-{end_line}"
+        description = "Stub function: {name} ({stub_type})"
+        details = {"stub_type": ..., "args": ..., "return_annotation": ...}
+
+    Args:
+        stubs: List of StubFunction from scan_stubs.
+
+    Returns:
+        List of GapEvidence objects.
+    """
+    evidence: list[GapEvidence] = []
+    for stub in stubs:
+        details: dict[str, Any] = {
+            "stub_type": stub.stub_type,
+            "args": stub.args,
+            "return_annotation": stub.return_annotation,
+            "has_docstring": stub.has_docstring,
+        }
+        evidence.append(
+            GapEvidence(
+                invariant_family="executable_stub",
+                description=f"Stub function: {stub.name} ({stub.stub_type})",
+                details=details,
+                confidence=1.0,
+                location=f"{stub.file_path}:{stub.line}-{stub.end_line}",
+                detector="stub_scanner",
+            )
+        )
+    return evidence
+
+
+# ---------------------------------------------------------------------------
+# GapItem (branches-layer adapter)
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -93,15 +334,13 @@ def _stub_to_gap_item(sf: StubFunction) -> GapItem:
 class GapDetector:
     """Detects gaps in algorithmic code mechanically.
 
-    Delegates to canonical scanners in ``compliance.detection`` for
-    comment and stub detection.  Runtime error detection is kept
+    Comment and stub detection use ``analyze_source`` from
+    ``spec_manager.core.code_analysis``.  Runtime error detection is kept
     in-place.
     """
 
     def find_unimplemented_comments(self, filepath: Path) -> list[GapItem]:
         """Every comment in algorithmic code is an unimplemented spec element.
-
-        Delegates to ``compliance.detection.comment_scanner.scan_comments``.
 
         Args:
             filepath: Path to the Python source file.
@@ -117,8 +356,6 @@ class GapDetector:
 
     def detect_stubs(self, filepath: Path) -> list[GapItem]:
         """Functions containing only pass, raise NotImplementedError, or Ellipsis.
-
-        Delegates to ``compliance.detection.stub_scanner.scan_stubs``.
 
         Args:
             filepath: Path to the Python source file.

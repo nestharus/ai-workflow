@@ -23,11 +23,9 @@ class TestScanConfig:
         assert config.enable_comments is True
         assert config.enable_stubs is True
         assert config.enable_runtime is False
-        assert config.enable_call_graph is True
         assert config.enable_coverage is False
         assert config.runtime_timeout_seconds == 5.0
         assert config.coverage_min_threshold == 0.0
-        assert config.call_graph_min_component_size == 2
 
 
 class TestScanExecutableGaps:
@@ -52,7 +50,6 @@ class TestScanExecutableGaps:
             enable_comments=True,
             enable_stubs=True,
             enable_runtime=False,
-            enable_call_graph=False,
             enable_coverage=False,
         )
 
@@ -62,35 +59,6 @@ class TestScanExecutableGaps:
         assert len(report.stub_gaps) == 2
         assert len(report.all_evidence) >= 3  # 1 comment + 2 stubs
         assert report.scan_duration_ms >= 0
-
-    def test_scan_with_call_graph(self, tmp_path: Path) -> None:
-        source = textwrap.dedent("""\
-            def cluster1_a():
-                cluster1_b()
-
-            def cluster1_b():
-                return 1
-
-            def cluster2_a():
-                cluster2_b()
-
-            def cluster2_b():
-                return 2
-        """)
-        filepath = tmp_path / "graph.py"
-        filepath.write_text(source, encoding="utf-8")
-
-        config = ScanConfig(
-            enable_comments=False,
-            enable_stubs=False,
-            enable_runtime=False,
-            enable_call_graph=True,
-            enable_coverage=False,
-        )
-
-        report = scan_executable_gaps([filepath], tmp_path, config)
-        assert report.call_graph is not None
-        assert len(report.call_graph.nodes) >= 4
 
     def test_scan_default_config(self, tmp_path: Path) -> None:
         source = textwrap.dedent("""\
@@ -115,7 +83,6 @@ class TestScanExecutableGaps:
         config = ScanConfig(
             enable_comments=True,
             enable_stubs=True,
-            enable_call_graph=False,
         )
         report = scan_executable_gaps([bad_path], tmp_path, config)
         assert isinstance(report, ExecutableGapReport)
@@ -132,7 +99,6 @@ class TestScanExecutableGaps:
         config = ScanConfig(
             enable_comments=True,
             enable_stubs=True,
-            enable_call_graph=False,
             enable_runtime=False,
             enable_coverage=False,
         )
@@ -160,7 +126,6 @@ class TestIntegrateWithGapQueue:
         config = ScanConfig(
             enable_comments=False,
             enable_stubs=True,
-            enable_call_graph=False,
         )
 
         report = scan_executable_gaps([filepath], tmp_path, config)
@@ -202,7 +167,6 @@ class TestIntegrateWithGapQueue:
         config = ScanConfig(
             enable_comments=False,
             enable_stubs=True,
-            enable_call_graph=False,
         )
 
         report = scan_executable_gaps([filepath], tmp_path, config)
@@ -229,7 +193,6 @@ class TestIntegrateWithGapQueue:
         config = ScanConfig(
             enable_comments=False,
             enable_stubs=True,
-            enable_call_graph=False,
         )
 
         report = scan_executable_gaps([filepath], tmp_path, config)

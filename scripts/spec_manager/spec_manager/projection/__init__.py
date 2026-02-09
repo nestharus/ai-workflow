@@ -25,8 +25,6 @@ __all__ = [
     "DriftKind",
     "DriftPolicy",
     "DriftReport",
-    "ImportEdge",
-    "ImportGraph",
     "LineageBuilder",
     "PinChange",
     "PinChangePropagator",
@@ -38,14 +36,17 @@ __all__ = [
     "ProjectionType",
     "PropagationItem",
     "PropagationReport",
+    "RawImportRecord",
     "SignalSpec",
     "convert_drift_to_gaps",
     "convert_propagation_to_drift",
     "generate_plan_from_libraries",
+    "scan_imports_from_directory",
+    "scan_imports_from_files",
 ]
 
 
-def __getattr__(name: str) -> Any:  # noqa: ANN401
+def __getattr__(name: str) -> Any:
     """Lazy import to avoid circular imports."""
     if name in ("ProjectionGenerator", "generate_plan_from_libraries"):
         from spec_manager.projection.generator import (
@@ -109,8 +110,13 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
     # Lineage tracking symbols
     _lineage_edge_names = {"ProjectionLineageEdge", "ProjectionType"}
     _lineage_table_names = {"ProjectionLineageTable"}
-    _lineage_import_names = {"ImportEdge", "ImportGraph"}
-    _lineage_builder_names = {"AtomDefinition", "LineageBuilder"}
+    _lineage_builder_names = {
+        "AtomDefinition",
+        "LineageBuilder",
+        "RawImportRecord",
+        "scan_imports_from_directory",
+        "scan_imports_from_files",
+    }
     _lineage_flow_names = {"DataFlowHop", "DataFlowTracker", "SignalSpec"}
     _lineage_drift_names = {"DriftKind", "PinDrift", "PinDriftDetector"}
 
@@ -130,15 +136,22 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         return ProjectionLineageTable
 
-    if name in _lineage_import_names:
-        from spec_manager.projection.lineage.import_graph import ImportEdge, ImportGraph
-
-        return {"ImportEdge": ImportEdge, "ImportGraph": ImportGraph}[name]
-
     if name in _lineage_builder_names:
-        from spec_manager.projection.lineage.builder import AtomDefinition, LineageBuilder
+        from spec_manager.projection.lineage.builder import (
+            AtomDefinition,
+            LineageBuilder,
+            RawImportRecord,
+            scan_imports_from_directory,
+            scan_imports_from_files,
+        )
 
-        return {"AtomDefinition": AtomDefinition, "LineageBuilder": LineageBuilder}[name]
+        return {
+            "AtomDefinition": AtomDefinition,
+            "LineageBuilder": LineageBuilder,
+            "RawImportRecord": RawImportRecord,
+            "scan_imports_from_directory": scan_imports_from_directory,
+            "scan_imports_from_files": scan_imports_from_files,
+        }[name]
 
     if name in _lineage_flow_names:
         from spec_manager.projection.lineage.data_flow import (

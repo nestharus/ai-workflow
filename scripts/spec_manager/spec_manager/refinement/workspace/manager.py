@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from spec_manager.branches.manager import BranchManager
-    from spec_manager.projection.lineage.import_graph import ImportGraph
     from spec_manager.projection.lineage.table import ProjectionLineageTable
 
 from spec_manager.core.gap import (
@@ -1151,24 +1150,6 @@ class WorkspaceManager:
         if not lineage_path.exists():
             return None
         return load_lineage_table(lineage_path)
-
-    def write_import_graph(self, graph: ImportGraph) -> Path:
-        """Write import graph to workspace/indexes/import_graph.json."""
-        from spec_manager.projection.lineage.persistence import save_import_graph
-
-        self.structure.indexes_dir.mkdir(parents=True, exist_ok=True)
-        graph_path = self.structure.indexes_dir / "import_graph.json"
-        save_import_graph(graph, graph_path)
-        return graph_path
-
-    def read_import_graph(self) -> ImportGraph | None:
-        """Read import graph from workspace/indexes/import_graph.json."""
-        from spec_manager.projection.lineage.persistence import load_import_graph
-
-        graph_path = self.structure.indexes_dir / "import_graph.json"
-        if not graph_path.exists():
-            return None
-        return load_import_graph(graph_path)
 
     def _save_state(self) -> None:
         """Save current state to disk."""

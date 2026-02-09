@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import ast
 import textwrap
+from unittest.mock import patch
 
-from spec_manager.planning.code_parser import parse_source
-from spec_manager.planning.models import CommentKind
+from spec_manager.planning.models import CommentKind, parse_source
 from spec_manager.planning.reverser import (
-    _generate_pseudocode_comments_heuristic,
-    _summarize_code_block,
     apply_reverse_plan_to_lines,
     reverse_translate_from_source,
 )
@@ -28,81 +26,20 @@ SAMPLE_CODE = textwrap.dedent("""\
         return result
 """)
 
-
-class TestSummarizeCodeBlock:
-    """Tests for _summarize_code_block helper."""
-
-    def test_return_statement(self) -> None:
-        result = _summarize_code_block(["return result"])
-        assert result is not None
-        assert "return" in result.lower()
-
-    def test_assignment(self) -> None:
-        result = _summarize_code_block(["total = compute_total(items)"])
-        assert result is not None
-        assert "compute" in result.lower()
-
-    def test_for_loop(self) -> None:
-        result = _summarize_code_block(["for item in items:"])
-        assert result is not None
-        assert "iterate" in result.lower()
-
-    def test_if_statement(self) -> None:
-        result = _summarize_code_block(["if not validated:"])
-        assert result is not None
-        assert "check" in result.lower()
-
-    def test_raise_statement(self) -> None:
-        result = _summarize_code_block(['raise ValueError("error")'])
-        assert result is not None
-        assert "raise" in result.lower() or "error" in result.lower()
-
-    def test_empty_block(self) -> None:
-        result = _summarize_code_block([])
-        assert result is None
-
-    def test_function_call(self) -> None:
-        result = _summarize_code_block(["validate_order(order)"])
-        assert result is not None
-        assert "validate" in result.lower()
+_MOCK_COMMENTS = [
+    "validate the order",
+    "check validation result",
+    "compute total and apply discount",
+    "save the order and return result",
+]
 
 
-class TestGeneratePseudocodeHeuristic:
-    """Tests for heuristic reverse translation."""
-
-    def test_generates_comments(self) -> None:
-        code_file = parse_source(SAMPLE_CODE, "/test/process.py")
-        func = code_file.functions[0]
-        lines = [
-            "    validated = validate_order(order)",
-            "    if not validated:",
-            '        raise ValueError("Invalid order")',
-            "    total = compute_total(order.items)",
-        ]
-        result = _generate_pseudocode_comments_heuristic(lines, func)
-        assert len(result) >= 1
-
-    def test_skips_blank_lines(self) -> None:
-        code_file = parse_source(SAMPLE_CODE, "/test/process.py")
-        func = code_file.functions[0]
-        lines = [
-            "    x = 1",
-            "",
-            "    y = 2",
-        ]
-        result = _generate_pseudocode_comments_heuristic(lines, func)
-        assert len(result) >= 2
-
-    def test_skips_existing_comments(self) -> None:
-        code_file = parse_source(SAMPLE_CODE, "/test/process.py")
-        func = code_file.functions[0]
-        lines = [
-            "    # existing comment",
-            "    x = 1",
-        ]
-        result = _generate_pseudocode_comments_heuristic(lines, func)
-        # Should not include the existing comment
-        assert all("existing comment" not in r for r in result)
+def _patch_llm():
+    """Patch the LLM pseudocode generator to return mock comments."""
+    return patch(
+        "spec_manager.planning.reverser._generate_pseudocode_comments",
+        return_value=list(_MOCK_COMMENTS),
+    )
 
 
 class TestReverseTranslateFromSource:
@@ -112,7 +49,8 @@ class TestReverseTranslateFromSource:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
         assert plan.function_name == "process_order"
         assert plan.file_path == "/test/process.py"
         assert len(plan.generated_comments) >= 1
@@ -121,7 +59,8 @@ class TestReverseTranslateFromSource:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
         for comment in plan.generated_comments:
             assert "[reverse-translated]" in comment.text
 
@@ -129,7 +68,8 @@ class TestReverseTranslateFromSource:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
         for comment in plan.generated_comments:
             assert comment.kind == CommentKind.REVERSE
 
@@ -137,23 +77,38 @@ class TestReverseTranslateFromSource:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
         assert "validate_order" in plan.original_code
 
     def test_partial_range(self) -> None:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        # Reverse only lines 3-5
-        plan = reverse_translate_from_source(
-            SAMPLE_CODE,
-            "/test/process.py",
-            func,
-            start_line=3,
-            end_line=5,
-        )
+        with _patch_llm():
+            # Reverse only lines 3-5
+            plan = reverse_translate_from_source(
+                SAMPLE_CODE,
+                "/test/process.py",
+                func,
+                start_line=3,
+                end_line=5,
+            )
         assert plan.start_line >= 3
         assert plan.end_line <= 5
+
+    def test_llm_failure_returns_empty_comments(self) -> None:
+        """When the LLM fails, we get a plan with no comments (no regex fallback)."""
+        code_file = parse_source(SAMPLE_CODE, "/test/process.py")
+        func = code_file.functions[0]
+
+        with patch(
+            "spec_manager.planning.reverser._generate_pseudocode_comments",
+            side_effect=RuntimeError("LLM unavailable"),
+        ):
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        assert plan.generated_comments == []
+        assert plan.original_code != ""
 
 
 class TestApplyReversePlan:
@@ -163,7 +118,8 @@ class TestApplyReversePlan:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
 
         lines = SAMPLE_CODE.splitlines(keepends=True)
         result = apply_reverse_plan_to_lines(plan, lines)
@@ -177,7 +133,8 @@ class TestApplyReversePlan:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
 
         lines = SAMPLE_CODE.splitlines(keepends=True)
         result = apply_reverse_plan_to_lines(plan, lines)
@@ -189,7 +146,8 @@ class TestApplyReversePlan:
         code_file = parse_source(SAMPLE_CODE, "/test/process.py")
         func = code_file.functions[0]
 
-        plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
+        with _patch_llm():
+            plan = reverse_translate_from_source(SAMPLE_CODE, "/test/process.py", func)
 
         lines = SAMPLE_CODE.splitlines(keepends=True)
         result = apply_reverse_plan_to_lines(plan, lines)

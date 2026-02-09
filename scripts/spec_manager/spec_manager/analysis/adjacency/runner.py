@@ -25,9 +25,6 @@ class AdjacencyAnalysisConfig:
 
     source_dirs: list[Path]  # Python source directories to analyze
     spec_dirs: list[Path]  # Spec markdown directories
-    include_call_graph: bool = True
-    include_event_graph: bool = True
-    include_store_graph: bool = True
     include_cooccurrence: bool = True
     weight_overrides: dict[str, float] | None = None
     output_format: str = "json"  # "json" or "markdown"
@@ -76,36 +73,11 @@ def run_adjacency_analysis(config: AdjacencyAnalysisConfig) -> AdjacencyReport:
     Returns:
         AdjacencyReport with full analysis
     """
-    source_files = _collect_python_files(config.source_dirs)
     spec_files = _collect_spec_files(config.spec_dirs)
 
-    # Determine root_dir from source_dirs
-    root_dir = config.source_dirs[0] if config.source_dirs else None
-
-    call_graph: AdjacencyGraph | None = None
-    event_graph: AdjacencyGraph | None = None
-    store_graph: AdjacencyGraph | None = None
     cooccurrence_graph: AdjacencyGraph | None = None
 
     partial_graphs: dict[str, AdjacencyGraph] = {}
-
-    if config.include_call_graph and source_files:
-        from .extractors.call_graph import extract_call_graph
-
-        call_graph = extract_call_graph(source_files, root_dir=root_dir)
-        partial_graphs["call"] = call_graph
-
-    if config.include_event_graph and source_files:
-        from .extractors.event_graph import extract_event_graph
-
-        event_graph = extract_event_graph(source_files, root_dir=root_dir)
-        partial_graphs["event"] = event_graph
-
-    if config.include_store_graph and source_files:
-        from .extractors.store_graph import extract_store_graph
-
-        store_graph = extract_store_graph(source_files, root_dir=root_dir)
-        partial_graphs["store"] = store_graph
 
     if config.include_cooccurrence and spec_files:
         from .extractors.cooccurrence import extract_cooccurrence_graph
@@ -124,9 +96,6 @@ def run_adjacency_analysis(config: AdjacencyAnalysisConfig) -> AdjacencyReport:
 
     # Build unified graph
     unified = build_unified_graph(
-        call_graph=call_graph,
-        event_graph=event_graph,
-        store_graph=store_graph,
         cooccurrence_graph=cooccurrence_graph,
         weight_overrides=weight_overrides,
     )

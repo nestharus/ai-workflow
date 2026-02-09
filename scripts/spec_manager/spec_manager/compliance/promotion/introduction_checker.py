@@ -14,7 +14,7 @@ from typing import Any
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.pin_coverage import PinCoverageReport
 from spec_manager.compliance.promotion.result import GateCheckResult
-from spec_manager.core.code_analysis import analyze_source
+from spec_manager.core.code_analysis import SourceAnalysis, analyze_source
 
 # Category classification heuristics based on function name patterns
 _CATEGORY_PATTERNS: list[tuple[list[str], str]] = [
@@ -72,25 +72,36 @@ def _classify_category(function_name: str, file_path: str) -> str:
     return "unknown"
 
 
-def _count_spec_comments(source_lines: list[str]) -> int:
-    """Count spec-style comments in source lines.
+def _count_spec_comments_from_analysis(
+    analysis: SourceAnalysis,
+    func_name: str,
+    start_line: int,
+    end_line: int,
+) -> int:
+    """Count spec-style comments in a function using analyze_source() data.
 
-    Spec comments are regular comments (starting with #) inside function bodies.
-    Excludes shebangs, encoding declarations, and marker comments.
+    Uses the comments already extracted by analyze_source() and filters them
+    to the function's line range.
+
+    Args:
+        analysis: SourceAnalysis containing all comments for the file.
+        func_name: Name of the enclosing function.
+        start_line: First line of the function.
+        end_line: Last line of the function.
+
+    Returns:
+        Count of spec-style comments in the function body.
     """
     count = 0
-    for line in source_lines:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            text = stripped.lstrip("#").strip()
-            # Skip shebangs, encodings, type comments, and blank comments
-            if (
-                not text.startswith("!")
-                and "coding" not in text
-                and "type:" not in text
-                and text  # skip empty comments
-            ):
-                count += 1
+    for comment in analysis.comments:
+        # Filter to comments within the function's line range
+        if comment.line < start_line or comment.line > end_line:
+            continue
+        # Also accept comments matched by enclosing_function
+        # Skip shebangs, encodings, type comments, and blank comments
+        text = comment.text.strip()
+        if text and not text.startswith("!") and "coding" not in text and "type:" not in text:
+            count += 1
     return count
 
 
@@ -146,15 +157,15 @@ def find_introduced_algorithms(
             continue
 
         analysis = analyze_source(source, file_str)
-        lines = source.splitlines()
         location_lines = {line for _, line in file_locations[file_str]}
 
         for func in analysis.functions:
             if func.start_line not in location_lines:
                 continue
 
-            body_lines = lines[func.start_line - 1 : func.end_line]
-            spec_count = _count_spec_comments(body_lines)
+            spec_count = _count_spec_comments_from_analysis(
+                analysis, func.name, func.start_line, func.end_line
+            )
             category = _classify_category(func.qualified_name, file_str)
 
             results.append(
