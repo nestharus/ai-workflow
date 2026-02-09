@@ -1,0 +1,24 @@
+{
+  "file_id": "risk_engine",
+  "summary": "Specifies the RiskEngine that performs real-time counterparty exposure monitoring, credit limit enforcement, and risk breach notifications. The engine calculates weighted exposure across T+0 to T+2 settlement windows, triggers margin calls at 80% of limits, enforces 25% concentration caps, suspends counterparties after 10 consecutive check failures, and integrates with notification auditing.",
+  "content_types": [
+    "algorithms",
+    "shapes",
+    "invariants",
+    "narrative"
+  ],
+  "likely_libraries": [
+    {
+      "name": "risk_engine",
+      "reason": "The entire file describes the RiskEngine's purpose, behavior, and operational rules for counterparty risk management."
+    },
+    {
+      "name": "exposure_management",
+      "reason": "Details exposure calculation, credit limits, and concentration monitoring across settlement windows."
+    }
+  ],
+  "cross_references": [
+    "notification_audit.md",
+    "cross_system_invariants.md"
+  ]
+}

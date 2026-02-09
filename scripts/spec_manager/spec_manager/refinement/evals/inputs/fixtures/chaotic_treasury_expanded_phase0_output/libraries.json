@@ -1,0 +1,46 @@
+{
+  "libraries": [
+    {
+      "lib_id": "LIB-01",
+      "name": "Settlement Processing",
+      "description": "Core settlement pipeline orchestrating instruction ingestion, validation, netting, FX conversion, and confirmation workflows"
+    },
+    {
+      "lib_id": "LIB-02",
+      "name": "Risk Management",
+      "description": "Real-time counterparty exposure monitoring, credit limit enforcement, margin calls, and concentration caps across settlement windows"
+    },
+    {
+      "lib_id": "LIB-03",
+      "name": "Reconciliation",
+      "description": "Continuous matching of internal ledger entries against counterparty acknowledgments with tolerance-based break classification and auto-resolution"
+    },
+    {
+      "lib_id": "LIB-04",
+      "name": "Regulatory Compliance",
+      "description": "Enforcement of reporting obligations, threshold monitoring, suspicious transaction flagging, and audit retention requirements"
+    },
+    {
+      "lib_id": "LIB-05",
+      "name": "Event Infrastructure",
+      "description": "Pub/sub messaging backbone providing event publishing, ordering guarantees, retry policies, and correlation tracing across the system"
+    },
+    {
+      "lib_id": "LIB-06",
+      "name": "Audit and Notification",
+      "description": "Immutable audit trail maintenance and operational notification routing to compliance, risk, and operations teams"
+    },
+    {
+      "lib_id": "LIB-07",
+      "name": "Operations and Deployment",
+      "description": "Infrastructure configuration, monitoring logic, health checks, and operational parameter management for production settlement engine"
+    },
+    {
+      "lib_id": "LIB-08",
+      "name": "System Architecture",
+      "description": "Cross-system invariants, component integration patterns, and high-level architecture documentation describing how all libraries interact"
+    }
+  ],
+  "rationale": "Seven existing libraries (LIB-01 through LIB-07) cover the functional capabilities of the settlement engine. The unroutable files ('cross_system_invariants' and 'overview') describe system-wide integration patterns, architectural invariants, and cross-library flow diagrams that do not belong to any single library. These require a new library (LIB-08 System Architecture) that captures cross-cutting architectural concerns, system-wide invariants, and orchestration patterns that govern how the seven functional libraries interact.",
+  "overlap_notes": "The new System Architecture library (LIB-08) intentionally references all seven existing libraries because it documents their integration points and cross-system invariants. This is not duplication—it serves a distinct purpose of defining the contracts and invariants that bind the libraries together. Files like 'deployment_and_operations' fit cleanly into LIB-07, while 'event_pipeline', 'notification_and_audit', 'reconciliation_service', 'regulatory_compliance', 'risk_engine', 'settlement_processing', and 'transaction_validation' map to their corresponding existing libraries (LIB-05, LIB-06, LIB-03, LIB-04, LIB-02, LIB-01, LIB-01 respectively)."
+}

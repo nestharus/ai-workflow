@@ -1,0 +1,21 @@
+{
+  "file_id": "reconciliation_service",
+  "summary": "Describes the Reconciliation Service that continuously matches internal ledger entries against counterparty acknowledgements using a tuple-based matching algorithm. Implements break classification based on tolerance bands (0.01% domestic, 0.05% cross-border), auto-resolution logic for small discrepancies, duplicate detection, and escalation workflows.",
+  "content_types": [
+    "algorithms",
+    "invariants"
+  ],
+  "likely_libraries": [
+    {
+      "name": "Reconciliation",
+      "reason": "Major system capability for matching and reconciling ledger entries with counterparties, implementing tolerance-based break classification and auto-resolution logic"
+    },
+    {
+      "name": "Operations",
+      "reason": "Handles operational workflows including manual resolution routing, duplicate suppression, and analyst escalation"
+    }
+  ],
+  "cross_references": [
+    "regulatory_compliance.md"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "file_id": "notification_and_audit",
+  "summary": "Describes the AuditNotification service that maintains an immutable audit trail and routes notifications to operational teams, with specific performance requirements, routing rules by event type, and batching mechanisms for high-volume alert periods.",
+  "content_types": [
+    "algorithms",
+    "shapes",
+    "invariants",
+    "narrative"
+  ],
+  "likely_libraries": [
+    {
+      "name": "Audit and Notification Service",
+      "reason": "The file primarily documents a service that combines audit trail maintenance with notification routing to compliance, risk, and operations teams."
+    },
+    {
+      "name": "Settlement Integration",
+      "reason": "Describes audit requirements and notification mechanisms specifically tied to settlement pipeline events and identifiers."
+    },
+    {
+      "name": "Risk and Compliance Infrastructure",
+      "reason": "Details routing of compliance and risk events from RiskEngine to compliance inbox, risk dashboard, and operations channels."
+    }
+  ],
+  "cross_references": [
+    "RiskEngine integration",
+    "settlement pipeline",
+    "compliance inbox and risk dashboard",
+    "operations Slack channel"
+  ]
+}

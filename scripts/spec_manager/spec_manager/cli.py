@@ -80,6 +80,68 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lifecycle(args: argparse.Namespace) -> int:
+    """Run the full PDD lifecycle (Build → QA → Architecture → Code Quality)."""
+    from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    run_id = args.run_id
+    input_folder = Path(args.input) if args.input else Path.cwd()
+    mode = args.mode
+    use_research = args.research
+    steering_path = Path(args.steering) if args.steering else None
+    use_worktrees = getattr(args, "worktrees", False)
+
+    print(f"PDD lifecycle: run_id={run_id}")
+    print(f"  Input: {input_folder}")
+    print(f"  Mode: {mode}")
+    if use_research:
+        print("  Research: enabled")
+    if steering_path:
+        print(f"  Steering: {steering_path}")
+    if use_worktrees:
+        print("  Worktrees: enabled")
+
+    manager = WorkspaceManager(run_id=run_id, input_folder=input_folder)
+    if not manager.is_initialized:
+        manager.initialize()
+
+    # Setup worktree manager if requested
+    worktree_manager = None
+    if use_worktrees:
+        from spec_manager.orchestration.vcs import GitVcs
+        from spec_manager.orchestration.worktree_manager import WorktreeManager
+
+        vcs = GitVcs(repo_root=input_folder)
+        worktree_manager = WorktreeManager(
+            vcs=vcs, workspace_root=input_folder, run_id=run_id or "default"
+        )
+
+    lifecycle = PddLifecycle(
+        manager,
+        mode=mode,
+        use_research=use_research,
+        steering_path=steering_path,
+        worktree_manager=worktree_manager,
+    )
+
+    # Run specific phase or full lifecycle
+    phase_name = getattr(args, "lifecycle_phase", None)
+    if phase_name:
+        runner = getattr(lifecycle, phase_name, None)
+        if runner is None:
+            print(f"Unknown lifecycle phase: {phase_name}", file=sys.stderr)
+            return 1
+        result = runner()
+        print(f"\nLifecycle phase '{phase_name}' complete:")
+    else:
+        result = lifecycle.run()
+        print("\nPDD lifecycle complete:")
+
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
 def cmd_phase(args: argparse.Namespace) -> int:
     """Run a specific PDD design phase (0-10)."""
     from spec_manager.orchestration.pdd_orchestrator import PDD_PHASE_ORDER, PddOrchestrator
@@ -789,6 +851,49 @@ def main() -> int:
         help="Path to input spec folder",
     )
 
+    # lifecycle - full PDD lifecycle (Build → QA → Architecture → Code Quality)
+    p_lifecycle = subparsers.add_parser(
+        "lifecycle",
+        help="Run PDD lifecycle (Build → QA → Architecture → Code Quality)",
+    )
+    p_lifecycle.add_argument(
+        "run_id",
+        nargs="?",
+        default=None,
+        help="Run identifier (auto-generated if omitted)",
+    )
+    p_lifecycle.add_argument(
+        "lifecycle_phase",
+        nargs="?",
+        default=None,
+        choices=["build", "qa", "architecture", "code_quality"],
+        help="Run a specific lifecycle phase (default: all)",
+    )
+    p_lifecycle.add_argument(
+        "--input",
+        help="Path to input spec folder",
+    )
+    p_lifecycle.add_argument(
+        "--mode",
+        choices=["auto", "interactive", "steering"],
+        default="interactive",
+        help="Ambiguity resolution mode (default: interactive)",
+    )
+    p_lifecycle.add_argument(
+        "--research",
+        action="store_true",
+        help="Enable web research for ambiguity resolution",
+    )
+    p_lifecycle.add_argument(
+        "--steering",
+        help="Path to steering script JSON (for eval mode)",
+    )
+    p_lifecycle.add_argument(
+        "--worktrees",
+        action="store_true",
+        help="Enable per-library git worktrees for parallel implementation",
+    )
+
     # phase - run a specific PDD phase
     p_phase = subparsers.add_parser(
         "phase",
@@ -1035,6 +1140,7 @@ def main() -> int:
 
     commands = {
         "run": cmd_run,
+        "lifecycle": cmd_lifecycle,
         "phase": cmd_phase,
         "extract": cmd_extract,
         "phase-02": cmd_phase_02,

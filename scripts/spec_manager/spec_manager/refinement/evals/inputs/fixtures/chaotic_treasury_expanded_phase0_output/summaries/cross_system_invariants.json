@@ -1,0 +1,26 @@
+{
+  "file_id": "cross_system_invariants",
+  "summary": "Defines system-wide invariants that must hold across all settlement processing libraries, including rate freshness, dead-letter auditing, settlement immutability, and correlation ID propagation. Includes a flow diagram showing how settlement instructions pass through eight components from ingestion through audit.",
+  "content_types": [
+    "invariants",
+    "algorithms"
+  ],
+  "likely_libraries": [
+    {
+      "name": "Rate Management",
+      "reason": "FX rate freshness invariant and rate cache behavior"
+    },
+    {
+      "name": "Settlement Processing",
+      "reason": "Settlement finality invariant and component flow architecture"
+    },
+    {
+      "name": "Audit and Compliance",
+      "reason": "Dead-letter audit invariant and regulatory summary requirements"
+    }
+  ],
+  "cross_references": [
+    "settlement_processing.md",
+    "reconciliation.md"
+  ]
+}

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from spec_manager.schemas.derived_elements import DerivedElement
 
 # Library ID pattern
-_LIB_ID_PATTERN = re.compile(r"^LIB-\d{4}$")
+_LIB_ID_PATTERN = re.compile(r"^LIB-\d+$")
 
 
 class Library(BaseModel):

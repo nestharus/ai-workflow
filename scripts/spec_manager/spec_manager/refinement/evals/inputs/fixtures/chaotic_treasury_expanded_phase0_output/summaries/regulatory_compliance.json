@@ -1,0 +1,23 @@
+{
+  "file_id": "regulatory_compliance",
+  "summary": "Defines the RegulatoryCompliance module that enforces reporting obligations and holds for settlement transactions based on notional thresholds ($10M/$25M) and cross-border criteria ($5M). Covers event-driven workflow for regulatory reporting via SFTP, suspicious transaction flags to FIU, audit attachment, and seven-year record retention requirements.",
+  "content_types": [
+    "algorithms",
+    "shapes",
+    "stores",
+    "invariants",
+    "narrative"
+  ],
+  "likely_libraries": [
+    {
+      "name": "RegulatoryCompliance",
+      "reason": "Primary module implementation for enforceable regulatory reporting workflow and threshold-based compliance checks"
+    }
+  ],
+  "cross_references": [
+    "SettlementProcessor module",
+    "FinancialIntelligenceUnit (FIU)",
+    "AuditNotification service",
+    "settlement.confirmed events"
+  ]
+}

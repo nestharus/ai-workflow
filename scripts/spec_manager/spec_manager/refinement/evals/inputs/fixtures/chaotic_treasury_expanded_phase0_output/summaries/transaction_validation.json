@@ -1,0 +1,23 @@
+{
+  "file_id": "transaction_validation",
+  "summary": "Defines the TransactionValidator component that enforces schema validation and deduplication at the settlement pipeline's ingestion boundary. It describes two-stage validation: schema conformance checks against the settlement payload, and duplicate detection using Bloom filters within a 5-second window, with retry logic for reference-data service failures.",
+  "content_types": [
+    "algorithms",
+    "shapes",
+    "invariants",
+    "narrative"
+  ],
+  "likely_libraries": [
+    {
+      "name": "Transaction Validation Library",
+      "reason": "This file defines the core validation logic, schema requirements, and deduplication rules that all incoming settlement instructions must satisfy before entering the processing pipeline."
+    },
+    {
+      "name": "Settlement Processing Library",
+      "reason": "Contributes the validation gateway component and its integration points (event publishing, reference-data checks) to the broader settlement pipeline infrastructure."
+    }
+  ],
+  "cross_references": [
+    "settlement_processing.md (for settlement payload JSON definition)"
+  ]
+}

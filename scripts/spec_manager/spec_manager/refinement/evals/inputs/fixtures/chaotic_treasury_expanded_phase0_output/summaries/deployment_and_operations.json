@@ -1,0 +1,19 @@
+{
+  "file_id": "deployment_and_operations",
+  "summary": "This file defines infrastructure-as-code configuration for the settlement engine's operational parameters, including batch sizes, thresholds, and retention periods. It describes monitoring and alerting logic through pseudocode that checks counterparty exposures and dead-letter queue ages, plus health check procedures for maintaining system availability.",
+  "content_types": [
+    "shapes",
+    "algorithms",
+    "invariants"
+  ],
+  "likely_libraries": [
+    {
+      "name": "deployment-and-operations",
+      "reason": "The file contains deployment configuration, operational parameters, monitoring logic, and health check procedures that define how the settlement engine is deployed and operated in production."
+    }
+  ],
+  "cross_references": [
+    "risk_engine.md",
+    "cross_system_invariants.md"
+  ]
+}

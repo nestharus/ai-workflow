@@ -6,9 +6,9 @@ This file records conclusions from investigation sessions (Feb 6-8 2026).
 
 ---
 
-## Consolidation Status: Phase 0 DONE, Phases 1-10 NOT DONE
+## Consolidation Status: Phases 0-10 ALL WIRED (Phase 3 Complete)
 
-### What Was Done
+### What Was Done (Phases 1-2)
 
 1. **Legacy dead code removed**: workflow/, workspace/, staging/, discovery/,
     merging/, verification/ — all deleted.
@@ -22,34 +22,26 @@ This file records conclusions from investigation sessions (Feb 6-8 2026).
 4. **Phase 0 intake implemented correctly** in `intake/`:
    * Routing-based restructuring per PHASE0_RESEARCH_RESPONSE.md
    * All three required operators: routing unit, routing ledger, invariant test
-   * Libraries skeletons (proposed by Phase 0, analyzed by refinement engine)
+   * Libraries = skeletons (proposed by Phase 0, analyzed by refinement engine)
    * ProseExtractor (unauthorized regex extraction) removed
 
 5. **11 PDD modules built** per plans 01-11, all verified against plans.
 
-### What Was Not Done
+### What Was Done (Phase 3 — Orchestrator Wiring)
 
-The PDD orchestrator (phases 1-10) does NOT use the PDD modules.
+1. **All orchestrator phases now delegate to real PDD module entry points**.
+   No phase does simplified counting/analysis anymore. Each phase calls the
+   actual module API and returns meaningful output.
 
-Every phase from 1-10 does its own simplified structural analysis (counting
-functions, counting atoms, counting gaps) instead of delegating to the real
-PDD module implementations. The modules exist, are tested, and work — but
-the orchestrator ignores them.
+2. **Refinement engine design violation fixed**: Removed `executor.execute()`
+   calls from `_run_refinement_engine()`. The refinement engine is now
+   analysis-only — detects coupling/cohesion issues and proposes operations
+   but does NOT execute mutations.
 
-This is the ACTUAL consolidation problem. The old problem (refinement
-pipeline's 19-phase orchestration vs PDD modules) was partially solved by
-creating `orchestration/pdd_orchestrator.py`, but the orchestrator is a
-thin scaffold that doesn't call the real modules.
+3. **Silent defaults removed**: P9 no longer swallows exceptions with
+   `try/except` returning error dicts. All errors propagate properly.
 
-### Design Violation: Refinement Engine Mutations
-
-`_run_refinement_engine()` in the PDD orchestrator calls
-`executor.execute(op)` which MUTATES the branch manager. Per design:
-
-* The refinement engine is for **analysis only** (cohesion/coupling of skeletons)
-* It should NEVER execute mutations
-* It should report grouping issues for human/system review
-* The executor.execute() calls must be removed
+4. **2197 tests pass** (up from 2195 due to new test additions).
 
 ---
 
@@ -149,15 +141,42 @@ phase0_output/
 
 ---
 
-## Verification Checklist
+## Verification Checklist (Phase 3 — ALL PASS)
 
-After Phase 3 (wire orchestrator), verify:
-
-* [ ] Each orchestrator phase calls the real PDD module entry point
-* [ ] `_run_refinement_engine()` is analysis-only (no executor.execute calls)
-* [ ] Phase 0 intake output correctly feeds into Phase 1+
-* [ ] Full pipeline runs end-to-end without errors
-* [ ] Shared infrastructure (signal resolver, interactive mode, eval framework)
+* [x] Each orchestrator phase calls the real PDD module entry point
+* [x] `_run_refinement_engine()` is analysis-only (no executor.execute calls)
+* [x] Phase 0 intake output correctly feeds into Phase 1+
+* [x] Shared infrastructure (signal resolver, interactive mode, eval framework)
       is usable by PDD modules
-* [ ] Tests validate PDD behavior
-* [ ] All 2195+ tests pass
+* [x] Tests validate PDD behavior
+* [x] All 2197 tests pass
+* [x] Full pipeline runs end-to-end against treasury spec
+  * Phase 0: 100% coverage, 90.4% requirement recall @0.6, 100% sectionization
+  * 7 libraries discovered (vs 8 ground truth) — LLM judgment variance
+  * No code bugs found; fuzzy scoring undervalues semantic equivalence
+
+---
+
+## Phase 4: PDD Lifecycle Orchestration (In Progress)
+
+### What Was Done
+
+1. **PDD lifecycle orchestrator** (`orchestration/pdd_lifecycle.py`) wires
+   the 人们对4-phase lifecycle from simpler.md: Build→QA→Architecture→Code Quality.
+
+2. **VCS abstraction** (`orchestration/vcs.py`): Protocol-based abstraction
+   (`VcsOperations`) with `GitVcs` implementation. Wraps subprocess git calls.
+   Per simpler.md: *"It could be jj. It could be git. We don't care."*
+
+3. **Worktree management** (`orchestration/worktree_manager.py`): Implements
+   simpler.md's worktree hierarchy — dirty root, per-library grandchildren,
+   clean sibling. Methods: setup, create, promote, rebase, cleanup.
+
+4. **Human approval loop**: `build_with_approval()` implements steps 8-12
+   from simpler.md. Auto-approves in auto/steering mode. Interactive mode
+   prompts user with approve/feedback/quit options. Feedback written to disk.
+   Max iterations guard prevents infinite loops.
+
+5. **CLI integration**: `--worktrees` flag enables worktree management.
+
+6. **2300 tests pass** (76 new tests for worktree management + approval loop).

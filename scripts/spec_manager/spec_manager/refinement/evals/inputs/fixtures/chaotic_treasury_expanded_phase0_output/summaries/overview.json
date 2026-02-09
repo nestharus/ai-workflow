@@ -1,0 +1,50 @@
+{
+  "file_id": "overview",
+  "summary": "High-level overview of the treasury settlement engine describing a seven-library pipeline (settlement processing, risk engine, reconciliation, event pipeline, regulatory compliance, notification/audit, and transaction validation) that processes settlement instructions through validation, risk checking, netting, and clearing stages with complex interdependencies and references nine detailed architecture documentation files.",
+  "content_types": [
+    "algorithms",
+    "narrative",
+    "invariants"
+  ],
+  "likely_libraries": [
+    {
+      "name": "Settlement Processing",
+      "reason": "Core pipeline for validation, risk checking, netting, and clearing of settlement instructions"
+    },
+    {
+      "name": "Risk Engine",
+      "reason": "Maintains exposure windows and determines margin requirements for netting decisions"
+    },
+    {
+      "name": "Reconciliation Service",
+      "reason": "Detects breaks between internal ledger and counterparty acknowledgments from events"
+    },
+    {
+      "name": "Event Pipeline",
+      "reason": "Carries every state transition as typed events across the organization"
+    },
+    {
+      "name": "Regulatory Compliance",
+      "reason": "Watches for reportable thresholds and hold-period triggers with regulatory holds"
+    },
+    {
+      "name": "Notification and Audit",
+      "reason": "Persists full snapshots within latency budget and routes alerts to teams"
+    },
+    {
+      "name": "Transaction Validation",
+      "reason": "Performs upfront deduplication and schema validation"
+    }
+  ],
+  "cross_references": [
+    "settlement_processing.md",
+    "cross_system_invariants.md",
+    "risk_engine.md",
+    "reconciliation.md",
+    "event_pipeline.md",
+    "regulatory_compliance.md",
+    "notification_audit.md",
+    "transaction_validation.md",
+    "deployment_operations.md"
+  ]
+}

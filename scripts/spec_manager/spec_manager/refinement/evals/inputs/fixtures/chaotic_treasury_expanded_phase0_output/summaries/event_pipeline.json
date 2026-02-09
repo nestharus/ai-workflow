@@ -1,0 +1,23 @@
+{
+  "file_id": "event_pipeline",
+  "summary": "Describes the EventPipeline, a pub/sub architecture for a settlement engine that handles event publishing, topic configuration, ordering guarantees, retry policies, transactional publishing, and operational metrics monitoring.",
+  "content_types": [
+    "algorithms",
+    "shapes",
+    "invariants",
+    "stores"
+  ],
+  "likely_libraries": [
+    {
+      "name": "EventPipeline",
+      "reason": "Core messaging infrastructure with pub/sub topics, partitioning, retry logic, and transactional publishing capabilities"
+    },
+    {
+      "name": "AuditTraceability",
+      "reason": "Correlation ID mechanism for end-to-end trace reconstruction across the entire pipeline"
+    }
+  ],
+  "cross_references": [
+    "cross_system_invariants.md - correlation tracing invariant"
+  ]
+}

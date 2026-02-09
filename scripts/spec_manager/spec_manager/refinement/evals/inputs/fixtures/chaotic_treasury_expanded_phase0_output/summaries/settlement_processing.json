@@ -1,0 +1,20 @@
+{
+  "file_id": "settlement_processing",
+  "summary": "Describes the end-to-end settlement processing pipeline from instruction ingestion through validation, netting, FX conversion, audit notification, and confirmation. Covers the core algorithm for grouping and netting instructions by counterparty and value date, the payload schema for settlement data, and integration points with validation and regulatory compliance modules.",
+  "content_types": [
+    "algorithms",
+    "shapes",
+    "invariants",
+    "narrASFrative"
+  ],
+  "likely_libraries": [
+    {
+      "name": "Settlement Processing Engine",
+      "reason": "The file describes a complete settlement processing capability including validation delegation, netting logic, FX rate application, and audit notification."
+    }
+  ],
+  "cross_references": [
+    "transaction_validation.md (TransactionValidator)",
+    "regulatory_compliance.md (reporting threshold definitions)"
+  ]
+}

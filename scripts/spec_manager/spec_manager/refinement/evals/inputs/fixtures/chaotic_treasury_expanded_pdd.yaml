@@ -1,0 +1,27 @@
+# Manifest for the expanded treasury spec in PDD format (Python skeletons).
+# Same spec as chaotic_treasury_expanded but represented as Python code
+# with spec comments (gaps) instead of prose markdown.
+# Used for QA of PDD phases 1-10 which require Python source files.
+
+spec_id: chaotic_treasury_expanded_pdd
+title: Treasury Settlement Engine (PDD Python Skeletons)
+description: |
+  Python skeleton representation of the chaotic treasury expanded spec.
+  Each library is a Python module with classes/functions. Requirements
+  are embedded as spec comments (# ...) inside function bodies, detected
+  by the edit-in-place engine. 8 files, 38 functions, 60 spec comments
+  (52 ground-truth requirements + 8 orchestrator process comments).
+
+complexity_score: 12
+tags:
+  - chaotic
+  - python
+  - treasury
+  - multi-library
+  - pdd
+  - code-as-spec
+
+sections_dir: chaotic_treasury_expanded_pdd
+ground_truth_path: chaotic_treasury_expanded_ground_truth.yaml
+
+rules: []
