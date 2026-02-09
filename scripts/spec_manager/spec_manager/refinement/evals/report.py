@@ -123,6 +123,7 @@ class EvalReport:
     aggregate_metrics: dict[str, Any] = field(default_factory=dict)
     common_bottlenecks: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)
 
     def add_result(self, result: EvalResult) -> None:
         """Add a spec result to the report.
@@ -235,6 +236,7 @@ class EvalReport:
             "aggregate_metrics": self.aggregate_metrics,
             "common_bottlenecks": self.common_bottlenecks,
             "recommendations": self.recommendations,
+            "config": self.config,
         }
 
     @classmethod
@@ -249,6 +251,7 @@ class EvalReport:
             aggregate_metrics=data.get("aggregate_metrics", {}),
             common_bottlenecks=data.get("common_bottlenecks", []),
             recommendations=data.get("recommendations", []),
+            config=data.get("config", {}),
         )
         for result_data in data.get("results", []):
             report.results.append(EvalResult.from_dict(result_data))
@@ -277,8 +280,14 @@ def generate_markdown_report(report: EvalReport) -> str:
         f"- **Failed:** {report.specs_failed}",
         f"- **Pass Rate:** "
         f"{_format_percentage(report.specs_passed / max(1, report.specs_evaluated))}",
-        "",
     ]
+
+    if report.config.get("use_judge"):
+        lines.append("- **Scoring Method:** LLM Judge (semantic matching)")
+    else:
+        lines.append("- **Scoring Method:** Fuzzy string matching")
+
+    lines.append("")
 
     # Aggregate metrics
     if report.aggregate_metrics:

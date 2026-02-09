@@ -1,0 +1,15 @@
+Analyze the following source code and return the JSON structure
+described in your system prompt.
+
+File: /tmp/pytest-of-nes/pytest-446/test_single_file_text0/module.py
+
+```
+# validate payment
+def process():
+    # TODO: apply discount
+    return 1
+
+def stub():
+    pass
+
+```

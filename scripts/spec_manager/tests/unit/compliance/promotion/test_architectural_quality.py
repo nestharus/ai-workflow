@@ -118,8 +118,9 @@ class TestCheckNoInlinedAtomLogic:
         assert len(result.findings) >= 1
         assert result.findings[0]["detection_method"] == "exact_match"
 
-    def test_ast_similarity_detected(self, tmp_path: Path) -> None:
-        # Same structure but different variable names
+    def test_text_similarity_detected(self, tmp_path: Path) -> None:
+        # Same structure with minor variable name differences —
+        # text similarity detects near-duplicate logic.
         algo_file = _write_py(
             tmp_path / "algo",
             "compute.py",
@@ -134,10 +135,10 @@ class TestCheckNoInlinedAtomLogic:
             tmp_path / "arch",
             "service.py",
             """\
-            def process(data):
-                temp = data * 2
-                final = temp + 1
-                return final
+            def process(value):
+                result = value * 2
+                output = result + 2
+                return output
         """,
         )
         registry = _make_registry(
@@ -157,12 +158,12 @@ class TestCheckNoInlinedAtomLogic:
         )
         gate_spec = GateSpec(
             gate_id=GateId.NO_INLINED_ATOM_LOGIC,
-            params={"similarity_threshold": 0.7},
+            params={"similarity_threshold": 0.8},
         )
         result = check_no_inlined_atom_logic(registry, [arch_file], [algo_file], gate_spec)
-        # AST similarity should detect this
+        # Text similarity should detect this near-duplicate
         assert result.passed is False
-        assert any(f["detection_method"] == "ast_similarity" for f in result.findings)
+        assert any(f["detection_method"] == "text_similarity" for f in result.findings)
 
     def test_different_logic_not_flagged(self, tmp_path: Path) -> None:
         algo_file = _write_py(

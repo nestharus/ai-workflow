@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.gap import Gap, GapEvidence, GapType
 from spec_manager.core.gaps import Severity
 from spec_manager.planning.models import (
@@ -253,8 +254,8 @@ def _generate_gap_id(prefix: str, file_or_func: str, line_no: int, text: str) ->
 def _is_stub_from_info(func: FunctionInfo) -> bool:
     """Check if a FunctionInfo represents a stub function.
 
-    A stub has a body consisting only of pass, Ellipsis, or raise
-    NotImplementedError (possibly preceded by a docstring).
+    Uses language-agnostic LLM-based analysis to determine if a function
+    is a stub (has an incomplete implementation).
 
     Args:
         func: FunctionInfo to check.
@@ -262,35 +263,18 @@ def _is_stub_from_info(func: FunctionInfo) -> bool:
     Returns:
         True if the function is a stub.
     """
-    # Filter out blank lines and comments from body
-    effective_lines: list[str] = []
-    for line in func.body_lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            continue
-        if stripped.startswith("def ") or stripped.startswith("async def "):
-            continue
-        if stripped.startswith("@"):
-            continue
-        # Skip docstrings (triple-quoted strings)
-        if stripped.startswith('"""') or stripped.startswith("'''"):
-            continue
-        if stripped.startswith('"') or stripped.startswith("'"):
-            continue
-        effective_lines.append(stripped)
+    if not func.body_lines:
+        return False
 
-    if not effective_lines:
-        return True
+    # Reconstruct source from body_lines and analyze
+    source = "\n".join(func.body_lines)
+    analysis = analyze_source(source, func.file_path)
 
-    if len(effective_lines) == 1:
-        line = effective_lines[0]
-        if line == "pass":
-            return True
-        if line == "...":
-            return True
-        if line.startswith("raise NotImplementedError"):
-            return True
+    # The reconstructed source should contain exactly this function;
+    # match by name, take first match
+    for raw_func in analysis.functions:
+        if raw_func.name == func.name:
+            return raw_func.is_stub
 
+    # If we couldn't find the function in the analysis, assume it's not a stub
     return False

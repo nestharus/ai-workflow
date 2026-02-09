@@ -1,0 +1,9 @@
+Analyze the following source code and return the JSON structure
+described in your system prompt.
+
+File: spec.md
+
+```
+The system must ensure correctness. All components shall work together.
+        Required functionality includes error handling. The algorithm should converge.
+```

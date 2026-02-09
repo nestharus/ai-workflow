@@ -1,16 +1,27 @@
-"""Call graph extractor using AST-based analysis of Python source files.
+"""Call graph extractor using language-agnostic source analysis.
 
-Walks the AST of each file, identifies function/method definitions,
-and records call relationships between them.
+Uses ``analyze_source`` from :mod:`spec_manager.core.code_analysis` to
+discover function/method definitions, then applies regex-based call-site
+detection on each function body to record call relationships.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
+
 from ..graph import AdjacencyGraph, EdgeSignal, NodeInfo, SignalType
+
+# ---------------------------------------------------------------------------
+# Regex patterns for call-site detection
+# ---------------------------------------------------------------------------
+
+# Matches function/method calls: word(...) or word.word(...)
+# Captures the full dotted name before the opening parenthesis.
+_CALL_RE = re.compile(r"\b(\w+(?:\.\w+)*)\s*\(")
 
 
 @dataclass
@@ -28,13 +39,13 @@ def extract_call_graph(
     source_paths: list[Path],
     root_dir: Path | None = None,
 ) -> AdjacencyGraph:
-    """Build a call graph from Python source files.
+    """Build a call graph from source files.
 
-    Walks AST of each file, identifies function/method definitions,
-    and records call relationships between them.
+    Analyzes each file to discover functions, then uses regex to detect
+    call relationships between them.
 
     Args:
-        source_paths: Python files to analyze
+        source_paths: Source files to analyze
         root_dir: Project root for computing module-qualified names
 
     Returns:
@@ -52,12 +63,19 @@ def extract_call_graph(
             continue
         try:
             source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
-        except (SyntaxError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
             continue
 
-        functions = _extract_functions(tree, path, root_dir)
-        calls = _extract_calls(tree, path, root_dir)
+        analysis = analyze_source(source, filepath=str(path))
+
+        if not analysis.functions:
+            continue
+
+        source_lines = source.splitlines()
+        module = _module_prefix(path, root_dir)
+
+        functions = _extract_functions(analysis.functions, path, module)
+        calls = _extract_calls(analysis.functions, source_lines, path, module)
         all_functions.extend(functions)
         all_calls.extend(calls)
 
@@ -100,114 +118,169 @@ def _module_prefix(file_path: Path, root_dir: Path | None) -> str:
     return file_path.stem
 
 
-def _extract_functions(tree: ast.Module, file_path: Path, root_dir: Path | None) -> list[NodeInfo]:
-    """Extract all function/method definitions from an AST."""
-    functions: list[NodeInfo] = []
-    module = _module_prefix(file_path, root_dir)
+def _qualified_node_id(func: RawFunctionInfo, module: str) -> str:
+    """Build a fully-qualified node ID from a RawFunctionInfo.
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Determine qualified name
-            # Check if this function is inside a class
-            qualified_name = _get_qualified_name(node, tree, module)
-            functions.append(
-                NodeInfo(
-                    node_id=qualified_name,
-                    node_type="async_function"
-                    if isinstance(node, ast.AsyncFunctionDef)
-                    else "function",
-                    file_path=str(file_path),
-                    line_number=node.lineno,
-                    metadata={"module": module},
-                )
+    The ``qualified_name`` from the analysis already contains the
+    class/nesting path (e.g. ``ClassName.method`` or ``outer.inner``).
+    We prepend the module prefix to get something like
+    ``module.ClassName.method``.
+    """
+    qname = func.qualified_name or func.name
+    return f"{module}.{qname}"
+
+
+def _extract_functions(
+    raw_functions: list[RawFunctionInfo],
+    file_path: Path,
+    module: str,
+) -> list[NodeInfo]:
+    """Convert RawFunctionInfo list into NodeInfo list for the graph."""
+    functions: list[NodeInfo] = []
+
+    for func in raw_functions:
+        qualified_name = _qualified_node_id(func, module)
+        functions.append(
+            NodeInfo(
+                node_id=qualified_name,
+                node_type="async_function" if func.is_async else "function",
+                file_path=str(file_path),
+                line_number=func.start_line,
+                metadata={"module": module},
             )
+        )
 
     return functions
 
 
-def _get_qualified_name(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-    tree: ast.Module,
+def _extract_calls(
+    raw_functions: list[RawFunctionInfo],
+    source_lines: list[str],
+    file_path: Path,
     module: str,
-) -> str:
-    """Get a qualified name for a function node by walking the AST tree."""
-    # Build a parent map
-    parent_map: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent_map[id(child)] = node
-
-    parts: list[str] = [func_node.name]
-    current: ast.AST = func_node
-    while id(current) in parent_map:
-        parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            parts.insert(0, parent.name)
-        current = parent
-
-    return f"{module}.{'.'.join(parts)}"
-
-
-def _extract_calls(tree: ast.Module, file_path: Path, root_dir: Path | None) -> list[CallSite]:
-    """Extract all function call sites from an AST."""
+) -> list[CallSite]:
+    """Extract call sites from each function body using regex."""
     calls: list[CallSite] = []
-    module = _module_prefix(file_path, root_dir)
 
-    # Build a map: each Call node -> enclosing function name
-    # Walk through the tree and track the current function scope
-    _collect_calls_from_node(tree, tree, module, str(file_path), calls)
+    for func in raw_functions:
+        caller = _qualified_node_id(func, module)
+        # Extract the body text from source lines
+        # body_start_line is 1-indexed; body_line_count is the number of lines
+        body_start = func.body_start_line
+        body_count = func.body_line_count
+
+        if body_start <= 0 or body_count <= 0:
+            # Fallback: use the full function range (start_line to end_line)
+            body_start = func.start_line
+            body_count = max(func.end_line - func.start_line + 1, 0)
+
+        if body_count <= 0:
+            continue
+
+        # Convert to 0-indexed for slicing
+        start_idx = body_start - 1
+        end_idx = start_idx + body_count
+        body_lines = source_lines[start_idx:end_idx]
+
+        for line_offset, line_text in enumerate(body_lines):
+            line_number = body_start + line_offset
+            # Skip comment-only lines and def/class lines
+            stripped = line_text.strip()
+            if (
+                stripped.startswith("#")
+                or stripped.startswith("def ")
+                or stripped.startswith("async def ")
+                or stripped.startswith("class ")
+            ):
+                continue
+
+            for match in _CALL_RE.finditer(line_text):
+                callee_name = match.group(1)
+                # Skip language keywords and builtins that look like calls
+                if callee_name in _SKIP_NAMES:
+                    continue
+                is_method = "." in callee_name
+                calls.append(
+                    CallSite(
+                        caller=caller,
+                        callee=callee_name,
+                        file_path=str(file_path),
+                        line_number=line_number,
+                        is_method_call=is_method,
+                    )
+                )
 
     return calls
 
 
-def _collect_calls_from_node(
-    node: ast.AST,
-    tree: ast.Module,
-    module: str,
-    file_path: str,
-    calls: list[CallSite],
-    current_func: str | None = None,
-) -> None:
-    """Recursively collect call sites, tracking the enclosing function."""
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        func_name = _get_qualified_name(node, tree, module)
-        for child in ast.iter_child_nodes(node):
-            _collect_calls_from_node(child, tree, module, file_path, calls, func_name)
-        return
-
-    if isinstance(node, ast.Call) and current_func is not None:
-        callee_name, is_method = _extract_callee_name(node)
-        if callee_name is not None:
-            calls.append(
-                CallSite(
-                    caller=current_func,
-                    callee=callee_name,
-                    file_path=file_path,
-                    line_number=node.lineno,
-                    is_method_call=is_method,
-                )
-            )
-
-    for child in ast.iter_child_nodes(node):
-        _collect_calls_from_node(child, tree, module, file_path, calls, current_func)
-
-
-def _extract_callee_name(call_node: ast.Call) -> tuple[str | None, bool]:
-    """Extract the callee name from a Call node.
-
-    Returns (name, is_method_call).
-    """
-    func = call_node.func
-    if isinstance(func, ast.Name):
-        return func.id, False
-    elif isinstance(func, ast.Attribute):
-        # e.g., self.method(), obj.function(), module.func()
-        attr_name = func.attr
-        if isinstance(func.value, ast.Name):
-            return f"{func.value.id}.{attr_name}", True
-        # Deeper chains like a.b.c() - just use the final attribute
-        return attr_name, True
-    return None, False
+# Names to skip in regex call detection (keywords, builtins, control flow)
+_SKIP_NAMES: frozenset[str] = frozenset(
+    {
+        "if",
+        "elif",
+        "while",
+        "for",
+        "with",
+        "assert",
+        "raise",
+        "except",
+        "print",
+        "type",
+        "isinstance",
+        "issubclass",
+        "len",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "sorted",
+        "reversed",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "bytes",
+        "bytearray",
+        "super",
+        "property",
+        "staticmethod",
+        "classmethod",
+        "hasattr",
+        "getattr",
+        "setattr",
+        "delattr",
+        "open",
+        "input",
+        "round",
+        "abs",
+        "min",
+        "max",
+        "sum",
+        "any",
+        "all",
+        "next",
+        "iter",
+        "repr",
+        "hash",
+        "id",
+        "vars",
+        "dir",
+        "help",
+        "hex",
+        "oct",
+        "bin",
+        "chr",
+        "ord",
+        "callable",
+        "format",
+        "object",
+    }
+)
 
 
 def _resolve_callee(call_site: CallSite, known_functions: set[str]) -> str | None:

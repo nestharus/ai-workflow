@@ -117,20 +117,22 @@ class TestBuildCallGraph:
 
         graph = build_call_graph([cf_a, cf_b])
 
+        # Nodes come from function names (still populated)
         assert len(graph.nodes) >= 5  # process, validate, transform, save, load, notify
-        assert len(graph.edges) > 0
+        # Edges are empty because calls=[] (adjacency being deprecated)
+        assert len(graph.edges) == 0
 
-    def test_resolves_call_relationships(self) -> None:
+    def test_nodes_populated_without_calls(self) -> None:
         cf_a = parse_source(MODULE_A, "/test/module_a.py")
         cf_b = parse_source(MODULE_B, "/test/module_b.py")
 
         graph = build_call_graph([cf_a, cf_b])
 
-        # process calls validate, transform, save
-        # Qualified name is test.module_a.process (parent_dir.stem)
-        process_callees = graph.callees("test.module_a.process")
-        callee_names = {c.split(".")[-1] for c in process_callees}
-        assert "validate" in callee_names
+        # Verify function nodes are still discovered
+        node_names = {n.split(".")[-1] for n in graph.nodes}
+        assert "process" in node_names
+        assert "validate" in node_names
+        assert "save" in node_names
 
     def test_single_file(self) -> None:
         cf = parse_source(MODULE_A, "/test/module.py")
@@ -184,20 +186,41 @@ class TestClassifyStoreTouch:
 class TestFindStoreTouches:
     """Tests for find_store_touches function."""
 
-    def test_detects_db_touches(self) -> None:
+    def test_no_touches_without_calls(self) -> None:
+        # calls=[] now (adjacency being deprecated), so no store touches detected
         cf_b = parse_source(MODULE_B, "/test/module_b.py")
         touches = find_store_touches([cf_b])
+        assert len(touches) == 0
 
+    def test_detects_touches_from_manual_calls(self) -> None:
+        # Verify store detection still works when calls are provided directly
+        from spec_manager.planning.models import CodeFile, FunctionInfo
+
+        func = FunctionInfo(
+            name="save",
+            file_path="/test/module_b.py",
+            start_line=1,
+            end_line=3,
+            indent_level=0,
+            parameters=[],
+            return_annotation=None,
+            docstring=None,
+            body_lines=2,
+            calls=["write", "commit"],
+            comments=[],
+            class_name=None,
+            decorators=[],
+        )
+        cf = CodeFile(
+            file_path="/test/module_b.py",
+            functions=[func],
+            top_level_comments=[],
+            imports=[],
+            classes=[],
+        )
+        touches = find_store_touches([cf])
         store_names = {t.store_name for t in touches}
-        assert "database" in store_names or "filesystem" in store_names
-
-    def test_detects_event_touches(self) -> None:
-        cf_b = parse_source(MODULE_B, "/test/module_b.py")
-        touches = find_store_touches([cf_b])
-
-        func_names = {t.function_name for t in touches}
-        # notify calls emit, which is event_bus
-        assert any("notify" in f for f in func_names)
+        assert "filesystem" in store_names or "database" in store_names
 
 
 class TestDiscoverAdjacentDetails:

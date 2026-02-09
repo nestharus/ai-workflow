@@ -116,6 +116,78 @@ This is how Phase 0's routing algorithm was designed — a research prompt
 produced the three required operators (routing unit, routing ledger,
 invariant test) that no amount of guessing would have found.
 
+#### When introducing anything new, validate against design principles
+
+Every new data structure, module, parsing approach, or architectural
+decision MUST be validated against the established design principles before
+implementation. The principles are not just rules — they are the philosophy
+behind how this system operates. Violating one principle usually means
+violating several, because they reinforce each other.
+
+**Core design principles** (derived from `simpler.md` and `WORKFLOW_ANALYSIS.md`):
+
+1. **LLM for pattern recognition** — no hardcoding, no regex, no
+   language-specific parsing. Patterns are recognized contextually by LLMs,
+   not by scripts. (simpler.md lines 6-12)
+
+2. **Abstraction over implementation** — any solution the system didn't
+   specify needs an abstraction so it can be swapped. (simpler.md lines
+   130-131)
+
+3. **Routing over extraction** — Phase 0 routes, it doesn't extract.
+   Summaries are routing hints, not final output. The system avoids
+   extraction wherever possible. If you find yourself extracting, you are
+   likely solving a problem that doesn't need to exist.
+
+4. **Code IS the spec** — no separate spec layer distinct from code. The
+   PDD skeletons are simultaneously the spec and the code.
+   (WORKFLOW_ANALYSIS.md lines 5-9)
+
+5. **Promotion, not direct editing** — upper layers emerge from promotion.
+   You never edit architecture or clean code directly. Changes flow through
+   the promotion system. (WORKFLOW_ANALYSIS.md lines 293-306)
+
+6. **The system always knows what to edit** — changes originate from
+   processes (promotion, demotion, refinement, gate failure, review) that
+   already identify the target. (WORKFLOW_ANALYSIS.md line 306)
+
+7. **Pins as the bridge** — pin-functions bridge layers. The pin projection
+   type describes assembly. Promotion IS routing at upper layers.
+
+8. **Graph operations, not code operations** — the system operates on a
+   graph of relationships between pins pointing to text locations. It does
+   NOT parse source code syntax. Downstream modules consume graph data.
+
+9. **Dynamic structures over rigid types** — language-agnostic means you
+   cannot assume any language construct exists (classes, imports, etc.).
+   Use dicts and dynamic structures when the structure varies by language.
+   Only the LLM understands what the code contains.
+
+10. **LLM does work during its actual task** — pinning happens while the
+    LLM is making promotion decisions. There is no separate mechanical
+    extraction step. If the LLM already understands the code while doing
+    its job, a separate parsing step is redundant.
+
+11. **Minimal planning, constant iteration** — plan as little as you can
+    get away with, constant baby steps. Each phase produces something messy,
+    the next phase cleans it up. (simpler.md lines 158-162)
+
+12. **Block on ambiguity** — don't guess, don't assume. Surface the
+    question. Human provides CONSTRAINTS, not solutions.
+    (WORKFLOW_ANALYSIS.md line 190)
+
+**How to validate**: Before implementing, ask yourself for each principle:
+"Does my introduction violate this?" If yes for ANY principle, either
+redesign to comply or explicitly ask the user for permission to change the
+philosophy, providing a clear reason why the change is necessary. Do NOT
+silently violate principles — that causes rework.
+
+**Example violation**: Introducing AST parsing violates principles 1
+(hardcoded language), 2 (no abstraction), 3 (extraction instead of
+routing), 8 (code operations instead of graph operations), 9 (rigid types),
+10 (redundant mechanical step). One bad introduction can violate many
+principles simultaneously.
+
 ---
 
 ## Phase 3: Wire PDD Orchestrator to Real Modules (COMPLETE)

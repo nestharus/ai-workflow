@@ -1,0 +1,10 @@
+Analyze the following source code and return the JSON structure
+described in your system prompt.
+
+File: /tmp/pytest-of-nes/pytest-447/test_gap_queue_compatible_with0/compat.py
+
+```
+# gap
+def f(): pass
+
+```

@@ -2,55 +2,81 @@
 
 from __future__ import annotations
 
-import ast
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.code_analysis import RawFunctionInfo, SourceAnalysis, analyze_source
 from spec_manager.schemas.lineage import DataFlowSummary
 
 logger = logging.getLogger(__name__)
 
+_STORE_KEYWORDS = {"store", "cache", "db", "database", "repository", "repo", "registry"}
+_STORE_ACCESS_RE = re.compile(r"\b(\w+)\.(\w+)")
 
-def _find_function_node(
-    tree: ast.Module,
+
+def _find_function(
+    analysis: SourceAnalysis,
     func_name: str,
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Locate the AST node for a top-level or class-level function by name."""
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == func_name:
-                return node
+) -> RawFunctionInfo | None:
+    """Locate the RawFunctionInfo for a function by name."""
+    for func in analysis.functions:
+        if func.name == func_name:
+            return func
     return None
 
 
 def _extract_params(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    func: RawFunctionInfo,
+    source_lines: list[str],
 ) -> list[str]:
-    """Extract parameter names with optional type annotations."""
+    """Extract parameter names with optional type annotations from source text.
+
+    Uses the function's start_line to locate the ``def`` signature in source,
+    then parses parameter names and annotations from the raw text.
+    """
+    # Build the full signature text by joining lines from def until we find
+    # the closing ')'.  Handles multi-line signatures.
+    sig_lines: list[str] = []
+    for i in range(func.start_line - 1, min(func.end_line, len(source_lines))):
+        sig_lines.append(source_lines[i])
+        if ")" in source_lines[i]:
+            break
+
+    sig_text = " ".join(sig_lines)
+
+    # Extract everything between the first '(' and the matching ')'.
+    paren_match = re.search(r"\(([^)]*)\)", sig_text)
+    if not paren_match:
+        return list(func.args)
+
+    params_text = paren_match.group(1)
+
     params: list[str] = []
-    for arg in func_node.args.args:
-        if arg.arg == "self":
+    for part in params_text.split(","):
+        part = part.strip()
+        if not part or part == "self" or part == "cls":
             continue
-        if arg.annotation:
-            annotation = ast.unparse(arg.annotation)
-            params.append(f"{arg.arg}: {annotation}")
-        else:
-            params.append(arg.arg)
+        # Remove default value (everything after '=')
+        if "=" in part:
+            part = part[: part.index("=")].rstrip()
+        # Keep "name: annotation" or just "name"
+        params.append(part)
+
     return params
 
 
-def _extract_return_type(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> list[str]:
+def _extract_return_type(func: RawFunctionInfo) -> list[str]:
     """Extract return type annotation if present."""
-    if func_node.returns:
-        return [ast.unparse(func_node.returns)]
+    if func.return_annotation:
+        return [func.return_annotation]
     return []
 
 
 def _extract_store_access(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    func: RawFunctionInfo,
+    source_lines: list[str],
     store_definitions: dict[str, list[str]] | None,
     atom_name: str,
 ) -> list[str]:
@@ -60,7 +86,7 @@ def _extract_store_access(
     1. If *store_definitions* maps store_id -> [atom_ids], look up which
        stores list this atom.
     2. Heuristic: scan for attribute access patterns that resemble store
-       operations (e.g., `self.store`, `db.get`, `cache.set`).
+       operations (e.g., ``self.store``, ``db.get``, ``cache.set``).
     """
     stores: set[str] = set()
 
@@ -70,12 +96,16 @@ def _extract_store_access(
             if atom_name in atom_ids:
                 stores.add(store_id)
 
-    # Strategy 2: heuristic detection from attribute calls.
-    store_keywords = {"store", "cache", "db", "database", "repository", "repo", "registry"}
-    for node in ast.walk(func_node):
-        if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id.lower() in store_keywords:
-                stores.add(f"{node.value.id}.{node.attr}")
+    # Strategy 2: heuristic detection from attribute access in function body.
+    body_start = func.start_line - 1
+    body_end = min(func.end_line, len(source_lines))
+    for i in range(body_start, body_end):
+        line = source_lines[i]
+        for match in _STORE_ACCESS_RE.finditer(line):
+            obj_name = match.group(1)
+            attr_name = match.group(2)
+            if obj_name.lower() in _STORE_KEYWORDS:
+                stores.add(f"{obj_name}.{attr_name}")
 
     return sorted(stores)
 
@@ -106,20 +136,17 @@ def extract_data_flow(
         logger.warning("Cannot read %s: %s", file_path, exc)
         return DataFlowSummary(atom_id=atom_name)
 
-    try:
-        tree = ast.parse(source, filename=str(file_path))
-    except SyntaxError as exc:
-        logger.warning("Syntax error in %s: %s", file_path, exc)
-        return DataFlowSummary(atom_id=atom_name)
+    analysis = analyze_source(source, filepath=str(file_path))
+    source_lines = source.splitlines()
 
-    func_node = _find_function_node(tree, atom_name)
-    if func_node is None:
+    func = _find_function(analysis, atom_name)
+    if func is None:
         logger.debug("Function %s not found in %s", atom_name, file_path)
         return DataFlowSummary(atom_id=atom_name)
 
-    signals_in = _extract_params(func_node)
-    signals_out = _extract_return_type(func_node)
-    stores_touched = _extract_store_access(func_node, store_definitions, atom_name)
+    signals_in = _extract_params(func, source_lines)
+    signals_out = _extract_return_type(func)
+    stores_touched = _extract_store_access(func, source_lines, store_definitions, atom_name)
 
     return DataFlowSummary(
         atom_id=atom_name,

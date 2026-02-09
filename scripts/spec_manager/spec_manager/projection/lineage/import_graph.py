@@ -1,22 +1,26 @@
-"""Import graph builder using Python AST static analysis.
+"""Import graph builder using regex-based static analysis.
 
-Builds a graph of Python import relationships from source files,
+Builds a graph of import relationships from source files,
 enabling queries like "who imports function X?" for pin-function tracing.
 """
 
 from __future__ import annotations
 
-import ast
 import fnmatch
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# Language-agnostic import patterns (no AST dependency)
+_FROM_IMPORT_RE = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)", re.MULTILINE)
+_IMPORT_RE = re.compile(r"^\s*import\s+(.+)", re.MULTILINE)
+
 
 @dataclass
 class ImportEdge:
-    """A raw Python import relationship from AST analysis.
+    """A raw import relationship from static analysis.
 
     Not to be confused with:
     - ``schemas.pin_functions.ImportEdge``: a higher-level pin-function-to-
@@ -69,9 +73,9 @@ class ImportEdge:
 
 
 class ImportGraph:
-    """Graph of Python import relationships.
+    """Graph of import relationships.
 
-    Built from static analysis of ast.Import and ast.ImportFrom nodes.
+    Built from regex-based static analysis of import statements.
     Enables "who imports function X?" queries for pin-function tracing.
     """
 
@@ -148,53 +152,97 @@ class ImportGraph:
         self._by_importer_file[edge.importer_file].append(edge)
 
     def _analyze_file(self, file_path: Path) -> list[ImportEdge]:
-        """Analyze a Python file for import statements.
+        """Analyze a source file for import statements.
 
-        Uses ast.parse to extract Import and ImportFrom nodes.
+        Uses regex patterns to extract import relationships without
+        requiring language-specific AST parsing.
 
         Args:
-            file_path: Path to Python file.
+            file_path: Path to source file.
 
         Returns:
             List of ImportEdge entries found in the file.
         """
         try:
             source = file_path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(file_path))
-        except (SyntaxError, UnicodeDecodeError):
+        except UnicodeDecodeError:
             return []
 
         edges: list[ImportEdge] = []
         file_str = str(file_path)
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                for alias in node.names:
-                    name = alias.asname if alias.asname else alias.name
-                    edges.append(
-                        ImportEdge(
-                            importer_file=file_str,
-                            importer_location=f"{file_str}:module-level",
-                            imported_name=name,
-                            imported_from_module=module,
-                            imported_from_file="",
-                            line_no=node.lineno,
-                        )
+        # Build a line-number lookup: map character offset -> line number
+        line_starts: list[int] = [0]
+        for i, ch in enumerate(source):
+            if ch == "\n":
+                line_starts.append(i + 1)
+
+        def _offset_to_lineno(offset: int) -> int:
+            """Convert a character offset to a 1-based line number."""
+            lo, hi = 0, len(line_starts) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if line_starts[mid] <= offset:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return lo + 1  # 1-based
+
+        # --- from X import Y, Z as A ---
+        for m in _FROM_IMPORT_RE.finditer(source):
+            module = m.group(1)
+            names_str = m.group(2).strip().rstrip("\\")
+            lineno = _offset_to_lineno(m.start())
+            for part in names_str.split(","):
+                part = part.strip()
+                if not part or part.startswith("#") or part == "(":
+                    continue
+                # Remove trailing parentheses/comments
+                part = part.split("#")[0].strip().rstrip(")")
+                if not part:
+                    continue
+                # Handle 'name as alias'
+                tokens = part.split()
+                name = tokens[2] if len(tokens) >= 3 and tokens[1] == "as" else tokens[0]
+                edges.append(
+                    ImportEdge(
+                        importer_file=file_str,
+                        importer_location=f"{file_str}:module-level",
+                        imported_name=name,
+                        imported_from_module=module,
+                        imported_from_file="",
+                        line_no=lineno,
                     )
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    name = alias.asname if alias.asname else alias.name
-                    edges.append(
-                        ImportEdge(
-                            importer_file=file_str,
-                            importer_location=f"{file_str}:module-level",
-                            imported_name=name,
-                            imported_from_module=alias.name,
-                            imported_from_file="",
-                            line_no=node.lineno,
-                        )
+                )
+
+        # --- import X, Y as Z ---
+        for m in _IMPORT_RE.finditer(source):
+            names_str = m.group(1).strip()
+            lineno = _offset_to_lineno(m.start())
+            for part in names_str.split(","):
+                part = part.strip()
+                if not part or part.startswith("#"):
+                    continue
+                part = part.split("#")[0].strip()
+                if not part:
+                    continue
+                tokens = part.split()
+                if len(tokens) >= 3 and tokens[1] == "as":
+                    alias = tokens[2]
+                    original = tokens[0]
+                else:
+                    alias = tokens[0]
+                    original = tokens[0]
+                edges.append(
+                    ImportEdge(
+                        importer_file=file_str,
+                        importer_location=f"{file_str}:module-level",
+                        imported_name=alias,
+                        imported_from_module=original,
+                        imported_from_file="",
+                        line_no=lineno,
                     )
+                )
 
         return edges
 

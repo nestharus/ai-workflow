@@ -6,14 +6,13 @@ Detects gaps in algorithmic code mechanically by scanning for:
 - Runtime error raises used as placeholders
 
 Delegates comment scanning and stub detection to the canonical modules
-in ``compliance.detection``.  Runtime error detection is kept in-place
-(the canonical ``runtime_detector`` probes at runtime via subprocess,
-which is a different approach).
+in ``compliance.detection`` (both now use LLM-based code_analysis).
+Runtime error detection uses text-based pattern matching.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -133,14 +132,18 @@ class GapDetector:
             return []
         return [_stub_to_gap_item(sf) for sf in canonical_stubs]
 
+    # Pattern matches "raise RuntimeError(" at any indentation level
+    _RUNTIME_ERROR_RE = re.compile(r"^\s*raise\s+RuntimeError\s*\(", re.MULTILINE)
+
     def detect_runtime_errors(self, filepath: Path) -> list[GapItem]:
         """Find raise RuntimeError used as placeholders.
 
-        Kept in-place -- the canonical ``runtime_detector`` probes at
+        Uses text-based pattern matching (language-agnostic for Python-like
+        raise syntax).  The canonical ``runtime_detector`` probes at
         runtime via subprocess, which is a different approach.
 
         Args:
-            filepath: Path to the Python source file.
+            filepath: Path to the source file.
 
         Returns:
             List of GapItems for each runtime error placeholder found.
@@ -151,26 +154,16 @@ class GapDetector:
         except (OSError, UnicodeDecodeError):
             return gaps
 
-        try:
-            tree = ast.parse(source, filename=str(filepath))
-        except SyntaxError:
-            return gaps
-
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Raise)
-                and isinstance(node.exc, ast.Call)
-                and isinstance(node.exc.func, ast.Name)
-                and node.exc.func.id == "RuntimeError"
-            ):
-                gaps.append(
-                    GapItem(
-                        file=str(filepath),
-                        line=node.lineno,
-                        text="RuntimeError placeholder",
-                        gap_type="runtime_error",
-                    )
+        for match in self._RUNTIME_ERROR_RE.finditer(source):
+            line_no = source[: match.start()].count("\n") + 1
+            gaps.append(
+                GapItem(
+                    file=str(filepath),
+                    line=line_no,
+                    text="RuntimeError placeholder",
+                    gap_type="runtime_error",
                 )
+            )
 
         return gaps
 

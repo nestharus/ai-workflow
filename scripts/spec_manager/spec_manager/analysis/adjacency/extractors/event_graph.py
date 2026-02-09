@@ -1,14 +1,18 @@
 """Event graph extractor for detecting publish/subscribe coupling patterns.
 
-Detects event publish and subscribe endpoints in Python source code
-via AST analysis of method calls, decorators, and class inheritance.
+Detects event publish and subscribe endpoints in source code
+via regex analysis of method calls, decorators, and class inheritance.
+Language-agnostic: uses analyze_source for structural info and regex for
+call-site detection.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from spec_manager.core.code_analysis import RawFunctionInfo, SourceAnalysis, analyze_source
 
 from ..graph import AdjacencyGraph, EdgeSignal, NodeInfo, SignalType
 
@@ -41,6 +45,26 @@ DEFAULT_DECORATOR_PATTERNS: list[str] = [
     "handles",
 ]
 
+# Regex to match a method/function call: captures `obj.method(` or `func(`
+# Group 1 = full call name (e.g. "self.bus.publish" or "emit")
+_CALL_RE = re.compile(r"(?<![.\w])(\w+(?:\.\w+)*)\s*\(")
+
+# Regex to extract the first string argument from a call:
+#   name(  "topic"  or  name(  'topic'
+_TOPIC_RE = re.compile(
+    r"(?<![.\w])(\w+(?:\.\w+)*)\s*\(\s*"
+    r"""(?:["']([^"']+)["']|(\w+))"""
+)
+
+# Regex to detect decorator lines with optional call syntax:
+#   @event_handler("topic")  or  @subscribe  or  @bus.on("topic")
+_DECORATOR_RE = re.compile(
+    r"@(\w+(?:\.\w+)*)"
+    r"(?:\s*\(\s*"
+    r"""(?:["']([^"']+)["']|(\w+))"""
+    r"\s*\))?"
+)
+
 
 @dataclass
 class EventEndpoint:
@@ -60,13 +84,13 @@ def extract_event_graph(
     subscribe_patterns: list[str] | None = None,
     decorator_patterns: list[str] | None = None,
 ) -> AdjacencyGraph:
-    """Build an event graph from Python source files.
+    """Build an event graph from source files.
 
     Detects publish/subscribe patterns and creates edges between
     publishers and subscribers of the same topic.
 
     Args:
-        source_paths: Python files to analyze
+        source_paths: Source files to analyze
         root_dir: Project root for computing module-qualified names
         publish_patterns: Override default publish method name patterns
         subscribe_patterns: Override default subscribe method name patterns
@@ -86,12 +110,17 @@ def extract_event_graph(
             continue
         try:
             source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
-        except (SyntaxError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        analysis = analyze_source(source, filepath=str(path))
+
+        # If analysis returned no functions, skip (likely a parse error or empty file)
+        if not analysis.functions and not source.strip():
             continue
 
         endpoints = _detect_event_endpoints(
-            tree, path, root_dir, pub_patterns, sub_patterns, dec_patterns
+            source, analysis, path, root_dir, pub_patterns, sub_patterns, dec_patterns
         )
         all_endpoints.extend(endpoints)
 
@@ -146,61 +175,93 @@ def _module_prefix(file_path: Path, root_dir: Path | None) -> str:
     return file_path.stem
 
 
-def _get_enclosing_function(
-    node: ast.AST, parent_map: dict[int, ast.AST], module: str
+def _find_enclosing_function(
+    line_number: int,
+    functions: list[RawFunctionInfo],
+    module: str,
 ) -> str | None:
-    """Walk up the parent map to find the enclosing function/method name."""
-    parts: list[str] = []
-    current = node
-    while id(current) in parent_map:
-        parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            parts.insert(0, parent.name)
-        current = parent
+    """Find the innermost function enclosing a given line number.
 
-    if parts:
-        return f"{module}.{'.'.join(parts)}"
+    Uses function start_line/end_line ranges from SourceAnalysis.
+    Returns the qualified_name prefixed with the module, or None if the
+    line is not inside any function.
+    """
+    best: RawFunctionInfo | None = None
+    for func in functions:
+        if func.start_line <= line_number <= func.end_line and (
+            best is None or (func.end_line - func.start_line) < (best.end_line - best.start_line)
+        ):
+            best = func
+    if best is not None:
+        return f"{module}.{best.qualified_name}"
     return None
 
 
-def _build_parent_map(tree: ast.Module) -> dict[int, ast.AST]:
-    """Build a mapping from child node id to parent node."""
-    parent_map: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent_map[id(child)] = node
-    return parent_map
+def _call_name_candidates(call_name: str) -> list[str]:
+    """Generate candidate call names for pattern matching.
+
+    For multi-segment dotted names (e.g. ``self.bus.publish``), returns
+    the full name plus progressively shorter suffixes so that pattern
+    matching works the same way as the old AST extractor which only saw
+    at most two segments (``obj.method`` or just ``method``).
+
+    Returns candidates from most-specific to least-specific:
+        "self.bus.publish" -> ["self.bus.publish", "bus.publish", "publish"]
+        "bus.publish"      -> ["bus.publish"]
+        "publish"          -> ["publish"]
+    """
+    parts = call_name.split(".")
+    if len(parts) <= 2:
+        return [call_name]
+    # For 3+ segment names, produce all 2-segment and 1-segment suffixes
+    candidates: list[str] = [call_name]
+    for i in range(1, len(parts)):
+        candidates.append(".".join(parts[i:]))
+    return candidates
 
 
 def _detect_event_endpoints(
-    tree: ast.Module,
+    source: str,
+    analysis: SourceAnalysis,
     file_path: Path,
     root_dir: Path | None,
     publish_patterns: list[str],
     subscribe_patterns: list[str],
     decorator_patterns: list[str],
 ) -> list[EventEndpoint]:
-    """Detect publish/subscribe endpoints in an AST."""
+    """Detect publish/subscribe endpoints in source text using regex."""
     endpoints: list[EventEndpoint] = []
     module = _module_prefix(file_path, root_dir)
-    parent_map = _build_parent_map(tree)
+    lines = source.splitlines()
 
-    # Detect method call patterns (publish/subscribe)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            call_name = _get_call_name(node)
-            if call_name is None:
-                continue
+    # Detect method call patterns (publish/subscribe) line by line
+    for line_idx, line_text in enumerate(lines, start=1):
+        # Skip comment-only lines
+        stripped = line_text.lstrip()
+        if stripped.startswith("#"):
+            continue
+
+        for match in _CALL_RE.finditer(line_text):
+            full_call_name = match.group(1)
+
+            # Normalize multi-segment names to mimic AST behaviour:
+            # self.bus.publish -> try "self.bus.publish", "bus.publish", "publish"
+            candidates = _call_name_candidates(full_call_name)
 
             direction = None
-            if _matches_pattern(call_name, publish_patterns):
-                direction = "publish"
-            elif _matches_pattern(call_name, subscribe_patterns):
-                direction = "subscribe"
+            for candidate in candidates:
+                if _matches_pattern(candidate, publish_patterns):
+                    direction = "publish"
+                    break
+                if _matches_pattern(candidate, subscribe_patterns):
+                    direction = "subscribe"
+                    break
 
             if direction is not None:
-                topic = _extract_topic_from_call(node) or "unknown"
-                func_name = _get_enclosing_function(node, parent_map, module)
+                # Always use the full call name for topic extraction since
+                # that is what appears in the source text
+                topic = _extract_topic_from_line(line_text, full_call_name) or "unknown"
+                func_name = _find_enclosing_function(line_idx, analysis.functions, module)
                 if func_name is not None:
                     endpoints.append(
                         EventEndpoint(
@@ -208,54 +269,68 @@ def _detect_event_endpoints(
                             event_topic=topic,
                             direction=direction,
                             file_path=str(file_path),
-                            line_number=node.lineno,
+                            line_number=line_idx,
                         )
                     )
 
     # Detect decorator patterns (@event_handler("topic"), @subscribe("topic"))
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for decorator in node.decorator_list:
-                dec_name = None
-                topic = "unknown"
+    for func in analysis.functions:
+        for decorator in func.decorators:
+            # The decorator string from analysis is just the name
+            # (e.g. "event_handler"), without call arguments.
+            # We need to check if it matches a pattern, then scan the
+            # source lines near the function to extract the topic.
+            dec_name = decorator
 
-                if isinstance(decorator, ast.Call):
-                    dec_name = _get_call_name_from_func(decorator.func)
-                    topic = _extract_topic_from_call(decorator) or "unknown"
-                elif isinstance(decorator, ast.Name):
-                    dec_name = decorator.id
-                elif isinstance(decorator, ast.Attribute):
-                    dec_name = decorator.attr
+            if not _matches_pattern(dec_name, decorator_patterns):
+                continue
 
-                if dec_name is not None and _matches_pattern(dec_name, decorator_patterns):
-                    # Get the qualified function name
-                    qualified = _get_qualified_func_name(node, tree, module)
-                    endpoints.append(
-                        EventEndpoint(
-                            function_name=qualified,
-                            event_topic=topic,
-                            direction="subscribe",
-                            file_path=str(file_path),
-                            line_number=node.lineno,
-                        )
-                    )
+            # Scan source lines near start_line to find decorator with topic
+            topic = "unknown"
+            # Look up to 5 lines before start_line for the @decorator line
+            search_start = max(0, func.start_line - 6)  # 0-indexed
+            search_end = func.start_line  # exclusive, 0-indexed
+            for src_line in lines[search_start:search_end]:
+                dec_match = _DECORATOR_RE.search(src_line)
+                if dec_match and dec_match.group(1) == dec_name:
+                    if dec_match.group(2):
+                        topic = dec_match.group(2)
+                    elif dec_match.group(3):
+                        topic = f"${dec_match.group(3)}"
+                    break
+
+            qualified = f"{module}.{func.qualified_name}"
+            endpoints.append(
+                EventEndpoint(
+                    function_name=qualified,
+                    event_topic=topic,
+                    direction="subscribe",
+                    file_path=str(file_path),
+                    line_number=func.start_line,
+                )
+            )
 
     return endpoints
 
 
-def _get_call_name(call_node: ast.Call) -> str | None:
-    """Extract the call name from a Call node."""
-    return _get_call_name_from_func(call_node.func)
+def _extract_topic_from_line(line_text: str, call_name: str) -> str | None:
+    """Extract topic string from the first argument of a call on a line.
 
-
-def _get_call_name_from_func(func: ast.expr) -> str | None:
-    """Extract a name from a function expression (Name or Attribute)."""
-    if isinstance(func, ast.Name):
-        return func.id
-    elif isinstance(func, ast.Attribute):
-        if isinstance(func.value, ast.Name):
-            return f"{func.value.id}.{func.attr}"
-        return func.attr
+    Looks for the call_name followed by a parenthesized string or variable.
+    Returns None if topic cannot be statically determined.
+    """
+    # Build a regex specific to this call_name
+    # Escape dots in the call_name for regex
+    escaped = re.escape(call_name)
+    pattern = r"(?<![.\w])" + escaped + r"\s*\(\s*" + r"""(?:["']([^"']+)["']|(\w+))"""
+    match = re.search(pattern, line_text)
+    if match:
+        # String literal topic
+        if match.group(1):
+            return match.group(1)
+        # Variable reference
+        if match.group(2):
+            return f"${match.group(2)}"
     return None
 
 
@@ -286,50 +361,6 @@ def _matches_pattern(name: str, patterns: list[str]) -> bool:
                     if obj in event_hints:
                         return True
     return False
-
-
-def _extract_topic_from_call(call_node: ast.Call) -> str | None:
-    """Extract topic string from the first argument of a publish/subscribe call.
-
-    Handles string literals and simple string constants.
-    Returns None if topic cannot be statically determined.
-    """
-    if not call_node.args:
-        return None
-
-    first_arg = call_node.args[0]
-
-    # String literal
-    if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-        return first_arg.value
-
-    # Name reference to a constant (best-effort, return the name)
-    if isinstance(first_arg, ast.Name):
-        return f"${first_arg.id}"  # Mark as variable reference
-
-    return None
-
-
-def _get_qualified_func_name(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-    tree: ast.Module,
-    module: str,
-) -> str:
-    """Get a qualified name for a function node."""
-    parent_map: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent_map[id(child)] = node
-
-    parts: list[str] = [func_node.name]
-    current: ast.AST = func_node
-    while id(current) in parent_map:
-        parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            parts.insert(0, parent.name)
-        current = parent
-
-    return f"{module}.{'.'.join(parts)}"
 
 
 def _match_publishers_to_subscribers(

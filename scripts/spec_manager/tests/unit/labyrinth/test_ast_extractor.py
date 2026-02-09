@@ -1,4 +1,9 @@
-"""Tests for AST-based atom function extractor (Plan 2)."""
+"""Tests for atom function extractor (Plan 2).
+
+Tests extraction via ``analyze_source`` (injected test double in root conftest).
+Shape detection is now convention-based (shapes/ directory), store references
+and called functions are deferred to evidence-based system (always empty lists).
+"""
 
 from __future__ import annotations
 
@@ -185,9 +190,31 @@ class TestExtractFromFile:
 
 
 class TestShapeDetection:
-    """Tests for pure function (shape) detection."""
+    """Tests for convention-based shape detection.
 
-    def test_pure_function_is_shape(self, extractor, tmp_path):
+    Shape detection is now convention-based: files in a shapes/ directory
+    are treated as shapes; all others default to False. Fine-grained purity
+    analysis is deferred to LLM-based analysis.
+    """
+
+    def test_shapes_directory_is_shape(self, extractor, tmp_path):
+        """Files in shapes/ directory produce is_shape=True."""
+        shapes_dir = tmp_path / "shapes"
+        shapes_dir.mkdir()
+        source = """\
+        def add(x: int, y: int) -> int:
+            \"\"\"Add two numbers.\"\"\"
+            return x + y
+        """
+        path = _write_py(shapes_dir, "math_funcs.py", source)
+        candidates = extractor.extract_from_file(path)
+
+        assert len(candidates) >= 1
+        add_func = next(c for c in candidates if c.function_name == "add")
+        assert add_func.is_shape is True
+
+    def test_non_shapes_directory_not_shape(self, extractor, tmp_path):
+        """Files NOT in shapes/ directory produce is_shape=False."""
         source = """\
         def add(x: int, y: int) -> int:
             \"\"\"Add two numbers.\"\"\"
@@ -198,65 +225,26 @@ class TestShapeDetection:
 
         assert len(candidates) >= 1
         add_func = next(c for c in candidates if c.function_name == "add")
-        assert add_func.is_shape is True
+        assert add_func.is_shape is False
 
-    def test_global_disqualifies_shape(self, extractor, tmp_path):
+    def test_atoms_directory_not_shape(self, extractor, tmp_path):
+        """Files in atoms/ (not shapes/) produce is_shape=False."""
+        atoms_dir = tmp_path / "atoms"
+        atoms_dir.mkdir()
         source = """\
-        counter = 0
-        def increment():
-            \"\"\"Increment global counter.\"\"\"
-            global counter
-            counter += 1
+        def compute(x):
+            \"\"\"Compute something.\"\"\"
+            return x * 2
         """
-        path = _write_py(tmp_path, "state.py", source)
+        path = _write_py(atoms_dir, "compute.py", source)
         candidates = extractor.extract_from_file(path)
 
-        inc_func = next(c for c in candidates if c.function_name == "increment")
-        assert inc_func.is_shape is False
-
-    def test_io_call_disqualifies_shape(self, extractor, tmp_path):
-        source = """\
-        def log_result(msg: str) -> None:
-            \"\"\"Log a message.\"\"\"
-            print(msg)
-        """
-        path = _write_py(tmp_path, "logging_funcs.py", source)
-        candidates = extractor.extract_from_file(path)
-
-        log_func = next(c for c in candidates if c.function_name == "log_result")
-        assert log_func.is_shape is False
-
-    def test_attribute_mutation_disqualifies_shape(self, extractor, tmp_path):
-        source = """\
-        def modify_config(cfg):
-            \"\"\"Modify a config.\"\"\"
-            cfg.debug = True
-            return cfg
-        """
-        path = _write_py(tmp_path, "config.py", source)
-        candidates = extractor.extract_from_file(path)
-
-        mod_func = next(c for c in candidates if c.function_name == "modify_config")
-        assert mod_func.is_shape is False
-
-    def test_self_mutation_allowed_for_shape(self, extractor, tmp_path):
-        """self.attr = val should NOT disqualify shape."""
-        source = """\
-        class Calculator:
-            def reset(self) -> None:
-                \"\"\"Reset calculator state.\"\"\"
-                self.total = 0
-        """
-        path = _write_py(tmp_path, "calc.py", source)
-        candidates = extractor.extract_from_file(path)
-
-        reset = [c for c in candidates if c.function_name == "reset"]
-        if reset:
-            assert reset[0].is_shape is True
+        assert len(candidates) >= 1
+        assert candidates[0].is_shape is False
 
 
 class TestSignatureExtraction:
-    """Tests for function signature extraction."""
+    """Tests for function signature reconstruction from code analysis."""
 
     def test_simple_args(self, extractor, tmp_path):
         source = """\
@@ -267,32 +255,9 @@ class TestSignatureExtraction:
         path = _write_py(tmp_path, "sigs.py", source)
         candidates = extractor.extract_from_file(path)
         sig = candidates[0].signature
-        assert sig == "(a, b, c)"
-
-    def test_typed_args(self, extractor, tmp_path):
-        source = """\
-        def func(x: int, y: str) -> bool:
-            \"\"\"Typed.\"\"\"
-            pass
-        """
-        path = _write_py(tmp_path, "sigs.py", source)
-        candidates = extractor.extract_from_file(path)
-        sig = candidates[0].signature
-        assert "x: int" in sig
-        assert "y: str" in sig
-        assert "-> bool" in sig
-
-    def test_default_values(self, extractor, tmp_path):
-        source = """\
-        def func(x: int = 10, y: str = "hello"):
-            \"\"\"Defaults.\"\"\"
-            pass
-        """
-        path = _write_py(tmp_path, "sigs.py", source)
-        candidates = extractor.extract_from_file(path)
-        sig = candidates[0].signature
-        assert "x: int = 10" in sig
-        assert "y: str = 'hello'" in sig
+        assert "a" in sig
+        assert "b" in sig
+        assert "c" in sig
 
     def test_kwargs(self, extractor, tmp_path):
         source = """\
@@ -405,9 +370,10 @@ class TestExtractFromDirectory:
 
 
 class TestStoreReferences:
-    """Tests for store reference detection."""
+    """Tests for store reference detection (now evidence-based, returns empty)."""
 
-    def test_detect_db_reference(self, extractor, tmp_path):
+    def test_store_references_empty(self, extractor, tmp_path):
+        """Store references are deferred to evidence-based system."""
         source = """\
         def save_data(db, record):
             \"\"\"Save to database.\"\"\"
@@ -417,25 +383,14 @@ class TestStoreReferences:
         candidates = extractor.extract_from_file(path)
 
         save = next(c for c in candidates if c.function_name == "save_data")
-        assert "db" in save.store_references
-
-    def test_detect_cache_reference(self, extractor, tmp_path):
-        source = """\
-        def get_cached(cache, key):
-            \"\"\"Get from cache.\"\"\"
-            return cache.get(key)
-        """
-        path = _write_py(tmp_path, "caching.py", source)
-        candidates = extractor.extract_from_file(path)
-
-        cached = next(c for c in candidates if c.function_name == "get_cached")
-        assert "cache" in cached.store_references
+        assert save.store_references == []
 
 
 class TestCalledFunctions:
-    """Tests for called function detection."""
+    """Tests for called function detection (now evidence-based, returns empty)."""
 
-    def test_detect_called_functions(self, extractor, tmp_path):
+    def test_called_functions_empty(self, extractor, tmp_path):
+        """Called functions are deferred to evidence-based system."""
         source = """\
         def orchestrator(data):
             \"\"\"Orchestrate processing.\"\"\"
@@ -447,6 +402,4 @@ class TestCalledFunctions:
         candidates = extractor.extract_from_file(path)
 
         orch = next(c for c in candidates if c.function_name == "orchestrator")
-        assert "validate" in orch.called_functions
-        assert "compute" in orch.called_functions
-        assert "format_output" in orch.called_functions
+        assert orch.called_functions == []

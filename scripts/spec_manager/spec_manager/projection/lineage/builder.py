@@ -6,12 +6,13 @@ and classifies transformation types based on architectural patterns.
 
 from __future__ import annotations
 
-import ast
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.projection.lineage.import_graph import ImportEdge, ImportGraph
 from spec_manager.projection.lineage.table import ProjectionLineageTable
 from spec_manager.schemas.pin_functions import ProjectionType
@@ -180,10 +181,11 @@ class LineageBuilder:
     def _detect_handler_pattern(self, file_path: str) -> str | None:
         """Detect if a file follows event handler, middleware, or retry patterns.
 
-        Uses AST analysis to check class bases and decorator patterns.
+        Uses regex for class base detection and analyze_source for
+        decorator pattern detection.
 
         Args:
-            file_path: Path to the Python file to analyze.
+            file_path: Path to the source file to analyze.
 
         Returns:
             Pattern name ("event_handler", "middleware", "retry") or None.
@@ -196,54 +198,51 @@ class LineageBuilder:
         return result
 
     def _analyze_handler_pattern(self, file_path: str) -> str | None:
-        """Perform AST analysis of a file to detect handler patterns.
+        """Detect handler patterns using analyze_source + regex.
+
+        Uses analyze_source for function/decorator detection and regex
+        for class base class detection (class bases are not part of
+        RawFunctionInfo).
 
         Args:
-            file_path: Path to the Python file.
+            file_path: Path to the source file.
 
         Returns:
-            Pattern name or None.
+            Pattern name ("event_handler", "middleware", "retry") or None.
         """
         path = Path(file_path)
-        if not path.exists() or path.suffix != ".py":
+        if not path.exists():
             return None
 
         try:
             source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=file_path)
-        except (SyntaxError, UnicodeDecodeError):
+        except (UnicodeDecodeError, OSError):
             return None
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                # Check base classes
-                for base in node.bases:
-                    base_name = _extract_name(base)
-                    if base_name in _EVENT_HANDLER_BASES:
-                        return "event_handler"
-                    if base_name in _MIDDLEWARE_BASES:
-                        return "middleware"
+        # --- Check class base classes via regex ---
+        # Matches: class Foo(Base1, Base2):
+        class_pattern = re.compile(r"^\s*class\s+\w+\s*\(([^)]+)\)\s*:", re.MULTILINE)
+        for match in class_pattern.finditer(source):
+            bases_str = match.group(1)
+            bases = [b.strip().rsplit(".", 1)[-1] for b in bases_str.split(",")]
+            for base_name in bases:
+                if base_name in _EVENT_HANDLER_BASES:
+                    return "event_handler"
+                if base_name in _MIDDLEWARE_BASES:
+                    return "middleware"
 
-                # Check class decorators
-                for decorator in node.decorator_list:
-                    dec_name = _extract_name(decorator)
-                    if dec_name in _EVENT_HANDLER_DECORATORS:
-                        return "event_handler"
-                    if dec_name in _MIDDLEWARE_DECORATORS:
-                        return "middleware"
-                    if dec_name in _RETRY_DECORATORS:
-                        return "retry"
-
-            elif isinstance(node, ast.FunctionDef):
-                # Check function decorators
-                for decorator in node.decorator_list:
-                    dec_name = _extract_name(decorator)
-                    if dec_name in _RETRY_DECORATORS:
-                        return "retry"
-                    if dec_name in _EVENT_HANDLER_DECORATORS:
-                        return "event_handler"
-                    if dec_name in _MIDDLEWARE_DECORATORS:
-                        return "middleware"
+        # --- Check decorators via analyze_source ---
+        analysis = analyze_source(source, file_path)
+        for func in analysis.functions:
+            for dec in func.decorators:
+                # Extract the simple name from dotted or call decorators
+                dec_name = dec.rsplit(".", 1)[-1].split("(")[0]
+                if dec_name in _EVENT_HANDLER_DECORATORS:
+                    return "event_handler"
+                if dec_name in _MIDDLEWARE_DECORATORS:
+                    return "middleware"
+                if dec_name in _RETRY_DECORATORS:
+                    return "retry"
 
         return None
 
@@ -251,11 +250,11 @@ class LineageBuilder:
 def compute_signature_hash(file_path: str, function_name: str) -> str | None:
     """Compute a hash of a function's signature from source code.
 
-    Uses AST analysis to extract the function signature (parameter names
-    and annotations) and returns an MD5 hash for comparison.
+    Uses analyze_source to extract function info and builds a hash
+    from the function name, args, and return annotation.
 
     Args:
-        file_path: Path to the Python file containing the function.
+        file_path: Path to the source file containing the function.
         function_name: Name of the function to hash.
 
     Returns:
@@ -267,70 +266,47 @@ def compute_signature_hash(file_path: str, function_name: str) -> str | None:
 
     try:
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=file_path)
-    except (SyntaxError, UnicodeDecodeError):
+    except (UnicodeDecodeError, OSError):
         return None
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
-            sig_parts = _extract_signature_parts(node)
+    analysis = analyze_source(source, file_path)
+
+    for func in analysis.functions:
+        if func.name == function_name:
+            sig_parts = _extract_signature_parts_from_info(func)
             sig_str = "|".join(sig_parts)
             return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
 
     return None
 
 
-def _extract_signature_parts(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
-    """Extract signature components from a function AST node.
+def _extract_signature_parts_from_info(func: object) -> list[str]:
+    """Extract signature components from a RawFunctionInfo.
+
+    Builds a list of signature components from the language-agnostic
+    function info returned by analyze_source.
 
     Args:
-        func_node: AST function definition node.
+        func: RawFunctionInfo instance with name, args, return_annotation.
 
     Returns:
         List of signature component strings.
     """
-    parts: list[str] = [func_node.name]
+    parts: list[str] = [func.name]  # type: ignore[union-attr]
 
-    # Parameters
-    args = func_node.args
-    for arg in args.args:
-        annotation = ast.dump(arg.annotation) if arg.annotation else ""
-        parts.append(f"arg:{arg.arg}:{annotation}")
+    for arg_str in func.args:  # type: ignore[union-attr]
+        # args come as strings like "amount", "*args", "**kwargs"
+        if arg_str.startswith("**"):
+            parts.append(f"kwarg:{arg_str[2:]}")
+        elif arg_str.startswith("*"):
+            parts.append(f"vararg:{arg_str[1:]}")
+        else:
+            parts.append(f"arg:{arg_str}")
 
-    for arg in args.kwonlyargs:
-        annotation = ast.dump(arg.annotation) if arg.annotation else ""
-        parts.append(f"kwonly:{arg.arg}:{annotation}")
-
-    if args.vararg:
-        parts.append(f"vararg:{args.vararg.arg}")
-    if args.kwarg:
-        parts.append(f"kwarg:{args.kwarg.arg}")
-
-    # Return annotation
-    if func_node.returns:
-        parts.append(f"return:{ast.dump(func_node.returns)}")
+    if func.return_annotation:  # type: ignore[union-attr]
+        parts.append(f"return:{func.return_annotation}")  # type: ignore[union-attr]
 
     return parts
-
-
-def _extract_name(node: ast.expr) -> str | None:
-    """Extract a simple name from an AST expression node.
-
-    Handles Name, Attribute, and Call nodes.
-
-    Args:
-        node: AST expression node.
-
-    Returns:
-        Extracted name string or None.
-    """
-    if isinstance(node, ast.Name):
-        return node.id
-    elif isinstance(node, ast.Attribute):
-        return node.attr
-    elif isinstance(node, ast.Call):
-        return _extract_name(node.func)
-    return None
 
 
 __all__ = [

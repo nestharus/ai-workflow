@@ -1,4 +1,4 @@
-"""Test-pin association discovery via AST analysis.
+"""Test-pin association discovery via source analysis.
 
 Scans test files to find which test functions exercise which pin-functions
 by analyzing imports and call sites. Produces a mapping of test functions
@@ -7,17 +7,32 @@ to pin-function IDs.
 
 from __future__ import annotations
 
-import ast
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
+
 if TYPE_CHECKING:
     from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Regex patterns for import and call-site extraction
+# ---------------------------------------------------------------------------
+
+# Matches: from foo.bar import name1, name2 as alias2
+_IMPORT_FROM_RE = re.compile(r"^\s*from\s+\S+\s+import\s+(.+)$", re.MULTILINE)
+# Matches: import foo.bar, baz as qux
+_IMPORT_RE = re.compile(r"^\s*import\s+(.+)$", re.MULTILINE)
+# Matches function calls: identifier( or obj.identifier(
+_CALL_RE = re.compile(r"(?:^|[^.\w])(\w+)\s*\(", re.MULTILINE)
+# Also capture attribute calls: obj.method(
+_ATTR_CALL_RE = re.compile(r"\.(\w+)\s*\(", re.MULTILINE)
 
 
 @dataclass
@@ -70,8 +85,8 @@ def discover_test_pin_associations(
 ) -> TestPinMap:
     """Discover which test functions exercise which pin-functions.
 
-    Uses AST analysis to find imports and call sites in test files that
-    reference pin-function atoms.
+    Uses source analysis and regex to find imports and call sites in test
+    files that reference pin-function atoms.
 
     Args:
         test_files: List of test file paths to scan.
@@ -125,78 +140,127 @@ def _scan_test_file(
 
     try:
         source = test_file.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(test_file))
-    except (SyntaxError, UnicodeDecodeError):
-        logger.warning("Failed to parse test file: %s", test_file)
+    except UnicodeDecodeError:
+        logger.warning("Failed to read test file: %s", test_file)
         return []
 
-    # Step 1: Walk imports to find which pin-function names are imported
+    # Use analyze_source to get function info
+    try:
+        analysis = analyze_source(source, filepath=str(test_file))
+    except Exception:
+        logger.warning("Failed to analyze test file: %s", test_file)
+        return []
+
+    # Step 1: Extract imports via regex to find which pin-function names are imported
     imported_pins: dict[str, str] = {}  # local_name -> pin_func_id
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom | ast.Import):
-            for alias in node.names:
-                local_name = alias.asname if alias.asname else alias.name
-                if alias.name in name_to_pin:
-                    imported_pins[local_name] = name_to_pin[alias.name]
+    imported_pins.update(_extract_imported_pins(source, name_to_pin))
 
     # Step 2: Walk all test functions and look for calls to imported pins
     associations: list[TestPinAssociation] = []
     file_str = str(test_file)
+    source_lines = source.splitlines()
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-            # Class-based tests
-            for item in node.body:
-                if isinstance(
-                    item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                ) and item.name.startswith("test_"):
-                    qualified_name = f"{node.name}.{item.name}"
-                    assocs = _find_associations_in_function(
-                        item,
-                        qualified_name,
-                        file_str,
-                        imported_pins,
-                        name_to_pin,
-                    )
-                    associations.extend(assocs)
+    for func_info in analysis.functions:
+        # Determine qualified test function name and whether it's a test
+        qualified_name = func_info.qualified_name
+        func_name = func_info.name
 
-        elif (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.startswith("test_")
-            and _is_top_level_function(tree, node)
-        ):
-            # Check if this is a top-level test function (not inside a class)
-            # We already handle class-based tests above, so skip if parent is a class
-            # Since ast.walk doesn't give parent info, we check by looking at module body
-            assocs = _find_associations_in_function(
-                node,
-                node.name,
-                file_str,
-                imported_pins,
-                name_to_pin,
-            )
-            associations.extend(assocs)
+        if not func_name.startswith("test_"):
+            continue
+
+        # Check if this is a class method (qualified_name contains ".")
+        # or a top-level function
+        is_class_method = "." in qualified_name
+        if is_class_method:
+            # Only include if parent class starts with "Test"
+            class_name = qualified_name.rsplit(".", 1)[0]
+            if not class_name.startswith("Test"):
+                continue
+
+        # Extract function body source lines for call analysis
+        body_source = _extract_function_body(source_lines, func_info)
+
+        assocs = _find_associations_in_function(
+            func_info,
+            body_source,
+            qualified_name,
+            file_str,
+            imported_pins,
+            name_to_pin,
+        )
+        associations.extend(assocs)
 
     return associations
 
 
-def _is_top_level_function(
-    tree: ast.Module, func_node: ast.FunctionDef | ast.AsyncFunctionDef
-) -> bool:
-    """Check if a function node is at the top level of the module (not inside a class).
+def _extract_imported_pins(source: str, name_to_pin: dict[str, str]) -> dict[str, str]:
+    """Extract pin-function imports from source using regex.
 
     Args:
-        tree: The module AST.
-        func_node: The function node to check.
+        source: The source code text.
+        name_to_pin: Mapping of function_name to pin_func_id.
 
     Returns:
-        True if the function is at module level.
+        Mapping of local_name to pin_func_id for imported pin-functions.
     """
-    return any(node is func_node for node in tree.body)
+    imported_pins: dict[str, str] = {}
+
+    # Handle "from X import a, b as c, d"
+    for match in _IMPORT_FROM_RE.finditer(source):
+        names_part = match.group(1).strip().rstrip("\\")
+        for name_spec in names_part.split(","):
+            name_spec = name_spec.strip()
+            if not name_spec:
+                continue
+            # Handle "name as alias"
+            parts = name_spec.split(" as ")
+            original_name = parts[0].strip()
+            local_name = parts[-1].strip() if len(parts) > 1 else original_name
+            if original_name in name_to_pin:
+                imported_pins[local_name] = name_to_pin[original_name]
+
+    # Handle "import foo.bar, baz as qux"
+    for match in _IMPORT_RE.finditer(source):
+        # Skip "from X import Y" lines (already handled)
+        line = match.group(0).strip()
+        if line.startswith("from "):
+            continue
+        names_part = match.group(1).strip()
+        for name_spec in names_part.split(","):
+            name_spec = name_spec.strip()
+            if not name_spec:
+                continue
+            parts = name_spec.split(" as ")
+            original_name = parts[0].strip()
+            local_name = parts[-1].strip() if len(parts) > 1 else original_name
+            if original_name in name_to_pin:
+                imported_pins[local_name] = name_to_pin[original_name]
+
+    return imported_pins
+
+
+def _extract_function_body(source_lines: list[str], func_info: RawFunctionInfo) -> str:
+    """Extract the source text of a function body.
+
+    Args:
+        source_lines: All lines of the source file.
+        func_info: The function info from analyze_source.
+
+    Returns:
+        The function body as a string.
+    """
+    start = func_info.start_line - 1  # Convert to 0-indexed
+    end = func_info.end_line  # end_line is inclusive, so this gets all lines
+    if start < 0:
+        start = 0
+    if end > len(source_lines):
+        end = len(source_lines)
+    return "\n".join(source_lines[start:end])
 
 
 def _find_associations_in_function(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    func_info: RawFunctionInfo,
+    body_source: str,
     qualified_name: str,
     file_str: str,
     imported_pins: dict[str, str],
@@ -208,7 +272,8 @@ def _find_associations_in_function(
     usage via parameter names.
 
     Args:
-        func_node: The AST node of the test function.
+        func_info: The function info from analyze_source.
+        body_source: The source text of the function body.
         qualified_name: Fully qualified test function name.
         file_str: Path to the test file as string.
         imported_pins: Mapping of local import names to pin_func_id.
@@ -220,32 +285,36 @@ def _find_associations_in_function(
     associations: list[TestPinAssociation] = []
     seen_pins: set[str] = set()  # Avoid duplicate associations
 
-    # Check calls in function body
-    for node in ast.walk(func_node):
-        if isinstance(node, ast.Call):
-            called_name = _extract_call_name(node)
-            if called_name is not None and called_name in imported_pins:
-                pin_id = imported_pins[called_name]
-                if pin_id not in seen_pins:
-                    seen_pins.add(pin_id)
-                    # Resolve the original function name from pin_id
-                    pin_func_name = _resolve_pin_func_name(pin_id, called_name, name_to_pin)
-                    associations.append(
-                        TestPinAssociation(
-                            test_file=file_str,
-                            test_function=qualified_name,
-                            pin_func_id=pin_id,
-                            pin_function_name=pin_func_name,
-                            association_type="direct_import",
-                            confidence=1.0,
-                        )
+    # Check calls in function body using regex
+    called_names: set[str] = set()
+    for m in _CALL_RE.finditer(body_source):
+        called_names.add(m.group(1))
+    for m in _ATTR_CALL_RE.finditer(body_source):
+        called_names.add(m.group(1))
+
+    for called_name in called_names:
+        if called_name in imported_pins:
+            pin_id = imported_pins[called_name]
+            if pin_id not in seen_pins:
+                seen_pins.add(pin_id)
+                pin_func_name = _resolve_pin_func_name(pin_id, called_name, name_to_pin)
+                associations.append(
+                    TestPinAssociation(
+                        test_file=file_str,
+                        test_function=qualified_name,
+                        pin_func_id=pin_id,
+                        pin_function_name=pin_func_name,
+                        association_type="direct_import",
+                        confidence=1.0,
                     )
+                )
 
     # Check fixture-based associations via parameter names
-    for arg in func_node.args.args:
-        param_name = arg.arg
-        if param_name in name_to_pin:
-            pin_id = name_to_pin[param_name]
+    for param_name in func_info.args:
+        # Strip annotation if present (args may include "self", "amount: float", etc.)
+        clean_name = param_name.split(":")[0].strip()
+        if clean_name in name_to_pin:
+            pin_id = name_to_pin[clean_name]
             if pin_id not in seen_pins:
                 seen_pins.add(pin_id)
                 associations.append(
@@ -253,31 +322,13 @@ def _find_associations_in_function(
                         test_file=file_str,
                         test_function=qualified_name,
                         pin_func_id=pin_id,
-                        pin_function_name=param_name,
+                        pin_function_name=clean_name,
                         association_type="fixture_usage",
                         confidence=0.7,
                     )
                 )
 
     return associations
-
-
-def _extract_call_name(node: ast.Call) -> str | None:
-    """Extract the simple function name from a Call node.
-
-    Handles both simple calls (func()) and attribute calls (obj.func()).
-
-    Args:
-        node: The AST Call node.
-
-    Returns:
-        The function name string, or None if not extractable.
-    """
-    if isinstance(node.func, ast.Name):
-        return node.func.id
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr
-    return None
 
 
 def _resolve_pin_func_name(

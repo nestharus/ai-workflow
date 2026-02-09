@@ -1035,16 +1035,29 @@ class ProseFragmentInferenceDetector:
         """Extract prose sections (not code, not structured headers)."""
         sections = []
 
+        # Use LLM analysis to identify comment lines
+        from .code_analysis import analyze_source
+
+        analysis = analyze_source(content, filepath="spec.md")
+        comment_lines = {c.line for c in analysis.comments}
+
         # Split by code blocks
         parts = re.split(r"```[\s\S]*?```", content)
 
         for _i, part in enumerate(parts):
             # Skip if it's mostly headers/structured content
             lines = part.strip().split("\n")
-            prose_lines = [line for line in lines if not line.startswith("#") and line.strip()]
+            start_line = content[: content.find(part)].count("\n") + 1 if part in content else 1
+
+            # Filter out markdown headers and comment lines, keep non-empty lines
+            prose_lines = []
+            for idx, line in enumerate(lines):
+                line_num = start_line + idx
+                # Skip markdown headers, comments, and empty lines
+                if not line.startswith("#") and line_num not in comment_lines and line.strip():
+                    prose_lines.append(line)
 
             if len(prose_lines) >= 3:  # At least 3 prose lines
-                start_line = content[: content.find(part)].count("\n") + 1 if part in content else 1
                 sections.append(
                     {
                         "content": "\n".join(prose_lines),
@@ -2218,6 +2231,13 @@ def _detect_undefined_references(content: str, registry) -> list[dict[str, Any]]
 
     # Also find bare ID mentions in prose
     lines = content.split("\n")
+
+    # Use LLM analysis to identify comment and header lines
+    from .code_analysis import analyze_source
+
+    analysis = analyze_source(content, filepath="spec.md")
+    comment_lines = {c.line for c in analysis.comments}
+
     id_patterns = [
         (r"\bAlgorithm\s+(\d+)\b", lambda m: f"Algorithm {m.group(1)}"),
         (r"\b(D\d+)\b", lambda m: m.group(1)),
@@ -2228,20 +2248,22 @@ def _detect_undefined_references(content: str, registry) -> list[dict[str, Any]]
     ]
 
     for i, line in enumerate(lines):
-        if line.strip().startswith("#"):  # Skip headers
+        line_num = i + 1
+        # Skip markdown headers and comment lines
+        if line.strip().startswith("#") or line_num in comment_lines:
             continue
         for pattern, id_builder in id_patterns:
             for match in re.finditer(pattern, line):
                 id_value = id_builder(match)
                 if id_value not in all_known_ids:
                     # Check it's not already captured
-                    existing = any(g["id"] == id_value and g["line"] == i + 1 for g in gaps)
+                    existing = any(g["id"] == id_value and g["line"] == line_num for g in gaps)
                     if not existing:
                         gaps.append(
                             {
                                 "type": "undefined_reference",
                                 "id": id_value,
-                                "line": i + 1,
+                                "line": line_num,
                                 "description": f"Reference to undefined ID: {id_value}",
                                 "severity": "warning",
                             }
@@ -2509,13 +2531,25 @@ def _detect_invalid_libraries(libraries_dir: Path) -> list[dict[str, Any]]:
         content = lib_file.read_text(encoding="utf-8")
         lines = content.split("\n")
 
+        # Use LLM analysis to identify comment lines
+        from .code_analysis import analyze_source
+
+        analysis = analyze_source(content, filepath=str(lib_file))
+        comment_lines = {c.line for c in analysis.comments}
+
         # Check header (first # line)
         header = ""
         description = ""
-        for line in lines:
+        for i, line in enumerate(lines):
+            line_num = i + 1
             if line.strip().startswith("# "):
                 header = line.strip()
-            elif header and line.strip() and not line.strip().startswith("#"):
+            elif (
+                header
+                and line.strip()
+                and not line.strip().startswith("#")
+                and line_num not in comment_lines
+            ):
                 description = line.strip()
                 break
 

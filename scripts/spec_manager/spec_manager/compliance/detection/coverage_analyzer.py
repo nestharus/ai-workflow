@@ -6,7 +6,6 @@ Reports which functions/branches are exercised vs. not.
 
 from __future__ import annotations
 
-import ast
 import json
 import subprocess
 import sys
@@ -14,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.gap import GapEvidence
 
 
@@ -98,32 +98,20 @@ def run_coverage(
     return coverage_data_file
 
 
-def _extract_function_ranges(source: str) -> list[tuple[str, int, int]]:
+def _extract_function_ranges(source: str, filepath: str = "") -> list[tuple[str, int, int]]:
     """Extract function name and line ranges from source code.
+
+    Uses ``analyze_source`` (language-agnostic) instead of Python AST.
 
     Returns list of (qualified_name, start_line, end_line).
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
+    analysis = analyze_source(source, filepath)
 
     ranges: list[tuple[str, int, int]] = []
+    for func in analysis.functions:
+        qualified = func.qualified_name or func.name
+        ranges.append((qualified, func.start_line, func.end_line))
 
-    def _visit(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                class_prefix = f"{child.name}." if not prefix else f"{prefix}{child.name}."
-                if not prefix:
-                    class_prefix = f"{child.name}."
-                _visit(child, class_prefix)
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                qualified = f"{prefix}{child.name}"
-                end_line = child.end_lineno or child.lineno
-                ranges.append((qualified, child.lineno, end_line))
-                _visit(child, f"{qualified}.")
-
-    _visit(tree, "")
     return ranges
 
 
@@ -156,7 +144,7 @@ def parse_coverage_report(
     """Parse a .coverage data file into structured coverage data.
 
     Uses coverage.py JSON report to analyze per-file coverage, then
-    cross-references with AST-extracted function ranges for per-function
+    cross-references with extracted function ranges for per-function
     coverage.
 
     Args:
@@ -231,14 +219,14 @@ def parse_coverage_report(
         total_stmts += num_statements
         total_covered += covered
 
-        # Per-function coverage from AST + missing lines
+        # Per-function coverage from analyze_source + missing lines
         try:
             source = Path(file_path_str).read_text(encoding="utf-8")
             source_lines = source.splitlines()
         except (OSError, UnicodeDecodeError):
             continue
 
-        function_ranges = _extract_function_ranges(source)
+        function_ranges = _extract_function_ranges(source, file_path_str)
         missing_set = set(missing)
 
         for func_name, start, end in function_ranges:

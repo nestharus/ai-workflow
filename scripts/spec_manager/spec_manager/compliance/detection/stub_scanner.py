@@ -1,17 +1,17 @@
 """Stub scanner for executable gap detection.
 
-AST-parses Python files to find functions whose bodies are only `pass`,
-`raise NotImplementedError(...)`, or `Ellipsis (...)`, optionally preceded
-by a docstring.
+Uses ``spec_manager.core.code_analysis.analyze_source()`` for language-agnostic
+stub detection.  Each function flagged as a stub by the analyzer is mapped to a
+``StubFunction`` record.
 """
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.gap import GapEvidence
 
 
@@ -29,167 +29,63 @@ class StubFunction:
     return_annotation: str | None
 
 
-def _get_return_annotation(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
-    """Extract return annotation as a string if present."""
-    if node.returns is None:
-        return None
-    try:
-        return ast.unparse(node.returns)
-    except Exception:
-        return None
+def _map_stub_reason(reason: str | None) -> Literal["pass", "ellipsis", "not_implemented"]:
+    """Map a ``stub_reason`` from code analysis to a stub_type literal.
 
-
-def _get_arg_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
-    """Extract parameter names from a function definition."""
-    names: list[str] = []
-    for arg in node.args.args:
-        names.append(arg.arg)
-    for arg in node.args.posonlyargs:
-        names.append(arg.arg)
-    for arg in node.args.kwonlyargs:
-        names.append(arg.arg)
-    if node.args.vararg:
-        names.append(f"*{node.args.vararg.arg}")
-    if node.args.kwarg:
-        names.append(f"**{node.args.kwarg.arg}")
-    return names
-
-
-def _is_docstring(stmt: ast.stmt) -> bool:
-    """Check if a statement is a docstring (Expr containing a string constant)."""
-    if not isinstance(stmt, ast.Expr):
-        return False
-    if not isinstance(stmt.value, ast.Constant):
-        return False
-    return isinstance(stmt.value.value, str)
-
-
-def _is_pass(stmt: ast.stmt) -> bool:
-    """Check if a statement is a `pass` statement."""
-    return isinstance(stmt, ast.Pass)
-
-
-def _is_ellipsis(stmt: ast.stmt) -> bool:
-    """Check if a statement is an Ellipsis expression (`...`)."""
-    if not isinstance(stmt, ast.Expr):
-        return False
-    return isinstance(stmt.value, ast.Constant) and stmt.value.value is ...
-
-
-def _is_not_implemented_raise(stmt: ast.stmt) -> bool:
-    """Check if a statement is `raise NotImplementedError(...)`."""
-    if not isinstance(stmt, ast.Raise):
-        return False
-    exc = stmt.exc
-    if exc is None:
-        return False
-    # raise NotImplementedError(...)
-    if isinstance(exc, ast.Call):
-        func = exc.func
-        if isinstance(func, ast.Name) and func.id == "NotImplementedError":
-            return True
-        if isinstance(func, ast.Attribute) and func.attr == "NotImplementedError":
-            return True
-    # raise NotImplementedError
-    return isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
-
-
-def _classify_stub(
-    body: list[ast.stmt],
-) -> tuple[Literal["pass", "ellipsis", "not_implemented"] | None, bool]:
-    """Classify a function body as a stub or not.
-
-    Returns (stub_type, has_docstring) or (None, False) if not a stub.
-    A function is a stub if its body consists of ONLY:
-    1. An optional docstring (Expr(Constant(str)))
-    2. Followed by one of:
-       a. `pass` statement
-       b. `raise NotImplementedError(...)`
-       c. Ellipsis expression (`...`)
+    The analyzer may return various reason strings depending on the backend
+    (LLM or AST test double).  This function normalises them into the three
+    canonical categories used by ``StubFunction.stub_type``.
     """
-    if not body:
-        return None, False
-
-    stmts = list(body)
-    has_docstring = False
-
-    if stmts and _is_docstring(stmts[0]):
-        has_docstring = True
-        stmts = stmts[1:]
-
-    if not stmts:
-        # Docstring-only function is a stub (no implementation body)
-        if has_docstring:
-            return "pass", has_docstring
-        return None, has_docstring
-
-    if len(stmts) != 1:
-        return None, has_docstring
-
-    stmt = stmts[0]
-
-    if _is_pass(stmt):
-        return "pass", has_docstring
-    if _is_ellipsis(stmt):
-        return "ellipsis", has_docstring
-    if _is_not_implemented_raise(stmt):
-        return "not_implemented", has_docstring
-
-    return None, has_docstring
+    if reason is None:
+        return "pass"
+    lower = reason.lower()
+    if "ellipsis" in lower or reason == "...":
+        return "ellipsis"
+    if "notimplemented" in lower.replace(" ", "").replace("_", ""):
+        return "not_implemented"
+    # "pass", "placeholder", or any other unknown reason
+    return "pass"
 
 
 def scan_stubs(filepath: Path) -> list[StubFunction]:
-    """AST-parse a Python file and return all stub functions.
+    """Scan a source file and return all stub functions.
 
-    A function is a stub if its body consists of ONLY:
-    1. An optional docstring (Expr(Constant(str)))
-    2. Followed by one of:
-       a. `pass` statement
-       b. `raise NotImplementedError(...)`
-       c. Ellipsis expression (`...`)
+    Uses ``analyze_source()`` from ``spec_manager.core.code_analysis`` to
+    perform language-agnostic structural analysis, then filters for functions
+    whose ``is_stub`` flag is ``True``.
 
     Handles both top-level functions and methods within classes.
-    Qualified names use "ClassName.method_name" format.
+    Qualified names use ``ClassName.method_name`` format.
 
     Args:
-        filepath: Path to the Python file.
+        filepath: Path to the source file.
 
     Returns:
         List of StubFunction for each stub found.
     """
-    source = filepath.read_text(encoding="utf-8")
     try:
-        tree = ast.parse(source, filename=str(filepath))
-    except SyntaxError:
+        source = filepath.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return []
 
+    analysis = analyze_source(source, str(filepath))
+
     stubs: list[StubFunction] = []
-
-    def _visit(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                class_prefix = f"{child.name}." if not prefix else f"{prefix}{child.name}."
-                _visit(child, class_prefix)
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                qualified = f"{prefix}{child.name}"
-                stub_type, has_docstring = _classify_stub(child.body)
-                if stub_type is not None:
-                    stubs.append(
-                        StubFunction(
-                            file_path=str(filepath),
-                            line=child.lineno,
-                            end_line=child.end_lineno or child.lineno,
-                            name=qualified,
-                            stub_type=stub_type,
-                            has_docstring=has_docstring,
-                            args=_get_arg_names(child),
-                            return_annotation=_get_return_annotation(child),
-                        )
-                    )
-                # Visit nested functions/classes within this function
-                _visit(child, f"{qualified}.")
-
-    _visit(tree, "")
+    for func in analysis.functions:
+        if not func.is_stub:
+            continue
+        stubs.append(
+            StubFunction(
+                file_path=str(filepath),
+                line=func.start_line,
+                end_line=func.end_line,
+                name=func.qualified_name,
+                stub_type=_map_stub_reason(func.stub_reason),
+                has_docstring=func.has_docstring,
+                args=list(func.args),
+                return_annotation=func.return_annotation,
+            )
+        )
     return stubs
 
 

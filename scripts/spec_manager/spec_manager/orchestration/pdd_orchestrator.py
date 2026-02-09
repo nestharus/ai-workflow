@@ -125,6 +125,13 @@ class PddOrchestrator:
 
         phases_to_run = PDD_PHASE_ORDER[start_idx : end_idx + 1]
 
+        # TODO: Support iterative per-slice mode alongside sequential.
+        #   Current: single pass through P0-P10 in order.
+        #   Needed: run P0 once (Promotion 1), then iterative loop
+        #   for Promotion 2: P3→P8→P9→tests→P4→P5→gates→CI per slice.
+        #   P6/P7 run after all slices promoted. P10 runs periodically.
+        #   Add `iterative: bool` parameter and slice-based looping.
+
         completed: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
@@ -220,6 +227,15 @@ class PddOrchestrator:
         # Install Phase 0 output into workspace structure
         self._install_phase0_output(output_dir)
 
+        # TODO: Add library quality validator after Promotion 1.
+        #   After Phase 0 produces libraries, check spec-level quality:
+        #     - Overlap detection: do any libraries cover the same concern?
+        #     - Concern isolation: does each library have a single purpose?
+        #     - Completeness: are all source requirements routed?
+        #   This is a post-Promotion-1 gate before Promotion 2 begins.
+        #   The refinement engine (coupling/cohesion) runs later on code,
+        #   but this checks the SPEC-level quality of library boundaries.
+
         return result
 
     def _install_phase0_output(self, phase0_dir: Path) -> None:
@@ -290,8 +306,6 @@ class PddOrchestrator:
             if not file_path.exists():
                 errors.append(f"File not found: {file_path}")
                 continue
-            if file_path.suffix != ".py":
-                continue
             try:
                 code_file = parse_file(str(file_path))
                 per_file_results.append(
@@ -344,7 +358,7 @@ class PddOrchestrator:
         errors: list[str] = []
 
         for _file_id, file_path in all_files.items():
-            if not file_path.exists() or file_path.suffix != ".py":
+            if not file_path.exists():
                 continue
             try:
                 code_file = parse_file(str(file_path))
@@ -384,7 +398,7 @@ class PddOrchestrator:
         from spec_manager.core.gap_queue import GapQueue
 
         all_files = self.manager.get_all_files()
-        filepaths = [fp for fp in all_files.values() if fp.exists() and fp.suffix == ".py"]
+        filepaths = [fp for fp in all_files.values() if fp.exists()]
         project_root = self.manager.structure.root
 
         report = scan_executable_gaps(filepaths, project_root)
@@ -466,10 +480,28 @@ class PddOrchestrator:
         )
 
         # Run promotion workflow if branch manager has atoms
+        # TODO: Wire demotion on compliance gate failure. Currently
+        #   promote() returns skipped_atoms but nothing acts on them.
+        #   If gates fail: DownwardFlowEngine should trace pins back
+        #   to atoms, fix at L1 (code-as-spec), then re-promote.
+        #   Full chain: L3→L2→L1 demotion until issue is resolved.
         branch_mgr = self.manager.branches
         promotion_result = None
         if branch_mgr.is_initialized() and branch_mgr.list_atoms():
             promotion_result = branch_mgr.promote()
+
+        # TODO: Add architectural implementation agent after promotion.
+        #   After atoms are promoted via pins, the architectural layer
+        #   (services/events/middleware) needs to be BUILT from them.
+        #   Pin projections define HOW atoms map to architecture
+        #   (PASS_THROUGH, EVENT_BRIDGE, MIDDLEWARE_WRAP, etc.) but
+        #   nothing currently generates the actual architectural code.
+        #   This agent should:
+        #     1. Read promoted pins and their projection types
+        #     2. Generate service/event/middleware code that uses pin-functions
+        #     3. Enforce NO_INLINED_ATOM_LOGIC gate (all logic via pins)
+        #   Separate from P9 (algorithmic implementation) — this is
+        #   architectural assembly.
 
         outputs: dict[str, Any] = {
             "pins_found": len(registry.pin_functions),
@@ -639,7 +671,7 @@ class PddOrchestrator:
 
         # Gather target files from workspace snapshot
         all_files = self.manager.get_all_files()
-        target_files = [str(fp) for fp in all_files.values() if fp.exists() and fp.suffix == ".py"]
+        target_files = [str(fp) for fp in all_files.values() if fp.exists()]
 
         # Derive intentions from Phase 3 compliance gap descriptions
         phase3_result = self.manager.state.phases.get(Phase.COMPLIANCE_CLEAN.value)
@@ -651,6 +683,28 @@ class PddOrchestrator:
                     f"Resolve {gap_count} executable gaps found during compliance scan"
                 )
 
+        # TODO: Wire under-specification → constraints → blocking flow.
+        #   When planning hits an under-specification:
+        #     1. Planning agent identifies potential solutions
+        #     2. Checks CONSTRAINTS against each solution
+        #     3. If constraints cover → decide, record in analysis docs
+        #     4. If constraints DON'T cover → BLOCK
+        #        - Interactive mode: generate research prompt for human
+        #        - Auto mode: source decision from research team
+        #     5. Human provides CONSTRAINTS (not solutions)
+        #   Currently just produces plans without blocking.
+
+        # TODO: Wire Layer 1 routing for incoming changes.
+        #   When a new requirement, decision, or demoted algorithm needs
+        #   to be added to code-as-spec, route it to the right library
+        #   and function using vertical slice summaries:
+        #     1. Load VerticalSlice summaries from branch manager
+        #     2. Match incoming change against slice summaries
+        #     3. Route to the right library by summary similarity
+        #     4. Within library, route to right function/atom
+        #   Same pattern as Phase 0 (summarize → discover → route).
+        #   Infrastructure: VerticalSlice with summary details exists
+        #   but isn't wired into the planning/routing flow.
         result = run_planning_v2_phase(
             run_id=self.manager.run_id,
             target_files=target_files,
@@ -660,14 +714,27 @@ class PddOrchestrator:
         return {"planning_result": result}
 
     def _run_implementation(self) -> dict[str, Any]:
-        """Phase 9: Edit-in-place analysis + gap report + planning integration.
+        """Phase 9: Implement functions from spec comments.
 
         1. Analyzes the project for translation state and gaps.
-        2. Formats a gap report for downstream consumption.
-        3. If Phase 8 produced planning output, feeds it to the insertion
-           workflow for functions that have actionable plans.
+        2. For each UNRESOLVED function (stub + spec comments),
+           calls LLM to produce implementation code.
+        3. Applies implementations to files in-place.
+        4. Re-analyzes to confirm gaps were resolved.
+
+        Functions are processed file-by-file, bottom-up within each
+        file (last function first) to preserve line numbers.
         """
-        from spec_manager.core.edit_in_place import analyze_project, find_gaps, format_gap_report
+        import json
+
+        from spec_manager.core.agent_utils import run_agent
+        from spec_manager.core.edit_in_place import (
+            TranslationState,
+            analyze_project,
+            find_gaps,
+            format_gap_report,
+        )
+        from spec_manager.refinement.formats import _extract_json_payload, _strip_code_fences
 
         project_root = str(self.manager.structure.root)
         project_state = analyze_project(project_root)
@@ -678,19 +745,225 @@ class PddOrchestrator:
         gap_report_path = self.manager.structure.root / "gap_report.md"
         gap_report_path.write_text(gap_report, encoding="utf-8")
 
+        implemented: list[dict[str, Any]] = []
+        impl_errors: list[dict[str, Any]] = []
+        all_gaps_found: list[str] = []
+
+        for file_path, file_state in sorted(project_state.files.items()):
+            # Find functions that need implementation
+            unresolved = [
+                f
+                for f in file_state.functions
+                if f.translation_state in (TranslationState.UNRESOLVED, TranslationState.STUB)
+            ]
+            if not unresolved:
+                continue
+
+            source_path = Path(file_path)
+            file_content = source_path.read_text(encoding="utf-8")
+            lines = file_content.splitlines(keepends=True)
+
+            # Process bottom-up to preserve line numbers
+            for func in sorted(unresolved, key=lambda f: f.line_start, reverse=True):
+                spec_texts = [c.text for c in func.spec_comments]
+                if not spec_texts and func.translation_state == TranslationState.STUB:
+                    # Stub without spec comments — nothing to implement from
+                    continue
+
+                prompt = self._build_implementation_prompt(func, file_content, file_state)
+
+                try:
+                    output = run_agent(
+                        agent_name="pdd-function-implementor",
+                        prompt=prompt,
+                        workspace=self.manager.workspace_path,
+                    )
+                    cleaned = _strip_code_fences(output)
+                    data = json.loads(_extract_json_payload(cleaned))
+
+                    body = data.get("body", "")
+                    if not body.strip():
+                        impl_errors.append(
+                            {
+                                "function": func.qualified_name,
+                                "error": "Agent returned empty body",
+                            }
+                        )
+                        continue
+
+                    # Apply implementation: replace function body
+                    lines = self._apply_function_body(
+                        lines, func, body, data.get("imports_needed", [])
+                    )
+
+                    # Track results
+                    implemented.append(
+                        {
+                            "function": func.qualified_name,
+                            "file": source_path.name,
+                            "spec_comments": len(spec_texts),
+                            "gaps": data.get("gaps", []),
+                            "notes": data.get("notes", ""),
+                        }
+                    )
+                    all_gaps_found.extend(data.get("gaps", []))
+
+                except Exception as exc:
+                    impl_errors.append(
+                        {
+                            "function": func.qualified_name,
+                            "error": str(exc),
+                        }
+                    )
+
+            # Write modified file back
+            source_path.write_text("".join(lines), encoding="utf-8")
+
+        # Re-analyze to verify gaps were resolved
+        post_state = analyze_project(project_root)
+        post_gaps = find_gaps(post_state)
+
         outputs: dict[str, Any] = {
             "files_analyzed": len(project_state.files),
-            "gaps_remaining": len(gaps),
+            "gaps_before": len(gaps),
+            "gaps_after": len(post_gaps),
+            "functions_implemented": len(implemented),
+            "implementation_errors": len(impl_errors),
+            "implementations": implemented,
+            "errors": impl_errors,
+            "dependency_gaps": all_gaps_found,
             "gap_report_path": str(gap_report_path),
         }
 
-        # Summarize gap distribution by file
-        gaps_by_file: dict[str, int] = {}
-        for gap in gaps:
-            gaps_by_file[gap.file] = gaps_by_file.get(gap.file, 0) + 1
-        outputs["files_with_gaps"] = len(gaps_by_file)
+        # TODO: Add small test generation step here.
+        #   simpler.md step 4: "write small tests to validate small
+        #   units of work." After implementation writes code, generate
+        #   tests for each implemented function/atom, run them, and
+        #   include results in outputs for compliance gating.
 
         return outputs
+
+    def _build_implementation_prompt(
+        self,
+        func: Any,
+        file_content: str,
+        file_state: Any,
+    ) -> str:
+        """Build the prompt for the pdd-function-implementor agent.
+
+        Includes file context (imports, constants, class), the function
+        stub with spec comments, and extracted requirements.
+        """
+        lines = file_content.splitlines()
+
+        # Extract the function text (from line_start to line_end)
+        func_text = "\n".join(lines[func.line_start - 1 : func.line_end])
+
+        # Extract spec comment texts
+        spec_requirements = [c.text for c in func.spec_comments]
+
+        # Build file context: everything before the first function/method
+        first_func_line = min((f.line_start for f in file_state.functions), default=len(lines))
+        file_header = "\n".join(lines[: first_func_line - 1])
+
+        # Get other method signatures for cross-reference
+        class_methods: list[str] = []
+        for other_func in file_state.functions:
+            if other_func.qualified_name != func.qualified_name:
+                sig_line = lines[other_func.line_start - 1].rstrip()
+                class_methods.append(sig_line)
+
+        prompt_parts = [
+            "## FILE CONTEXT\n",
+            f"```\n{file_header}\n```\n",
+        ]
+
+        if class_methods:
+            prompt_parts.append("## OTHER METHODS IN CLASS\n")
+            prompt_parts.append("```\n")
+            for m in class_methods:
+                prompt_parts.append(f"{m}\n")
+            prompt_parts.append("```\n")
+
+        prompt_parts.append("## FUNCTION TO IMPLEMENT\n")
+        prompt_parts.append(f"```\n{func_text}\n```\n")
+
+        prompt_parts.append("## REQUIREMENTS (from spec comments)\n")
+        for i, req in enumerate(spec_requirements, 1):
+            prompt_parts.append(f"{i}. {req}\n")
+
+        prompt_parts.append(
+            "\n## TASK\n"
+            "Implement the function body that fulfills ALL requirements above.\n"
+            "Return the body code with correct indentation "
+            "(8 spaces for class methods, 4 for top-level functions).\n"
+        )
+
+        return "\n".join(prompt_parts)
+
+    @staticmethod
+    def _apply_function_body(
+        lines: list[str],
+        func: Any,
+        new_body: str,
+        imports_needed: list[str],
+    ) -> list[str]:
+        """Replace a function's body with new implementation code.
+
+        Uses ``body_start_line`` from LLM-based code analysis to find
+        the body start position, then replaces from body start (after
+        docstring) through function end. Preserves the def line,
+        signature, and docstring.
+
+        Args:
+            lines: File lines (with line endings).
+            func: FunctionInfo with line_start, line_end, body_start_line.
+            new_body: The new body code string.
+            imports_needed: New imports to add at file top.
+
+        Returns:
+            Modified lines list.
+        """
+        # body_start_line is 1-indexed; convert to 0-indexed for slicing
+        body_start_idx = getattr(func, "body_start_line", 0) - 1
+        if body_start_idx < 0:
+            # Fallback: couldn't determine body start, skip this function
+            return list(lines)
+
+        func_end_idx = func.line_end  # 1-indexed, exclusive in slice
+
+        # Ensure new_body ends with a newline
+        if not new_body.endswith("\n"):
+            new_body += "\n"
+
+        new_lines = list(lines)
+        # Remove old body (from body_start_idx to func_end_idx, 0-indexed)
+        del new_lines[body_start_idx:func_end_idx]
+        # Insert new body
+        body_lines = new_body.splitlines(keepends=True)
+        for k, bl in enumerate(body_lines):
+            new_lines.insert(body_start_idx + k, bl)
+
+        # Add imports at the top of the file if needed
+        if imports_needed:
+            import_block = ""
+            file_text = "".join(new_lines)
+            for imp in imports_needed:
+                imp = imp.strip()
+                if imp and imp not in file_text:
+                    import_block += imp + "\n"
+            if import_block:
+                # Insert after the first non-empty line (preserves shebangs,
+                # module docstrings, package declarations in any language).
+                insert_idx = 0
+                for idx, line in enumerate(new_lines):
+                    stripped = line.strip()
+                    if stripped:
+                        insert_idx = idx + 1
+                        break
+                new_lines.insert(insert_idx, import_block)
+
+        return new_lines
 
     def _run_continuous_qa(self) -> dict[str, Any]:
         """Phase 10: Strategy evolution, refinement engine analysis.

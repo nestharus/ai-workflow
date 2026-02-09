@@ -6,7 +6,7 @@ pin-functions, providing a stable baseline for drift detection.
 
 from __future__ import annotations
 
-import ast
+import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -14,10 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from spec_manager.projection.lineage.builder import (
-    _extract_signature_parts,
-    compute_signature_hash,
-)
+from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 
 if TYPE_CHECKING:
     from spec_manager.projection.lineage.test_pin_discovery import TestPinMap
@@ -101,8 +98,6 @@ def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
         seen.add(key)
 
         # Compute signature hash for the test function
-        # For class-qualified names like "TestFoo.test_method", we need
-        # to find the method inside the class
         sig_hash = _compute_test_signature_hash(assoc.test_file, assoc.test_function)
         sig_text = _extract_test_signature_text(assoc.test_file, assoc.test_function)
 
@@ -220,7 +215,7 @@ def _compute_test_signature_hash(file_path: str, test_function: str) -> str | No
     """Compute signature hash for a test function, handling class-qualified names.
 
     For names like "TestClass.test_method", finds the method inside the class.
-    For simple names like "test_foo", uses the standard compute_signature_hash.
+    For simple names like "test_foo", finds the top-level function.
 
     Args:
         file_path: Path to the test file.
@@ -229,51 +224,13 @@ def _compute_test_signature_hash(file_path: str, test_function: str) -> str | No
     Returns:
         MD5 hex digest of the signature, or None if not found.
     """
-    if "." in test_function:
-        # Class-qualified name: "ClassName.method_name"
-        class_name, method_name = test_function.split(".", 1)
-        return _compute_class_method_signature_hash(file_path, class_name, method_name)
-    else:
-        return compute_signature_hash(file_path, test_function)
-
-
-def _compute_class_method_signature_hash(
-    file_path: str, class_name: str, method_name: str
-) -> str | None:
-    """Compute signature hash for a method inside a class.
-
-    Args:
-        file_path: Path to the Python file.
-        class_name: Name of the containing class.
-        method_name: Name of the method.
-
-    Returns:
-        MD5 hex digest of the method signature, or None if not found.
-    """
-    import hashlib
-
-    path = Path(file_path)
-    if not path.exists():
+    func_info = _find_function_info(file_path, test_function)
+    if func_info is None:
         return None
 
-    try:
-        source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=file_path)
-    except (SyntaxError, UnicodeDecodeError):
-        return None
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            for item in node.body:
-                if (
-                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and item.name == method_name
-                ):
-                    sig_parts = _extract_signature_parts(item)
-                    sig_str = "|".join(sig_parts)
-                    return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
-
-    return None
+    sig_parts = _extract_signature_parts_from_info(func_info)
+    sig_str = "|".join(sig_parts)
+    return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
 
 
 def _extract_test_signature_text(file_path: str, test_function: str) -> str:
@@ -286,55 +243,92 @@ def _extract_test_signature_text(file_path: str, test_function: str) -> str:
     Returns:
         Human-readable signature string, or empty string if not found.
     """
-    path = Path(file_path)
-    if not path.exists():
+    func_info = _find_function_info(file_path, test_function)
+    if func_info is None:
         return ""
 
-    try:
-        source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=file_path)
-    except (SyntaxError, UnicodeDecodeError):
-        return ""
-
-    func_node = _find_function_node(tree, test_function)
-    if func_node is None:
-        return ""
-
-    parts = _extract_signature_parts(func_node)
+    parts = _extract_signature_parts_from_info(func_info)
     return "|".join(parts)
 
 
-def _find_function_node(
-    tree: ast.Module, test_function: str
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Find the AST function node for a test function.
+def _find_function_info(file_path: str, test_function: str) -> RawFunctionInfo | None:
+    """Find the RawFunctionInfo for a test function using analyze_source.
 
     Args:
-        tree: The module AST.
-        test_function: Function name, possibly class-qualified.
+        file_path: Path to the source file.
+        test_function: Function name, possibly class-qualified (e.g., "TestClass.test_method").
 
     Returns:
-        The AST function node, or None if not found.
+        The matching RawFunctionInfo, or None if not found.
     """
-    if "." in test_function:
-        class_name, method_name = test_function.split(".", 1)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
-                for item in node.body:
-                    if (
-                        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and item.name == method_name
-                    ):
-                        return item
-    else:
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == test_function
-            ):
-                return node
+    path = Path(file_path)
+    if not path.exists():
+        return None
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+
+    try:
+        analysis = analyze_source(source, filepath=file_path)
+    except Exception:
+        return None
+
+    # Match by qualified_name for class methods, by name for top-level functions
+    for func in analysis.functions:
+        if func.qualified_name == test_function:
+            return func
+        # Also try matching just by name for simple (non-class-qualified) functions
+        if "." not in test_function and func.name == test_function:
+            return func
 
     return None
+
+
+def _extract_signature_parts_from_info(func_info: RawFunctionInfo) -> list[str]:
+    """Extract signature components from a RawFunctionInfo.
+
+    Produces output compatible with the original AST-based _extract_signature_parts:
+    function name, then arg specs, then return annotation.
+
+    Args:
+        func_info: Function info from analyze_source.
+
+    Returns:
+        List of signature component strings.
+    """
+    parts: list[str] = [func_info.name]
+
+    # Parameters: args is a tuple of strings like "param", "param: Type", etc.
+    for arg_str in func_info.args:
+        arg_str = arg_str.strip()
+        if arg_str.startswith("*") and not arg_str.startswith("**"):
+            # *args / vararg
+            vararg_name = arg_str.lstrip("*").split(":")[0].strip()
+            if vararg_name:
+                parts.append(f"vararg:{vararg_name}")
+        elif arg_str.startswith("**"):
+            # **kwargs / kwarg
+            kwarg_name = arg_str.lstrip("*").split(":")[0].strip()
+            if kwarg_name:
+                parts.append(f"kwarg:{kwarg_name}")
+        else:
+            # Regular arg or keyword-only arg
+            if ":" in arg_str:
+                name, annotation = arg_str.split(":", 1)
+                name = name.strip()
+                annotation = annotation.strip()
+            else:
+                name = arg_str
+                annotation = ""
+            parts.append(f"arg:{name}:{annotation}")
+
+    # Return annotation
+    if func_info.return_annotation:
+        parts.append(f"return:{func_info.return_annotation}")
+
+    return parts
 
 
 def _store_to_dict(store: TestPinBaselineStore) -> dict[str, Any]:

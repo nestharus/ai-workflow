@@ -109,14 +109,15 @@ class TestParseSource:
         assert "top_level_function" in func_names
         assert "stub_function" in func_names
 
-    def test_parse_classes(self) -> None:
+    def test_parse_classes_deprecated(self) -> None:
         code_file = parse_source(SAMPLE_CODE, "/test/sample.py")
-        assert "MyClass" in code_file.classes
+        # classes list is deprecated (no longer extracted by code_analysis)
+        assert code_file.classes == []
 
-    def test_parse_imports(self) -> None:
+    def test_parse_imports_deprecated(self) -> None:
         code_file = parse_source(SAMPLE_CODE, "/test/sample.py")
-        assert "os" in code_file.imports
-        assert "sys" in code_file.imports
+        # imports list is deprecated (no longer extracted by code_analysis)
+        assert code_file.imports == []
 
     def test_function_parameters(self) -> None:
         code_file = parse_source(SAMPLE_CODE, "/test/sample.py")
@@ -134,10 +135,11 @@ class TestParseSource:
         method = next(f for f in code_file.functions if f.name == "method_one")
         assert method.docstring == "Compute something."
 
-    def test_function_calls_extracted(self) -> None:
+    def test_function_calls_empty(self) -> None:
+        # calls are no longer extracted (adjacency module being deprecated)
         code_file = parse_source(SAMPLE_CODE, "/test/sample.py")
         method = next(f for f in code_file.functions if f.name == "method_one")
-        assert "ValueError" in method.calls
+        assert method.calls == []
 
     def test_function_class_assignment(self) -> None:
         code_file = parse_source(SAMPLE_CODE, "/test/sample.py")

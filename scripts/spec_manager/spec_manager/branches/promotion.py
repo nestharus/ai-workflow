@@ -135,6 +135,11 @@ class PromotionEngine:
         if not skip_compliance:
             compliance_result = self._check_compliance(slices)
             if not compliance_result.passed:
+                # TODO: Trigger demotion on compliance failure instead
+                #   of just returning failure. DownwardFlowEngine should
+                #   trace pins back to atoms, identify what needs fixing
+                #   at L1 (code-as-spec), fix it, then retry promotion.
+                #   Current behavior: returns skipped, caller ignores.
                 return PromotionResult(
                     success=False,
                     promoted_atoms=[],
@@ -269,6 +274,14 @@ class PromotionEngine:
         if descriptor is None:
             return None
 
+        # TODO: Smart projection routing based on atom metadata.
+        #   Currently always uses PASS_THROUGH. Should inspect the
+        #   atom's role/context to select the appropriate ProjectionType:
+        #   - EVENT_BRIDGE for event-emitting atoms
+        #   - MIDDLEWARE_WRAP for cross-cutting concerns
+        #   - RETRY_DECORATE for retry-capable operations
+        #   - AGGREGATION for data-combining atoms
+        #   Atom descriptor should carry enough metadata to decide.
         pin_id = self._pin_registry.allocate_pin_id()
         return PinProjection(
             pin_id=pin_id,

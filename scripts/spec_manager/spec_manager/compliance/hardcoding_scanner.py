@@ -39,6 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.code_analysis import analyze_source
+
 # =============================================================================
 # Finding Data Structure
 # =============================================================================
@@ -88,7 +90,7 @@ KEYWORD_INFERENCE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # This suggests inferring requirements from keywords
     (
         re.compile(
-            r'''["'](must|shall|should|required|mandatory)["']\s*(in|==)''',
+            r"""["'](must|shall|should|required|mandatory)["']\s*(in|==)""",
             re.IGNORECASE,
         ),
         "Keyword inference: scanning for requirement keywords in text",
@@ -96,7 +98,7 @@ KEYWORD_INFERENCE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # if "must" in line or similar patterns
     (
         re.compile(
-            r'''if\s+["'](must|shall|should|required)["']\s+in\s+''',
+            r"""if\s+["'](must|shall|should|required)["']\s+in\s+""",
             re.IGNORECASE,
         ),
         "Keyword inference: using requirement keywords to detect requirements",
@@ -104,7 +106,7 @@ KEYWORD_INFERENCE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Patterns like: "must" in text.lower() or "must" in line.lower()
     (
         re.compile(
-            r'''["'](must|shall|should|required)["']\s+in\s+\w+\.lower\(\)''',
+            r"""["'](must|shall|should|required)["']\s+in\s+\w+\.lower\(\)""",
             re.IGNORECASE,
         ),
         "Keyword inference: scanning for requirement keywords with case-insensitive check",
@@ -118,14 +120,14 @@ HEADING_PARSE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # re.search/match/findall with markdown heading patterns
     (
         re.compile(
-            r'''re\.(search|match|findall)\s*\([^)]*["'][^"']*\^?#{1,4}''',
+            r"""re\.(search|match|findall)\s*\([^)]*["'][^"']*\^?#{1,4}""",
         ),
         "Heading parsing: regex matching markdown headings to infer sections",
     ),
     # Pattern matching for "## Section" style headings as regex patterns
     (
         re.compile(
-            r'''r["']\^?#{1,4}\\s''',
+            r"""r["']\^?#{1,4}\\s""",
         ),
         "Heading parsing: hardcoded heading level pattern",
     ),
@@ -138,7 +140,7 @@ SEMANTIC_LIST_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Lists of "banned" or "prohibited" items
     (
         re.compile(
-            r'''(BANNED|PROHIBITED|FORBIDDEN|BLOCKED)_\w+\s*=\s*[\[\{]''',
+            r"""(BANNED|PROHIBITED|FORBIDDEN|BLOCKED)_\w+\s*=\s*[\[\{]""",
             re.IGNORECASE,
         ),
         "Semantic list: hardcoded list of prohibited items",
@@ -146,7 +148,7 @@ SEMANTIC_LIST_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Lists of requirement/constraint keywords
     (
         re.compile(
-            r'''(REQUIREMENT|CONSTRAINT|MUST|SHALL)_KEYWORDS\s*=\s*[\[\{]''',
+            r"""(REQUIREMENT|CONSTRAINT|MUST|SHALL)_KEYWORDS\s*=\s*[\[\{]""",
             re.IGNORECASE,
         ),
         "Semantic list: hardcoded list of requirement keywords",
@@ -158,14 +160,14 @@ SEMANTIC_LIST_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 ALLOWLIST_PATTERNS: list[re.Pattern[str]] = [
     # System ID patterns (ATOM-####, SEC-####, LIB-####, etc.)
-    re.compile(r'''["'](ATOM|SEC|EVID|LIB|REQ|F|GAP)-\d'''),
+    re.compile(r"""["'](ATOM|SEC|EVID|LIB|REQ|F|GAP)-\d"""),
     # Schema validation patterns
-    re.compile(r'''["']\$schema["']'''),
+    re.compile(r"""["']\$schema["']"""),
     # JSON field names
-    re.compile(r'''["'](atom_id|elem_id|lib_id|file_uid|rev_id)["']'''),
+    re.compile(r"""["'](atom_id|elem_id|lib_id|file_uid|rev_id)["']"""),
     # Test file patterns (tests are allowed to use these)
     # Match only actual test files, not temp directories with "test_" in path
-    re.compile(r'''(?:^|[/\\])test_[^/\\]*\.py$|_test\.py$|conftest\.py$'''),
+    re.compile(r"""(?:^|[/\\])test_[^/\\]*\.py$|_test\.py$|conftest\.py$"""),
 ]
 
 
@@ -184,30 +186,7 @@ def _is_allowlisted(line: str, file_path: str) -> bool:
     Returns:
         True if the line/file is allowlisted, False otherwise.
     """
-    for pattern in ALLOWLIST_PATTERNS:
-        if pattern.search(line) or pattern.search(file_path):
-            return True
-    return False
-
-
-def _is_in_comment(line: str) -> bool:
-    """Check if a line is a comment or docstring line.
-
-    This is a simple heuristic - it checks if the stripped line
-    starts with # or is part of a docstring.
-
-    Args:
-        line: The line of code.
-
-    Returns:
-        True if likely a comment, False otherwise.
-    """
-    stripped = line.strip()
-    if stripped.startswith("#"):
-        return True
-    if stripped.startswith('"""') or stripped.startswith("'''"):
-        return True
-    return False
+    return any(pattern.search(line) or pattern.search(file_path) for pattern in ALLOWLIST_PATTERNS)
 
 
 def scan_file_for_hardcoding_violations(
@@ -233,12 +212,16 @@ def scan_file_for_hardcoding_violations(
     lines = content.splitlines()
     file_str = str(file_path)
 
+    # Analyze source to get comment line numbers (language-agnostic)
+    analysis = analyze_source(content, filepath=file_str)
+    comment_lines = {comment.line for comment in analysis.comments}
+
     # Custom allowlist patterns
     custom_allowlist = allowlist or {}
 
     for line_no, line in enumerate(lines, start=1):
-        # Skip comments
-        if _is_in_comment(line):
+        # Skip comments (language-agnostic via LLM analysis)
+        if line_no in comment_lines:
             continue
 
         # Skip allowlisted lines/files
@@ -249,9 +232,10 @@ def scan_file_for_hardcoding_violations(
         for pattern, message in KEYWORD_INFERENCE_PATTERNS:
             if pattern.search(line):
                 pattern_type = "keyword_inference"
-                if pattern_type in custom_allowlist:
-                    if any(p in line for p in custom_allowlist[pattern_type]):
-                        continue
+                if pattern_type in custom_allowlist and any(
+                    p in line for p in custom_allowlist[pattern_type]
+                ):
+                    continue
                 findings.append(
                     HardcodingFinding(
                         severity="warning",
@@ -267,9 +251,10 @@ def scan_file_for_hardcoding_violations(
         for pattern, message in HEADING_PARSE_PATTERNS:
             if pattern.search(line):
                 pattern_type = "heading_parse"
-                if pattern_type in custom_allowlist:
-                    if any(p in line for p in custom_allowlist[pattern_type]):
-                        continue
+                if pattern_type in custom_allowlist and any(
+                    p in line for p in custom_allowlist[pattern_type]
+                ):
+                    continue
                 findings.append(
                     HardcodingFinding(
                         severity="warning",
@@ -285,9 +270,10 @@ def scan_file_for_hardcoding_violations(
         for pattern, message in SEMANTIC_LIST_PATTERNS:
             if pattern.search(line):
                 pattern_type = "semantic_list"
-                if pattern_type in custom_allowlist:
-                    if any(p in line for p in custom_allowlist[pattern_type]):
-                        continue
+                if pattern_type in custom_allowlist and any(
+                    p in line for p in custom_allowlist[pattern_type]
+                ):
+                    continue
                 findings.append(
                     HardcodingFinding(
                         severity="warning",

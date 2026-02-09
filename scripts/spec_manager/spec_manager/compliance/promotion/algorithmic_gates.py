@@ -10,138 +10,21 @@ Implements the five algorithmic layer cleanliness gates:
 
 from __future__ import annotations
 
-import ast
+import re
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from spec_manager.compliance.detection.comment_scanner import scan_comments
+from spec_manager.compliance.detection.stub_scanner import scan_stubs
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
+from spec_manager.core.code_analysis import analyze_source
 
-
-def _scan_comments_fallback(file_path: Path) -> list[dict[str, Any]]:
-    """Fallback comment scanner when Plan 05 modules are not available.
-
-    Scans for spec-style comments (lines starting with # that look like
-    spec annotations or TODO/FIXME markers within function bodies).
-    """
-    findings: list[dict[str, Any]] = []
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return findings
-
-    try:
-        tree = ast.parse(source, filename=str(file_path))
-    except SyntaxError:
-        return findings
-
-    lines = source.splitlines()
-
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        func_name = node.name
-        func_start = node.lineno
-        func_end = node.end_lineno or func_start
-
-        for line_no in range(func_start, min(func_end + 1, len(lines) + 1)):
-            line = lines[line_no - 1]
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                comment_text = stripped.lstrip("#").strip()
-                # Skip shebangs and encoding declarations
-                if comment_text.startswith("!") or "coding" in comment_text:
-                    continue
-                findings.append({
-                    "file_path": str(file_path),
-                    "line": line_no,
-                    "text": comment_text,
-                    "enclosing_function": func_name,
-                })
-
-    return findings
-
-
-def _scan_stubs_fallback(file_path: Path) -> list[dict[str, Any]]:
-    """Fallback stub scanner when Plan 05 modules are not available.
-
-    Detects functions with stub bodies: pass, ..., raise NotImplementedError, etc.
-    """
-    findings: list[dict[str, Any]] = []
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return findings
-
-    try:
-        tree = ast.parse(source, filename=str(file_path))
-    except SyntaxError:
-        return findings
-
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-
-        # Get the body statements, skipping docstrings
-        body = list(node.body)
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-        ):
-            body = body[1:]
-
-        if not body:
-            findings.append({
-                "file_path": str(file_path),
-                "line": node.lineno,
-                "name": node.name,
-                "stub_type": "empty_body",
-            })
-            continue
-
-        if len(body) == 1:
-            stmt = body[0]
-            # pass statement
-            if isinstance(stmt, ast.Pass):
-                findings.append({
-                    "file_path": str(file_path),
-                    "line": node.lineno,
-                    "name": node.name,
-                    "stub_type": "pass",
-                })
-            # Ellipsis (...)
-            elif (
-                isinstance(stmt, ast.Expr)
-                and isinstance(stmt.value, ast.Constant)
-                and stmt.value.value is ...
-            ):
-                findings.append({
-                    "file_path": str(file_path),
-                    "line": node.lineno,
-                    "name": node.name,
-                    "stub_type": "ellipsis",
-                })
-            # raise NotImplementedError
-            elif isinstance(stmt, ast.Raise):
-                exc = stmt.exc
-                if exc is not None:
-                    exc_name = None
-                    if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-                        exc_name = exc.func.id
-                    elif isinstance(exc, ast.Name):
-                        exc_name = exc.id
-                    if exc_name == "NotImplementedError":
-                        findings.append({
-                            "file_path": str(file_path),
-                            "line": node.lineno,
-                            "name": node.name,
-                            "stub_type": "not_implemented",
-                        })
-
-    return findings
+# Regex patterns for text-based import scanning (used by check_store_monogamy)
+_IMPORT_RE = re.compile(r"^\s*import\s+(.+)", re.MULTILINE)
+_FROM_IMPORT_RE = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)", re.MULTILINE)
 
 
 def check_no_remaining_comments(
@@ -166,22 +49,17 @@ def check_no_remaining_comments(
     start = time.monotonic()
     all_findings: list[dict[str, Any]] = []
 
-    # Try to use Plan 05 scanner first, fall back to built-in
-    try:
-        from spec_manager.compliance.detection.comment_scanner import scan_comments
-
-        for f in algorithmic_files:
-            gaps = scan_comments(f)
-            for gap in gaps:
-                all_findings.append({
+    for f in algorithmic_files:
+        gaps = scan_comments(f)
+        for gap in gaps:
+            all_findings.append(
+                {
                     "file_path": gap.file_path,
                     "line": gap.line,
                     "text": gap.text,
                     "enclosing_function": gap.enclosing_function,
-                })
-    except ImportError:
-        for f in algorithmic_files:
-            all_findings.extend(_scan_comments_fallback(f))
+                }
+            )
 
     passed = len(all_findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -222,21 +100,17 @@ def check_no_stub_functions(
     start = time.monotonic()
     all_findings: list[dict[str, Any]] = []
 
-    try:
-        from spec_manager.compliance.detection.stub_scanner import scan_stubs
-
-        for f in algorithmic_files:
-            stubs = scan_stubs(f)
-            for stub in stubs:
-                all_findings.append({
+    for f in algorithmic_files:
+        stubs = scan_stubs(f)
+        for stub in stubs:
+            all_findings.append(
+                {
                     "file_path": stub.file_path,
                     "line": stub.line,
                     "name": stub.name,
                     "stub_type": stub.stub_type,
-                })
-    except ImportError:
-        for f in algorithmic_files:
-            all_findings.extend(_scan_stubs_fallback(f))
+                }
+            )
 
     passed = len(all_findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -289,11 +163,13 @@ def check_all_tests_pass(
         output = result.stdout + result.stderr
         findings: list[dict[str, Any]] = []
         if not passed:
-            findings.append({
-                "returncode": result.returncode,
-                "stdout": result.stdout[:2000],
-                "stderr": result.stderr[:2000],
-            })
+            findings.append(
+                {
+                    "returncode": result.returncode,
+                    "stdout": result.stdout[:2000],
+                    "stderr": result.stderr[:2000],
+                }
+            )
     except subprocess.TimeoutExpired:
         passed = False
         output = f"Test command timed out after {timeout_seconds}s"
@@ -312,9 +188,7 @@ def check_all_tests_pass(
         score=1.0 if passed else 0.0,
         findings=findings,
         summary=(
-            "All algorithmic tests passed"
-            if passed
-            else f"Test command failed: {output[:200]}"
+            "All algorithmic tests passed" if passed else f"Test command failed: {output[:200]}"
         ),
         duration_ms=duration,
     )
@@ -359,14 +233,15 @@ def check_call_graph_connected(
             sorted_components = sorted(components, key=len, reverse=True)
             for component in sorted_components[1:]:
                 filtered = [
-                    name for name in component
-                    if not any(pat in name for pat in ignore_patterns)
+                    name for name in component if not any(pat in name for pat in ignore_patterns)
                 ]
                 if len(filtered) >= min_component_size:
-                    findings.append({
-                        "component_size": len(filtered),
-                        "functions": sorted(filtered),
-                    })
+                    findings.append(
+                        {
+                            "component_size": len(filtered),
+                            "functions": sorted(filtered),
+                        }
+                    )
     except ImportError:
         # Plan 05 not yet available, degrade gracefully
         findings = _build_call_graph_fallback(
@@ -396,10 +271,10 @@ def _build_call_graph_fallback(
     min_component_size: int,
     ignore_patterns: list[str],
 ) -> list[dict[str, Any]]:
-    """Fallback call graph analysis using AST-based function/call extraction.
+    """Fallback call graph analysis using analyze_source() and regex-based call extraction.
 
-    Builds a simple graph of function definitions and function calls,
-    then finds disconnected components via union-find.
+    Uses analyze_source() for function definitions and regex on source lines
+    for approximate call detection, then finds disconnected components via union-find.
     """
     # Collect all defined functions and their calls
     func_defs: dict[str, str] = {}  # func_name -> file_path
@@ -408,27 +283,41 @@ def _build_call_graph_fallback(
     for file_path in algorithmic_files:
         try:
             source = file_path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(file_path))
-        except (OSError, SyntaxError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
             continue
 
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                func_name = node.name
-                func_defs[func_name] = str(file_path)
-                calls: set[str] = set()
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Call):
-                        if isinstance(child.func, ast.Name):
-                            calls.add(child.func.id)
-                        elif isinstance(child.func, ast.Attribute):
-                            calls.add(child.func.attr)
-                func_calls[func_name] = calls
+        analysis = analyze_source(source, str(file_path))
+        lines = source.splitlines()
+
+        for func_info in analysis.functions:
+            func_name = func_info.name
+            func_defs[func_name] = str(file_path)
+
+            # Extract the function body text from the source lines
+            # body_start_line and end_line give us the range
+            body_start = func_info.body_start_line
+            body_end = func_info.end_line
+            if body_start > 0 and body_end > 0 and body_end <= len(lines):
+                body_lines = lines[body_start - 1 : body_end]
+                body_text = "\n".join(body_lines)
+            elif func_info.start_line > 0 and func_info.end_line > 0:
+                body_lines = lines[func_info.start_line - 1 : func_info.end_line]
+                body_text = "\n".join(body_lines)
+            else:
+                body_text = ""
+
+            # Use regex to find call-like patterns in body text
+            raw_calls = set(re.findall(r"\b(\w+)\s*\(", body_text))
+            func_calls[func_name] = raw_calls
 
     # Build adjacency and find connected components via union-find
     all_funcs = set(func_defs.keys())
     if not all_funcs:
         return []
+
+    # Filter calls to only known function names
+    for caller in func_calls:
+        func_calls[caller] = func_calls[caller] & all_funcs
 
     parent: dict[str, str] = {f: f for f in all_funcs}
 
@@ -462,15 +351,14 @@ def _build_call_graph_fallback(
     # Sort components by size descending, skip the largest (main component)
     sorted_components = sorted(components.values(), key=len, reverse=True)
     for component in sorted_components[1:]:
-        filtered = [
-            name for name in component
-            if not any(pat in name for pat in ignore_patterns)
-        ]
+        filtered = [name for name in component if not any(pat in name for pat in ignore_patterns)]
         if len(filtered) >= min_component_size:
-            findings.append({
-                "component_size": len(filtered),
-                "functions": sorted(filtered),
-            })
+            findings.append(
+                {
+                    "component_size": len(filtered),
+                    "functions": sorted(filtered),
+                }
+            )
 
     return findings
 
@@ -542,9 +430,7 @@ def check_store_monogamy(
             store_modules[module_name] = sf
 
     # Step 2: For each algorithmic file, find store imports
-    store_importers: dict[str, set[str]] = {
-        name: set() for name in store_modules
-    }
+    store_importers: dict[str, set[str]] = {name: set() for name in store_modules}
 
     for f in algorithmic_files:
         if f in store_files:
@@ -552,8 +438,7 @@ def check_store_monogamy(
 
         try:
             source = f.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(f))
-        except (OSError, SyntaxError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
             continue
 
         # Determine vertical slice for this file
@@ -564,34 +449,51 @@ def check_store_monogamy(
         parts = rel.parts
         vertical = "/".join(parts[:vertical_depth]) if len(parts) >= vertical_depth else str(rel)
 
-        # Scan imports
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    name = alias.name.split(".")[-1]
-                    if name in store_modules:
-                        store_importers[name].add(vertical)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    module_parts = node.module.split(".")
-                    # Check if any part of the import path matches a store module
-                    for part in module_parts:
-                        if part in store_modules:
-                            store_importers[part].add(vertical)
-                    # Also check imported names
-                    for alias in node.names:
-                        if alias.name in store_modules:
-                            store_importers[alias.name].add(vertical)
+        # Scan imports using regex
+        for match in _IMPORT_RE.finditer(source):
+            # `import foo, bar.baz` -> extract each module
+            import_text = match.group(1)
+            for segment in import_text.split(","):
+                segment = segment.strip()
+                # Handle `import foo as bar` -> extract `foo`
+                module_part = (
+                    segment.split(" as ")[0].strip() if " as " in segment else segment.strip()
+                )
+                name = module_part.split(".")[-1]
+                if name in store_modules:
+                    store_importers[name].add(vertical)
+
+        for match in _FROM_IMPORT_RE.finditer(source):
+            module_path = match.group(1)
+            imported_names = match.group(2)
+
+            # Check if any part of the from-module path matches a store module
+            module_parts = module_path.split(".")
+            for part in module_parts:
+                if part in store_modules:
+                    store_importers[part].add(vertical)
+
+            # Also check the imported names
+            for segment in imported_names.split(","):
+                segment = segment.strip()
+                # Handle `from x import foo as bar` -> extract `foo`
+                imported_name = (
+                    segment.split(" as ")[0].strip() if " as " in segment else segment.strip()
+                )
+                if imported_name in store_modules:
+                    store_importers[imported_name].add(vertical)
 
     # Step 3: Flag stores accessed by multiple verticals
     for store_name, verticals in store_importers.items():
         if len(verticals) > 1:
-            findings.append({
-                "store_name": store_name,
-                "store_file": str(store_modules[store_name]),
-                "verticals": sorted(verticals),
-                "vertical_count": len(verticals),
-            })
+            findings.append(
+                {
+                    "store_name": store_name,
+                    "store_file": str(store_modules[store_name]),
+                    "verticals": sorted(verticals),
+                    "vertical_count": len(verticals),
+                }
+            )
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -605,9 +507,7 @@ def check_store_monogamy(
         summary=(
             "All stores are accessed by single vertical slices"
             if passed
-            else (
-                f"Found {len(findings)} store(s) accessed by multiple vertical slices"
-            )
+            else (f"Found {len(findings)} store(s) accessed by multiple vertical slices")
         ),
         duration_ms=duration,
     )

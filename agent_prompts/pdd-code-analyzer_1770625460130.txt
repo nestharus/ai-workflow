@@ -1,0 +1,11 @@
+Analyze the following source code and return the JSON structure
+described in your system prompt.
+
+File: /tmp/pytest-of-nes/pytest-447/test_single_file_json0/mod.py
+
+```
+def f():
+    # TODO: compute result
+    return 1
+
+```

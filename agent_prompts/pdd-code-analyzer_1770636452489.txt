@@ -1,0 +1,14 @@
+Analyze the following source code and return the JSON structure
+described in your system prompt.
+
+File: payment.py
+
+```
+def validate_payment(amount: float, currency: str) -> bool:
+    """Validate a payment."""
+    return amount > 0
+
+def compute_tax(amount: float) -> float:
+    return amount * 0.1
+
+```

@@ -1,19 +1,17 @@
 """Comment scanner for executable gap detection.
 
-Tokenizes Python files and extracts comments as unimplemented spec elements.
-In algorithmic code, every comment IS spec -- a description of behavior
-that should be implemented, not described.
+Uses LLM-based code analysis to extract comments as unimplemented spec
+elements.  In algorithmic code, every comment IS spec -- a description
+of behavior that should be implemented, not described.
 """
 
 from __future__ import annotations
 
-import ast
-import io
-import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.gap import GapEvidence
 
 
@@ -44,94 +42,30 @@ EXCLUDED_PREFIXES: tuple[str, ...] = (
 )
 
 
-def _build_function_line_map(source: str) -> list[tuple[int, int, str]]:
-    """Build a mapping from line ranges to enclosing function names.
-
-    Returns a sorted list of (start_line, end_line, qualified_name) tuples.
-    Handles both top-level functions and methods within classes.
-    Nested functions get qualified names like "outer.inner".
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
-
-    ranges: list[tuple[int, int, str]] = []
-
-    def _walk(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                class_prefix = f"{prefix}{child.name}." if not prefix else f"{prefix}{child.name}."
-                if not prefix:
-                    class_prefix = f"{child.name}."
-                _walk(child, class_prefix)
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                qualified = f"{prefix}{child.name}"
-                end_line = child.end_lineno or child.lineno
-                ranges.append((child.lineno, end_line, qualified))
-                _walk(child, f"{qualified}.")
-
-    _walk(tree, "")
-    ranges.sort(key=lambda r: (r[0], -r[1]))
-    return ranges
-
-
-def _find_enclosing_function(
-    line: int,
-    function_ranges: list[tuple[int, int, str]],
-) -> str | None:
-    """Find the most specific (innermost) enclosing function for a given line."""
-    best: str | None = None
-    best_size = float("inf")
-    for start, end, name in function_ranges:
-        if start <= line <= end:
-            size = end - start
-            if size < best_size:
-                best_size = size
-                best = name
-    return best
-
-
 def scan_comments(filepath: Path) -> list[CommentGap]:
-    """Tokenize a Python file and return all spec comments.
+    """Scan a source file and return all spec comments.
 
-    Uses tokenize.generate_tokens to find COMMENT tokens.
+    Delegates structural analysis to ``analyze_source`` (language-agnostic).
     Filters out excluded prefixes (type: ignore, noqa, pragma, etc.).
-    Resolves enclosing function via ast.parse + line range lookup.
 
     Args:
-        filepath: Path to the Python file.
+        filepath: Path to the source file.
 
     Returns:
         List of CommentGap for each spec comment found.
     """
     source = filepath.read_text(encoding="utf-8")
-    function_ranges = _build_function_line_map(source)
-
-    gaps: list[CommentGap] = []
-    readline = io.StringIO(source).readline
-
-    try:
-        tokens = list(tokenize.generate_tokens(readline))
-    except tokenize.TokenError:
-        return gaps
+    analysis = analyze_source(source, str(filepath))
 
     source_lines = source.splitlines()
+    gaps: list[CommentGap] = []
 
-    for tok in tokens:
-        if tok.type != tokenize.COMMENT:
-            continue
-
-        comment_text = tok.string
-        line_no = tok.start[0]
-        col = tok.start[1]
-
-        # Strip the leading '#' and optional space
-        stripped = comment_text.lstrip("#").strip()
-
+    for comment in analysis.comments:
         # Check if it is a shebang
-        if comment_text.startswith("#!") and line_no <= 2:
+        if comment.raw.startswith("#!") and comment.line <= 2:
             continue
+
+        stripped = comment.text
 
         # Check excluded prefixes
         skip = False
@@ -148,21 +82,19 @@ def scan_comments(filepath: Path) -> list[CommentGap]:
 
         # Determine if inline (code before the comment on the same line)
         is_inline = False
-        if line_no <= len(source_lines):
-            line_text = source_lines[line_no - 1]
-            before_comment = line_text[:col].strip()
+        if comment.line <= len(source_lines):
+            line_text = source_lines[comment.line - 1]
+            before_comment = line_text[: comment.col_offset].strip()
             if before_comment:
                 is_inline = True
-
-        enclosing = _find_enclosing_function(line_no, function_ranges)
 
         gaps.append(
             CommentGap(
                 file_path=str(filepath),
-                line=line_no,
-                col_int=col,
+                line=comment.line,
+                col_int=comment.col_offset,
                 text=stripped,
-                enclosing_function=enclosing,
+                enclosing_function=comment.enclosing_function,
                 is_inline=is_inline,
             )
         )

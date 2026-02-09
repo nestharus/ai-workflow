@@ -35,10 +35,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
 from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+if TYPE_CHECKING:
+    from spec_manager.orchestration.worktree_manager import WorktreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +79,9 @@ class PddLifecycle:
         use_evidence_store: bool = False,
         steering_path: Path | None = None,
         max_refinement_iterations: int = 5,
-        worktree_manager: "WorktreeManager | None" = None,
+        worktree_manager: WorktreeManager | None = None,
         max_approval_iterations: int = 3,
     ) -> None:
-        from spec_manager.orchestration.worktree_manager import WorktreeManager
-
         self.manager = manager
         self.orchestrator = PddOrchestrator(manager)
         self.mode = mode
@@ -105,6 +106,27 @@ class PddLifecycle:
         Returns:
             Summary dict with results from each lifecycle phase.
         """
+        # TODO: Restructure as per-slice iterative promotion loop.
+        #   Currently sequential: Build → QA → Architecture → Code Quality.
+        #   Should be:
+        #     1. Run Promotion 1 (P0 intake, optional — skip if input is PDD)
+        #     2. Create worktrees per library
+        #     3. FOR EACH SLICE (parallel across library worktrees):
+        #        a. P3 gap exploration (find remaining TODO comments)
+        #        b. P8 planning (what to implement, how to integrate)
+        #        c. P9 implementation (write code + small tests)
+        #        d. Under-specification check → constraints → block or decide
+        #        e. P1/P2 analyze (parse, reverse-translate)
+        #        f. P4/P5 promote (extract atoms, pin, compliance gates)
+        #        g. Refinement engine (coupling/cohesion)
+        #        h. CI on clean worktree (extract slice → test → rebase)
+        #        i. P6/P7 verify (cross-library, lineage)
+        #        j. POWER alignment (periodic)
+        #        k. If gates fail → fix → retry from (a)
+        #     4. Termination: all TODO comments resolved, all atoms promoted,
+        #        all gates pass, clean worktree tests pass
+        #     5. Quality reviewers → demotion if logic issues → re-promote
+        #     6. Merge to main
         results: dict[str, Any] = {}
 
         # Build with approval loop
@@ -141,11 +163,24 @@ class PddLifecycle:
         logger.info("=== PDD Lifecycle: BUILD ===")
         outputs: dict[str, Any] = {}
 
+        # TODO: Restructure build to separate Promotion 1 from Promotion 2.
+        #   Step 1 should ONLY run P0 (intake) if input is raw prose.
+        #   Then create worktrees BEFORE the iterative loop.
+        #   Then the iterative per-slice loop replaces steps 1-5.
+        #   Current flow runs all 11 phases as a single sequential pass,
+        #   creates worktrees last (too late), and batches refinement.
+
         # 1. Run the internal 11-phase pipeline
+        # TODO: Replace with: run P0 once (if needed), then iterative
+        #   per-slice loop for P3→P8→P9→P4→P5 with CI integration.
         pipeline_result = self.orchestrator.run()
         outputs["pipeline"] = pipeline_result
 
         # 2. Refine library specs (ambiguity detection + resolution)
+        # TODO: Remove batch refinement. Ambiguity resolution should
+        #   happen INLINE during implementation when under-specification
+        #   is hit. The planning agent checks constraints, blocks if
+        #   insufficient, and sources from human or research team.
         refinement_result = self._refine_libraries()
         outputs["refinement"] = refinement_result
 
@@ -158,6 +193,10 @@ class PddLifecycle:
         outputs["overview"] = overview_result
 
         # 5. Create per-library worktrees for parallel implementation
+        # TODO: Move worktree creation to BEFORE the iterative loop.
+        #   Worktrees are where implementation happens — they must
+        #   exist before P9 writes code. Currently created after
+        #   all phases complete, which is too late.
         if self.worktree_manager:
             worktree_result = self._setup_library_worktrees()
             outputs["worktrees"] = worktree_result
@@ -215,9 +254,7 @@ class PddLifecycle:
             "reason": "max_iterations_reached",
         }
 
-    def _request_approval(
-        self, build_result: dict[str, Any], iteration: int
-    ) -> dict[str, Any]:
+    def _request_approval(self, build_result: dict[str, Any], iteration: int) -> dict[str, Any]:
         """Request human approval of the build output.
 
         Args:
@@ -292,6 +329,11 @@ class PddLifecycle:
         Returns:
             QA phase results.
         """
+        # TODO: QA is a process at every promotion, not a separate phase.
+        #   Should run as part of compliance gating within the per-slice
+        #   loop: after P9 writes code, run tests + eval before promoting.
+        #   Keep this method as a standalone check but wire it into the
+        #   promotion loop as a gate.
         logger.info("=== PDD Lifecycle: QA ===")
 
         from spec_manager.refinement.evals.runner import EvalConfig, EvalRunner
@@ -335,6 +377,11 @@ class PddLifecycle:
         Returns:
             Architecture phase results.
         """
+        # TODO: Architecture emerges from Promotion 2 (L1→L2), not
+        #   from a separate proposal phase. Pin-function scan + atom
+        #   promotion already create architectural structure. This
+        #   method should validate what emerged, not propose from scratch.
+        #   Move architectural validation into the promotion loop.
         logger.info("=== PDD Lifecycle: ARCHITECTURE ===")
 
         from spec_manager.core.agent_utils import run_agent
@@ -405,6 +452,10 @@ class PddLifecycle:
         Returns:
             Code quality phase results.
         """
+        # TODO: Code quality IS Promotion 3 (L2→L3). If quality
+        #   reviewers find logic issues → trigger demotion all the way
+        #   down to L1 (code-as-spec), fix there, re-promote through
+        #   ALL gates. Currently just collects findings, no demotion.
         logger.info("=== PDD Lifecycle: CODE QUALITY ===")
 
         from spec_manager.core.agent_utils import run_agent
@@ -457,9 +508,7 @@ class PddLifecycle:
                         finding["reviewer"] = reviewer
                     all_findings.extend(findings)
                 except Exception as exc:
-                    logger.warning(
-                        "Reviewer %s failed for %s: %s", reviewer, lib_id, exc
-                    )
+                    logger.warning("Reviewer %s failed for %s: %s", reviewer, lib_id, exc)
 
         # Write quality report
         reports_dir = self.manager.structure.root / "reports"

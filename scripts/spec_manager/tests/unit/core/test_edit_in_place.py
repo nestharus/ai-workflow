@@ -2,6 +2,10 @@
 
 Covers Plans 1-4: data structures, comment classifier, function analyzer,
 and file-level orchestrator.
+
+Note: Production code uses LLM-based analysis (code_analysis module).
+Tests inject a local Python AST-based analyzer as a test double for
+deterministic, fast unit testing.
 """
 
 from __future__ import annotations
@@ -18,8 +22,6 @@ from spec_manager.core.edit_in_place import (
     SpecComment,
     TranslationState,
     _determine_translation_state,
-    _get_docstring,
-    _is_stub_body,
     analyze_file,
     analyze_functions,
     analyze_project,
@@ -28,6 +30,10 @@ from spec_manager.core.edit_in_place import (
     format_gap_report,
     scan_comments,
 )
+
+# NOTE: The _use_local_analyzer autouse fixture is provided by
+# tests/unit/core/conftest.py and applies to ALL tests in this directory.
+
 
 # =============================================================================
 # Plan 1: Data Structure Tests
@@ -95,6 +101,7 @@ class TestFunctionInfo:
             args=["self", "x"],
             return_annotation="int",
             docstring="Do something.",
+            body_start_line=7,
             body_line_count=10,
             translation_state=TranslationState.IMPLEMENTED,
             spec_comments=[],
@@ -197,7 +204,8 @@ class TestFileTranslationState:
         )
         assert state.completion_ratio == 0.5
 
-    def test_gaps_filtering(self) -> None:
+    def test_gaps_filtering_module_level(self) -> None:
+        """Module-level SPEC + TODO comments are always gaps."""
         spec = self._make_comment(CommentKind.SPEC)
         todo = self._make_comment(CommentKind.TODO)
         infra = self._make_comment(CommentKind.INFRASTRUCTURE)
@@ -218,6 +226,97 @@ class TestFileTranslationState:
         gaps = state.gaps
         assert len(gaps) == 2
         assert all(g.kind in (CommentKind.SPEC, CommentKind.TODO) for g in gaps)
+
+    def test_gaps_spec_in_implemented_function_not_gap(self) -> None:
+        """SPEC comments inside implemented functions are NOT gaps."""
+        func_comment = SpecComment(
+            file="test.py",
+            line=5,
+            col_offset=8,
+            text="parse currency pair",
+            raw="# parse currency pair",
+            kind=CommentKind.SPEC,
+            enclosing_function="MyClass.convert_fx",
+        )
+        func = FunctionInfo(
+            name="convert_fx",
+            qualified_name="MyClass.convert_fx",
+            file="test.py",
+            line_start=3,
+            line_end=10,
+            col_offset=4,
+            is_async=False,
+            decorators=[],
+            args=["self", "amount"],
+            return_annotation="Decimal",
+            docstring="Convert FX.",
+            body_start_line=5,
+            body_line_count=7,
+            translation_state=TranslationState.IMPLEMENTED,
+            spec_comments=[func_comment],
+            stub_reason=None,
+        )
+        state = FileTranslationState(
+            file="test.py",
+            content_hash="abc",
+            functions=[func],
+            module_comments=[],
+            all_comments=[func_comment],
+            total_spec_comments=0,
+            total_functions=1,
+            stub_count=0,
+            partial_count=0,
+            implemented_count=1,
+            unresolved_count=0,
+        )
+        gaps = state.gaps
+        assert len(gaps) == 0
+
+    def test_gaps_spec_in_stub_function_is_gap(self) -> None:
+        """SPEC comments inside stub functions ARE gaps."""
+        func_comment = SpecComment(
+            file="test.py",
+            line=5,
+            col_offset=8,
+            text="validate all fields",
+            raw="# validate all fields",
+            kind=CommentKind.SPEC,
+            enclosing_function="MyClass.validate",
+        )
+        func = FunctionInfo(
+            name="validate",
+            qualified_name="MyClass.validate",
+            file="test.py",
+            line_start=3,
+            line_end=7,
+            col_offset=4,
+            is_async=False,
+            decorators=[],
+            args=["self", "data"],
+            return_annotation="bool",
+            docstring="Validate data.",
+            body_start_line=5,
+            body_line_count=4,
+            translation_state=TranslationState.UNRESOLVED,
+            spec_comments=[func_comment],
+            stub_reason="pass",
+        )
+        state = FileTranslationState(
+            file="test.py",
+            content_hash="abc",
+            functions=[func],
+            module_comments=[],
+            all_comments=[func_comment],
+            total_spec_comments=1,
+            total_functions=1,
+            stub_count=0,
+            partial_count=0,
+            implemented_count=0,
+            unresolved_count=1,
+        )
+        gaps = state.gaps
+        assert len(gaps) == 1
+        assert gaps[0].text == "validate all fields"
 
 
 class TestProjectTranslationState:
@@ -272,67 +371,67 @@ class TestProjectTranslationState:
 
 
 # =============================================================================
-# Plan 2: Comment Classifier Tests
+# Plan 2: Comment Classifier Tests (operates on clean text, no delimiter)
 # =============================================================================
 
 
 class TestClassifyComment:
     def test_spec_comment(self) -> None:
-        assert classify_comment("# validate payment against fraud rules") == CommentKind.SPEC
+        assert classify_comment("validate payment against fraud rules") == CommentKind.SPEC
 
     def test_type_ignore(self) -> None:
-        assert classify_comment("# type: ignore[attr-defined]") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("type: ignore[attr-defined]") == CommentKind.INFRASTRUCTURE
 
     def test_noqa(self) -> None:
-        assert classify_comment("# noqa: E501") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("noqa: E501") == CommentKind.INFRASTRUCTURE
 
     def test_pragma_no_cover(self) -> None:
-        assert classify_comment("# pragma: no cover") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("pragma: no cover") == CommentKind.INFRASTRUCTURE
 
     def test_shebang(self) -> None:
-        assert classify_comment("#!/usr/bin/env python") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("!/usr/bin/env python") == CommentKind.INFRASTRUCTURE
 
     def test_encoding_declaration(self) -> None:
-        assert classify_comment("# -*- coding: utf-8 -*-") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("-*- coding: utf-8 -*-") == CommentKind.INFRASTRUCTURE
 
     def test_pylint_disable(self) -> None:
-        assert classify_comment("# pylint: disable=C0301") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("pylint: disable=C0301") == CommentKind.INFRASTRUCTURE
 
     def test_fmt_off(self) -> None:
-        assert classify_comment("# fmt: off") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("fmt: off") == CommentKind.INFRASTRUCTURE
 
     def test_isort_skip(self) -> None:
-        assert classify_comment("# isort: skip") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("isort: skip") == CommentKind.INFRASTRUCTURE
 
     def test_mypy_directive(self) -> None:
-        assert classify_comment("# mypy: ignore-errors") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("mypy: ignore-errors") == CommentKind.INFRASTRUCTURE
 
     def test_ruff_directive(self) -> None:
-        assert classify_comment("# ruff: noqa") == CommentKind.INFRASTRUCTURE
+        assert classify_comment("ruff: noqa") == CommentKind.INFRASTRUCTURE
 
     def test_section_marker_dashes(self) -> None:
-        assert classify_comment("# ---- atoms ----") == CommentKind.SECTION_MARKER
+        assert classify_comment("---- atoms ----") == CommentKind.SECTION_MARKER
 
     def test_section_marker_equals(self) -> None:
-        assert classify_comment("# ==== Section ====") == CommentKind.SECTION_MARKER
+        assert classify_comment("==== Section ====") == CommentKind.SECTION_MARKER
 
     def test_todo(self) -> None:
-        assert classify_comment("# TODO: implement this") == CommentKind.TODO
+        assert classify_comment("TODO: implement this") == CommentKind.TODO
 
     def test_fixme(self) -> None:
-        assert classify_comment("# FIXME: broken logic") == CommentKind.TODO
+        assert classify_comment("FIXME: broken logic") == CommentKind.TODO
 
     def test_hack(self) -> None:
-        assert classify_comment("# HACK: temporary workaround") == CommentKind.TODO
+        assert classify_comment("HACK: temporary workaround") == CommentKind.TODO
 
     def test_xxx(self) -> None:
-        assert classify_comment("# XXX: needs attention") == CommentKind.TODO
+        assert classify_comment("XXX: needs attention") == CommentKind.TODO
 
     def test_workaround(self) -> None:
-        assert classify_comment("# WORKAROUND: issue #123") == CommentKind.TODO
+        assert classify_comment("WORKAROUND: issue #123") == CommentKind.TODO
 
     def test_todo_case_insensitive(self) -> None:
-        assert classify_comment("# todo: do this") == CommentKind.TODO
+        assert classify_comment("todo: do this") == CommentKind.TODO
 
 
 class TestScanComments:
@@ -402,103 +501,8 @@ class TestScanComments:
 
 
 # =============================================================================
-# Plan 3: Function Analyzer Tests
+# Plan 3: Translation State Tests
 # =============================================================================
-
-
-class TestIsStubBody:
-    def test_pass(self) -> None:
-        import ast as _ast
-
-        tree = _ast.parse("def f(): pass")
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        is_stub, reason = _is_stub_body(func.body)
-        assert is_stub is True
-        assert reason == "pass"
-
-    def test_ellipsis(self) -> None:
-        import ast as _ast
-
-        tree = _ast.parse("def f(): ...")
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        is_stub, reason = _is_stub_body(func.body)
-        assert is_stub is True
-        assert reason == "ellipsis"
-
-    def test_not_implemented(self) -> None:
-        import ast as _ast
-
-        tree = _ast.parse("def f(): raise NotImplementedError()")
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        is_stub, reason = _is_stub_body(func.body)
-        assert is_stub is True
-        assert reason == "not_implemented"
-
-    def test_not_implemented_bare(self) -> None:
-        import ast as _ast
-
-        tree = _ast.parse("def f(): raise NotImplementedError")
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        is_stub, reason = _is_stub_body(func.body)
-        assert is_stub is True
-        assert reason == "not_implemented"
-
-    def test_docstring_plus_pass(self) -> None:
-        import ast as _ast
-
-        src = textwrap.dedent('''\
-            def f():
-                """Docstring."""
-                pass
-        ''')
-        tree = _ast.parse(src)
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        is_stub, reason = _is_stub_body(func.body)
-        assert is_stub is True
-        assert reason == "pass"
-
-    def test_real_code(self) -> None:
-        import ast as _ast
-
-        src = textwrap.dedent("""\
-            def f():
-                x = 1
-                return x + 1
-        """)
-        tree = _ast.parse(src)
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        is_stub, reason = _is_stub_body(func.body)
-        assert is_stub is False
-        assert reason is None
-
-
-class TestGetDocstring:
-    def test_has_docstring(self) -> None:
-        import ast as _ast
-
-        src = textwrap.dedent('''\
-            def f():
-                """My docstring."""
-                pass
-        ''')
-        tree = _ast.parse(src)
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        assert _get_docstring(func.body) == "My docstring."
-
-    def test_no_docstring(self) -> None:
-        import ast as _ast
-
-        tree = _ast.parse("def f(): pass")
-        func = tree.body[0]
-        assert isinstance(func, _ast.FunctionDef)
-        assert _get_docstring(func.body) is None
 
 
 class TestDetermineTranslationState:
@@ -524,45 +528,42 @@ class TestDetermineTranslationState:
             enclosing_function=None,
         )
 
-    def test_unresolved(self) -> None:
-        import ast as _ast
+    def _make_todo_comment(self) -> SpecComment:
+        return SpecComment(
+            file="t.py",
+            line=1,
+            col_offset=0,
+            text="TODO: finish this",
+            raw="# TODO: finish this",
+            kind=CommentKind.TODO,
+            enclosing_function=None,
+        )
 
-        node = _ast.parse("def f(): pass").body[0]
-        assert isinstance(node, _ast.FunctionDef)
-        state = _determine_translation_state(node, [self._make_spec_comment()], is_stub=True)
+    def test_unresolved(self) -> None:
+        state = _determine_translation_state([self._make_spec_comment()], is_stub=True)
         assert state == TranslationState.UNRESOLVED
 
     def test_stub(self) -> None:
-        import ast as _ast
-
-        node = _ast.parse("def f(): pass").body[0]
-        assert isinstance(node, _ast.FunctionDef)
-        state = _determine_translation_state(node, [], is_stub=True)
+        state = _determine_translation_state([], is_stub=True)
         assert state == TranslationState.STUB
 
-    def test_partial(self) -> None:
-        import ast as _ast
-
-        node = _ast.parse("def f(): pass").body[0]
-        assert isinstance(node, _ast.FunctionDef)
-        state = _determine_translation_state(node, [self._make_spec_comment()], is_stub=False)
+    def test_partial_requires_todo(self) -> None:
+        """Non-stub function with TODO comment -> PARTIAL."""
+        state = _determine_translation_state([self._make_todo_comment()], is_stub=False)
         assert state == TranslationState.PARTIAL
 
-    def test_implemented(self) -> None:
-        import ast as _ast
+    def test_spec_in_implemented_is_not_gap(self) -> None:
+        """Non-stub function with bare SPEC comment -> IMPLEMENTED (not PARTIAL)."""
+        state = _determine_translation_state([self._make_spec_comment()], is_stub=False)
+        assert state == TranslationState.IMPLEMENTED
 
-        node = _ast.parse("def f(): pass").body[0]
-        assert isinstance(node, _ast.FunctionDef)
-        state = _determine_translation_state(node, [], is_stub=False)
+    def test_implemented(self) -> None:
+        state = _determine_translation_state([], is_stub=False)
         assert state == TranslationState.IMPLEMENTED
 
     def test_infra_comments_dont_count_as_gaps(self) -> None:
         """Infrastructure comments should not make a function PARTIAL or UNRESOLVED."""
-        import ast as _ast
-
-        node = _ast.parse("def f(): pass").body[0]
-        assert isinstance(node, _ast.FunctionDef)
-        state = _determine_translation_state(node, [self._make_infra_comment()], is_stub=False)
+        state = _determine_translation_state([self._make_infra_comment()], is_stub=False)
         assert state == TranslationState.IMPLEMENTED
 
 
@@ -577,6 +578,11 @@ class TestAnalyzeFunctions:
                 pass
 
             def partial_func():
+                # TODO: apply discount logic
+                x = 1
+                return x
+
+            def implemented_with_comment():
                 # apply discount logic
                 x = 1
                 return x
@@ -591,13 +597,15 @@ class TestAnalyzeFunctions:
         comments = scan_comments(str(fpath))
         functions = analyze_functions(str(fpath), comments)
 
-        assert len(functions) == 4
+        assert len(functions) == 5
 
         by_name = {f.name: f for f in functions}
         assert by_name["implemented"].translation_state == TranslationState.IMPLEMENTED
         assert by_name["stub_func"].translation_state == TranslationState.STUB
         assert by_name["stub_func"].stub_reason == "pass"
         assert by_name["partial_func"].translation_state == TranslationState.PARTIAL
+        # Bare SPEC comments in non-stub functions are code comments, not gaps
+        assert by_name["implemented_with_comment"].translation_state == TranslationState.IMPLEMENTED
         assert by_name["unresolved_func"].translation_state == TranslationState.UNRESOLVED
 
     def test_class_methods(self, tmp_path: Path) -> None:
@@ -750,7 +758,7 @@ class TestAnalyzeFile:
                 pass
 
             def partial_f():
-                # finish this logic
+                # TODO: finish this logic
                 x = compute()
                 return x
 
@@ -766,18 +774,22 @@ class TestAnalyzeFile:
         assert state.stub_count == 1
         assert state.partial_count == 1
         assert state.unresolved_count == 1
-        assert state.total_spec_comments == 3  # module gap + finish this + compute results
+        # module gap + TODO in partial_f + SPEC in unresolved_f (stub)
+        assert state.total_spec_comments == 3
 
     def test_file_not_found(self) -> None:
         with pytest.raises(FileNotFoundError):
             analyze_file("/nonexistent/path/to/file.py")
 
-    def test_syntax_error(self, tmp_path: Path) -> None:
+    def test_malformed_file_returns_empty(self, tmp_path: Path) -> None:
+        """Malformed files return empty analysis (LLM handles gracefully)."""
         fpath = tmp_path / "bad.py"
         fpath.write_text("def foo(:\n  pass\n")
 
-        with pytest.raises(SyntaxError):
-            analyze_file(str(fpath))
+        state = analyze_file(str(fpath))
+        # Local AST analyzer returns empty for syntax errors
+        assert state.total_functions == 0
+        assert state.total_spec_comments == 0
 
     def test_content_hash_deterministic(self, tmp_path: Path) -> None:
         source = "x = 1\n"
@@ -816,13 +828,13 @@ class TestAnalyzeProject:
         state = analyze_project(str(tmp_path), exclude=["**/b.py"])
         assert len(state.files) == 1
 
-    def test_syntax_error_skipped(self, tmp_path: Path) -> None:
+    def test_malformed_file_skipped(self, tmp_path: Path) -> None:
         (tmp_path / "good.py").write_text("def f(): return 1\n")
         (tmp_path / "bad.py").write_text("def f(:\n")
 
         state = analyze_project(str(tmp_path), exclude=[])
-        # bad.py should be skipped due to SyntaxError
-        assert len(state.files) == 1
+        # bad.py gets empty analysis (0 functions), good.py has 1
+        assert state.total_functions == 1
 
 
 class TestFindGaps:

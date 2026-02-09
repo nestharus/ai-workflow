@@ -8,8 +8,7 @@ translation.
 
 from __future__ import annotations
 
-import re
-
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.provenance import TrackedUnit
 from spec_manager.strategies.base import (
     ProcessingContext,
@@ -65,29 +64,22 @@ class StubPromotionStrategy(Strategy):
     def applies_to(self, context: ProcessingContext) -> bool:
         """Check if function is a stub with surrounding context.
 
-        Detects stub patterns (pass, raise NotImplementedError, ...)
-        and checks for surrounding context that might provide implementation details.
+        Uses LLM-based code analysis to detect stubs (language-agnostic).
+        Checks for surrounding context that might provide implementation details.
         """
         tc = context.translation_context
         if tc is None:
             return False
 
-        # Check surrounding code for stub patterns
-        stub_patterns = [
-            r"^\s*pass\s*$",
-            r"^\s*raise\s+NotImplementedError",
-            r'^\s*raise\s+NotImplementedError\("',
-            r"^\s*\.\.\.\s*$",
-        ]
+        # Use LLM-based analysis to detect stubs (language-agnostic)
+        code_to_analyze = "\n".join(tc.surrounding_code)
+        analysis = analyze_source(
+            content=code_to_analyze,
+            filepath=tc.file_path or "unknown",
+        )
 
-        has_stub = False
-        for line in tc.surrounding_code:
-            for pattern in stub_patterns:
-                if re.match(pattern, line):
-                    has_stub = True
-                    break
-            if has_stub:
-                break
+        # Check if any function in the surrounding code is a stub
+        has_stub = any(func.is_stub for func in analysis.functions)
 
         if not has_stub:
             return False
@@ -120,11 +112,21 @@ class StubPromotionStrategy(Strategy):
         if tc.comment_text:
             context_pieces.append(f"Comment: {tc.comment_text}")
 
-        # Collect docstrings and comments from surrounding code
-        for line in tc.surrounding_code:
-            stripped = line.strip()
-            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
-                context_pieces.append(f"Context: {stripped}")
+        # Use LLM-based analysis to collect comments and docstrings (language-agnostic)
+        code_to_analyze = "\n".join(tc.surrounding_code)
+        analysis = analyze_source(
+            content=code_to_analyze,
+            filepath=tc.file_path or "unknown",
+        )
+
+        # Add detected comments
+        for comment in analysis.comments:
+            context_pieces.append(f"Context: {comment.text}")
+
+        # Add docstrings from functions
+        for func in analysis.functions:
+            if func.has_docstring and func.docstring:
+                context_pieces.append(f"Context: {func.docstring}")
 
         # Use tools if available
         if self._stub_detector:

@@ -1,18 +1,19 @@
 """Call graph builder and adjacency detector for executable gap detection.
 
-Builds a static function-level call graph from AST analysis of Python source
-files. Detects disconnected subgraphs that may indicate missed adjacencies
+Builds a static function-level call graph from language-agnostic source
+analysis. Detects disconnected subgraphs that may indicate missed adjacencies
 per design doc Section 7.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.gap import GapEvidence
 
 
@@ -130,40 +131,6 @@ class CallGraph:
         return visited
 
 
-def _resolve_call_name(node: ast.expr) -> str | None:
-    """Resolve an ast.Call node's function name to a string.
-
-    Handles:
-    - Simple names: foo()
-    - Attribute access: self.foo(), obj.method()
-    - Does NOT handle complex expressions (e.g., getattr, subscript)
-
-    Returns the resolved name or None if unresolvable.
-    """
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _resolve_call_name(node.value)
-        if prefix is not None:
-            return f"{prefix}.{node.attr}"
-        return node.attr
-    return None
-
-
-class _CallCollector(ast.NodeVisitor):
-    """AST visitor that collects function calls within a function body."""
-
-    def __init__(self, file_path: str) -> None:
-        self.calls: list[tuple[str, int]] = []  # (callee_name, line)
-        self.file_path = file_path
-
-    def visit_Call(self, node: ast.Call) -> None:
-        name = _resolve_call_name(node.func)
-        if name is not None:
-            self.calls.append((name, node.lineno))
-        self.generic_visit(node)
-
-
 def _extract_functions_and_calls(
     source: str,
     filepath: Path,
@@ -171,59 +138,64 @@ def _extract_functions_and_calls(
 ) -> tuple[list[FunctionNode], list[CallEdge]]:
     """Extract function definitions and call relationships from source code.
 
+    Uses ``analyze_source`` for function discovery (language-agnostic) and
+    regex for approximate call detection within function bodies.
+
     Args:
-        source: Python source code.
+        source: Source code text.
         filepath: Path to the source file.
         module_prefix: Dotted module prefix for qualified names.
 
     Returns:
         Tuple of (function_nodes, call_edges).
     """
-    try:
-        tree = ast.parse(source, filename=str(filepath))
-    except SyntaxError:
+    analysis = analyze_source(source, filepath=str(filepath))
+
+    if not analysis.functions:
         return [], []
 
     nodes: list[FunctionNode] = []
     edges: list[CallEdge] = []
-    # Map local names to qualified names for resolution
-    local_to_qualified: dict[str, str] = {}
+    lines = source.splitlines()
 
-    def _visit(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                class_prefix = f"{prefix}{child.name}."
-                _visit(child, class_prefix)
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                qualified = f"{prefix}{child.name}"
-                fn_node = FunctionNode(
-                    qualified_name=qualified,
-                    file_path=str(filepath),
-                    line=child.lineno,
-                    is_stub=False,
-                )
-                nodes.append(fn_node)
-                local_to_qualified[child.name] = qualified
+    for func_info in analysis.functions:
+        qualified = f"{module_prefix}{func_info.qualified_name}"
+        fn_node = FunctionNode(
+            qualified_name=qualified,
+            file_path=str(filepath),
+            line=func_info.start_line,
+            is_stub=func_info.is_stub,
+        )
+        nodes.append(fn_node)
 
-                # Collect calls within this function
-                collector = _CallCollector(str(filepath))
-                for stmt in child.body:
-                    collector.visit(stmt)
+        # Extract the function body text from the source lines
+        body_start = func_info.body_start_line
+        body_end = func_info.end_line
+        if body_start > 0 and body_end > 0 and body_end <= len(lines):
+            body_lines = lines[body_start - 1 : body_end]
+            body_text = "\n".join(body_lines)
+        elif func_info.start_line > 0 and func_info.end_line > 0:
+            body_lines = lines[func_info.start_line - 1 : func_info.end_line]
+            body_text = "\n".join(body_lines)
+        else:
+            body_text = ""
 
-                for callee_name, call_line in collector.calls:
-                    edges.append(
-                        CallEdge(
-                            caller=qualified,
-                            callee=callee_name,
-                            call_site_line=call_line,
-                            file_path=str(filepath),
-                        )
+        # Use regex to find call-like patterns in body text
+        raw_calls = re.findall(r"\b(\w+)\s*\(", body_text)
+        # Deduplicate while preserving first-seen order
+        seen: set[str] = set()
+        for callee_name in raw_calls:
+            if callee_name not in seen:
+                seen.add(callee_name)
+                edges.append(
+                    CallEdge(
+                        caller=qualified,
+                        callee=callee_name,
+                        call_site_line=func_info.body_start_line,
+                        file_path=str(filepath),
                     )
+                )
 
-                # Visit nested definitions
-                _visit(child, f"{qualified}.")
-
-    _visit(tree, module_prefix)
     return nodes, edges
 
 
@@ -231,16 +203,16 @@ def build_call_graph(
     filepaths: list[Path],
     project_root: Path | None = None,
 ) -> CallGraph:
-    """Build a function-level call graph from Python source files.
+    """Build a function-level call graph from source files.
 
     For each file:
-    1. AST-parse to find all function/method definitions
-    2. Walk function bodies to find ast.Call nodes
+    1. Use ``analyze_source`` to find all function/method definitions
+    2. Use regex on function bodies to find call-like patterns
     3. Resolve call targets to qualified names where possible
     4. Unresolved calls (dynamic dispatch, closures) are ignored
 
     Args:
-        filepaths: Python files to analyze.
+        filepaths: Source files to analyze.
         project_root: Root for module path resolution.
 
     Returns:
@@ -296,9 +268,12 @@ def build_call_graph(
                     callee_qualified = name_lookup[part]
                     break
 
-        if callee_qualified is not None and callee_qualified in graph.nodes:
-            if caller_qualified in graph.nodes:
-                graph.add_edge(caller_qualified, callee_qualified)
+        if (
+            callee_qualified is not None
+            and callee_qualified in graph.nodes
+            and caller_qualified in graph.nodes
+        ):
+            graph.add_edge(caller_qualified, callee_qualified)
 
     return graph
 

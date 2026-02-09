@@ -6,12 +6,12 @@ for replanning sections. This "reopens" a completed section for redesign.
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 import tempfile
 from pathlib import Path
 
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.planning.code_parser import _find_function
 from spec_manager.planning.models import (
     CodeFile,
@@ -86,10 +86,7 @@ def reverse_translate_from_source(
 
     actual_start = max(start_line, body_start) if start_line is not None else body_start
 
-    if end_line is not None:
-        actual_end = min(end_line, body_end)
-    else:
-        actual_end = body_end
+    actual_end = min(end_line, body_end) if end_line is not None else body_end
 
     # Extract the code lines to reverse-translate (1-based indexing)
     code_lines = lines[actual_start - 1 : actual_end]
@@ -177,6 +174,10 @@ def apply_reverse_plan_to_lines(plan: ReversePlan, lines: list[str]) -> str:
 def _get_body_start(source: str, func: FunctionInfo) -> int:
     """Get the line number where the function body starts (after docstring).
 
+    Uses ``analyze_source`` to find the ``body_start_line`` from the
+    matching ``RawFunctionInfo``.  Falls back to ``func.start_line + 1``
+    when the function cannot be located in the analysis.
+
     Args:
         source: Full file source.
         func: Function info.
@@ -184,33 +185,13 @@ def _get_body_start(source: str, func: FunctionInfo) -> int:
     Returns:
         1-based line number of the first body statement after docstring.
     """
-    try:
-        tree = ast.parse(source, filename=func.file_path)
-    except SyntaxError:
-        return func.start_line + 1
+    analysis = analyze_source(source, func.file_path)
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == func.name:
-                body = node.body
-                if not body:
-                    return func.start_line + 1
-
-                # Skip docstring
-                first_idx = 0
-                if (
-                    isinstance(body[0], ast.Expr)
-                    and isinstance(body[0].value, ast.Constant)
-                    and isinstance(body[0].value.value, str)
-                ):
-                    first_idx = 1
-
-                if first_idx < len(body):
-                    return body[first_idx].lineno
-                else:
-                    # Function body is just a docstring
-                    end = body[0].end_lineno or body[0].lineno
-                    return end + 1
+    for raw_func in analysis.functions:
+        if raw_func.name == func.name and raw_func.start_line == func.start_line:
+            if raw_func.body_start_line > 0:
+                return raw_func.body_start_line
+            return func.start_line + 1
 
     return func.start_line + 1
 
@@ -288,7 +269,7 @@ def _parse_agent_response(response: str) -> list[str]:
         parsed = json.loads(cleaned)
 
     if not isinstance(parsed, list):
-        raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
+        raise TypeError(f"Expected JSON array, got {type(parsed).__name__}")
 
     return [str(item) for item in parsed]
 
@@ -317,7 +298,7 @@ def _generate_pseudocode_comments_heuristic(
     """Heuristic reverse-translation when LLM is not available.
 
     Groups code lines into logical blocks and generates comments
-    based on AST analysis of each block.
+    based on regex/heuristic analysis of each block.
 
     Args:
         code_lines: Lines of code to reverse.

@@ -37,6 +37,7 @@ from .entities import (
     EntityTag,
     allocate_entity_id,
 )
+from .eval_judge import EvalJudgeOutput, ItemMatch
 from .evid_citation import (
     EvidCitation,
     build_evid,
@@ -165,6 +166,7 @@ __all__ = [
     "EntityKind",
     "EntityMention",
     "EntityTag",
+    "EvalJudgeOutput",
     "EvidCitation",
     "EvidenceGraph",
     "EvidenceGraphEdge",
@@ -181,6 +183,7 @@ __all__ = [
     "ImportEdge",
     "InterfaceContractSchema",
     "InterfaceIndexSchema",
+    "ItemMatch",
     "Library",
     "LibraryLabel",
     "LibraryLabelerOutput",

@@ -30,7 +30,7 @@ class TestCmdScanSourceText:
         source = textwrap.dedent("""\
             # validate payment
             def process():
-                # apply discount
+                # TODO: apply discount
                 return 1
 
             def stub():
@@ -65,7 +65,7 @@ class TestCmdScanSourceJson:
     def test_single_file_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         source = textwrap.dedent("""\
             def f():
-                # compute result
+                # TODO: compute result
                 return 1
         """)
         fpath = tmp_path / "mod.py"
@@ -121,15 +121,18 @@ class TestCmdScanSourceErrors:
         captured = capsys.readouterr()
         assert "Path not found" in captured.out
 
-    def test_syntax_error_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_malformed_file_graceful(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Malformed files are analyzed gracefully (empty result), not errors."""
         fpath = tmp_path / "bad.py"
         fpath.write_text("def f(:\n  pass\n")
 
         args = _make_args(path=str(fpath), exclude=None, format="text", output=None)
         result = cmd_scan_source(args)
-        assert result == 1
+        assert result == 0
         captured = capsys.readouterr()
-        assert "Syntax error" in captured.out
+        assert "# Gap Report" in captured.out
 
 
 class TestCmdScanSourceExclude:

@@ -18,6 +18,7 @@ from spec_manager.refinement.evals.inputs.sequence_spec import (
     SequenceSpec,
     load_sequence_spec,
 )
+from spec_manager.refinement.evals.judge_scorer import score_detail_capture_with_judge
 from spec_manager.refinement.evals.logger import EvalLogEntry, EvalLogger
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
 from spec_manager.refinement.evals.metrics import (
@@ -70,4 +71,5 @@ __all__ = [
     "run_real_phase_evaluation",
     "save_report",
     "score_detail_capture",
+    "score_detail_capture_with_judge",
 ]

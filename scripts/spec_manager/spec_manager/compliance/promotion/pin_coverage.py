@@ -6,7 +6,6 @@ except for classified introduction nodes.
 
 from __future__ import annotations
 
-import ast
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +13,7 @@ from typing import Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
+from spec_manager.core.code_analysis import analyze_source
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 # Default marker comment that classifies a function as an introduction
@@ -65,59 +65,32 @@ class PinCoverageReport:
 
 
 def _extract_functions_from_file(file_path: Path) -> list[dict[str, Any]]:
-    """Extract all function/method definitions from a Python file.
+    """Extract all function/method definitions from a source file.
 
     Returns a list of dicts with keys: name, qualified_name, line, is_method,
     body_source_lines (the raw source lines of the function body).
     """
     try:
         source = file_path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(file_path))
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError):
         return []
 
+    analysis = analyze_source(source, str(file_path))
     lines = source.splitlines()
     results: list[dict[str, Any]] = []
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            class_name = node.name
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    end_line = item.end_lineno or item.lineno
-                    body_lines = lines[item.lineno - 1 : end_line]
-                    results.append(
-                        {
-                            "name": item.name,
-                            "qualified_name": f"{class_name}.{item.name}",
-                            "line": item.lineno,
-                            "is_method": True,
-                            "body_source_lines": body_lines,
-                        }
-                    )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Skip nested functions inside classes (handled above)
-            parent_is_class = False
-            for parent_node in ast.walk(tree):
-                if isinstance(parent_node, ast.ClassDef):
-                    for child in parent_node.body:
-                        if child is node:
-                            parent_is_class = True
-                            break
-            if parent_is_class:
-                continue
-
-            end_line = node.end_lineno or node.lineno
-            body_lines = lines[node.lineno - 1 : end_line]
-            results.append(
-                {
-                    "name": node.name,
-                    "qualified_name": node.name,
-                    "line": node.lineno,
-                    "is_method": False,
-                    "body_source_lines": body_lines,
-                }
-            )
+    for func in analysis.functions:
+        body_lines = lines[func.start_line - 1 : func.end_line]
+        is_method = "." in func.qualified_name
+        results.append(
+            {
+                "name": func.name,
+                "qualified_name": func.qualified_name,
+                "line": func.start_line,
+                "is_method": is_method,
+                "body_source_lines": body_lines,
+            }
+        )
 
     return results
 

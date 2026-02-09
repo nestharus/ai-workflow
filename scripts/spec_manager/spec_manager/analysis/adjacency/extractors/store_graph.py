@@ -1,17 +1,19 @@
 """Store touch graph extractor for detecting shared-store coupling.
 
-Identifies which functions read/write which stores using AST analysis
-of type hints and naming conventions. Two functions that touch the same
+Identifies which functions read/write which stores using language-agnostic
+analysis of type hints and naming conventions. Two functions that touch the same
 store receive an edge between them.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from spec_manager.core.code_analysis import RawFunctionInfo, SourceAnalysis, analyze_source
 
 from ..graph import AdjacencyGraph, EdgeSignal, NodeInfo, SignalType
 
@@ -83,19 +85,28 @@ STORE_TYPE_HINTS: list[str] = [
     "Journal",
 ]
 
+# Regex to extract parameter annotations from a signature line.
+# Matches patterns like ``param_name: TypeName`` or ``param_name: Optional[TypeName]``
+_PARAM_ANNOTATION_RE = re.compile(
+    r"(\w+)\s*:\s*([A-Za-z_][\w\.\[\], |]*)",
+)
+
+# Regex to extract the "inner" type from generics like Optional[Store], list[Store]
+_INNER_TYPE_RE = re.compile(r"\[([A-Za-z_]\w*)\]")
+
 
 def extract_store_graph(
     source_paths: list[Path],
     root_dir: Path | None = None,
     pin_annotations: dict[str, str] | None = None,
 ) -> AdjacencyGraph:
-    """Build a store touch graph from Python source files.
+    """Build a store touch graph from source files.
 
     Two functions that touch the same store get an edge between them.
     Store nodes are included in the graph as intermediate nodes.
 
     Args:
-        source_paths: Python files to analyze
+        source_paths: Source files to analyze
         root_dir: Project root for module-qualified names
         pin_annotations: Optional map of function_name -> store file path
             from (@pin path:symbol) annotations in spec content
@@ -112,11 +123,15 @@ def extract_store_graph(
             continue
         try:
             source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
-        except (SyntaxError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
             continue
 
-        touches = _detect_store_touches(tree, path, root_dir)
+        try:
+            analysis = analyze_source(source, filepath=str(path))
+        except Exception:  # noqa: S112 — best-effort scan; unparseable files are skipped
+            continue
+
+        touches = _detect_store_touches(analysis, source, path, root_dir)
         all_touches.extend(touches)
 
     # Add pin annotation touches
@@ -150,43 +165,121 @@ def _module_prefix(file_path: Path, root_dir: Path | None) -> str:
     return file_path.stem
 
 
+def _qualified_func_name(
+    func: RawFunctionInfo,
+    module: str,
+) -> str:
+    """Compute a fully qualified name: module.qualified_name.
+
+    The ``qualified_name`` from ``RawFunctionInfo`` already includes
+    class nesting (e.g. ``ClassName.method``).  We prepend the module
+    prefix to match the behaviour of the previous AST-based implementation.
+    """
+    return f"{module}.{func.qualified_name}"
+
+
+def _extract_signature_text(
+    func: RawFunctionInfo,
+    source_lines: list[str],
+) -> str:
+    """Extract the full def-signature text for a function (up to the colon).
+
+    Handles multi-line signatures by collecting lines from start_line until
+    we find the closing parenthesis.
+    """
+    sig_parts: list[str] = []
+    for i in range(func.start_line - 1, min(func.end_line, len(source_lines))):
+        sig_parts.append(source_lines[i])
+        if ")" in source_lines[i]:
+            break
+    return " ".join(sig_parts)
+
+
+def _extract_param_annotations(sig_text: str) -> list[tuple[str, str]]:
+    """Extract (param_name, type_annotation) pairs from a signature string.
+
+    Returns a list of (param_name, annotation_text) tuples.
+    Skips ``self`` and ``cls``.
+    """
+    # Isolate the parameters portion between the first '(' and matching ')'
+    paren_match = re.search(r"\(([^)]*)\)", sig_text)
+    if not paren_match:
+        return []
+
+    params_text = paren_match.group(1)
+    results: list[tuple[str, str]] = []
+    for match in _PARAM_ANNOTATION_RE.finditer(params_text):
+        param_name = match.group(1)
+        annotation = match.group(2).strip().rstrip(",")
+        if param_name in ("self", "cls"):
+            continue
+        results.append((param_name, annotation))
+    return results
+
+
+def _extract_type_name_from_annotation(annotation: str) -> str | None:
+    """Extract the core type name from an annotation string.
+
+    Handles simple types (``Store``), qualified (``db.Store``),
+    and generic wrappers (``Optional[Store]``, ``list[Store]``).
+    """
+    annotation = annotation.strip()
+    if not annotation:
+        return None
+
+    # Check for generic wrappers: Optional[Store], list[Store], etc.
+    inner = _INNER_TYPE_RE.search(annotation)
+    if inner:
+        return inner.group(1)
+
+    # Check for dotted access: db.Store -> Store
+    if "." in annotation:
+        return annotation.rsplit(".", 1)[-1]
+
+    # Simple type name
+    # Strip any remaining brackets or whitespace
+    clean = annotation.split("[")[0].split("|")[0].strip()
+    if clean and clean[0].isalpha():
+        return clean
+    return None
+
+
 def _detect_store_touches(
-    tree: ast.Module,
+    analysis: SourceAnalysis,
+    source: str,
     file_path: Path,
     root_dir: Path | None,
 ) -> list[StoreTouch]:
-    """Detect store accesses in an AST via type hints and naming conventions."""
+    """Detect store accesses via type hints and naming conventions."""
     touches: list[StoreTouch] = []
     module = _module_prefix(file_path, root_dir)
+    source_lines = source.splitlines()
 
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-
-        func_name = _get_qualified_name(node, tree, module)
+    for func in analysis.functions:
+        func_name = _qualified_func_name(func, module)
 
         # Detection method 1: Type hints in parameters
-        for arg in node.args.args + node.args.kwonlyargs:
-            annotation = arg.annotation
-            if annotation is not None:
-                type_name = _extract_type_name(annotation)
-                if type_name and _is_store_type(type_name):
-                    store_name = _derive_store_name_from_type(type_name, arg.arg)
-                    touches.append(
-                        StoreTouch(
-                            function_name=func_name,
-                            store_name=store_name,
-                            store_type=_classify_store_type(store_name),
-                            access_mode=AccessMode.READ_WRITE,
-                            file_path=str(file_path),
-                            line_number=node.lineno,
-                            detection_method="type_hint",
-                        )
+        sig_text = _extract_signature_text(func, source_lines)
+        param_annotations = _extract_param_annotations(sig_text)
+        for param_name, annotation_text in param_annotations:
+            type_name = _extract_type_name_from_annotation(annotation_text)
+            if type_name and _is_store_type(type_name):
+                store_name = _derive_store_name_from_type(type_name, param_name)
+                touches.append(
+                    StoreTouch(
+                        function_name=func_name,
+                        store_name=store_name,
+                        store_type=_classify_store_type(store_name),
+                        access_mode=AccessMode.READ_WRITE,
+                        file_path=str(file_path),
+                        line_number=func.start_line,
+                        detection_method="type_hint",
                     )
+                )
 
         # Detection method 2: Return type annotation containing store types
-        if node.returns is not None:
-            type_name = _extract_type_name(node.returns)
+        if func.return_annotation:
+            type_name = _extract_type_name_from_annotation(func.return_annotation)
             if type_name and _is_store_type(type_name):
                 store_name = _derive_store_name_from_type(type_name, "return")
                 touches.append(
@@ -196,13 +289,13 @@ def _detect_store_touches(
                         store_type=_classify_store_type(store_name),
                         access_mode=AccessMode.READ,
                         file_path=str(file_path),
-                        line_number=node.lineno,
+                        line_number=func.start_line,
                         detection_method="type_hint",
                     )
                 )
 
         # Detection method 3: Function naming conventions
-        bare_name = node.name
+        bare_name = func.name
         access_mode = None
         store_name_from_naming = None
 
@@ -230,55 +323,12 @@ def _detect_store_touches(
                         store_type=_classify_store_type(store_name_from_naming),
                         access_mode=access_mode,
                         file_path=str(file_path),
-                        line_number=node.lineno,
+                        line_number=func.start_line,
                         detection_method="naming_convention",
                     )
                 )
 
     return touches
-
-
-def _get_qualified_name(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-    tree: ast.Module,
-    module: str,
-) -> str:
-    """Get a qualified name for a function node."""
-    parent_map: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent_map[id(child)] = node
-
-    parts: list[str] = [func_node.name]
-    current: ast.AST = func_node
-    while id(current) in parent_map:
-        parent = parent_map[id(current)]
-        if isinstance(parent, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            parts.insert(0, parent.name)
-        current = parent
-
-    return f"{module}.{'.'.join(parts)}"
-
-
-def _extract_type_name(annotation: ast.expr) -> str | None:
-    """Extract a type name string from an AST annotation node."""
-    if isinstance(annotation, ast.Name):
-        return annotation.id
-    elif isinstance(annotation, ast.Attribute):
-        return annotation.attr
-    elif isinstance(annotation, ast.Subscript):
-        # e.g., Optional[Store], list[Store]
-        if isinstance(annotation.value, ast.Name):
-            # Check the inner type
-            if isinstance(annotation.slice, ast.Name):
-                return annotation.slice.id
-            elif isinstance(annotation.slice, ast.Attribute):
-                return annotation.slice.attr
-        return _extract_type_name(annotation.value)
-    elif isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-        # String annotations like "Store"
-        return annotation.value
-    return None
 
 
 def _is_store_type(type_name: str) -> bool:

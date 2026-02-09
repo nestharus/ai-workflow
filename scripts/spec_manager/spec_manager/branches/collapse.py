@@ -5,31 +5,62 @@ it to Layer 1 (algorithmic representation) by extracting algorithmic
 intent from the source files.
 
 The collapse engine:
-1. Parses all Python files for function definitions
+1. Analyzes all source files for function definitions
 2. Classifies each function: algorithm, store, shape, or architecture
 3. Extracts algorithms/stores/shapes into atoms/
 4. Records architectural remnants for future projection
 5. Builds initial atom registry
-
-Delegates function shape detection, store reference detection, signature
-extraction, and body hashing to the canonical
-``analysis.ast_extractor.AtomFunctionExtractor``.
 """
 
 from __future__ import annotations
 
-import ast
+import hashlib
+import re
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.analysis.ast_extractor import (
-    AtomFunctionExtractor,
-    ExtractionConfig,
-)
+from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 
 from .layout import BranchLayout
 from .types import AtomDescriptor, AtomKind
+
+# Known I/O function names that disqualify shape classification
+_IO_FUNCTIONS = frozenset(
+    {
+        "print",
+        "open",
+        "input",
+        "write",
+        "read",
+        "send",
+        "recv",
+        "connect",
+        "execute",
+        "commit",
+        "rollback",
+        "close",
+        "flush",
+    }
+)
+
+# Store-access patterns: attribute names that indicate database/queue/file access
+_STORE_PATTERNS = frozenset(
+    {
+        "session",
+        "cursor",
+        "connection",
+        "db",
+        "database",
+        "cache",
+        "queue",
+        "redis",
+        "store",
+        "repository",
+        "repo",
+    }
+)
 
 # Keywords that suggest architectural/infrastructure patterns
 # (unique to collapse context -- not in the canonical extractor)
@@ -106,6 +137,24 @@ _STORE_INDICATORS = frozenset(
     }
 )
 
+# Regex: match function calls like ``func_name(`` or ``obj.method(``
+_CALL_RE = re.compile(r"\b(\w+)\s*\(")
+
+# Regex: match attribute access like ``obj.attr``
+_ATTR_ACCESS_RE = re.compile(r"\b(\w+)\.(\w+)")
+
+# Regex: match ``global <names>`` or ``nonlocal <names>``
+_GLOBAL_NONLOCAL_RE = re.compile(r"^\s*(?:global|nonlocal)\s+", re.MULTILINE)
+
+# Regex: match ``yield`` or ``yield from``
+_YIELD_RE = re.compile(r"\byield\b")
+
+# Regex: match non-self attribute assignment like ``obj.attr =`` (but not ``self.attr =``)
+_ATTR_ASSIGN_RE = re.compile(r"(\w+)\.(\w+)\s*(?:\+|-)?\s*=")
+
+# Regex: match identifier usage as a standalone name (not attribute access)
+_IDENT_RE = re.compile(r"(?<![.\w])(\w+)(?!\w)")
+
 
 @dataclass
 class CollapseResult:
@@ -146,24 +195,19 @@ class CollapseEngine:
     """Collapses an existing codebase to Layer 1 (design doc Section 6).
 
     When ingesting an existing codebase with no layer separation:
-    1. Parse all Python files for function definitions
+    1. Analyze all source files for function definitions
     2. Classify each function: algorithm, store, shape, or architecture
     3. Extract algorithms/stores/shapes into atoms/
     4. Record architectural remnants for future projection
     5. Build initial atom registry
 
-    Delegates shape detection, store reference detection, and body hashing
-    to ``AtomFunctionExtractor`` from ``analysis.ast_extractor``.
+    Uses language-agnostic ``analyze_source`` for function discovery, with
+    regex-based helpers for shape detection, store reference detection,
+    signature extraction, and body hashing.
     """
 
     def __init__(self, layout: BranchLayout) -> None:
         self._layout = layout
-        self._extractor = AtomFunctionExtractor(
-            ExtractionConfig(
-                require_docstring=False,
-                max_function_lines=999,
-            )
-        )
 
     def collapse(self, source_dir: Path) -> CollapseResult:
         """Collapse an existing codebase to Layer 1.
@@ -209,46 +253,38 @@ class CollapseEngine:
                 warnings.append(f"Failed to read {py_file}: {exc}")
                 continue
 
-            try:
-                tree = ast.parse(source, filename=str(py_file))
-            except SyntaxError as exc:
-                warnings.append(f"Syntax error in {py_file}: {exc}")
+            source_lines = source.splitlines()
+
+            # Use language-agnostic analysis for function discovery
+            analysis = analyze_source(source, filepath=str(py_file))
+
+            # If the file has content but no functions were discovered and
+            # it looks like it has syntax issues, report a warning.
+            if (
+                not analysis.functions
+                and source.strip()
+                and re.search(r"^\s*def\s+", source, re.MULTILINE)
+            ):
+                warnings.append(f"Syntax error in {py_file}: no functions parsed")
                 continue
 
             rel_path = py_file.relative_to(source_dir)
 
-            for node in ast.iter_child_nodes(tree):
-                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # Also check for functions inside classes
-                    if isinstance(node, ast.ClassDef):
-                        for class_node in ast.iter_child_nodes(node):
-                            if isinstance(class_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                                kind = self._classify_function(class_node, py_file, source)
-                                qualified_name = f"{node.name}.{class_node.name}"
-                                if kind is None:
-                                    architectural_remnants.append(f"{rel_path}:{qualified_name}")
-                                else:
-                                    descriptor = self._extract_atom(
-                                        class_node,
-                                        py_file,
-                                        source,
-                                        source_dir,
-                                        kind,
-                                        qualified_name=qualified_name,
-                                    )
-                                    if kind == AtomKind.ALGORITHM:
-                                        extracted_atoms.append(descriptor)
-                                    elif kind == AtomKind.STORE:
-                                        extracted_stores.append(descriptor)
-                                    elif kind == AtomKind.SHAPE:
-                                        extracted_shapes.append(descriptor)
-                    continue
+            for func_info in analysis.functions:
+                # Determine the qualified name and whether this is a class method
+                qualified_name = func_info.qualified_name
 
-                kind = self._classify_function(node, py_file, source)
+                kind = self._classify_function(func_info, source_lines)
                 if kind is None:
-                    architectural_remnants.append(f"{rel_path}:{node.name}")
+                    architectural_remnants.append(f"{rel_path}:{qualified_name}")
                 else:
-                    descriptor = self._extract_atom(node, py_file, source, source_dir, kind)
+                    descriptor = self._extract_atom(
+                        func_info,
+                        py_file,
+                        source,
+                        source_dir,
+                        kind,
+                    )
                     if kind == AtomKind.ALGORITHM:
                         extracted_atoms.append(descriptor)
                     elif kind == AtomKind.STORE:
@@ -267,26 +303,24 @@ class CollapseEngine:
 
     def _classify_function(
         self,
-        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-        module_path: Path,
-        source: str = "",
+        func_info: RawFunctionInfo,
+        source_lines: list[str],
     ) -> AtomKind | None:
         """Classify a function as algorithm, store, shape, or architectural.
 
-        Uses the canonical ``AtomFunctionExtractor.is_shape()`` for shape
-        detection and ``detect_store_references()`` for store detection,
-        combined with the branches-specific ``_ARCH_INDICATORS`` check.
+        Uses regex-based helpers for shape detection and store reference
+        detection, combined with the branches-specific ``_ARCH_INDICATORS``
+        check.
 
         Args:
-            func_node: The AST node for the function definition.
-            module_path: Path to the module file.
-            source: Full source code of the file.
+            func_info: The function info from code analysis.
+            source_lines: Lines of source for body extraction.
 
         Returns:
             AtomKind if the function is an atom, None if architectural.
         """
-        func_name = func_node.name.lower()
-        body_source = self._get_node_source(func_node, source)
+        func_name = func_info.name.lower()
+        body_source = self._get_body_source(func_info, source_lines)
         body_lower = body_source.lower()
 
         # Skip private/dunder methods
@@ -309,16 +343,16 @@ class CollapseEngine:
             if indicator in func_name or indicator in body_lower:
                 store_score += 1
 
-        # Delegate shape detection to canonical extractor
-        is_shape = self._extractor.is_shape(func_node, module_path)
+        # Shape detection via regex-based analysis
+        is_shape = self._is_shape(func_info, source_lines)
 
-        # Also check store references via canonical extractor
-        store_refs = self._extractor.detect_store_references(func_node)
+        # Store reference detection via regex-based analysis
+        store_refs = self._detect_store_references(func_info, source_lines)
         if store_refs:
             store_score += len(store_refs)
 
         # Async functions are typically architectural
-        if isinstance(func_node, ast.AsyncFunctionDef):
+        if func_info.is_async:
             if store_score > arch_score:
                 return AtomKind.STORE
             if arch_score >= 2 or arch_score > 0:
@@ -332,52 +366,47 @@ class CollapseEngine:
             return AtomKind.STORE
 
         # Functions with multi-step logic are algorithms even if pure
-        body = self._strip_docstring(func_node.body)
-        if len(body) >= 2:
+        body_stmt_count = self._estimate_body_statements(func_info, source_lines)
+        if body_stmt_count >= 2:
             return AtomKind.ALGORITHM
 
         if is_shape:
             return AtomKind.SHAPE
 
         # Single-statement functions with some logic default to algorithm
-        if len(body) >= 1:
+        if body_stmt_count >= 1:
             return AtomKind.ALGORITHM
 
         return AtomKind.SHAPE
 
     def _extract_atom(
         self,
-        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+        func_info: RawFunctionInfo,
         module_path: Path,
         source: str,
         source_dir: Path,
         kind: AtomKind,
-        qualified_name: str | None = None,
     ) -> AtomDescriptor:
         """Extract a function as an atom with metadata.
 
-        Delegates signature extraction and body hashing to the canonical
-        ``AtomFunctionExtractor``.
-
         Args:
-            func_node: The AST node for the function.
+            func_info: The function info from code analysis.
             module_path: Path to the module file.
             source: Full source code of the file.
             source_dir: Root of the source tree.
             kind: Classification of the atom.
-            qualified_name: Optional qualified name (e.g., Class.method).
 
         Returns:
             An AtomDescriptor for the extracted function.
         """
-        func_name = qualified_name or func_node.name
+        func_name = func_info.qualified_name
         rel_path = module_path.relative_to(source_dir).as_posix()
 
-        # Delegate signature extraction to canonical extractor
-        signature = self._extractor.extract_signature(func_node)
+        # Signature from RawFunctionInfo args and return annotation
+        signature = _reconstruct_signature(func_info)
 
-        # Delegate body hashing to canonical extractor
-        content_hash = self._extractor.compute_body_hash(func_node, source)
+        # Body hashing from line range
+        content_hash = self._compute_body_hash(func_info, source)
 
         return AtomDescriptor(
             atom_id=f"{rel_path}:{func_name}",
@@ -392,23 +421,196 @@ class CollapseEngine:
     # ---- Helpers ----
 
     @staticmethod
-    def _strip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
-        """Remove a leading docstring from a function body."""
-        if not body:
-            return body
-        first = body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
-            return body[1:]
-        return body
+    def _get_body_source(
+        func_info: RawFunctionInfo,
+        source_lines: list[str],
+    ) -> str:
+        """Extract function body source from line range."""
+        start = func_info.start_line - 1
+        end = func_info.end_line
+        if start < 0 or end > len(source_lines):
+            return ""
+        return "\n".join(source_lines[start:end])
 
     @staticmethod
-    def _get_node_source(node: ast.AST, source: str) -> str:
-        """Extract source code for an AST node."""
-        try:
-            return ast.get_source_segment(source, node) or ""
-        except (TypeError, AttributeError):
-            return ""
+    def _estimate_body_statements(
+        func_info: RawFunctionInfo,
+        source_lines: list[str],
+    ) -> int:
+        """Estimate the number of top-level body statements (excluding docstring).
+
+        Uses the body_start_line from RawFunctionInfo (which points past the
+        ``def`` line) and counts non-blank, non-comment, non-decorator lines
+        at the body indentation level.  Subtracts 1 if the function has a
+        docstring.
+        """
+        body_start = func_info.body_start_line
+        body_end = func_info.end_line
+        if body_start <= 0 or body_end <= 0 or body_start > len(source_lines):
+            # Fallback: use body_line_count directly
+            count = func_info.body_line_count
+            if func_info.has_docstring:
+                count = max(0, count - 1)
+            return count
+
+        # Find the indentation level of the body
+        body_indent: int | None = None
+        for i in range(body_start - 1, min(body_end, len(source_lines))):
+            line = source_lines[i]
+            stripped = line.lstrip()
+            if stripped and not stripped.startswith("#"):
+                body_indent = len(line) - len(stripped)
+                break
+
+        if body_indent is None:
+            return 0
+
+        # Count lines at body indentation level (top-level statements)
+        stmt_count = 0
+        in_docstring = False
+        docstring_skipped = False
+
+        for i in range(body_start - 1, min(body_end, len(source_lines))):
+            line = source_lines[i]
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped) if stripped else -1
+
+            # Skip blank lines and comments
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            # Track triple-quoted strings (docstrings)
+            if not docstring_skipped and (stripped.startswith('"""') or stripped.startswith("'''")):
+                quote = stripped[:3]
+                if stripped.count(quote) >= 2 and len(stripped) > 3:
+                    # Single-line docstring
+                    docstring_skipped = True
+                    continue
+                else:
+                    in_docstring = not in_docstring
+                    if not in_docstring:
+                        docstring_skipped = True
+                    continue
+
+            if in_docstring:
+                continue
+
+            # Only count lines at the body indentation level
+            if indent == body_indent:
+                stmt_count += 1
+
+        return stmt_count
+
+    @staticmethod
+    def _is_shape(
+        func_info: RawFunctionInfo,
+        source_lines: list[str],
+    ) -> bool:
+        """Determine if a function is a pure shape (no side effects) via regex.
+
+        A shape function has:
+        - No global/nonlocal statements
+        - No attribute assignment on non-self objects
+        - No calls to known I/O functions
+        - No yield/yield from (generators)
+        """
+        start = func_info.start_line - 1
+        end = func_info.end_line
+        if start < 0 or end > len(source_lines):
+            return True
+
+        body_text = "\n".join(source_lines[start:end])
+
+        # Check for global/nonlocal
+        if _GLOBAL_NONLOCAL_RE.search(body_text):
+            return False
+
+        # Check for yield/yield from
+        if _YIELD_RE.search(body_text):
+            return False
+
+        # Check for non-self attribute assignment
+        for match in _ATTR_ASSIGN_RE.finditer(body_text):
+            obj_name = match.group(1)
+            if obj_name != "self":
+                return False
+
+        # Check for calls to known I/O functions
+        for match in _CALL_RE.finditer(body_text):
+            called_name = match.group(1)
+            if called_name in _IO_FUNCTIONS:
+                return False
+            # Also check attribute-style calls like obj.write(...)
+        for match in _ATTR_ACCESS_RE.finditer(body_text):
+            attr_name = match.group(2)
+            # Check if this is a call: attr followed by ``(``
+            end_pos = match.end()
+            rest = body_text[end_pos:].lstrip()
+            if rest.startswith("(") and attr_name in _IO_FUNCTIONS:
+                return False
+
+        return True
+
+    @staticmethod
+    def _detect_store_references(
+        func_info: RawFunctionInfo,
+        source_lines: list[str],
+    ) -> list[str]:
+        """Detect store/database access patterns in a function via regex."""
+        start = func_info.start_line - 1
+        end = func_info.end_line
+        if start < 0 or end > len(source_lines):
+            return []
+
+        body_text = "\n".join(source_lines[start:end])
+
+        store_refs: list[str] = []
+        seen: set[str] = set()
+
+        # Check attribute access: ``obj.attr`` where obj matches store patterns
+        for match in _ATTR_ACCESS_RE.finditer(body_text):
+            obj_name = match.group(1)
+            if obj_name.lower() in _STORE_PATTERNS and obj_name not in seen:
+                seen.add(obj_name)
+                store_refs.append(obj_name)
+
+        # Check standalone identifiers matching store patterns
+        for match in _IDENT_RE.finditer(body_text):
+            name = match.group(1)
+            if name.lower() in _STORE_PATTERNS and name not in seen:
+                seen.add(name)
+                store_refs.append(name)
+
+        return store_refs
+
+    @staticmethod
+    def _compute_body_hash(
+        func_info: RawFunctionInfo,
+        source: str,
+    ) -> str:
+        """Compute SHA-256 hash of the function body source."""
+        lines = source.splitlines()
+        body_start = func_info.start_line
+        body_end = func_info.end_line
+        body_lines = lines[body_start - 1 : body_end]
+        body_text = "\n".join(body_lines)
+        body_text = textwrap.dedent(body_text).strip()
+        return hashlib.sha256(body_text.encode("utf-8")).hexdigest()
+
+
+def _reconstruct_signature(func_info: RawFunctionInfo) -> str:
+    """Reconstruct a function signature from RawFunctionInfo.
+
+    Builds a signature string like ``(arg1, arg2, ...) -> ReturnType``
+    from the function's args tuple and return annotation.
+
+    Args:
+        func_info: The raw function info from code analysis.
+
+    Returns:
+        Signature string.
+    """
+    sig = f"({', '.join(func_info.args)})"
+    if func_info.return_annotation:
+        sig += f" -> {func_info.return_annotation}"
+    return sig

@@ -185,6 +185,7 @@ class EvalRunner:
             report.add_result(result)
 
         # Compute aggregates and save
+        report.config = self.config.to_dict()
         report.compute_aggregates()
         save_report(report, self.config.output_dir, f"eval_report_{run_id}")
 

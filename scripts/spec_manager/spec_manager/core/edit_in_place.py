@@ -1,9 +1,9 @@
-"""Edit-in-place engine: treats Python source files as living specifications.
+"""Edit-in-place engine: treats source files as living specifications.
 
 Comments are unimplemented spec elements, stubs are incomplete implementations,
 and "no comments in production" is the completeness invariant. This module
-provides mechanical, deterministic source analysis using Python's ``ast`` and
-``tokenize`` modules.
+provides language-agnostic source analysis via LLM-based code structure
+extraction (``code_analysis`` module).
 
 Primary entry points:
     - ``analyze_file(filepath)`` -> ``FileTranslationState``
@@ -14,14 +14,13 @@ Primary entry points:
 
 from __future__ import annotations
 
-import ast
 import enum
 import hashlib
-import io
 import re
-import tokenize
 from dataclasses import dataclass
 from pathlib import Path
+
+from spec_manager.core.code_analysis import analyze_source
 
 # =============================================================================
 # Plan 1: Core Data Structures
@@ -32,7 +31,7 @@ class TranslationState(enum.Enum):
     """Lifecycle state of a spec element (comment or function)."""
 
     UNRESOLVED = "unresolved"  # Pure pseudocode comment, no code yet
-    STUB = "stub"  # Function exists but body is pass/NotImplementedError/...
+    STUB = "stub"  # Function exists but body is a placeholder
     PARTIAL = "partial"  # Function has some code but still has spec comments
     IMPLEMENTED = "implemented"  # Function has code, no remaining spec comments
     VERIFIED = "verified"  # Function has code + tests pass
@@ -44,7 +43,7 @@ class CommentKind(enum.Enum):
     SPEC = "spec"  # Unimplemented spec element (IS a gap)
     TODO = "todo"  # Explicit TODO/FIXME marker (IS a gap)
     INFRASTRUCTURE = "infra"  # Type-ignore, noqa, pragma, encoding, shebang
-    SECTION_MARKER = "section"  # Visual separator (# ---- ... ----)
+    SECTION_MARKER = "section"  # Visual separator (---- ... ----)
 
 
 @dataclass(frozen=True)
@@ -54,8 +53,8 @@ class SpecComment:
     file: str
     line: int
     col_offset: int
-    text: str  # Comment text without leading '# '
-    raw: str  # Full token string including '#'
+    text: str  # Comment text without language-specific delimiter
+    raw: str  # Full token string including delimiter
     kind: CommentKind
     enclosing_function: str | None  # Qualified name of enclosing function, or None if module-level
 
@@ -75,6 +74,7 @@ class FunctionInfo:
     args: list[str]  # Parameter names (no types, just names for addressing)
     return_annotation: str | None  # Return type annotation as string, if present
     docstring: str | None  # First string expression in body, if present
+    body_start_line: int  # 1-indexed line where body starts (after signature + docstring)
     body_line_count: int  # Number of lines in the function body
     translation_state: TranslationState
     spec_comments: list[SpecComment]  # Spec comments inside this function
@@ -95,7 +95,7 @@ class FunctionInfo:
 
 @dataclass
 class FileTranslationState:
-    """Complete translation state snapshot for a single Python file.
+    """Complete translation state snapshot for a single source file.
 
     This is the primary output of the edit-in-place engine.
     It replaces the old Phase 0 extraction output.
@@ -129,8 +129,28 @@ class FileTranslationState:
 
     @property
     def gaps(self) -> list[SpecComment]:
-        """All spec comments that represent gaps (SPEC + TODO kinds)."""
-        return [c for c in self.all_comments if c.kind in (CommentKind.SPEC, CommentKind.TODO)]
+        """All comments that represent actual gaps (state-aware).
+
+        Gap logic considers function state:
+        - TODO comments are always gaps regardless of context
+        - Module-level SPEC comments are always gaps
+        - SPEC comments inside stub/unresolved functions are gaps
+        - SPEC comments inside implemented functions are NOT gaps
+          (they are legitimate code comments, not unimplemented spec)
+        """
+        func_states = {f.qualified_name: f.translation_state for f in self.functions}
+        result = []
+        for c in self.all_comments:
+            if c.kind == CommentKind.TODO:
+                result.append(c)
+            elif c.kind == CommentKind.SPEC:
+                if c.enclosing_function is None:
+                    result.append(c)
+                else:
+                    state = func_states.get(c.enclosing_function)
+                    if state in (TranslationState.UNRESOLVED, TranslationState.STUB):
+                        result.append(c)
+        return result
 
 
 @dataclass
@@ -156,42 +176,44 @@ class ProjectTranslationState:
 
 
 # =============================================================================
-# Plan 2: Comment Classifier
+# Plan 2: Comment Classifier (language-agnostic — operates on clean text)
 # =============================================================================
 
+# These patterns match on clean comment TEXT, not on raw tokens with delimiters.
+# The LLM extracts comment text without language-specific delimiters (#, //, --, etc.)
 _INFRASTRUCTURE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^#\s*type:\s*ignore"),  # type: ignore[...]
-    re.compile(r"^#\s*noqa"),
-    re.compile(r"^#\s*pragma:\s*no\s*cover"),  # pragma: no cover
-    re.compile(r"^#\s*pylint:\s*(disable|enable)"),  # pylint directives
-    re.compile(r"^#\s*fmt:\s*(on|off)"),  # black/ruff format directives
-    re.compile(r"^#\s*isort:\s*(skip|on|off)"),  # isort directives
-    re.compile(r"^#!"),  # shebang
-    re.compile(r"^#\s*-\*-\s*coding"),  # encoding declarations
-    re.compile(r"^#\s*mypy:\s*"),  # mypy directives
-    re.compile(r"^#\s*ruff:\s*"),  # ruff directives
+    re.compile(r"^type:\s*ignore"),  # type: ignore[...]
+    re.compile(r"^noqa"),
+    re.compile(r"^pragma:\s*no\s*cover"),  # pragma: no cover
+    re.compile(r"^pylint:\s*(disable|enable)"),  # pylint directives
+    re.compile(r"^fmt:\s*(on|off)"),  # black/ruff format directives
+    re.compile(r"^isort:\s*(skip|on|off)"),  # isort directives
+    re.compile(r"^!"),  # shebang (delimiter stripped, leading ! remains)
+    re.compile(r"^-\*-\s*coding"),  # encoding declarations
+    re.compile(r"^mypy:\s*"),  # mypy directives
+    re.compile(r"^ruff:\s*"),  # ruff directives
 ]
 
 _SECTION_MARKER_PATTERN: re.Pattern[str] = re.compile(
-    r"^#\s*[-=]{4,}"  # # ---- ... ---- or # ==== ... ====
+    r"^[-=]{4,}"  # ---- ... ---- or ==== ... ==== (delimiter already stripped)
 )
 
-_TODO_PATTERN: re.Pattern[str] = re.compile(
-    r"^#\s*(TODO|FIXME|HACK|XXX|WORKAROUND)\b", re.IGNORECASE
-)
+_TODO_PATTERN: re.Pattern[str] = re.compile(r"^(TODO|FIXME|HACK|XXX|WORKAROUND)\b", re.IGNORECASE)
 
 
-def classify_comment(token_string: str) -> CommentKind:
-    """Classify a single comment token.
+def classify_comment(text: str) -> CommentKind:
+    """Classify a comment by its clean text content.
 
     Args:
-        token_string: The full token string including '#' prefix.
+        text: Comment text WITHOUT language-specific delimiter.
+              E.g., ``"validate payment against fraud rules"`` not
+              ``"# validate payment against fraud rules"``.
 
     Returns:
         CommentKind indicating whether this is a spec comment, TODO,
         infrastructure comment, or section marker.
     """
-    stripped = token_string.strip()
+    stripped = text.strip()
 
     # Check infrastructure patterns first
     for pattern in _INFRASTRUCTURE_PATTERNS:
@@ -210,417 +232,236 @@ def classify_comment(token_string: str) -> CommentKind:
     return CommentKind.SPEC
 
 
-def _build_function_line_map(
-    tree: ast.Module,
-) -> list[tuple[int, int, str]]:
-    """Build a list of (line_start, line_end, qualified_name) for all functions.
-
-    Returns the list sorted by line_start so we can efficiently look up
-    which function encloses a given line. Innermost (most deeply nested)
-    functions appear later, so we iterate in reverse for enclosing lookup.
-    """
-    result: list[tuple[int, int, str]] = []
-
-    class _Visitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self._name_stack: list[str] = []
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            self._name_stack.append(node.name)
-            self.generic_visit(node)
-            self._name_stack.pop()
-
-        def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-            qualified = ".".join([*self._name_stack, node.name])
-            end_line = node.end_lineno if node.end_lineno is not None else node.lineno
-            result.append((node.lineno, end_line, qualified))
-            self._name_stack.append(node.name)
-            self.generic_visit(node)
-            self._name_stack.pop()
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self._visit_func(node)
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self._visit_func(node)
-
-    _Visitor().visit(tree)
-    # Sort by start line, then by end line descending (larger ranges first)
-    result.sort(key=lambda t: (t[0], -t[1]))
-    return result
-
-
-def _find_enclosing_function(
-    line: int,
-    func_map: list[tuple[int, int, str]],
-) -> str | None:
-    """Find the innermost enclosing function for a given line number.
-
-    Iterates the function map in reverse to find the most specific (innermost)
-    function that contains the line.
-    """
-    best: str | None = None
-    best_size = float("inf")
-    for start, end, name in func_map:
-        if start <= line <= end:
-            size = end - start
-            if size < best_size:
-                best_size = size
-                best = name
-    return best
-
-
-def scan_comments(filepath: str) -> list[SpecComment]:
-    """Scan a Python file and return all comments with classification.
-
-    Uses ``tokenize.generate_tokens`` to find every COMMENT token.
-    For each, determines the enclosing function (if any) by cross-referencing
-    with ``ast.parse`` results.
-
-    Args:
-        filepath: Path to a Python source file.
-
-    Returns:
-        List of SpecComment objects for every comment in the file.
-    """
-    source = Path(filepath).read_text(encoding="utf-8")
-
-    # Parse AST for function line ranges
-    tree = ast.parse(source, filename=filepath)
-    func_map = _build_function_line_map(tree)
-
-    # Tokenize to find all COMMENT tokens
-    comments: list[SpecComment] = []
-    tokens = tokenize.generate_tokens(io.StringIO(source).readline)
-    for tok in tokens:
-        if tok.type == tokenize.COMMENT:
-            raw = tok.string
-            kind = classify_comment(raw)
-            # Strip leading '# ' or '#' to get text
-            text = raw.lstrip("#").strip()
-            enclosing = _find_enclosing_function(tok.start[0], func_map)
-            comments.append(
-                SpecComment(
-                    file=filepath,
-                    line=tok.start[0],
-                    col_offset=tok.start[1],
-                    text=text,
-                    raw=raw,
-                    kind=kind,
-                    enclosing_function=enclosing,
-                )
-            )
-
-    return comments
-
-
 # =============================================================================
-# Plan 3: Function Analyzer (Stub and State Detection)
+# Plan 3: Translation State Determination (pure logic, no AST dependency)
 # =============================================================================
-
-
-def _is_stub_body(body: list[ast.stmt]) -> tuple[bool, str | None]:
-    """Check if a function body is a stub.
-
-    A function is a stub if its body consists entirely of:
-    - ``pass`` statement(s)
-    - Ellipsis literal (``...``)
-    - ``raise NotImplementedError(...)``
-    - A docstring followed by any of the above
-
-    Args:
-        body: The body of an ``ast.FunctionDef`` node.
-
-    Returns:
-        ``(is_stub, reason)`` where reason is ``"pass"``, ``"ellipsis"``,
-        or ``"not_implemented"``.
-    """
-    # Filter out the docstring if present
-    effective_body = list(body)
-    if (
-        effective_body
-        and isinstance(effective_body[0], ast.Expr)
-        and isinstance(effective_body[0].value, ast.Constant)
-        and isinstance(effective_body[0].value.value, str)
-    ):
-        effective_body = effective_body[1:]
-
-    if not effective_body:
-        # Only a docstring, treat as stub
-        return True, "pass"
-
-    # Check each statement
-    for stmt in effective_body:
-        if isinstance(stmt, ast.Pass):
-            continue
-        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-            if stmt.value.value is ...:
-                continue
-            else:
-                return False, None
-        elif isinstance(stmt, ast.Raise):
-            # Check if it's raise NotImplementedError(...)
-            if stmt.exc is not None:
-                if isinstance(stmt.exc, ast.Call) and isinstance(stmt.exc.func, ast.Name):
-                    if stmt.exc.func.id == "NotImplementedError":
-                        continue
-                elif isinstance(stmt.exc, ast.Name) and stmt.exc.id == "NotImplementedError":
-                    continue
-            return False, None
-        else:
-            return False, None
-
-    # Determine the reason from the first effective statement
-    if not effective_body:
-        return True, "pass"
-
-    first = effective_body[0]
-    if isinstance(first, ast.Pass):
-        return True, "pass"
-    elif (
-        isinstance(first, ast.Expr)
-        and isinstance(first.value, ast.Constant)
-        and first.value.value is ...
-    ):
-        return True, "ellipsis"
-    elif isinstance(first, ast.Raise):
-        return True, "not_implemented"
-    else:
-        return True, "pass"
-
-
-def _get_docstring(body: list[ast.stmt]) -> str | None:
-    """Extract docstring from function body (first Expr node with Constant str)."""
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        return body[0].value.value
-    return None
-
-
-def _compute_qualified_name(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-    parents: list[str],
-) -> str:
-    """Compute dotted qualified name from AST node and its parent chain.
-
-    Examples:
-        - Top-level function: ``"validate_payment"``
-        - Method: ``"PaymentService.validate"``
-        - Nested class method: ``"Outer.Inner.method"``
-    """
-    return ".".join([*parents, node.name])
 
 
 def _determine_translation_state(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
     spec_comments: list[SpecComment],
     is_stub: bool,
 ) -> TranslationState:
     """Determine the translation state of a function.
 
     Logic:
-    - If is_stub and has spec comments: UNRESOLVED
+    - If is_stub and has spec comments (SPEC or TODO): UNRESOLVED
     - If is_stub and no spec comments: STUB
-    - If not stub and has spec comments: PARTIAL
-    - If not stub and no spec comments: IMPLEMENTED
+    - If not stub and has TODO comments: PARTIAL
+    - If not stub and no TODO comments: IMPLEMENTED
+
+    In stubs, ALL comments (SPEC and TODO) indicate unimplemented spec.
+    In implemented functions, only TODO markers indicate remaining gaps —
+    bare comments are legitimate code comments, not spec elements.
 
     Note: VERIFIED requires external test results, not determined here.
     """
-    has_gaps = any(c.kind in (CommentKind.SPEC, CommentKind.TODO) for c in spec_comments)
-
-    if is_stub and has_gaps:
-        return TranslationState.UNRESOLVED
-    if is_stub and not has_gaps:
-        return TranslationState.STUB
-    if not is_stub and has_gaps:
-        return TranslationState.PARTIAL
-    return TranslationState.IMPLEMENTED
+    if is_stub:
+        has_gaps = any(c.kind in (CommentKind.SPEC, CommentKind.TODO) for c in spec_comments)
+        return TranslationState.UNRESOLVED if has_gaps else TranslationState.STUB
+    else:
+        has_todo = any(c.kind == CommentKind.TODO for c in spec_comments)
+        return TranslationState.PARTIAL if has_todo else TranslationState.IMPLEMENTED
 
 
-def _extract_decorator_name(decorator: ast.expr) -> str:
-    """Extract a readable name from a decorator AST node."""
-    if isinstance(decorator, ast.Name):
-        return decorator.id
-    if isinstance(decorator, ast.Attribute):
-        parts: list[str] = []
-        node: ast.expr = decorator
-        while isinstance(node, ast.Attribute):
-            parts.append(node.attr)
-            node = node.value
-        if isinstance(node, ast.Name):
-            parts.append(node.id)
-        return ".".join(reversed(parts))
-    if isinstance(decorator, ast.Call):
-        return _extract_decorator_name(decorator.func)
-    return ast.dump(decorator)
+# =============================================================================
+# Stub reason mapping (LLM-agnostic labels → internal labels)
+# =============================================================================
+
+_STUB_REASON_MAP: dict[str | None, str | None] = {
+    "placeholder": "pass",
+    "ellipsis": "ellipsis",
+    "not_implemented": "not_implemented",
+    None: None,
+}
 
 
-def _extract_return_annotation(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
-    """Extract return type annotation as string."""
-    if node.returns is None:
-        return None
-    return ast.unparse(node.returns)
+def _normalize_stub_reason(reason: str | None) -> str | None:
+    """Map LLM stub reason labels to internal labels."""
+    return _STUB_REASON_MAP.get(reason, reason)
+
+
+# =============================================================================
+# Plan 4: LLM-Backed Analysis Functions
+# =============================================================================
+
+
+def scan_comments(
+    filepath: str,
+    *,
+    workspace: Path | None = None,
+) -> list[SpecComment]:
+    """Scan a source file and return all comments with classification.
+
+    Uses LLM-based code analysis to extract comments in any language.
+    Comment classification uses regex on extracted clean text (no
+    language-specific delimiters).
+
+    Args:
+        filepath: Path to a source file.
+        workspace: Working directory for LLM agent execution.
+
+    Returns:
+        List of SpecComment objects for every comment in the file.
+    """
+    content = Path(filepath).read_text(encoding="utf-8")
+    analysis = analyze_source(content, filepath, workspace=workspace)
+
+    comments: list[SpecComment] = []
+    for raw_comment in analysis.comments:
+        kind = classify_comment(raw_comment.text)
+        comments.append(
+            SpecComment(
+                file=filepath,
+                line=raw_comment.line,
+                col_offset=raw_comment.col_offset,
+                text=raw_comment.text,
+                raw=raw_comment.raw,
+                kind=kind,
+                enclosing_function=raw_comment.enclosing_function,
+            )
+        )
+
+    return comments
 
 
 def analyze_functions(
     filepath: str,
     comments: list[SpecComment],
+    *,
+    workspace: Path | None = None,
 ) -> list[FunctionInfo]:
-    """Analyze all function definitions in a Python file.
+    """Analyze all function definitions in a source file.
 
-    Uses ``ast.parse`` to walk the AST. For each ``FunctionDef``/``AsyncFunctionDef``:
-    1. Extract name, qualified name, line range, decorators, args, return annotation
-    2. Check if body is a stub
-    3. Cross-reference with comments to find spec comments inside this function
-    4. Determine translation state
+    Uses LLM-based code analysis to extract function boundaries, stub
+    detection, and metadata in any language.
 
     Args:
-        filepath: Path to Python source file.
+        filepath: Path to source file.
         comments: Pre-scanned comments from ``scan_comments()``.
+        workspace: Working directory for LLM agent execution.
 
     Returns:
         List of FunctionInfo for every function/method in the file.
     """
-    source = Path(filepath).read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=filepath)
+    content = Path(filepath).read_text(encoding="utf-8")
+    analysis = analyze_source(content, filepath, workspace=workspace)
 
     functions: list[FunctionInfo] = []
+    for raw_func in analysis.functions:
+        # Find spec comments within this function's line range
+        func_comments = [c for c in comments if raw_func.start_line <= c.line <= raw_func.end_line]
 
-    class _FuncVisitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self._name_stack: list[str] = []
+        # Determine translation state
+        state = _determine_translation_state(func_comments, raw_func.is_stub)
 
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            self._name_stack.append(node.name)
-            self.generic_visit(node)
-            self._name_stack.pop()
-
-        def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-            qualified = _compute_qualified_name(node, self._name_stack)
-            end_line = node.end_lineno if node.end_lineno is not None else node.lineno
-
-            # Extract decorator names
-            decorators = [_extract_decorator_name(d) for d in node.decorator_list]
-
-            # Extract argument names
-            args: list[str] = []
-            for arg in node.args.args:
-                args.append(arg.arg)
-            for arg in node.args.posonlyargs:
-                args.append(arg.arg)
-            for arg in node.args.kwonlyargs:
-                args.append(arg.arg)
-            if node.args.vararg:
-                args.append(f"*{node.args.vararg.arg}")
-            if node.args.kwarg:
-                args.append(f"**{node.args.kwarg.arg}")
-
-            # Check stub status
-            is_stub, stub_reason = _is_stub_body(node.body)
-
-            # Get docstring
-            docstring = _get_docstring(node.body)
-
-            # Find spec comments within this function's line range
-            func_comments = [c for c in comments if node.lineno <= c.line <= end_line]
-
-            # Determine translation state
-            state = _determine_translation_state(node, func_comments, is_stub)
-
-            # Return annotation
-            return_annotation = _extract_return_annotation(node)
-
-            # Body line count
-            body_line_count = end_line - node.lineno
-
-            functions.append(
-                FunctionInfo(
-                    name=node.name,
-                    qualified_name=qualified,
-                    file=filepath,
-                    line_start=node.lineno,
-                    line_end=end_line,
-                    col_offset=node.col_offset,
-                    is_async=isinstance(node, ast.AsyncFunctionDef),
-                    decorators=decorators,
-                    args=args,
-                    return_annotation=return_annotation,
-                    docstring=docstring,
-                    body_line_count=body_line_count,
-                    translation_state=state,
-                    spec_comments=func_comments,
-                    stub_reason=stub_reason,
-                )
+        functions.append(
+            FunctionInfo(
+                name=raw_func.name,
+                qualified_name=raw_func.qualified_name,
+                file=filepath,
+                line_start=raw_func.start_line,
+                line_end=raw_func.end_line,
+                col_offset=0,
+                is_async=raw_func.is_async,
+                decorators=list(raw_func.decorators),
+                args=list(raw_func.args),
+                return_annotation=raw_func.return_annotation,
+                docstring=raw_func.docstring,
+                body_start_line=raw_func.body_start_line,
+                body_line_count=raw_func.body_line_count,
+                translation_state=state,
+                spec_comments=func_comments,
+                stub_reason=_normalize_stub_reason(raw_func.stub_reason),
             )
+        )
 
-            # Visit nested functions/classes
-            self._name_stack.append(node.name)
-            self.generic_visit(node)
-            self._name_stack.pop()
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self._visit_func(node)
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self._visit_func(node)
-
-    _FuncVisitor().visit(tree)
     return functions
 
 
-# =============================================================================
-# Plan 4: File-Level Orchestrator
-# =============================================================================
+def analyze_file(
+    filepath: str,
+    *,
+    workspace: Path | None = None,
+) -> FileTranslationState:
+    """Analyze a single source file and produce its translation state.
 
-
-def analyze_file(filepath: str) -> FileTranslationState:
-    """Analyze a single Python file and produce its translation state.
-
-    This is the main entry point for single-file analysis.
+    This is the main entry point for single-file analysis. Uses LLM-based
+    code analysis for language-agnostic operation.
 
     Steps:
     1. Read file content and compute content_hash
-    2. ``scan_comments()`` to get all classified comments
-    3. ``analyze_functions()`` to get all function info with states
-    4. Separate module-level spec comments (not inside any function)
+    2. Call LLM-based analysis (cached by content hash)
+    3. Classify all comments
+    4. Build function info with translation states
     5. Compute summary counts
     6. Return ``FileTranslationState``
 
     Args:
-        filepath: Absolute path to a Python source file.
+        filepath: Path to a source file.
+        workspace: Working directory for LLM agent execution.
 
     Returns:
         FileTranslationState snapshot.
 
     Raises:
         FileNotFoundError: If filepath does not exist.
-        SyntaxError: If the file cannot be parsed (not valid Python).
     """
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
 
     content = path.read_text(encoding="utf-8")
-
-    # Validate it is parseable Python (raises SyntaxError if invalid)
-    ast.parse(content, filename=filepath)
-
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    # Scan all comments
-    all_comments = scan_comments(filepath)
+    # Single LLM analysis call (cached by content hash)
+    analysis = analyze_source(content, filepath, workspace=workspace)
 
-    # Analyze functions
-    functions = analyze_functions(filepath, all_comments)
+    # Classify all comments using clean text
+    all_comments: list[SpecComment] = []
+    for raw_comment in analysis.comments:
+        kind = classify_comment(raw_comment.text)
+        all_comments.append(
+            SpecComment(
+                file=filepath,
+                line=raw_comment.line,
+                col_offset=raw_comment.col_offset,
+                text=raw_comment.text,
+                raw=raw_comment.raw,
+                kind=kind,
+                enclosing_function=raw_comment.enclosing_function,
+            )
+        )
+
+    # Build function info from LLM analysis
+    functions: list[FunctionInfo] = []
+    for raw_func in analysis.functions:
+        func_comments = [
+            c for c in all_comments if raw_func.start_line <= c.line <= raw_func.end_line
+        ]
+        state = _determine_translation_state(func_comments, raw_func.is_stub)
+        functions.append(
+            FunctionInfo(
+                name=raw_func.name,
+                qualified_name=raw_func.qualified_name,
+                file=filepath,
+                line_start=raw_func.start_line,
+                line_end=raw_func.end_line,
+                col_offset=0,
+                is_async=raw_func.is_async,
+                decorators=list(raw_func.decorators),
+                args=list(raw_func.args),
+                return_annotation=raw_func.return_annotation,
+                docstring=raw_func.docstring,
+                body_start_line=raw_func.body_start_line,
+                body_line_count=raw_func.body_line_count,
+                translation_state=state,
+                spec_comments=func_comments,
+                stub_reason=_normalize_stub_reason(raw_func.stub_reason),
+            )
+        )
 
     # Build set of line ranges covered by functions
-    func_line_ranges: list[tuple[int, int]] = []
-    for func in functions:
-        func_line_ranges.append((func.line_start, func.line_end))
+    func_line_ranges: list[tuple[int, int]] = [(f.line_start, f.line_end) for f in functions]
 
     def _is_inside_function(line: int) -> bool:
         return any(start <= line <= end for start, end in func_line_ranges)
@@ -632,10 +473,20 @@ def analyze_file(filepath: str) -> FileTranslationState:
         if c.kind in (CommentKind.SPEC, CommentKind.TODO) and not _is_inside_function(c.line)
     ]
 
-    # Compute summary counts
-    total_spec_comments = sum(
-        1 for c in all_comments if c.kind in (CommentKind.SPEC, CommentKind.TODO)
-    )
+    # Compute state-aware gap count
+    func_states_map = {f.qualified_name: f.translation_state for f in functions}
+    total_spec_comments = 0
+    for c in all_comments:
+        if c.kind == CommentKind.TODO:
+            total_spec_comments += 1
+        elif c.kind == CommentKind.SPEC:
+            if c.enclosing_function is None:
+                total_spec_comments += 1
+            else:
+                state = func_states_map.get(c.enclosing_function)
+                if state in (TranslationState.UNRESOLVED, TranslationState.STUB):
+                    total_spec_comments += 1
+
     total_functions = len(functions)
     stub_count = sum(1 for f in functions if f.translation_state == TranslationState.STUB)
     partial_count = sum(1 for f in functions if f.translation_state == TranslationState.PARTIAL)
@@ -665,13 +516,17 @@ def analyze_project(
     root: str,
     include: list[str] | None = None,
     exclude: list[str] | None = None,
+    *,
+    workspace: Path | None = None,
 ) -> ProjectTranslationState:
-    """Analyze all Python files in a project directory.
+    """Analyze all source files in a project directory.
 
     Args:
         root: Root directory to scan.
         include: Glob patterns to include (default: ``["**/*.py"]``).
+            Callers should pass language-appropriate patterns.
         exclude: Glob patterns to exclude (default: ``["**/test_*", "**/__pycache__/**"]``).
+        workspace: Working directory for LLM agent execution.
 
     Returns:
         ProjectTranslationState with per-file states.
@@ -698,10 +553,8 @@ def analyze_project(
             rel = path
         rel_str = str(rel)
         for exc in exclude_patterns:
-            # Check against the full relative path
             if fnmatch.fnmatch(rel_str, exc):
                 return True
-            # Also check just the filename for patterns like **/test_*
             stripped = exc.lstrip("*").lstrip("/")
             if fnmatch.fnmatch(path.name, stripped):
                 return True
@@ -713,10 +566,9 @@ def analyze_project(
     files: dict[str, FileTranslationState] = {}
     for fpath in filtered_files:
         try:
-            state = analyze_file(str(fpath))
+            state = analyze_file(str(fpath), workspace=workspace)
             files[str(fpath)] = state
-        except SyntaxError:
-            # Skip files with syntax errors
+        except Exception:  # noqa: S112 — best-effort project scan; skip unparseable files
             continue
 
     return ProjectTranslationState(files=files)

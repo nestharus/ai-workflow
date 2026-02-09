@@ -1,0 +1,10 @@
+Analyze the following source code and return the JSON structure
+described in your system prompt.
+
+File: /tmp/pytest-of-nes/pytest-446/test_exclude_patterns0/main.py
+
+```
+# gap
+def f(): return 1
+
+```

@@ -577,11 +577,7 @@ def cmd_scan_source(args: argparse.Namespace) -> int:
     exclude_patterns = args.exclude if args.exclude else None
 
     if target.is_file():
-        try:
-            file_state = analyze_file(str(target))
-        except SyntaxError as e:
-            print(f"Syntax error in {target}: {e}")
-            return 1
+        file_state = analyze_file(str(target))
         # Wrap in ProjectTranslationState for uniform handling
         project_state = ProjectTranslationState(files={str(target): file_state})
     else:

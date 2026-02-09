@@ -6,7 +6,6 @@ have no algorithmic origin carry their own spec comments.
 
 from __future__ import annotations
 
-import ast
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.pin_coverage import PinCoverageReport
 from spec_manager.compliance.promotion.result import GateCheckResult
+from spec_manager.core.code_analysis import analyze_source
 
 # Category classification heuristics based on function name patterns
 _CATEGORY_PATTERNS: list[tuple[list[str], str]] = [
@@ -104,7 +104,7 @@ def find_introduced_algorithms(
     that has no pin-function import (identified via PinCoverageReport).
 
     For each introduced algorithm:
-    1. AST-parse the file to extract the function body.
+    1. Analyze the file to extract the function body.
     2. Scan the body for spec comments.
     3. Classify the algorithm category by heuristics.
 
@@ -142,54 +142,30 @@ def find_introduced_algorithms(
 
         try:
             source = arch_file.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=file_str)
-        except (OSError, SyntaxError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
             continue
 
+        analysis = analyze_source(source, file_str)
         lines = source.splitlines()
         location_lines = {line for _, line in file_locations[file_str]}
 
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for func in analysis.functions:
+            if func.start_line not in location_lines:
                 continue
 
-            if node.lineno not in location_lines:
-                continue
-
-            end_lineno = node.end_lineno or node.lineno
-            body_lines = lines[node.lineno - 1 : end_lineno]
-
-            # Check for docstring
-            has_docstring = (
-                len(node.body) > 0
-                and isinstance(node.body[0], ast.Expr)
-                and isinstance(node.body[0].value, ast.Constant)
-            )
-
-            # Count spec comments in the body
+            body_lines = lines[func.start_line - 1 : func.end_line]
             spec_count = _count_spec_comments(body_lines)
-
-            # Determine qualified name
-            qualified_name = node.name
-            # Check if this is a method inside a class
-            for parent_node in ast.walk(tree):
-                if isinstance(parent_node, ast.ClassDef):
-                    for child in parent_node.body:
-                        if child is node:
-                            qualified_name = f"{parent_node.name}.{node.name}"
-                            break
-
-            category = _classify_category(qualified_name, file_str)
+            category = _classify_category(func.qualified_name, file_str)
 
             results.append(
                 IntroducedAlgorithm(
-                    function_name=qualified_name,
+                    function_name=func.qualified_name,
                     file_path=file_str,
-                    line_start=node.lineno,
-                    line_end=end_lineno,
+                    line_start=func.start_line,
+                    line_end=func.end_line,
                     has_spec_comments=spec_count > 0,
                     spec_comment_count=spec_count,
-                    has_docstring=has_docstring,
+                    has_docstring=func.has_docstring,
                     category=category,
                 )
             )
