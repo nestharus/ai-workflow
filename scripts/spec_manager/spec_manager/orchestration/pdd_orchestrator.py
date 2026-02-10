@@ -104,17 +104,24 @@ class PddOrchestrator:
         end_phase: Phase | None = None,
         *,
         stop_on_failure: bool = True,
+        mode: str = "loop",
     ) -> dict[str, Any]:
-        """Run PDD phases in sequence.
+        """Run PDD phases.
 
         Args:
             start_phase: First phase to execute (default: first incomplete).
             end_phase: Last phase to execute (default: CONTINUOUS_QA).
             stop_on_failure: If True, stop on the first phase failure.
+            mode: Execution mode:
+                ``"loop"`` — per-slice iterative PromotionLoop (default).
+                ``"pipeline"`` — sequential P0-P10 (deprecated legacy).
 
         Returns:
             Summary dict with ``completed``, ``failed``, and ``skipped`` lists.
         """
+        if mode == "loop":
+            return self.run_loop()
+
         start_idx = 0
         end_idx = len(PDD_PHASE_ORDER) - 1
 
@@ -124,13 +131,6 @@ class PddOrchestrator:
             end_idx = PDD_PHASE_ORDER.index(end_phase)
 
         phases_to_run = PDD_PHASE_ORDER[start_idx : end_idx + 1]
-
-        # TODO: Support iterative per-slice mode alongside sequential.
-        #   Current: single pass through P0-P10 in order.
-        #   Needed: run P0 once (Promotion 1), then iterative loop
-        #   for Promotion 2: P3→P8→P9→tests→P4→P5→gates→CI per slice.
-        #   P6/P7 run after all slices promoted. P10 runs periodically.
-        #   Add `iterative: bool` parameter and slice-based looping.
 
         completed: list[str] = []
         failed: list[str] = []
@@ -196,6 +196,136 @@ class PddOrchestrator:
         except Exception as exc:
             self.manager.fail_phase(pdd_phase, error=str(exc))
             raise
+
+    def run_loop(
+        self,
+        *,
+        max_iterations: int = 20,
+        run_extraction: bool = True,
+    ) -> dict[str, Any]:
+        """Run the per-slice iterative PromotionLoop.
+
+        This is the new execution mode that replaces the sequential
+        P0-P10 pipeline with a convergence loop per slice.
+
+        Steps:
+        1. Conditionally run Phase 0 if IntakeQueue is non-empty or
+           ``run_extraction=True`` (first run).
+        2. Discover slices (libraries) from workspace.
+        3. Run PromotionLoop on each slice until convergence.
+        4. Run global verification (P6/P7) after all slices complete.
+
+        Args:
+            max_iterations: Max convergence iterations per slice.
+            run_extraction: Whether to run Phase 0 on first invocation.
+                Subsequent invocations check IntakeQueue instead.
+
+        Returns:
+            Summary dict with slice results.
+        """
+        from spec_manager.orchestration.intake_queue import IntakeQueue
+        from spec_manager.orchestration.promotion_loop import (
+            PromotionLoop,
+            RunContext,
+            SliceRef,
+        )
+
+        results: dict[str, Any] = {"mode": "loop"}
+
+        # 1. Run Phase 0 conditionally
+        intake_queue = IntakeQueue(self.manager.workspace_path)
+        needs_extraction = run_extraction or intake_queue.needs_phase0()
+
+        if needs_extraction:
+            # Drain intake queue items first
+            queued_items = intake_queue.drain()
+            if queued_items:
+                from spec_manager.orchestration.intake_queue import route_items
+
+                patches = route_items(queued_items, self.manager.workspace_path)
+                results["intake_routed"] = len(patches)
+
+            try:
+                extraction_result = self.run_phase(Phase.EXTRACTION)
+                results["extraction"] = extraction_result
+            except Exception as exc:
+                logger.warning("Phase 0 extraction failed: %s", exc)
+                results["extraction"] = {"error": str(exc)}
+        else:
+            results["extraction"] = "skipped (intake queue empty)"
+
+        # 2. Discover slices from workspace
+        libraries_dir = self.manager.structure.libraries_dir
+        slice_refs: list[SliceRef] = []
+
+        if libraries_dir.exists():
+            for lib_dir in sorted(libraries_dir.iterdir()):
+                if lib_dir.is_dir():
+                    slice_refs.append(
+                        SliceRef(
+                            slice_id=lib_dir.name,
+                            layer="l1",
+                            library_id=lib_dir.name,
+                            worktree_path=str(lib_dir),
+                        )
+                    )
+
+        if not slice_refs:
+            results["note"] = "No libraries found — nothing to loop over."
+            return results
+
+        # 3. Run PromotionLoop on discovered slices (via scheduler)
+        run_context = RunContext(
+            run_id=self.manager.run_id,
+            mode="auto",
+            workspace_root=str(self.manager.workspace_path),
+            max_iterations=max_iterations,
+        )
+
+        loop = PromotionLoop(workspace_root=self.manager.workspace_path)
+
+        from spec_manager.orchestration.promotion_scheduler import (
+            PromotionScheduler,
+            SchedulerConfig,
+        )
+
+        scheduler = PromotionScheduler(
+            loop=loop,
+            config=SchedulerConfig(max_parallel=4),
+        )
+        sched_result = scheduler.run(slice_refs, run_context)
+        slice_results = sched_result.slice_results
+
+        results["slices"] = [
+            {
+                "slice_id": r.slice_id,
+                "status": r.status,
+                "iterations": r.iterations,
+                "remaining_gaps": r.remaining_gaps,
+                "demotion_count": len(r.demotion_tickets),
+            }
+            for r in slice_results
+        ]
+
+        # 4. Global verification (P6 + P7)
+        all_complete = all(r.status == "COMPLETE" for r in slice_results)
+        if all_complete:
+            try:
+                p6_result = self.run_phase(Phase.CROSS_LIBRARY)
+                results["cross_library"] = p6_result
+            except Exception as exc:
+                logger.warning("P6 cross-library failed: %s", exc)
+                results["cross_library"] = {"error": str(exc)}
+
+            try:
+                p7_result = self.run_phase(Phase.PROJECTION_SYNC)
+                results["projection_sync"] = p7_result
+            except Exception as exc:
+                logger.warning("P7 projection sync failed: %s", exc)
+                results["projection_sync"] = {"error": str(exc)}
+
+        results["all_complete"] = all_complete
+        return results
 
     # ------------------------------------------------------------------
     # Phase runners

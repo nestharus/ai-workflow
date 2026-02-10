@@ -47,6 +47,7 @@ openapi/
 .review/
 .tmp/
 .worktrees/
+agent_prompts/
 .git-rewrite/
 .audit/
 out/

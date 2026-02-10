@@ -1,9 +1,0 @@
-Analyze the following source code and return the JSON structure
-described in your system prompt.
-
-File: /tmp/pytest-of-nes/pytest-446/test_directory_text0/b.py
-
-```
-def g(): return 2
-
-```

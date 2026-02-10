@@ -12,13 +12,16 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 from spec_manager.projection.lineage.builder import scan_imports_from_files
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
+
+if TYPE_CHECKING:
+    from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
 
 
 @dataclass
@@ -81,6 +84,11 @@ def _extract_function_info(file_path: Path) -> list[tuple[RawFunctionInfo, str]]
     return [(func, source) for func in analysis.functions]
 
 
+def _extract_function_info_from_analyzed(af: AnalyzedFile) -> list[tuple[RawFunctionInfo, str]]:
+    """Extract function info from a pre-loaded AnalyzedFile."""
+    return [(func, af.content) for func in af.analysis.functions]
+
+
 def _get_line_fingerprints(source: str, start: int, end: int) -> set[str]:
     """Get SHA-256 fingerprints for individual lines in a range."""
     lines = source.splitlines()
@@ -98,6 +106,8 @@ def check_no_inlined_atom_logic(
     architectural_files: list[Path],
     algorithmic_files: list[Path],
     gate_spec: GateSpec,
+    analyzed_arch: list[AnalyzedFile] | None = None,
+    analyzed_algo: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: No inlined atom logic in architectural layer.
 
@@ -141,8 +151,17 @@ def check_no_inlined_atom_logic(
     for pf in pin_registry.pin_functions:
         pin_func_id_by_name[pf.function_name] = pf.pin_func_id
 
+    # Build algo lookup from analyzed or files
+    algo_analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed_algo is not None:
+        for af in analyzed_algo:
+            algo_analyzed_lookup[af.path] = af
+
     for algo_file in algorithmic_files:
-        entries = _extract_function_info(algo_file)
+        af = algo_analyzed_lookup.get(str(algo_file))
+        entries = (
+            _extract_function_info_from_analyzed(af) if af else _extract_function_info(algo_file)
+        )
         for func_info, source in entries:
             func_name = func_info.name
             if func_name in pin_func_id_by_name:
@@ -155,8 +174,16 @@ def check_no_inlined_atom_logic(
     # Scan architectural files
     all_findings: list[dict[str, Any]] = []
 
+    arch_analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed_arch is not None:
+        for af in analyzed_arch:
+            arch_analyzed_lookup[af.path] = af
+
     for arch_file in architectural_files:
-        arch_entries = _extract_function_info(arch_file)
+        af = arch_analyzed_lookup.get(str(arch_file))
+        arch_entries = (
+            _extract_function_info_from_analyzed(af) if af else _extract_function_info(arch_file)
+        )
         for arch_func_info, arch_source in arch_entries:
             arch_end = arch_func_info.end_line
 
@@ -252,6 +279,7 @@ def check_function_recomposition(
     pin_registry: PinFunctionRegistry,
     architectural_files: list[Path],
     gate_spec: GateSpec,
+    analyzed_arch: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: Architectural functions correctly recompose atoms.
 
@@ -298,19 +326,28 @@ def check_function_recomposition(
         if name in pin_func_names:
             imports_by_file.setdefault(record.importer_file, set()).add(name)
 
+    # Build analyzed lookup
+    arch_analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed_arch is not None:
+        for af in analyzed_arch:
+            arch_analyzed_lookup[af.path] = af
+
     for arch_file in architectural_files:
         file_str = str(arch_file)
         imported_pin_names = imports_by_file.get(file_str, set())
         if not imported_pin_names:
             continue
 
-        try:
-            source = arch_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        # Find all call sites using analyze_source function bodies
-        analysis = analyze_source(source, file_str)
+        af = arch_analyzed_lookup.get(file_str)
+        if af is not None:
+            source = af.content
+            analysis = af.analysis
+        else:
+            try:
+                source = arch_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            analysis = analyze_source(source, file_str)
         lines = source.splitlines()
         called_names: set[str] = set()
         for func in analysis.functions:

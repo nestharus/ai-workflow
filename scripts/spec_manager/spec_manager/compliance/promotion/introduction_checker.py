@@ -9,12 +9,15 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.pin_coverage import PinCoverageReport
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.core.code_analysis import SourceAnalysis, analyze_source
+
+if TYPE_CHECKING:
+    from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
 
 # Category classification heuristics based on function name patterns
 _CATEGORY_PATTERNS: list[tuple[list[str], str]] = [
@@ -108,6 +111,7 @@ def _count_spec_comments_from_analysis(
 def find_introduced_algorithms(
     pin_coverage: PinCoverageReport,
     architectural_files: list[Path],
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> list[IntroducedAlgorithm]:
     """Find all introduced algorithms in the architectural layer.
 
@@ -146,17 +150,26 @@ def find_introduced_algorithms(
         fp = info["file_path"]
         file_locations.setdefault(fp, []).append((loc, info["line"]))
 
+    # Build analyzed lookup
+    analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed is not None:
+        for af in analyzed:
+            analyzed_lookup[af.path] = af
+
     for arch_file in architectural_files:
         file_str = str(arch_file)
         if file_str not in file_locations:
             continue
 
-        try:
-            source = arch_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        analysis = analyze_source(source, file_str)
+        af = analyzed_lookup.get(file_str)
+        if af is not None:
+            analysis = af.analysis
+        else:
+            try:
+                source = arch_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            analysis = analyze_source(source, file_str)
         location_lines = {line for _, line in file_locations[file_str]}
 
         for func in analysis.functions:
@@ -188,6 +201,7 @@ def check_introduced_algorithm_specs(
     pin_coverage: PinCoverageReport,
     architectural_files: list[Path],
     gate_spec: GateSpec,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: Introduced algorithms must have spec comments.
 
@@ -212,7 +226,7 @@ def check_introduced_algorithm_specs(
     require_docstring = gate_spec.params.get("require_docstring", True)
     min_spec_comments = gate_spec.params.get("min_spec_comments", 1)
 
-    introduced = find_introduced_algorithms(pin_coverage, architectural_files)
+    introduced = find_introduced_algorithms(pin_coverage, architectural_files, analyzed=analyzed)
 
     findings: list[dict[str, Any]] = []
     for algo in introduced:

@@ -97,6 +97,44 @@ class VcsOperations(Protocol):
         """
         ...
 
+    def rev_parse(self, ref: str) -> str | None:
+        """Resolve *ref* (branch, tag, SHA) to a full commit SHA.
+
+        Returns ``None`` on error.
+        """
+        ...
+
+    def update_ref(self, branch: str, target_sha: str) -> tuple[bool, str]:
+        """Move *branch* to *target_sha* (fast-forward ref update).
+
+        Returns:
+            ``(success, error_message)``.
+        """
+        ...
+
+    def rev_list_count(self, from_ref: str, to_ref: str) -> int | None:
+        """Count commits in the range ``from_ref..to_ref``.
+
+        Returns ``None`` on error.
+        """
+        ...
+
+    def create_tag(self, tag_name: str, target: str, message: str = "") -> tuple[bool, str]:
+        """Create an annotated tag at *target*.
+
+        Returns:
+            ``(success, error_message)``.
+        """
+        ...
+
+    def delete_ref(self, ref: str) -> tuple[bool, str]:
+        """Delete a branch or ref.
+
+        Returns:
+            ``(success, error_message)``.
+        """
+        ...
+
 
 class GitVcs:
     """Git implementation of :class:`VcsOperations`."""
@@ -108,9 +146,7 @@ class GitVcs:
     # Internal
     # ------------------------------------------------------------------
 
-    def _run(
-        self, args: list[str], cwd: Path | None = None
-    ) -> subprocess.CompletedProcess[str]:
+    def _run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["git", *args],
             cwd=cwd or self.repo_root,
@@ -127,9 +163,7 @@ class GitVcs:
     def create_worktree(
         self, path: Path, branch: str, *, start_point: str = "HEAD"
     ) -> tuple[bool, str]:
-        result = self._run(
-            ["worktree", "add", "-b", branch, str(path), start_point]
-        )
+        result = self._run(["worktree", "add", "-b", branch, str(path), start_point])
         if result.returncode != 0:
             return False, result.stderr.strip()
         return True, ""
@@ -186,9 +220,7 @@ class GitVcs:
         return True, ""
 
     def get_current_branch(self, worktree: Path | None = None) -> str | None:
-        result = self._run(
-            ["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree
-        )
+        result = self._run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree)
         if result.returncode != 0:
             return None
         branch = result.stdout.strip()
@@ -199,6 +231,43 @@ class GitVcs:
         if result.returncode != 0:
             return None
         return result.stdout.strip()
+
+    def rev_parse(self, ref: str) -> str | None:
+        result = self._run(["rev-parse", ref])
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    def update_ref(self, branch: str, target_sha: str) -> tuple[bool, str]:
+        ref = f"refs/heads/{branch}" if not branch.startswith("refs/") else branch
+        result = self._run(["update-ref", ref, target_sha])
+        if result.returncode != 0:
+            return False, result.stderr.strip()
+        return True, ""
+
+    def rev_list_count(self, from_ref: str, to_ref: str) -> int | None:
+        result = self._run(["rev-list", "--count", f"{from_ref}..{to_ref}"])
+        if result.returncode != 0:
+            return None
+        try:
+            return int(result.stdout.strip())
+        except ValueError:
+            return None
+
+    def create_tag(self, tag_name: str, target: str, message: str = "") -> tuple[bool, str]:
+        if message:
+            result = self._run(["tag", "-a", tag_name, target, "-m", message])
+        else:
+            result = self._run(["tag", tag_name, target])
+        if result.returncode != 0:
+            return False, result.stderr.strip()
+        return True, ""
+
+    def delete_ref(self, ref: str) -> tuple[bool, str]:
+        result = self._run(["branch", "-D", ref])
+        if result.returncode != 0:
+            return False, result.stderr.strip()
+        return True, ""
 
     # ------------------------------------------------------------------
     # Private helpers

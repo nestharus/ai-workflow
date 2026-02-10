@@ -1,0 +1,26 @@
+I need more context to generate useful search queries. The ambiguity "Which format?" is too vague without knowing what domain, specification, or system it relates to.
+
+```json
+{
+  "search_queries": [
+    "common data format specifications comparison JSON XML YAML",
+    "file format selection criteria software systems",
+    "data interchange format standards best practices",
+    "format specification ambiguity resolution technical requirements"
+  ],
+  "relevance_reasons": [
+    "Covers the most common structured data formats that might be referenced when 'format' is unspecified",
+    "Helps identify criteria for choosing between formats when the requirement doesn't specify one",
+    "Surfaces industry standards for data interchange that could be the intended format",
+    "Addresses how to resolve format ambiguities in technical specifications generally"
+  ]
+}
+```
+
+However, this is a very generic response because the ambiguity `"Which format?"` has no surrounding context — no spec section, no domain, no code reference. If you can provide:
+
+- **The spec section or requirement** where this ambiguity was found
+- **The domain** (e.g., treasury, API responses, file I/O)
+- **What "format" refers to** (data serialization? output rendering? message protocol?)
+
+I can generate much more targeted and actionable search queries.

@@ -138,10 +138,91 @@ FOR EACH SLICE (in parallel across library worktrees):
 
 ---
 
-## Promotion 3: Architecture → Clean Code
+## Continuous Integration: The Dirty/Clean Worktree Pipeline
 
-**Input**: Working but messy architecture
-**Output**: Clean, production-ready code, merged to main
+### Each Layer Has a Dirty/Clean Pair
+
+Every layer maintains TWO worktrees:
+
+* **Dirty** — where active work happens (implementation, refactoring, etc.)
+* **Clean** — where verified work lands after passing tests
+
+Additionally, the active layer has **grandchild worktrees** for parallel per-slice work.
+
+```text
+L1 (Code-as-Spec):
+  grandchild-slice-A   (parallel implementation)
+  grandchild-slice-B   (parallel implementation)
+  dirty                (accumulates from grandchildren)
+  clean                (accumulates from dirty after tests pass)
+
+L2 (Architecture):
+  dirty                (accumulates from L1 clean)
+  clean                (accumulates from L2 dirty after tests pass)
+
+L3 (Clean Code):
+  dirty                (accumulates from L2 clean)
+  clean                (accumulates from L3 dirty after tests pass) → main
+```
+
+### Batch Promotion Between Layers
+
+Promotion flows continuously through layers as **batches**, not as individual
+items and not as a big-bang "all at once":
+
+```text
+L1 grandchild → L1 dirty → [gates] → L1 clean → [tests]
+    → L2 dirty → [tests] → L2 clean
+    → L3 dirty → [tests] → L3 clean → main
+```
+
+When a slice passes gates in L1 dirty and is promoted to L1 clean (tests pass),
+it is **immediately promoted to L2 dirty**. No waiting. The promoted code lands
+in L2 dirty and sits there until creative L2 work begins.
+
+### Tracking Promoted vs Unpromoted Work
+
+Use `git diff` between dirty and clean at each layer:
+
+* `git diff L1-dirty L1-clean` = unpromoted work at L1
+* `git diff L1-clean L2-dirty` = unpromoted work between layers
+* **When dirty == clean (no diff), the entire layer is clean.**
+
+This is the termination signal for a layer: when all work has flowed through
+dirty → clean, there's nothing left to do at that layer.
+
+### Promotion Queue and Batching
+
+Multiple slices finishing at L1 form a **queue** to get into L1 clean:
+
+1. Slice A finishes → queued to merge into L1 clean
+2. Slice B finishes → queued behind A
+3. **Batch N** (A + B) is promoted: L1 dirty → L1 clean → tests
+4. If tests pass: batch N immediately flows to L2 dirty
+5. **Batch N+1** can now merge into L1 clean
+6. Repeat
+
+You empty the queue each time the previous batch is promoted. This creates
+a steady flow of verified batches moving through the layer pipeline.
+
+### Creative Work vs CI Integration
+
+**CI runs at all layers in parallel** — merges and tests happen continuously
+at every layer as batches flow through. But **creative work only happens at
+the active layer**:
+
+* While L1 is active: agents implement code, fill gaps, resolve under-specs
+* L2 and L3 only run CI (merge + test) — no architectural proposals, no
+  code quality reviews, no design work
+* When L1 dirty == L1 clean: L1 is done. Creative work moves to L2.
+* When L2 dirty == L2 clean: L2 is done. Creative work moves to L3.
+
+This prevents wasting tokens on work that would be invalidated by changes
+at lower layers.
+
+---
+
+## Promotion 3: Architecture → Clean Code
 
 **Input**: Working but messy architecture
 **Output**: Clean, production-ready code, merged to main

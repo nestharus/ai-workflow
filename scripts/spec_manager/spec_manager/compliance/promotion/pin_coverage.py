@@ -9,12 +9,15 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.core.code_analysis import analyze_source
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
+
+if TYPE_CHECKING:
+    from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
 
 # Default marker comment that classifies a function as an introduction
 _DEFAULT_INTRODUCTION_MARKERS = ["# @introduced", "# @infrastructure"]
@@ -95,6 +98,27 @@ def _extract_functions_from_file(file_path: Path) -> list[dict[str, Any]]:
     return results
 
 
+def _extract_functions_from_analyzed(af: AnalyzedFile) -> list[dict[str, Any]]:
+    """Extract function info from a pre-loaded AnalyzedFile."""
+    lines = af.content.splitlines()
+    results: list[dict[str, Any]] = []
+
+    for func in af.analysis.functions:
+        body_lines = lines[func.start_line - 1 : func.end_line]
+        is_method = "." in func.qualified_name
+        results.append(
+            {
+                "name": func.name,
+                "qualified_name": func.qualified_name,
+                "line": func.start_line,
+                "is_method": is_method,
+                "body_source_lines": body_lines,
+            }
+        )
+
+    return results
+
+
 def _has_introduction_marker(
     body_lines: list[str],
     markers: list[str],
@@ -117,6 +141,7 @@ def build_pin_coverage_report(
     registry: PinFunctionRegistry,
     architectural_files: list[Path],
     introduction_markers: list[str] | None = None,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> PinCoverageReport:
     """Build a pin coverage report by scanning architectural files.
 
@@ -153,9 +178,18 @@ def build_pin_coverage_report(
 
     items: list[PinCoverageItem] = []
 
+    # Build analyzed lookup for fast access
+    analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed is not None:
+        for af in analyzed:
+            analyzed_lookup[af.path] = af
+
     for arch_file in architectural_files:
         file_str = str(arch_file)
-        functions = _extract_functions_from_file(arch_file)
+        af = analyzed_lookup.get(file_str)
+        functions = (
+            _extract_functions_from_analyzed(af) if af else _extract_functions_from_file(arch_file)
+        )
 
         for func_info in functions:
             # Build the arch_location key: "file:qualified_name"
@@ -225,6 +259,7 @@ def check_pin_coverage(
     architectural_files: list[Path],
     gate_spec: GateSpec,
     introduction_markers: list[str] | None = None,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: Every architectural location pins to algorithmic origin.
 
@@ -253,6 +288,7 @@ def check_pin_coverage(
         registry=registry,
         architectural_files=architectural_files,
         introduction_markers=all_markers or None,
+        analyzed=analyzed,
     )
 
     # Build findings for unpinned locations

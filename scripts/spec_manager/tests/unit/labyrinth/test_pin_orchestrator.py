@@ -94,7 +94,8 @@ class TestScan:
         assert "compute_tax" in func_names
         assert "estimate_shipping" in func_names
 
-    def test_scan_finds_import_edges(self, tmp_path):
+    def test_scan_produces_no_edges(self, tmp_path):
+        """Filesystem scan no longer produces edges — edges are LLM-sourced only."""
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
@@ -105,8 +106,85 @@ class TestScan:
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         registry = orchestrator.scan()
 
-        # Should find edges for the imports
-        assert len(registry.import_edges) >= 1
+        assert len(registry.pin_functions) >= 1
+        assert len(registry.import_edges) == 0
+
+    def test_scan_mode_proposals_only(self, tmp_path):
+        """Proposals-only mode produces pins and edges from proposals."""
+        _setup_fixture_project(tmp_path)
+
+        config = PinFunctionConfig()
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
+
+        orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
+
+        pin_proposals = [
+            {
+                "function_name": "proposed_func",
+                "module_path": "atoms.proposed",
+                "file_path": str(tmp_path / "atoms" / "proposed.py"),
+                "line_start": 1,
+                "line_end": 3,
+                "signature": "(x: int) -> int",
+            }
+        ]
+        edge_proposals = [
+            {
+                "pin_func_id": "PFUNC-P-0001",
+                "arch_location": "services/handler.py:do_work",
+                "arch_file_path": str(tmp_path / "services" / "handler.py"),
+                "arch_line": 5,
+                "projection_type": "pass_through",
+            }
+        ]
+
+        registry = orchestrator.scan(
+            mode="proposals",
+            pin_proposals=pin_proposals,
+            edge_proposals=edge_proposals,
+        )
+
+        func_names = {pf.function_name for pf in registry.pin_functions}
+        assert "proposed_func" in func_names
+        assert len(registry.import_edges) == 1
+        assert registry.import_edges[0].arch_location == "services/handler.py:do_work"
+
+    def test_scan_mode_both_merges(self, tmp_path):
+        """Both mode: scan pins + proposal edges merged together."""
+        _setup_fixture_project(tmp_path)
+
+        config = PinFunctionConfig()
+        config.atom_directories = ["atoms"]
+        config.algorithmic_roots = ["atoms"]
+        config.architectural_roots = ["services"]
+
+        orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
+
+        # First do a scan to get a pin_func_id
+        scan_only = orchestrator.scan(mode="scan")
+        assert len(scan_only.pin_functions) >= 1
+        first_pin_id = scan_only.pin_functions[0].pin_func_id
+
+        # Now do "both" with edge proposals referencing scanned pin
+        edge_proposals = [
+            {
+                "pin_func_id": first_pin_id,
+                "arch_location": "services/payment_handler.py:handle_payment",
+                "arch_file_path": str(tmp_path / "services" / "payment_handler.py"),
+                "arch_line": 3,
+                "projection_type": "pass_through",
+            }
+        ]
+
+        # New orchestrator to reset edge counter
+        orchestrator2 = PinFunctionOrchestrator(tmp_path, config=config)
+        registry = orchestrator2.scan(mode="both", edge_proposals=edge_proposals)
+
+        assert len(registry.pin_functions) >= 1
+        assert len(registry.import_edges) == 1
+        assert registry.import_edges[0].pin_func_id == first_pin_id
 
     def test_scan_empty_project(self, tmp_path):
         config = PinFunctionConfig()
@@ -161,9 +239,15 @@ class TestDiff:
 
 
 class TestQuery:
-    """Tests for query commands."""
+    """Tests for query commands.
 
-    def test_query_importers(self, tmp_path):
+    Since scan no longer produces edges, query methods only find results
+    when edges have been provided via proposals.  Without proposals,
+    ``query_importers`` and ``query_pin_functions_for`` return empty.
+    """
+
+    def test_query_importers_no_edges(self, tmp_path):
+        """Without proposals, query_importers returns empty (scan has no edges)."""
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
@@ -174,8 +258,7 @@ class TestQuery:
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
         edges = orchestrator.query_importers("validate_payment")
 
-        # Should find at least one importer
-        assert len(edges) >= 1
+        assert edges == []
 
     def test_query_importers_not_found(self, tmp_path):
         _setup_fixture_project(tmp_path)
@@ -190,7 +273,8 @@ class TestQuery:
 
         assert edges == []
 
-    def test_query_pin_functions_for_file(self, tmp_path):
+    def test_query_pin_functions_for_file_no_edges(self, tmp_path):
+        """Without proposals, query_pin_functions_for returns empty."""
         _setup_fixture_project(tmp_path)
 
         config = PinFunctionConfig()
@@ -200,14 +284,10 @@ class TestQuery:
 
         orchestrator = PinFunctionOrchestrator(tmp_path, config=config)
 
-        # Get the actual file path as it would appear in edges
         handler_path = str(tmp_path / "services" / "payment_handler.py")
         pin_funcs = orchestrator.query_pin_functions_for(handler_path)
 
-        # Should find validate_payment and compute_tax
-        func_names = {pf.function_name for pf in pin_funcs}
-        # At least one of the two functions should be found
-        assert len(func_names) >= 1
+        assert len(pin_funcs) == 0
 
 
 class TestSaveRegistry:

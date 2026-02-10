@@ -77,6 +77,8 @@ class LayerPromotionGate:
         provenance_registry_path: Path | None = None,
         evidence_index: EvidenceIndex | None = None,
         entities_artifact: EntitiesArtifact | None = None,
+        algorithmic_analyzed: list[Any] | None = None,
+        architectural_analyzed: list[Any] | None = None,
     ) -> None:
         """Initialize the promotion gate.
 
@@ -90,6 +92,10 @@ class LayerPromotionGate:
                 If None, entity coverage gate is skipped with a warning.
             entities_artifact: EntitiesArtifact for explicit entity-atom linkage.
                 Optional even when evidence_index is provided.
+            algorithmic_analyzed: Pre-loaded AnalyzedFile list for algorithmic files.
+                When provided, gates skip file I/O and use these directly.
+            architectural_analyzed: Pre-loaded AnalyzedFile list for architectural files.
+                When provided, gates skip file I/O and use these directly.
         """
         self._config = config
         self._pin_registry = pin_registry
@@ -97,6 +103,8 @@ class LayerPromotionGate:
         self._evidence_index = evidence_index
         self._entities_artifact = entities_artifact
         self._project_root = Path(config.project_root)
+        self._algorithmic_analyzed = algorithmic_analyzed
+        self._architectural_analyzed = architectural_analyzed
 
     def run_all_checks(self) -> PromotionReport:
         """Run all enabled gate checks and produce a promotion report.
@@ -116,13 +124,24 @@ class LayerPromotionGate:
 
         # 1. Algorithmic layer gates
         algorithmic_files = self._resolve_files(self._config.algorithmic_roots)
+        algo_analyzed = self._algorithmic_analyzed
+        arch_analyzed = self._architectural_analyzed
 
         for gate_id, runner in [
-            (GateId.NO_REMAINING_COMMENTS, lambda: self._run_comments(algorithmic_files)),
-            (GateId.NO_STUB_FUNCTIONS, lambda: self._run_stubs(algorithmic_files)),
+            (
+                GateId.NO_REMAINING_COMMENTS,
+                lambda: self._run_comments(algorithmic_files, algo_analyzed),
+            ),
+            (GateId.NO_STUB_FUNCTIONS, lambda: self._run_stubs(algorithmic_files, algo_analyzed)),
             (GateId.ALL_TESTS_PASS, lambda: self._run_tests()),
-            (GateId.CALL_GRAPH_CONNECTED, lambda: self._run_call_graph(algorithmic_files)),
-            (GateId.STORE_MONOGAMY, lambda: self._run_store_monogamy(algorithmic_files)),
+            (
+                GateId.CALL_GRAPH_CONNECTED,
+                lambda: self._run_call_graph(algorithmic_files, algo_analyzed),
+            ),
+            (
+                GateId.STORE_MONOGAMY,
+                lambda: self._run_store_monogamy(algorithmic_files, algo_analyzed),
+            ),
         ]:
             gate_spec = self._config.get_gate(gate_id)
             if gate_spec.enabled:
@@ -135,10 +154,17 @@ class LayerPromotionGate:
         gate_spec = self._config.get_gate(GateId.PIN_COVERAGE)
         if gate_spec.enabled:
             if self._pin_registry is not None:
-                result = check_pin_coverage(self._pin_registry, architectural_files, gate_spec)
+                result = check_pin_coverage(
+                    self._pin_registry,
+                    architectural_files,
+                    gate_spec,
+                    analyzed=arch_analyzed,
+                )
                 results.append(result)
                 pin_coverage_report = build_pin_coverage_report(
-                    self._pin_registry, architectural_files
+                    self._pin_registry,
+                    architectural_files,
+                    analyzed=arch_analyzed,
                 )
             else:
                 results.append(
@@ -153,7 +179,10 @@ class LayerPromotionGate:
             if self._pin_registry is not None and pin_coverage_report is not None:
                 results.append(
                     check_introduced_algorithm_specs(
-                        pin_coverage_report, architectural_files, gate_spec
+                        pin_coverage_report,
+                        architectural_files,
+                        gate_spec,
+                        analyzed=arch_analyzed,
                     )
                 )
             else:
@@ -186,7 +215,12 @@ class LayerPromotionGate:
             if self._pin_registry is not None:
                 results.append(
                     check_no_inlined_atom_logic(
-                        self._pin_registry, architectural_files, algorithmic_files, gate_spec
+                        self._pin_registry,
+                        architectural_files,
+                        algorithmic_files,
+                        gate_spec,
+                        analyzed_arch=arch_analyzed,
+                        analyzed_algo=algo_analyzed,
                     )
                 )
             else:
@@ -200,7 +234,12 @@ class LayerPromotionGate:
         if gate_spec.enabled:
             if self._pin_registry is not None:
                 results.append(
-                    check_function_recomposition(self._pin_registry, architectural_files, gate_spec)
+                    check_function_recomposition(
+                        self._pin_registry,
+                        architectural_files,
+                        gate_spec,
+                        analyzed_arch=arch_analyzed,
+                    )
                 )
             else:
                 results.append(
@@ -315,25 +354,51 @@ class LayerPromotionGate:
 
         return runners[gate_id]()
 
-    def _run_comments(self, algorithmic_files: list[Path]) -> GateCheckResult:
+    def _run_comments(
+        self,
+        algorithmic_files: list[Path],
+        analyzed: list[Any] | None = None,
+    ) -> GateCheckResult:
         gate_spec = self._config.get_gate(GateId.NO_REMAINING_COMMENTS)
-        return check_no_remaining_comments(algorithmic_files, gate_spec)
+        return check_no_remaining_comments(algorithmic_files, gate_spec, analyzed=analyzed)
 
-    def _run_stubs(self, algorithmic_files: list[Path]) -> GateCheckResult:
+    def _run_stubs(
+        self,
+        algorithmic_files: list[Path],
+        analyzed: list[Any] | None = None,
+    ) -> GateCheckResult:
         gate_spec = self._config.get_gate(GateId.NO_STUB_FUNCTIONS)
-        return check_no_stub_functions(algorithmic_files, gate_spec)
+        return check_no_stub_functions(algorithmic_files, gate_spec, analyzed=analyzed)
 
     def _run_tests(self) -> GateCheckResult:
         gate_spec = self._config.get_gate(GateId.ALL_TESTS_PASS)
         return check_all_tests_pass(self._config.test_command, self._project_root, gate_spec)
 
-    def _run_call_graph(self, algorithmic_files: list[Path]) -> GateCheckResult:
+    def _run_call_graph(
+        self,
+        algorithmic_files: list[Path],
+        analyzed: list[Any] | None = None,
+    ) -> GateCheckResult:
         gate_spec = self._config.get_gate(GateId.CALL_GRAPH_CONNECTED)
-        return check_call_graph_connected(algorithmic_files, self._project_root, gate_spec)
+        return check_call_graph_connected(
+            algorithmic_files,
+            self._project_root,
+            gate_spec,
+            analyzed=analyzed,
+        )
 
-    def _run_store_monogamy(self, algorithmic_files: list[Path]) -> GateCheckResult:
+    def _run_store_monogamy(
+        self,
+        algorithmic_files: list[Path],
+        analyzed: list[Any] | None = None,
+    ) -> GateCheckResult:
         gate_spec = self._config.get_gate(GateId.STORE_MONOGAMY)
-        return check_store_monogamy(algorithmic_files, self._project_root, gate_spec)
+        return check_store_monogamy(
+            algorithmic_files,
+            self._project_root,
+            gate_spec,
+            analyzed=analyzed,
+        )
 
     def _run_introduction_check(
         self,

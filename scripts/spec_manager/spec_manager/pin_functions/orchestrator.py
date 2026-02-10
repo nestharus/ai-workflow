@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import textwrap
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 from spec_manager.core.pin_registry import PinRegistryIndex
@@ -27,10 +27,6 @@ from spec_manager.schemas.pin_functions import (
     PinFunctionRegistry,
     ProjectionType,
 )
-
-# Regex patterns for import detection (inlined from deleted import_graph)
-_IMPORT_RE = re.compile(r"^\s*import\s+(.+)", re.MULTILINE)
-_FROM_IMPORT_RE = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)", re.MULTILINE)
 
 
 @dataclass
@@ -65,43 +61,60 @@ class PinFunctionOrchestrator:
         """Path to the pin-function registry file."""
         return self._project_root / self._config.registry_dir / self._config.registry_filename
 
-    def scan(self) -> PinFunctionRegistry:
-        """Full scan: extract atoms, build import graph, produce registry.
+    def scan(
+        self,
+        mode: str = "scan",
+        pin_proposals: list[dict[str, Any]] | None = None,
+        edge_proposals: list[dict[str, Any]] | None = None,
+    ) -> PinFunctionRegistry:
+        """Scan for pin-functions and merge LLM-sourced proposals.
 
-        Scans the project root for atom functions, builds the import graph
-        from architectural files, and creates a complete registry.
+        Scans the project root for atom functions via ``analyze_source()``
+        (LLM-based).  Edges are exclusively LLM-sourced via proposals —
+        filesystem scan no longer produces edges.
+
+        Args:
+            mode: One of ``"scan"`` (filesystem only), ``"proposals"``
+                (proposals only), or ``"both"`` (merge both).
+            pin_proposals: Pin proposals from the IMPLEMENT step (P9).
+                Each dict should have at minimum ``function_name``,
+                ``module_path``, ``file_path``.
+            edge_proposals: Edge proposals from the IMPLEMENT step.
+                Each dict should have ``pin_func_id``, ``arch_file_path``,
+                ``arch_location``, ``projection_type``.
 
         Returns:
             PinFunctionRegistry with all discovered pin-functions and edges.
         """
-        # Extract atom candidates from all configured directories
-        all_candidates: list[_AtomCandidate] = []
-        for atom_dir_name in self._config.atom_directories:
-            atom_dir = self._project_root / atom_dir_name
-            if atom_dir.is_dir():
-                candidates = self._extract_from_directory(atom_dir)
-                all_candidates.extend(candidates)
-
-        # Also scan the project root for annotated functions
-        root_candidates = self._extract_from_directory(self._project_root, recursive=True)
-        # Avoid duplicates
-        seen_keys: set[str] = {f"{c.file_path}:{c.function_name}" for c in all_candidates}
-        for c in root_candidates:
-            key = f"{c.file_path}:{c.function_name}"
-            if key not in seen_keys:
-                seen_keys.add(key)
-                all_candidates.append(c)
-
-        # Convert candidates to PinFunction schemas
-        pin_functions = self._candidates_to_pin_functions(all_candidates)
-
-        # Build import graph from architectural directories
+        pin_functions: list[PinFunction] = []
         import_edges: list[ImportEdge] = []
-        for arch_dir_name in self._config.architectural_roots:
-            arch_dir = self._project_root / arch_dir_name
-            if arch_dir.is_dir():
-                edges = self._build_graph(pin_functions, arch_dir)
-                import_edges.extend(edges)
+
+        # Phase 1: Filesystem scan — pins only, NO edges
+        if mode in ("scan", "both"):
+            all_candidates: list[_AtomCandidate] = []
+            for atom_dir_name in self._config.atom_directories:
+                atom_dir = self._project_root / atom_dir_name
+                if atom_dir.is_dir():
+                    candidates = self._extract_from_directory(atom_dir)
+                    all_candidates.extend(candidates)
+
+            root_candidates = self._extract_from_directory(self._project_root, recursive=True)
+            seen_keys: set[str] = {f"{c.file_path}:{c.function_name}" for c in all_candidates}
+            for c in root_candidates:
+                key = f"{c.file_path}:{c.function_name}"
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    all_candidates.append(c)
+
+            pin_functions = self._candidates_to_pin_functions(all_candidates)
+
+        # Phase 2: Merge proposals (mode="proposals" or "both")
+        if mode in ("proposals", "both"):
+            proposed_pins, proposed_edges = self._merge_proposals(
+                pin_functions, pin_proposals or [], edge_proposals or []
+            )
+            pin_functions = proposed_pins
+            import_edges.extend(proposed_edges)
 
         registry = PinFunctionRegistry(
             schema_version="1.0",
@@ -257,6 +270,66 @@ class PinFunctionOrchestrator:
 
         return "\n".join(lines)
 
+    # --- Private: proposal merging ---
+
+    def _merge_proposals(
+        self,
+        existing_pins: list[PinFunction],
+        pin_proposals: list[dict[str, Any]],
+        edge_proposals: list[dict[str, Any]],
+    ) -> tuple[list[PinFunction], list[ImportEdge]]:
+        """Merge P9 proposals into the scanned pin functions.
+
+        Pin proposals that match existing functions by name+file are
+        skipped (scan wins). New proposals get IDs allocated.
+
+        Returns:
+            (merged_pin_functions, new_edges)
+        """
+        existing_keys = {(pf.function_name, pf.file_path) for pf in existing_pins}
+        merged = list(existing_pins)
+        next_id = len(merged) + 1
+
+        for proposal in pin_proposals:
+            key = (proposal.get("function_name", ""), proposal.get("file_path", ""))
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+
+            pf = PinFunction(
+                pin_func_id=proposal.get("pin_func_id", f"PFUNC-P-{next_id:04d}"),
+                function_name=proposal.get("function_name", ""),
+                module_path=proposal.get("module_path", ""),
+                file_path=proposal.get("file_path", ""),
+                line_start=proposal.get("line_start", 0),
+                line_end=proposal.get("line_end", 0),
+                signature=proposal.get("signature", ""),
+                docstring=proposal.get("docstring", ""),
+                content_hash=proposal.get("content_hash", ""),
+                is_shape=proposal.get("is_shape", False),
+                store_touches=proposal.get("store_touches", []),
+                evidence_atom_ids=proposal.get("evidence_atom_ids", []),
+            )
+            merged.append(pf)
+            next_id += 1
+
+        new_edges: list[ImportEdge] = []
+        for proposal in edge_proposals:
+            self._edge_counter += 1
+            edge = ImportEdge(
+                edge_id=proposal.get("edge_id", f"IMEDGE-P-{self._edge_counter:04d}"),
+                pin_func_id=proposal.get("pin_func_id", ""),
+                arch_location=proposal.get("arch_location", ""),
+                arch_file_path=proposal.get("arch_file_path", ""),
+                arch_line=proposal.get("arch_line", 0),
+                projection_type=proposal.get("projection_type", ProjectionType.PASS_THROUGH),
+                confidence=proposal.get("confidence", 0.8),
+                is_direct_import=proposal.get("is_direct_import", True),
+            )
+            new_edges.append(edge)
+
+        return merged, new_edges
+
     # --- Private: function extraction (replaces ast_extractor) ---
 
     def _extract_from_directory(
@@ -296,14 +369,12 @@ class PinFunctionOrchestrator:
         is_convention = self._is_convention_directory(file_path)
         is_shapes_dir = "shapes" in [p.lower() for p in file_path.parts]
         source_lines = source.splitlines()
-        annotated_functions = self._find_annotated_functions(source_lines)
 
         candidates: list[_AtomCandidate] = []
         for raw_func in analysis.functions:
             detection_method = self._classify_detection(
                 raw_func.name,
                 is_convention,
-                annotated_functions,
             )
             if detection_method is None:
                 continue
@@ -350,106 +421,22 @@ class PinFunctionOrchestrator:
         path_parts = [p.lower() for p in file_path.parts]
         return any(d.lower() in path_parts for d in self._config.atom_directories)
 
-    def _find_annotated_functions(self, source_lines: list[str]) -> set[str]:
-        annotated: set[str] = set()
-        marker = self._config.annotation_marker
-        for i, line in enumerate(source_lines):
-            stripped = line.strip()
-            if stripped == marker or stripped.startswith(marker + " "):
-                for j in range(i + 1, len(source_lines)):
-                    next_line = source_lines[j].strip()
-                    if not next_line or next_line.startswith("#") or next_line.startswith("@"):
-                        continue
-                    if next_line.startswith("def ") or next_line.startswith("async def "):
-                        func_name = next_line.split("(")[0].split()[-1]
-                        annotated.add(func_name)
-                    break
-        return annotated
-
     def _classify_detection(
         self,
         func_name: str,
         is_convention: bool,
-        annotated_functions: set[str],
     ) -> str | None:
+        """Classify how a function was detected as a pin candidate.
+
+        Public functions in convention directories are candidates.
+        Private functions (``_``-prefixed) are excluded.
+        Public functions outside convention directories use heuristic rules.
+        """
         if func_name.startswith("_"):
-            if func_name in annotated_functions:
-                return "annotation"
             return None
-        if func_name in annotated_functions:
-            return "annotation"
         if is_convention:
             return "convention"
         return "heuristic"
-
-    # --- Private: import graph building (replaces import_graph) ---
-
-    def _build_graph(
-        self,
-        pin_functions: list[PinFunction],
-        arch_directory: Path,
-    ) -> list[ImportEdge]:
-        """Build import graph by scanning architectural files for pin-function imports."""
-        pf_by_name: dict[str, PinFunction] = {pf.function_name: pf for pf in pin_functions}
-
-        edges: list[ImportEdge] = []
-        for py_file in sorted(arch_directory.rglob("*.py")):
-            if not py_file.is_file():
-                continue
-            try:
-                source = py_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-
-            imported = self._scan_imports(source)
-            for _local_name, orig_name in imported.items():
-                pf = pf_by_name.get(orig_name)
-                if pf is None:
-                    continue
-                self._edge_counter += 1
-                edge = ImportEdge(
-                    edge_id=f"IMEDGE-{self._edge_counter:04d}",
-                    pin_func_id=pf.pin_func_id,
-                    arch_location=f"{py_file}:<module>",
-                    arch_file_path=str(py_file),
-                    arch_line=0,
-                    projection_type=ProjectionType.PASS_THROUGH,
-                    confidence=1.0,
-                    is_direct_import=True,
-                )
-                edges.append(edge)
-
-        return edges
-
-    def _scan_imports(self, source: str) -> dict[str, str]:
-        """Scan source for import statements, return {local_name: original_name}."""
-        imported: dict[str, str] = {}
-
-        for match in _FROM_IMPORT_RE.finditer(source):
-            module = match.group(1)
-            if not self._is_algorithmic_module(module):
-                continue
-            names_str = match.group(2).strip()
-            for orig, alias in _parse_import_names(names_str):
-                local = alias or orig
-                imported[local] = orig
-
-        for match in _IMPORT_RE.finditer(source):
-            full_line = match.group(0).strip()
-            if full_line.startswith("from "):
-                continue
-            names_str = match.group(1).strip()
-            for orig, alias in _parse_import_names(names_str):
-                if not self._is_algorithmic_module(orig):
-                    continue
-                local = alias or orig
-                imported[local] = orig
-
-        return imported
-
-    def _is_algorithmic_module(self, module_name: str) -> bool:
-        module_parts = module_name.split(".")
-        return any(root in module_parts for root in self._config.algorithmic_roots)
 
     # --- Private: conversion ---
 
@@ -504,27 +491,6 @@ def _reconstruct_signature(func: RawFunctionInfo) -> str:
     if func.return_annotation:
         sig += f" -> {func.return_annotation}"
     return sig
-
-
-def _parse_import_names(names_str: str) -> list[tuple[str, str | None]]:
-    """Parse comma-separated import names, return [(original, alias_or_None)]."""
-    cleaned = names_str.strip().strip("()")
-    if "#" in cleaned:
-        cleaned = cleaned[: cleaned.index("#")]
-
-    result: list[tuple[str, str | None]] = []
-    for part in cleaned.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        as_match = re.match(r"(\S+)\s+as\s+(\S+)", part)
-        if as_match:
-            result.append((as_match.group(1), as_match.group(2)))
-        else:
-            name = part.strip()
-            if name.isidentifier() or "." in name:
-                result.append((name, None))
-    return result
 
 
 __all__ = [

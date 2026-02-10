@@ -119,6 +119,8 @@ class PromotionEngine:
         atom_ids: list[str] | None = None,
         skip_compliance: bool = False,
         slices: list[VerticalSlice] | None = None,
+        pin_proposals: list[dict[str, Any]] | None = None,
+        edge_proposals: list[dict[str, Any]] | None = None,
     ) -> PromotionResult:
         """Promote atoms from algorithmic to architectural branch.
 
@@ -126,6 +128,10 @@ class PromotionEngine:
             atom_ids: Specific atoms to promote (``None`` = all changed).
             skip_compliance: Skip compliance gate (for development only).
             slices: Vertical slices for store monogamy check.
+            pin_proposals: Pin proposals from the IMPLEMENT step (P9).
+                Pre-registered into the pin registry before promotion.
+            edge_proposals: Edge proposals from the IMPLEMENT step (P9).
+                Merged into the import graph.
 
         Returns:
             PromotionResult describing the outcome.

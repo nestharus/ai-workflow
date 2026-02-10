@@ -14,10 +14,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-
+from spec_manager.orchestration.models import LAYER_ORDER
 from spec_manager.orchestration.vcs import GitVcs, VcsOperations
 from spec_manager.orchestration.worktree_manager import WorktreeManager
-
 
 # ======================================================================
 # Helpers
@@ -51,6 +50,12 @@ def _make_mock_vcs() -> MagicMock:
     vcs.commit_all.return_value = (True, "")
     vcs.get_current_branch.return_value = "main"
     vcs.get_head_sha.return_value = "abc123"
+    # New multi-layer operations
+    vcs.rev_parse.return_value = "abc123"
+    vcs.update_ref.return_value = (True, "")
+    vcs.rev_list_count.return_value = 0
+    vcs.create_tag.return_value = (True, "")
+    vcs.delete_ref.return_value = (True, "")
     return vcs
 
 
@@ -65,9 +70,7 @@ class TestGitVcsCreateWorktree:
     """Test GitVcs.create_worktree method."""
 
     @patch(_SUBPROCESS_TARGET)
-    def test_create_worktree_success(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_create_worktree_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Successful worktree creation returns (True, '')."""
         mock_run.return_value = _completed()
         vcs = GitVcs(repo_root=tmp_path)
@@ -87,9 +90,7 @@ class TestGitVcsCreateWorktree:
         )
 
     @patch(_SUBPROCESS_TARGET)
-    def test_create_worktree_failure(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_create_worktree_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Failed worktree creation returns (False, error_message)."""
         mock_run.return_value = _completed(returncode=128, stderr="fatal: branch already exists")
         vcs = GitVcs(repo_root=tmp_path)
@@ -100,9 +101,7 @@ class TestGitVcsCreateWorktree:
         assert "branch already exists" in err
 
     @patch(_SUBPROCESS_TARGET)
-    def test_create_worktree_custom_start_point(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_create_worktree_custom_start_point(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Custom start_point is forwarded to the git command."""
         mock_run.return_value = _completed()
         vcs = GitVcs(repo_root=tmp_path)
@@ -125,12 +124,7 @@ class TestGitVcsRemoveWorktree:
         wt_path = tmp_path / "worktrees" / "my-wt"
         resolved = str(wt_path.resolve())
 
-        porcelain_output = (
-            f"worktree {resolved}\n"
-            "HEAD abc123\n"
-            "branch refs/heads/feature-branch\n"
-            "\n"
-        )
+        porcelain_output = f"worktree {resolved}\nHEAD abc123\nbranch refs/heads/feature-branch\n\n"
 
         # First call: worktree remove (success)
         # Second call: worktree list --porcelain (for _branch_for_worktree)
@@ -153,13 +147,9 @@ class TestGitVcsRemoveWorktree:
         assert branch_delete_call[0][0] == ["git", "branch", "-D", "feature-branch"]
 
     @patch(_SUBPROCESS_TARGET)
-    def test_remove_worktree_failure(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_remove_worktree_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Failed worktree removal returns (False, error_message)."""
-        mock_run.return_value = _completed(
-            returncode=1, stderr="fatal: not a valid worktree"
-        )
+        mock_run.return_value = _completed(returncode=1, stderr="fatal: not a valid worktree")
         vcs = GitVcs(repo_root=tmp_path)
 
         ok, err = vcs.remove_worktree(tmp_path / "nonexistent")
@@ -168,9 +158,7 @@ class TestGitVcsRemoveWorktree:
         assert "not a valid worktree" in err
 
     @patch(_SUBPROCESS_TARGET)
-    def test_remove_worktree_no_branch_found(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_remove_worktree_no_branch_found(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When no branch is associated, branch deletion is skipped."""
         wt_path = tmp_path / "worktrees" / "orphan"
 
@@ -198,11 +186,7 @@ class TestGitVcsWorktreeExists:
         resolved = str(wt_path.resolve())
 
         mock_run.return_value = _completed(
-            stdout=(
-                f"worktree {resolved}\n"
-                "HEAD abc123\n"
-                "branch refs/heads/main\n\n"
-            )
+            stdout=(f"worktree {resolved}\nHEAD abc123\nbranch refs/heads/main\n\n")
         )
 
         vcs = GitVcs(repo_root=tmp_path)
@@ -219,9 +203,7 @@ class TestGitVcsWorktreeExists:
         assert vcs.worktree_exists(tmp_path / "missing") is False
 
     @patch(_SUBPROCESS_TARGET)
-    def test_worktree_exists_git_error(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_worktree_exists_git_error(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Returns False when git command fails."""
         mock_run.return_value = _completed(returncode=1, stderr="not a git repo")
 
@@ -253,9 +235,7 @@ class TestGitVcsCherryPick:
         )
 
     @patch(_SUBPROCESS_TARGET)
-    def test_cherry_pick_failure_aborts(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_cherry_pick_failure_aborts(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Failed cherry-pick aborts and returns (False, error_message)."""
         mock_run.side_effect = [
             _completed(returncode=1, stderr="conflict in file.txt"),  # cherry-pick
@@ -299,9 +279,7 @@ class TestGitVcsRebase:
         )
 
     @patch(_SUBPROCESS_TARGET)
-    def test_rebase_failure_aborts(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_rebase_failure_aborts(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Failed rebase aborts and returns (False, error_message)."""
         mock_run.side_effect = [
             _completed(returncode=1, stderr="rebase conflict"),
@@ -344,9 +322,7 @@ class TestGitVcsMerge:
         )
 
     @patch(_SUBPROCESS_TARGET)
-    def test_merge_failure_aborts(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_merge_failure_aborts(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Failed merge aborts and returns (False, error_message)."""
         mock_run.side_effect = [
             _completed(returncode=1, stderr="merge conflict in main.py"),
@@ -391,19 +367,13 @@ class TestGitVcsCommitAll:
 
         # Verify git commit -m ...
         commit_call = mock_run.call_args_list[1]
-        assert commit_call[0][0] == [
-            "git", "commit", "-m", "initial commit", "--allow-empty"
-        ]
+        assert commit_call[0][0] == ["git", "commit", "-m", "initial commit", "--allow-empty"]
         assert commit_call[1]["cwd"] == wt
 
     @patch(_SUBPROCESS_TARGET)
-    def test_commit_all_stage_failure(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_commit_all_stage_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When git add fails, commit is not attempted."""
-        mock_run.return_value = _completed(
-            returncode=1, stderr="error: unable to create index"
-        )
+        mock_run.return_value = _completed(returncode=1, stderr="error: unable to create index")
 
         vcs = GitVcs(repo_root=tmp_path)
         ok, err = vcs.commit_all(tmp_path / "wt", "msg")
@@ -414,9 +384,7 @@ class TestGitVcsCommitAll:
         assert mock_run.call_count == 1
 
     @patch(_SUBPROCESS_TARGET)
-    def test_commit_all_commit_failure(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_commit_all_commit_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When git add succeeds but commit fails, returns the commit error."""
         mock_run.side_effect = [
             _completed(),  # git add -A succeeds
@@ -551,18 +519,13 @@ class TestGitVcsBranchForWorktree:
         assert result is None
 
     @patch(_SUBPROCESS_TARGET)
-    def test_branch_with_nested_refs(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_branch_with_nested_refs(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Correctly extracts branch name from deeply nested ref paths."""
         wt_path = tmp_path / "wt"
         resolved = str(wt_path.resolve())
 
         porcelain = (
-            f"worktree {resolved}\n"
-            "HEAD abc123\n"
-            "branch refs/heads/pdd/run-42/lib/auth-service\n"
-            "\n"
+            f"worktree {resolved}\nHEAD abc123\nbranch refs/heads/pdd/run-42/lib/auth-service\n\n"
         )
         mock_run.return_value = _completed(stdout=porcelain)
         vcs = GitVcs(repo_root=tmp_path)
@@ -672,9 +635,7 @@ class TestWorktreeManagerSetup:
         assert not base.exists()
 
         vcs = _make_mock_vcs()
-        mgr = WorktreeManager(
-            vcs=vcs, workspace_root=tmp_path, run_id="run-1", worktrees_base=base
-        )
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1", worktrees_base=base)
         mgr.setup()
 
         assert base.exists()
@@ -805,9 +766,7 @@ class TestWorktreeManagerPromoteLibrary:
         assert result["lib_id"] == "auth-service"
         assert result["promoted"] is True
 
-        vcs.merge.assert_called_once_with(
-            mgr._clean_path, "pdd/run-1/lib/auth-service"
-        )
+        vcs.merge.assert_called_once_with(mgr._clean_path, "pdd/run-1/lib/auth-service")
 
     def test_promote_unknown_library_raises(self, tmp_path: Path) -> None:
         """RuntimeError when promoting a library that has no worktree."""
@@ -839,9 +798,7 @@ class TestWorktreeManagerRebaseRootOnClean:
         result = mgr.rebase_root_on_clean()
 
         assert result["rebased"] is True
-        vcs.rebase.assert_called_once_with(
-            mgr._root_path, "pdd/run-1/clean"
-        )
+        vcs.rebase.assert_called_once_with(mgr._root_path, "pdd/run-1/clean")
 
     def test_rebase_failure_raises(self, tmp_path: Path) -> None:
         """RuntimeError when rebase fails."""
@@ -959,9 +916,9 @@ class TestWorktreeManagerCleanup:
 
         # lib-a removal fails, clean succeeds, root fails
         vcs.remove_worktree.side_effect = [
-            (False, "lock file exists"),   # lib-a
-            (True, ""),                     # clean
-            (False, "permission denied"),   # root
+            (False, "lock file exists"),  # lib-a
+            (True, ""),  # clean
+            (False, "permission denied"),  # root
         ]
 
         result = mgr.cleanup()
@@ -973,9 +930,7 @@ class TestWorktreeManagerCleanup:
         assert result["errors"][1]["worktree"] == "root"
         assert "permission denied" in result["errors"][1]["error"]
 
-    def test_cleanup_library_worktrees_removed_before_clean_and_root(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cleanup_library_worktrees_removed_before_clean_and_root(self, tmp_path: Path) -> None:
         """Library worktrees are removed before clean and root."""
         vcs = _make_mock_vcs()
         vcs.worktree_exists.return_value = True
@@ -1031,3 +986,744 @@ class TestWorktreeManagerProperties:
 
         with pytest.raises(AttributeError):
             mgr.clean_path = tmp_path / "other"  # type: ignore[misc]
+
+
+# ======================================================================
+# Multi-layer: setup_layers
+# ======================================================================
+
+
+class TestWorktreeManagerSetupLayers:
+    """Test WorktreeManager.setup_layers method."""
+
+    def test_setup_layers_creates_six_worktrees(self, tmp_path: Path) -> None:
+        """setup_layers(create_all=True) creates 6 worktrees (3 layers x 2 lanes)."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+
+        result = mgr.setup_layers()
+
+        assert vcs.create_worktree.call_count == 6
+        assert len(result["worktrees"]) == 6
+
+        # Verify all layer/lane combos
+        combos = {(w["layer"], w["lane"]) for w in result["worktrees"]}
+        expected = {
+            ("l1", "dirty"),
+            ("l1", "clean"),
+            ("l2", "dirty"),
+            ("l2", "clean"),
+            ("l3", "dirty"),
+            ("l3", "clean"),
+        }
+        assert combos == expected
+
+    def test_setup_layers_create_all_false_creates_only_l1(self, tmp_path: Path) -> None:
+        """setup_layers(create_all=False) creates only L1 dirty + clean."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+
+        result = mgr.setup_layers(create_all=False)
+
+        assert vcs.create_worktree.call_count == 2
+        assert len(result["worktrees"]) == 2
+        layers = {w["layer"] for w in result["worktrees"]}
+        assert layers == {"l1"}
+
+    def test_setup_layers_correct_branch_names(self, tmp_path: Path) -> None:
+        """setup_layers() uses correct branch naming convention."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+
+        mgr.setup_layers()
+
+        # Check that all create_worktree calls used correct branch names
+        calls = vcs.create_worktree.call_args_list
+        branch_names = {c[0][1] for c in calls}
+        expected_branches = {
+            "pdd/run-1/l1/dirty",
+            "pdd/run-1/l1/clean",
+            "pdd/run-1/l2/dirty",
+            "pdd/run-1/l2/clean",
+            "pdd/run-1/l3/dirty",
+            "pdd/run-1/l3/clean",
+        }
+        assert branch_names == expected_branches
+
+    def test_setup_layers_uses_base_ref(self, tmp_path: Path) -> None:
+        """setup_layers(base_ref=...) uses the specified base ref."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+
+        result = mgr.setup_layers(base_ref="origin/main")
+
+        assert result["base_ref"] == "origin/main"
+        for call_obj in vcs.create_worktree.call_args_list:
+            assert call_obj[1]["start_point"] == "origin/main"
+
+    def test_setup_layers_failure_raises(self, tmp_path: Path) -> None:
+        """RuntimeError when worktree creation fails during setup_layers."""
+        vcs = _make_mock_vcs()
+        vcs.create_worktree.return_value = (False, "disk full")
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+
+        with pytest.raises(RuntimeError, match="l1/dirty"):
+            mgr.setup_layers()
+
+    def test_setup_layers_sets_initialized_flag(self, tmp_path: Path) -> None:
+        """setup_layers() sets _layers_initialized to True."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+
+        assert mgr._layers_initialized is False
+        mgr.setup_layers()
+        assert mgr._layers_initialized is True
+
+
+# ======================================================================
+# Multi-layer: layer_branch / candidate_ref
+# ======================================================================
+
+
+class TestWorktreeManagerLayerAccessors:
+    """Test layer_branch() and candidate_ref() naming methods."""
+
+    def test_layer_branch_format(self, tmp_path: Path) -> None:
+        """layer_branch() returns pdd/{run_id}/{layer}/{lane}."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-42")
+
+        assert mgr.layer_branch("l1", "dirty") == "pdd/run-42/l1/dirty"
+        assert mgr.layer_branch("l2", "clean") == "pdd/run-42/l2/clean"
+        assert mgr.layer_branch("l3", "dirty") == "pdd/run-42/l3/dirty"
+
+    def test_candidate_ref_format(self, tmp_path: Path) -> None:
+        """candidate_ref() returns pdd/{run_id}/{layer}/candidate."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-42")
+
+        assert mgr.candidate_ref("l1") == "pdd/run-42/l1/candidate"
+        assert mgr.candidate_ref("l2") == "pdd/run-42/l2/candidate"
+        assert mgr.candidate_ref("l3") == "pdd/run-42/l3/candidate"
+
+
+# ======================================================================
+# Multi-layer: is_layer_clean
+# ======================================================================
+
+
+class TestWorktreeManagerIsLayerClean:
+    """Test is_layer_clean() for various dirty/clean states."""
+
+    def test_clean_when_dirty_equals_clean(self, tmp_path: Path) -> None:
+        """is_layer_clean returns True when dirty SHA == clean SHA and candidate matches."""
+        vcs = _make_mock_vcs()
+        vcs.get_head_sha.return_value = "same_sha"
+        vcs.rev_parse.return_value = "same_sha"  # candidate == clean
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        assert mgr.is_layer_clean("l1") is True
+
+    def test_dirty_when_shas_differ(self, tmp_path: Path) -> None:
+        """is_layer_clean returns False when dirty SHA != clean SHA."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        # Make dirty and clean return different SHAs
+        dirty_path = mgr._layer_worktrees["l1"]["dirty"]
+        clean_path = mgr._layer_worktrees["l1"]["clean"]
+
+        def head_sha_side_effect(path: Path) -> str | None:
+            if path == dirty_path:
+                return "dirty_sha"
+            elif path == clean_path:
+                return "clean_sha"
+            return None
+
+        vcs.get_head_sha.side_effect = head_sha_side_effect
+        vcs.rev_parse.return_value = None  # no candidate
+
+        assert mgr.is_layer_clean("l1") is False
+
+    def test_dirty_when_candidate_differs_from_clean(self, tmp_path: Path) -> None:
+        """is_layer_clean returns False when candidate SHA != clean SHA."""
+        vcs = _make_mock_vcs()
+        vcs.get_head_sha.return_value = "same_sha"
+        vcs.rev_parse.return_value = "different_candidate"  # candidate != clean
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        assert mgr.is_layer_clean("l1") is False
+
+
+# ======================================================================
+# Multi-layer: create_slice_worktree
+# ======================================================================
+
+
+class TestWorktreeManagerCreateSliceWorktree:
+    """Test create_slice_worktree() for grandchild worktrees."""
+
+    def test_creates_grandchild(self, tmp_path: Path) -> None:
+        """create_slice_worktree creates a worktree branching from layer dirty."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        # Reset mock to isolate slice creation from setup
+        vcs.create_worktree.reset_mock()
+
+        path = mgr.create_slice_worktree("l1", "auth-service")
+
+        assert vcs.create_worktree.call_count == 1
+        call_args = vcs.create_worktree.call_args
+        # Branch starts from dirty
+        assert call_args[1]["start_point"] == "pdd/run-1/l1/dirty"
+        # Branch name contains slice info
+        assert "slice/auth-service" in call_args[0][1]
+        # Path is tracked
+        assert mgr.get_slice_worktree("l1", "auth-service") == path
+
+    def test_duplicate_slice_raises(self, tmp_path: Path) -> None:
+        """create_slice_worktree raises when a slice already exists."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+        mgr.create_slice_worktree("l1", "auth")
+
+        with pytest.raises(RuntimeError, match="already exists"):
+            mgr.create_slice_worktree("l1", "auth")
+
+
+# ======================================================================
+# Multi-layer: merge_slice_to_dirty
+# ======================================================================
+
+
+class TestWorktreeManagerMergeSliceToDirty:
+    """Test merge_slice_to_dirty() merging grandchild into layer dirty."""
+
+    def test_merge_success(self, tmp_path: Path) -> None:
+        """merge_slice_to_dirty calls vcs.merge with correct arguments."""
+        vcs = _make_mock_vcs()
+        vcs.get_current_branch.return_value = "pdd/run-1/l1/slice/auth/abc123"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+        mgr.create_slice_worktree("l1", "auth")
+
+        result = mgr.merge_slice_to_dirty("l1", "auth")
+
+        assert result.success is True
+        assert result.layer == "l1"
+        assert result.slice_id == "auth"
+        # Verify merge was called with dirty path and slice branch
+        vcs.merge.assert_called()
+
+    def test_merge_no_slice_returns_failure(self, tmp_path: Path) -> None:
+        """merge_slice_to_dirty returns failure when slice does not exist."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        result = mgr.merge_slice_to_dirty("l1", "nonexistent")
+
+        assert result.success is False
+        assert "No slice worktree" in result.error
+
+
+# ======================================================================
+# Multi-layer: cleanup_slice_worktree
+# ======================================================================
+
+
+class TestWorktreeManagerCleanupSliceWorktree:
+    """Test cleanup_slice_worktree() removing a grandchild worktree."""
+
+    def test_removes_slice_worktree(self, tmp_path: Path) -> None:
+        """cleanup_slice_worktree removes the worktree via vcs."""
+        vcs = _make_mock_vcs()
+        vcs.worktree_exists.return_value = True
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+        mgr.create_slice_worktree("l1", "auth")
+
+        mgr.cleanup_slice_worktree("l1", "auth")
+
+        assert mgr.get_slice_worktree("l1", "auth") is None
+        vcs.remove_worktree.assert_called()
+
+
+# ======================================================================
+# Multi-layer: snapshot_candidate
+# ======================================================================
+
+
+class TestWorktreeManagerSnapshotCandidate:
+    """Test snapshot_candidate() creating CI snapshot ref."""
+
+    def test_snapshot_calls_update_ref(self, tmp_path: Path) -> None:
+        """snapshot_candidate sets candidate ref to dirty HEAD SHA."""
+        vcs = _make_mock_vcs()
+        vcs.get_head_sha.return_value = "dirty_sha_123"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        sha = mgr.snapshot_candidate("l1")
+
+        assert sha == "dirty_sha_123"
+        vcs.update_ref.assert_called_with("pdd/run-1/l1/candidate", "dirty_sha_123")
+
+    def test_snapshot_returns_none_when_no_dirty_worktree(self, tmp_path: Path) -> None:
+        """snapshot_candidate returns None when no dirty worktree exists."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        # Don't setup layers => no worktrees
+
+        sha = mgr.snapshot_candidate("l1")
+
+        assert sha is None
+
+
+# ======================================================================
+# Multi-layer: promote_dirty_to_clean
+# ======================================================================
+
+
+class TestWorktreeManagerPromoteDirtyToClean:
+    """Test promote_dirty_to_clean() advancing clean ref."""
+
+    def test_advances_clean_ref(self, tmp_path: Path) -> None:
+        """promote_dirty_to_clean updates clean branch to candidate SHA."""
+        vcs = _make_mock_vcs()
+        vcs.rev_parse.return_value = "candidate_sha"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        result = mgr.promote_dirty_to_clean("l1")
+
+        assert result.success is True
+        assert result.candidate_sha == "candidate_sha"
+        assert result.clean_sha == "candidate_sha"
+        vcs.update_ref.assert_called()
+
+    def test_no_candidate_returns_failure(self, tmp_path: Path) -> None:
+        """promote_dirty_to_clean fails when no candidate snapshot exists."""
+        vcs = _make_mock_vcs()
+        vcs.rev_parse.return_value = None  # no candidate
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers(layers=["l1"])
+
+        result = mgr.promote_dirty_to_clean("l1")
+
+        assert result.success is False
+        assert "No candidate" in result.error
+
+
+# ======================================================================
+# Multi-layer: propagate_clean_to_next_layer
+# ======================================================================
+
+
+class TestWorktreeManagerPropagateCleanToNextLayer:
+    """Test propagate_clean_to_next_layer() cross-layer merge."""
+
+    def test_l1_to_l2_merges_clean_to_dirty(self, tmp_path: Path) -> None:
+        """propagate_clean_to_next_layer merges l1/clean into l2/dirty."""
+        vcs = _make_mock_vcs()
+        vcs.get_head_sha.return_value = "merge_sha"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        result = mgr.propagate_clean_to_next_layer("l1")
+
+        assert result.success is True
+        assert result.from_layer == "l1"
+        assert result.to_layer == "l2"
+        assert result.merge_sha == "merge_sha"
+
+        # Should merge l1/clean branch into l2/dirty worktree
+        l2_dirty_path = mgr._layer_worktrees["l2"]["dirty"]
+        vcs.merge.assert_called_with(l2_dirty_path, "pdd/run-1/l1/clean")
+
+    def test_l3_has_no_next_layer(self, tmp_path: Path) -> None:
+        """propagate_clean_to_next_layer from l3 returns failure."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        result = mgr.propagate_clean_to_next_layer("l3")
+
+        assert result.success is False
+        assert "No next layer" in result.error
+
+
+# ======================================================================
+# Multi-layer: tick_pipeline
+# ======================================================================
+
+
+class TestWorktreeManagerTickPipeline:
+    """Test tick_pipeline() processing layers in order."""
+
+    def test_processes_layers_in_order(self, tmp_path: Path) -> None:
+        """tick_pipeline processes L1, then L2, then L3."""
+        vcs = _make_mock_vcs()
+        # Make layers dirty (dirty_sha != clean_sha via rev_parse returning different)
+        vcs.get_head_sha.return_value = "dirty_sha"
+        vcs.rev_parse.return_value = "candidate_sha"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        result = mgr.tick_pipeline(active_layer="l1")
+
+        # Should have batch results for layers that were processed
+        assert isinstance(result.layer_results, dict)
+
+    def test_skips_clean_layers(self, tmp_path: Path) -> None:
+        """tick_pipeline skips layers where dirty == clean."""
+        vcs = _make_mock_vcs()
+        # All same SHA = clean
+        vcs.get_head_sha.return_value = "same_sha"
+        vcs.rev_parse.return_value = "same_sha"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        result = mgr.tick_pipeline(active_layer="l1")
+
+        # No layers should have batch results since all are clean
+        assert len(result.layer_results) == 0
+
+
+# ======================================================================
+# Multi-layer: compute_active_layer
+# ======================================================================
+
+
+class TestWorktreeManagerComputeActiveLayer:
+    """Test compute_active_layer() returning lowest dirty layer."""
+
+    def test_returns_lowest_dirty_layer(self, tmp_path: Path) -> None:
+        """compute_active_layer returns the lowest layer that is not clean."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        # Make l1 clean (same SHAs) and l2 dirty (different SHAs)
+        l1_dirty = mgr._layer_worktrees["l1"]["dirty"]
+        l1_clean = mgr._layer_worktrees["l1"]["clean"]
+        l2_dirty = mgr._layer_worktrees["l2"]["dirty"]
+        l2_clean = mgr._layer_worktrees["l2"]["clean"]
+
+        def head_sha(path: Path) -> str | None:
+            if path in (l1_dirty, l1_clean):
+                return "same"
+            if path == l2_dirty:
+                return "dirty_l2"
+            if path == l2_clean:
+                return "clean_l2"
+            return "other"
+
+        vcs.get_head_sha.side_effect = head_sha
+        vcs.rev_parse.return_value = "same"  # candidate matches clean for l1
+
+        result = mgr.compute_active_layer()
+
+        assert result == "l2"
+
+    def test_returns_l1_when_all_clean(self, tmp_path: Path) -> None:
+        """compute_active_layer defaults to l1 when all layers are clean."""
+        vcs = _make_mock_vcs()
+        vcs.get_head_sha.return_value = "same"
+        vcs.rev_parse.return_value = "same"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        result = mgr.compute_active_layer()
+
+        assert result == "l1"
+
+
+# ======================================================================
+# Multi-layer: can_advance_layer
+# ======================================================================
+
+
+class TestWorktreeManagerCanAdvanceLayer:
+    """Test can_advance_layer() checking all conditions."""
+
+    def test_can_advance_when_all_clean(self, tmp_path: Path) -> None:
+        """can_advance_layer returns True when this and upper layers are clean."""
+        vcs = _make_mock_vcs()
+        vcs.get_head_sha.return_value = "same"
+        vcs.rev_parse.return_value = "same"
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        assert mgr.can_advance_layer("l1") is True
+
+    def test_cannot_advance_when_dirty(self, tmp_path: Path) -> None:
+        """can_advance_layer returns False when layer is dirty."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        # Make l1 dirty
+        l1_dirty = mgr._layer_worktrees["l1"]["dirty"]
+        l1_clean = mgr._layer_worktrees["l1"]["clean"]
+
+        def head_sha(path: Path) -> str | None:
+            if path == l1_dirty:
+                return "dirty"
+            if path == l1_clean:
+                return "clean"
+            return "same"
+
+        vcs.get_head_sha.side_effect = head_sha
+        vcs.rev_parse.return_value = None
+
+        assert mgr.can_advance_layer("l1") is False
+
+    def test_cannot_advance_when_upper_layer_dirty(self, tmp_path: Path) -> None:
+        """can_advance_layer returns False when a downstream layer is not clean."""
+        vcs = _make_mock_vcs()
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+
+        l1_dirty = mgr._layer_worktrees["l1"]["dirty"]
+        l1_clean = mgr._layer_worktrees["l1"]["clean"]
+        l2_dirty = mgr._layer_worktrees["l2"]["dirty"]
+        l2_clean = mgr._layer_worktrees["l2"]["clean"]
+
+        def head_sha(path: Path) -> str | None:
+            # l1 is clean
+            if path in (l1_dirty, l1_clean):
+                return "same_l1"
+            # l2 is dirty
+            if path == l2_dirty:
+                return "dirty_l2"
+            if path == l2_clean:
+                return "clean_l2"
+            return "same"
+
+        vcs.get_head_sha.side_effect = head_sha
+
+        def rev_parse_effect(ref: str) -> str | None:
+            if "l1" in ref:
+                return "same_l1"  # candidate matches clean for l1
+            return None
+
+        vcs.rev_parse.side_effect = rev_parse_effect
+
+        assert mgr.can_advance_layer("l1") is False
+
+
+# ======================================================================
+# Multi-layer: cleanup (extended)
+# ======================================================================
+
+
+class TestWorktreeManagerCleanupMultiLayer:
+    """Test cleanup() removes all layer + slice worktrees."""
+
+    def test_cleanup_removes_all_layer_worktrees(self, tmp_path: Path) -> None:
+        """cleanup() removes all layer worktrees and clears internal state."""
+        vcs = _make_mock_vcs()
+        vcs.worktree_exists.return_value = True
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+        mgr.create_slice_worktree("l1", "auth")
+
+        # Reset to isolate cleanup calls
+        vcs.reset_mock()
+        vcs.remove_worktree.return_value = (True, "")
+        vcs.worktree_exists.return_value = True
+        vcs.delete_ref.return_value = (True, "")
+
+        result = mgr.cleanup()
+
+        # Should remove: 1 slice + 6 layer worktrees + 2 legacy (clean + root)
+        assert "slice/l1:auth" in result["removed"]
+        assert mgr._layer_worktrees == {}
+        assert mgr._layer_branches == {}
+        assert mgr._slice_worktrees == {}
+
+        # Should delete candidate refs for all 3 layers
+        assert vcs.delete_ref.call_count == 3
+
+    def test_cleanup_slice_only(self, tmp_path: Path) -> None:
+        """cleanup_layer_slices removes only slice worktrees for a layer."""
+        vcs = _make_mock_vcs()
+        vcs.worktree_exists.return_value = True
+        mgr = WorktreeManager(vcs=vcs, workspace_root=tmp_path, run_id="run-1")
+        mgr.setup_layers()
+        mgr.create_slice_worktree("l1", "auth")
+        mgr.create_slice_worktree("l1", "payment")
+        mgr.create_slice_worktree("l2", "infra")
+
+        removed = mgr.cleanup_layer_slices("l1")
+
+        assert len(removed) == 2
+        assert "l1:auth" in removed
+        assert "l1:payment" in removed
+        # l2 slice is NOT removed
+        assert mgr.get_slice_worktree("l2", "infra") is not None
+
+
+# ======================================================================
+# GitVcs new methods: rev_parse, update_ref, rev_list_count, etc.
+# ======================================================================
+
+
+class TestGitVcsRevParse:
+    """Test GitVcs.rev_parse method."""
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_rev_parse_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """rev_parse returns SHA on success."""
+        sha = "a1b2c3d4e5f6"
+        mock_run.return_value = _completed(stdout=f"{sha}\n")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        result = vcs.rev_parse("refs/heads/main")
+
+        assert result == sha
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_rev_parse_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """rev_parse returns None on failure."""
+        mock_run.return_value = _completed(returncode=128, stderr="fatal: bad ref")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        result = vcs.rev_parse("nonexistent-ref")
+
+        assert result is None
+
+
+class TestGitVcsUpdateRef:
+    """Test GitVcs.update_ref method."""
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_update_ref_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """update_ref returns (True, '') on success."""
+        mock_run.return_value = _completed()
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.update_ref("pdd/run-1/l1/candidate", "abc123")
+
+        assert ok is True
+        assert err == ""
+        args = mock_run.call_args[0][0]
+        assert "update-ref" in args
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_update_ref_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """update_ref returns (False, error) on failure."""
+        mock_run.return_value = _completed(returncode=1, stderr="error: invalid ref")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.update_ref("bad-ref", "abc123")
+
+        assert ok is False
+        assert "invalid ref" in err
+
+
+class TestGitVcsRevListCount:
+    """Test GitVcs.rev_list_count method."""
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_rev_list_count_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """rev_list_count returns integer count on success."""
+        mock_run.return_value = _completed(stdout="5\n")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        result = vcs.rev_list_count("abc123", "def456")
+
+        assert result == 5
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_rev_list_count_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """rev_list_count returns None on failure."""
+        mock_run.return_value = _completed(returncode=128, stderr="fatal: bad ref")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        result = vcs.rev_list_count("bad", "refs")
+
+        assert result is None
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_rev_list_count_non_numeric(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """rev_list_count returns None when output is not numeric."""
+        mock_run.return_value = _completed(stdout="not a number\n")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        result = vcs.rev_list_count("ref1", "ref2")
+
+        assert result is None
+
+
+class TestGitVcsCreateTag:
+    """Test GitVcs.create_tag method."""
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_create_tag_lightweight(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """create_tag without message creates a lightweight tag."""
+        mock_run.return_value = _completed()
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.create_tag("v1.0", "abc123")
+
+        assert ok is True
+        assert err == ""
+        args = mock_run.call_args[0][0]
+        assert args == ["git", "tag", "v1.0", "abc123"]
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_create_tag_annotated(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """create_tag with message creates an annotated tag."""
+        mock_run.return_value = _completed()
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.create_tag("v1.0", "abc123", message="Release 1.0")
+
+        assert ok is True
+        args = mock_run.call_args[0][0]
+        assert args == ["git", "tag", "-a", "v1.0", "abc123", "-m", "Release 1.0"]
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_create_tag_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """create_tag returns (False, error) on failure."""
+        mock_run.return_value = _completed(returncode=1, stderr="tag already exists")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.create_tag("v1.0", "abc123")
+
+        assert ok is False
+        assert "already exists" in err
+
+
+class TestGitVcsDeleteRef:
+    """Test GitVcs.delete_ref method."""
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_delete_ref_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """delete_ref returns (True, '') on success."""
+        mock_run.return_value = _completed()
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.delete_ref("feature-branch")
+
+        assert ok is True
+        assert err == ""
+
+    @patch(_SUBPROCESS_TARGET)
+    def test_delete_ref_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """delete_ref returns (False, error) on failure."""
+        mock_run.return_value = _completed(returncode=1, stderr="error: branch not found")
+        vcs = GitVcs(repo_root=tmp_path)
+
+        ok, err = vcs.delete_ref("nonexistent")
+
+        assert ok is False
+        assert "not found" in err

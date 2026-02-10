@@ -14,7 +14,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.branches.gap_detection import scan_comments, scan_stubs
 from spec_manager.compliance.promotion.config import GateId, GateSpec
@@ -22,22 +22,27 @@ from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.core.code_analysis import analyze_source
 from spec_manager.projection.lineage.builder import scan_imports_from_files
 
+if TYPE_CHECKING:
+    from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
+
 
 def check_no_remaining_comments(
     algorithmic_files: list[Path],
     gate_spec: GateSpec,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: No remaining comments in algorithmic code.
 
     Scans algorithmic files for comments inside function bodies.
     In algorithmic code, every comment is an unimplemented spec element.
 
-    Each finding includes:
-        - file_path, line, text, enclosing_function
+    When *analyzed* is provided, uses pre-loaded SourceAnalysis data
+    instead of reading files and scanning independently.
 
     Args:
         algorithmic_files: Python files in the algorithmic layer.
         gate_spec: Gate configuration (mode, threshold).
+        analyzed: Pre-loaded file analyses (optional).
 
     Returns:
         GateCheckResult with passed=True only if zero spec comments found.
@@ -45,17 +50,29 @@ def check_no_remaining_comments(
     start = time.monotonic()
     all_findings: list[dict[str, Any]] = []
 
-    for f in algorithmic_files:
-        gaps = scan_comments(f)
-        for gap in gaps:
-            all_findings.append(
-                {
-                    "file_path": gap.file_path,
-                    "line": gap.line,
-                    "text": gap.text,
-                    "enclosing_function": gap.enclosing_function,
-                }
-            )
+    if analyzed is not None:
+        for af in analyzed:
+            for comment in af.analysis.comments:
+                all_findings.append(
+                    {
+                        "file_path": af.path,
+                        "line": comment.line,
+                        "text": comment.text,
+                        "enclosing_function": comment.enclosing_function,
+                    }
+                )
+    else:
+        for f in algorithmic_files:
+            gaps = scan_comments(f)
+            for gap in gaps:
+                all_findings.append(
+                    {
+                        "file_path": gap.file_path,
+                        "line": gap.line,
+                        "text": gap.text,
+                        "enclosing_function": gap.enclosing_function,
+                    }
+                )
 
     passed = len(all_findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -78,17 +95,18 @@ def check_no_remaining_comments(
 def check_no_stub_functions(
     algorithmic_files: list[Path],
     gate_spec: GateSpec,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: No stub functions in algorithmic code.
 
     Scans algorithmic files for stub functions (pass, ..., raise NotImplementedError).
 
-    Each finding includes:
-        - file_path, line, name, stub_type
+    When *analyzed* is provided, uses pre-loaded SourceAnalysis data.
 
     Args:
         algorithmic_files: Python files in the algorithmic layer.
         gate_spec: Gate configuration.
+        analyzed: Pre-loaded file analyses (optional).
 
     Returns:
         GateCheckResult with passed=True only if zero stubs found.
@@ -96,17 +114,30 @@ def check_no_stub_functions(
     start = time.monotonic()
     all_findings: list[dict[str, Any]] = []
 
-    for f in algorithmic_files:
-        stubs = scan_stubs(f)
-        for stub in stubs:
-            all_findings.append(
-                {
-                    "file_path": stub.file_path,
-                    "line": stub.line,
-                    "name": stub.name,
-                    "stub_type": stub.stub_type,
-                }
-            )
+    if analyzed is not None:
+        for af in analyzed:
+            for func in af.analysis.functions:
+                if func.is_stub:
+                    all_findings.append(
+                        {
+                            "file_path": af.path,
+                            "line": func.start_line,
+                            "name": func.name,
+                            "stub_type": func.stub_reason or "unknown",
+                        }
+                    )
+    else:
+        for f in algorithmic_files:
+            stubs = scan_stubs(f)
+            for stub in stubs:
+                all_findings.append(
+                    {
+                        "file_path": stub.file_path,
+                        "line": stub.line,
+                        "name": stub.name,
+                        "stub_type": stub.stub_type,
+                    }
+                )
 
     passed = len(all_findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -194,10 +225,14 @@ def check_call_graph_connected(
     algorithmic_files: list[Path],
     project_root: Path,
     gate_spec: GateSpec,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: Call graph has no orphaned algorithms.
 
     Checks for disconnected components above the configured minimum size.
+
+    When *analyzed* is provided, uses pre-loaded analyses instead of
+    reading files.
 
     gate_spec.params:
         - min_component_size (int, default 2): Minimum component size to flag.
@@ -207,6 +242,7 @@ def check_call_graph_connected(
         algorithmic_files: Python files to analyze.
         project_root: For module path resolution.
         gate_spec: Gate configuration.
+        analyzed: Pre-loaded file analyses (optional).
 
     Returns:
         GateCheckResult with findings for each disconnected component.
@@ -214,7 +250,9 @@ def check_call_graph_connected(
     start = time.monotonic()
     min_component_size = gate_spec.params.get("min_component_size", 2)
     ignore_patterns: list[str] = gate_spec.params.get("ignore_patterns", [])
-    findings = _build_call_graph_fallback(algorithmic_files, min_component_size, ignore_patterns)
+    findings = _build_call_graph_fallback(
+        algorithmic_files, min_component_size, ignore_patterns, analyzed=analyzed
+    )
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -238,45 +276,67 @@ def _build_call_graph_fallback(
     algorithmic_files: list[Path],
     min_component_size: int,
     ignore_patterns: list[str],
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> list[dict[str, Any]]:
-    """Fallback call graph analysis using analyze_source() and regex-based call extraction.
+    """Call graph analysis using analyze_source() and regex-based call extraction.
 
-    Uses analyze_source() for function definitions and regex on source lines
-    for approximate call detection, then finds disconnected components via union-find.
+    Uses analyze_source() for function definitions and regex on pre-loaded
+    content for approximate call detection, then finds disconnected components
+    via union-find.
+
+    When *analyzed* is provided, skips file I/O entirely.
     """
     # Collect all defined functions and their calls
     func_defs: dict[str, str] = {}  # func_name -> file_path
     func_calls: dict[str, set[str]] = {}  # caller -> {callees}
 
-    for file_path in algorithmic_files:
-        try:
-            source = file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
+    if analyzed is not None:
+        for af in analyzed:
+            lines = af.content.splitlines()
+            for func_info in af.analysis.functions:
+                func_name = func_info.name
+                func_defs[func_name] = af.path
 
-        analysis = analyze_source(source, str(file_path))
-        lines = source.splitlines()
+                body_start = func_info.body_start_line
+                body_end = func_info.end_line
+                if body_start > 0 and body_end > 0 and body_end <= len(lines):
+                    body_lines = lines[body_start - 1 : body_end]
+                    body_text = "\n".join(body_lines)
+                elif func_info.start_line > 0 and func_info.end_line > 0:
+                    body_lines = lines[func_info.start_line - 1 : func_info.end_line]
+                    body_text = "\n".join(body_lines)
+                else:
+                    body_text = ""
 
-        for func_info in analysis.functions:
-            func_name = func_info.name
-            func_defs[func_name] = str(file_path)
+                raw_calls = set(re.findall(r"\b(\w+)\s*\(", body_text))
+                func_calls[func_name] = raw_calls
+    else:
+        for file_path in algorithmic_files:
+            try:
+                source = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
 
-            # Extract the function body text from the source lines
-            # body_start_line and end_line give us the range
-            body_start = func_info.body_start_line
-            body_end = func_info.end_line
-            if body_start > 0 and body_end > 0 and body_end <= len(lines):
-                body_lines = lines[body_start - 1 : body_end]
-                body_text = "\n".join(body_lines)
-            elif func_info.start_line > 0 and func_info.end_line > 0:
-                body_lines = lines[func_info.start_line - 1 : func_info.end_line]
-                body_text = "\n".join(body_lines)
-            else:
-                body_text = ""
+            analysis = analyze_source(source, str(file_path))
+            lines = source.splitlines()
 
-            # Use regex to find call-like patterns in body text
-            raw_calls = set(re.findall(r"\b(\w+)\s*\(", body_text))
-            func_calls[func_name] = raw_calls
+            for func_info in analysis.functions:
+                func_name = func_info.name
+                func_defs[func_name] = str(file_path)
+
+                body_start = func_info.body_start_line
+                body_end = func_info.end_line
+                if body_start > 0 and body_end > 0 and body_end <= len(lines):
+                    body_lines = lines[body_start - 1 : body_end]
+                    body_text = "\n".join(body_lines)
+                elif func_info.start_line > 0 and func_info.end_line > 0:
+                    body_lines = lines[func_info.start_line - 1 : func_info.end_line]
+                    body_text = "\n".join(body_lines)
+                else:
+                    body_text = ""
+
+                raw_calls = set(re.findall(r"\b(\w+)\s*\(", body_text))
+                func_calls[func_name] = raw_calls
 
     # Build adjacency and find connected components via union-find
     all_funcs = set(func_defs.keys())
@@ -335,6 +395,7 @@ def check_store_monogamy(
     algorithmic_files: list[Path],
     project_root: Path,
     gate_spec: GateSpec,
+    analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: Each store is accessed by only one vertical slice.
 
