@@ -502,27 +502,38 @@ After Promotion 1 produced PDD skeletons:
 * Gap detection (P3)
 * Atom extraction (P4)
 
-### Wrong Order / Wrong Time
+### Wrong Order / Wrong Time — ALL RESOLVED (Feb 9 2026)
 
-* Worktree creation: after all phases → should be before implementation
-* Ambiguity resolution: batch after phases → should be inline during implementation
-* P0 conflated with P1-P10: Promotion 1 runs once, Promotion 2 loops
-* Library quality check: never → should be after Promotion 1
+* ~~Worktree creation: after all phases → should be before implementation~~ — `WorktreeManager`
+   wired before implementation in `PddLifecycle`
+* ~~Ambiguity resolution: batch after phases → should be inline during
+  implementation~~ — Under-spec blocking in `PromotionLoop` (inline per-slice)
+* ~~P0 conflated with P1-P10: Promotion 1 runs once, Promotion 2 loops~~ —
+   `IntakeQueue` + conditional Phase 0 in `PromotionLoop`
+* ~~Library quality check: never → should be after Promotion 1~~ —
+   `intake/quality/validator.py` (5-dimension scoring)
 
-### Missing
+### Missing — ALL RESOLVED (Feb 9 2026)
 
-* **Implementation agent (P9)** — takes plans + gaps → writes code. The single
-  biggest gap. Everything else (analysis, planning, gates, promotion, verification)
-  exists. Nothing acts on the analysis.
-* **Per-slice CI loop** — `run()` should loop per slice with CI integration, not
-  single sequential pass
-* **Small test generation** — simpler.md step 4: "write small tests to validate
-  small units of work"
-* **Under-specification → planning → constraints flow** — planning agent exists
-  but isn't wired to block on under-specification and source constraints from
-  human or research team
-* **Full demotion chain** — DownwardFlowEngine handles L2→L1 via pins, but
-  L3→L2→L1 chain not wired
-* **Library quality validator** — spec-level overlap/isolation after Promotion 1
-* **Architectural implementation agent** — builds services/events/middleware from
-  promoted atoms (separate from algorithmic implementation)
+* ~~**Implementation agent (P9)**~~ — `orchestration/implementation/runner.py`
+   (`ImplementationRunner`: apply function bodies, write artifacts, emit
+   pin/edge proposals)
+* ~~**Per-slice CI loop**~~ — `orchestration/promotion_loop.py`
+   (`PromotionLoop`: 10-step state machine
+   COLLECT→GAP→PLAN→IMPLEMENT→UNDER_SPEC→ANALYZE→PROMOTE→INTEGRATE→VERIFY→DONE?)
+* ~~**Small test generation**~~ — `TestArtifact` in `implementation/types.py`,
+   written by `ImplementationRunner._write_artifacts()`
+* ~~**Under-specification → planning → constraints flow**~~ —
+   `orchestration/planning_gate.py` (decision coverage check) +
+   `orchestration/under_spec/manager.py` (hard-stop blocking with
+   `ConstraintsStore`)
+* ~~**Full demotion chain**~~ — `demotion/triage.py`
+   (category/gate/source routing) + `demotion/router.py` (`DemotionRouter`)
+   `downward_flow/engine.py` (`DownwardFlowEngine`: pin tracing) +
+   `review/findings_to_tickets.py` (review→tickets)
+* ~~**Library quality validator**~~ — `intake/quality/validator.py`
+   (routing overlap, semantic overlap, concern isolation, requirement
+   coverage, size balance)
+* ~~**Architectural implementation agent**~~ —
+   `orchestration/architecture/agent_definition.py` (service/event/middleware
+   assembly from promoted atoms)

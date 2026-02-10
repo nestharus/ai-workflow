@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import tempfile
 from pathlib import Path
 
 from spec_manager.core.code_analysis import analyze_source
@@ -237,15 +236,12 @@ def _generate_pseudocode_comments(
         f'["validate input parameters", "compute the result hash"]\n'
     )
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
-        f.write(prompt)
-        prompt_path = f.name
-
-    try:
-        result = run_agent(agent_name, prompt_path)
-        return _parse_agent_response(result)
-    finally:
-        Path(prompt_path).unlink(missing_ok=True)
+    result = run_agent(
+        agent_name=agent_name,
+        prompt=prompt,
+        workspace=Path.cwd(),
+    )
+    return _parse_agent_response(result)
 
 
 def _parse_agent_response(response: str) -> list[str]:

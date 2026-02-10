@@ -357,14 +357,29 @@ class PddOrchestrator:
         # Install Phase 0 output into workspace structure
         self._install_phase0_output(output_dir)
 
-        # TODO: Add library quality validator after Promotion 1.
-        #   After Phase 0 produces libraries, check spec-level quality:
-        #     - Overlap detection: do any libraries cover the same concern?
-        #     - Concern isolation: does each library have a single purpose?
-        #     - Completeness: are all source requirements routed?
-        #   This is a post-Promotion-1 gate before Promotion 2 begins.
-        #   The refinement engine (coupling/cohesion) runs later on code,
-        #   but this checks the SPEC-level quality of library boundaries.
+        # Library quality validation (post-Phase 0 gate)
+        try:
+            from spec_manager.intake.quality.library_quality_validator import (
+                validate_libraries,
+            )
+
+            quality_report = validate_libraries(
+                self.manager.workspace_path,
+                phase0_output_dir=output_dir,
+            )
+            result["library_quality"] = quality_report.to_dict()
+
+            if not quality_report.gate_passed:
+                logger.warning(
+                    "Library quality gate failed: %s",
+                    [d.name for d in quality_report.dimensions if not d.passed],
+                )
+                result["library_quality_passed"] = False
+            else:
+                result["library_quality_passed"] = True
+        except Exception as exc:
+            logger.warning("Library quality validation failed: %s", exc)
+            result["library_quality"] = {"error": str(exc)}
 
         return result
 
@@ -896,6 +911,17 @@ class PddOrchestrator:
             file_content = source_path.read_text(encoding="utf-8")
             lines = file_content.splitlines(keepends=True)
 
+            # Build per-file cross-file context (excludes the current file)
+            file_project_context = self._build_project_context(
+                project_state,
+                file_path,
+            )
+
+            # Collect imports across all functions in this file.
+            # Imports are deferred until after all bodies are replaced
+            # to avoid shifting line numbers during bottom-up processing.
+            pending_imports: list[str] = []
+
             # Process bottom-up to preserve line numbers
             for func in sorted(unresolved, key=lambda f: f.line_start, reverse=True):
                 spec_texts = [c.text for c in func.spec_comments]
@@ -903,7 +929,12 @@ class PddOrchestrator:
                     # Stub without spec comments — nothing to implement from
                     continue
 
-                prompt = self._build_implementation_prompt(func, file_content, file_state)
+                prompt = self._build_implementation_prompt(
+                    func,
+                    file_content,
+                    file_state,
+                    project_context=file_project_context,
+                )
 
                 try:
                     output = run_agent(
@@ -914,20 +945,46 @@ class PddOrchestrator:
                     cleaned = _strip_code_fences(output)
                     data = json.loads(_extract_json_payload(cleaned))
 
-                    body = data.get("body", "")
+                    body = self._extract_body(data)
+                    if not body.strip():
+                        # Retry once with stronger prompt
+                        logger.warning(
+                            "Empty body for %s, retrying with emphasis",
+                            func.qualified_name,
+                        )
+                        retry_prompt = self._build_implementation_prompt(
+                            func,
+                            file_content,
+                            file_state,
+                            project_context=file_project_context,
+                            is_retry=True,
+                        )
+                        output = run_agent(
+                            agent_name="pdd-function-implementor",
+                            prompt=retry_prompt,
+                            workspace=self.manager.workspace_path,
+                        )
+                        cleaned = _strip_code_fences(output)
+                        data = json.loads(_extract_json_payload(cleaned))
+                        body = self._extract_body(data)
+
                     if not body.strip():
                         impl_errors.append(
                             {
                                 "function": func.qualified_name,
-                                "error": "Agent returned empty body",
+                                "error": "Agent returned empty body after retry",
                             }
                         )
                         continue
 
-                    # Apply implementation: replace function body
+                    # Replace function body (no import insertion yet)
                     lines = self._apply_function_body(
-                        lines, func, body, data.get("imports_needed", [])
+                        lines,
+                        func,
+                        body,
+                        imports_needed=[],
                     )
+                    pending_imports.extend(data.get("imports_needed", []))
 
                     # Track results
                     implemented.append(
@@ -948,6 +1005,10 @@ class PddOrchestrator:
                             "error": str(exc),
                         }
                     )
+
+            # Insert all collected imports once after all bodies are placed
+            if pending_imports:
+                lines = self._insert_imports(lines, pending_imports)
 
             # Write modified file back
             source_path.write_text("".join(lines), encoding="utf-8")
@@ -976,16 +1037,61 @@ class PddOrchestrator:
 
         return outputs
 
+    @staticmethod
+    def _build_project_context(
+        project_state: Any,
+        current_file: str,
+    ) -> str:
+        """Build a summary of other files in the project for cross-reference.
+
+        Includes class names, method signatures, constants, and dataclass
+        definitions from all files except the current one.  This gives
+        the implementation agent enough context to reference cross-service
+        types and methods.
+        """
+        parts: list[str] = []
+        for file_path, file_state in sorted(project_state.files.items()):
+            if file_path == current_file:
+                continue
+            try:
+                content = Path(file_path).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            lines = content.splitlines()
+            # Extract header (imports, constants, dataclasses) up to first function
+            first_func_line = min(
+                (f.line_start for f in file_state.functions),
+                default=len(lines),
+            )
+            header = "\n".join(lines[: first_func_line - 1])
+            # Extract method signatures
+            sigs = [
+                lines[f.line_start - 1].rstrip()
+                for f in file_state.functions
+                if f.line_start - 1 < len(lines)
+            ]
+            file_name = Path(file_path).name
+            parts.append(f"### {file_name}\n```\n{header}\n")
+            if sigs:
+                parts.append("# Methods:\n")
+                for sig in sigs:
+                    parts.append(f"{sig}\n")
+            parts.append("```\n")
+        return "\n".join(parts)
+
     def _build_implementation_prompt(
         self,
         func: Any,
         file_content: str,
         file_state: Any,
+        project_context: str = "",
+        is_retry: bool = False,
     ) -> str:
         """Build the prompt for the pdd-function-implementor agent.
 
         Includes file context (imports, constants, class), the function
-        stub with spec comments, and extracted requirements.
+        stub with spec comments, extracted requirements, and optionally
+        a summary of other project files for cross-service references.
         """
         lines = file_content.splitlines()
 
@@ -1018,6 +1124,11 @@ class PddOrchestrator:
                 prompt_parts.append(f"{m}\n")
             prompt_parts.append("```\n")
 
+        if project_context:
+            prompt_parts.append("## OTHER FILES IN PROJECT\n")
+            prompt_parts.append(project_context)
+            prompt_parts.append("\n")
+
         prompt_parts.append("## FUNCTION TO IMPLEMENT\n")
         prompt_parts.append(f"```\n{func_text}\n```\n")
 
@@ -1025,14 +1136,122 @@ class PddOrchestrator:
         for i, req in enumerate(spec_requirements, 1):
             prompt_parts.append(f"{i}. {req}\n")
 
-        prompt_parts.append(
+        task_instruction = (
             "\n## TASK\n"
             "Implement the function body that fulfills ALL requirements above.\n"
             "Return the body code with correct indentation "
             "(8 spaces for class methods, 4 for top-level functions).\n"
         )
+        if is_retry:
+            task_instruction += (
+                "\nIMPORTANT: You MUST provide a non-empty implementation.\n"
+                "If the function references external services or types not "
+                "defined in this file, use reasonable internal attributes "
+                "(e.g. self._event_bus, self._dashboard, self._dead_letters) "
+                "as stand-ins. The function must have a real body.\n"
+            )
+        prompt_parts.append(task_instruction)
 
         return "\n".join(prompt_parts)
+
+    @staticmethod
+    def _extract_body(data: dict[str, Any]) -> str:
+        """Extract function body from agent response.
+
+        Checks ``body`` first (legacy field).  If empty, falls back to
+        extracting added lines from ``edits[].unified_diff``.
+
+        Args:
+            data: Parsed JSON response from the agent.
+
+        Returns:
+            Body code string (may be empty if agent truly returned nothing).
+        """
+        body = data.get("body", "")
+        if body.strip():
+            return body
+
+        # Fallback: extract added lines from unified diffs
+        edits = data.get("edits", [])
+        for edit in edits:
+            diff_text = edit.get("unified_diff", "")
+            if not diff_text:
+                continue
+            # Collect lines that start with '+' (additions) but skip
+            # diff headers ('+++', '---') and hunk markers ('@@').
+            added: list[str] = []
+            for line in diff_text.splitlines():
+                if line.startswith("+++") or line.startswith("---"):
+                    continue
+                if line.startswith("@@"):
+                    continue
+                if line.startswith("+"):
+                    added.append(line[1:])  # strip the leading '+'
+            if added:
+                return "\n".join(added)
+
+        return body
+
+    @staticmethod
+    def _insert_imports(lines: list[str], imports_needed: list[str]) -> list[str]:
+        """Insert new import statements after existing imports.
+
+        Finds the last existing ``import`` or ``from ... import`` line
+        and inserts new imports immediately after it.  Skips imports
+        that already appear in the file.
+
+        Args:
+            lines: File lines (with line endings).
+            imports_needed: Import statements to add.
+
+        Returns:
+            Modified lines list.
+        """
+        new_lines = list(lines)
+        file_text = "".join(new_lines)
+
+        # Deduplicate and filter already-present imports
+        unique_imports: list[str] = []
+        for imp in imports_needed:
+            imp = imp.strip()
+            if imp and imp not in file_text and imp not in unique_imports:
+                unique_imports.append(imp)
+
+        if not unique_imports:
+            return new_lines
+
+        # Find the last import line to insert after
+        last_import_idx = -1
+        for idx, line in enumerate(new_lines):
+            stripped = line.strip()
+            if stripped.startswith("import ") or stripped.startswith("from "):
+                last_import_idx = idx
+
+        # If no imports found, insert after module docstring
+        if last_import_idx < 0:
+            in_docstring = False
+            for idx, line in enumerate(new_lines):
+                stripped = line.strip()
+                if stripped.startswith('"""') or stripped.startswith("'''"):
+                    if in_docstring:
+                        # Closing quote — insert after this line
+                        last_import_idx = idx
+                        break
+                    elif stripped.count('"""') >= 2 or stripped.count("'''") >= 2:
+                        # Single-line docstring
+                        last_import_idx = idx
+                        break
+                    else:
+                        in_docstring = True
+                elif not in_docstring and stripped:
+                    last_import_idx = idx
+                    break
+
+        insert_at = last_import_idx + 1 if last_import_idx >= 0 else 0
+        import_block = "\n".join(unique_imports) + "\n"
+        new_lines.insert(insert_at, import_block)
+
+        return new_lines
 
     @staticmethod
     def _apply_function_body(
@@ -1052,7 +1271,9 @@ class PddOrchestrator:
             lines: File lines (with line endings).
             func: FunctionInfo with line_start, line_end, body_start_line.
             new_body: The new body code string.
-            imports_needed: New imports to add at file top.
+            imports_needed: New imports (ignored — use ``_insert_imports``
+                separately to avoid line-number drift during bottom-up
+                processing).
 
         Returns:
             Modified lines list.
@@ -1076,25 +1297,6 @@ class PddOrchestrator:
         body_lines = new_body.splitlines(keepends=True)
         for k, bl in enumerate(body_lines):
             new_lines.insert(body_start_idx + k, bl)
-
-        # Add imports at the top of the file if needed
-        if imports_needed:
-            import_block = ""
-            file_text = "".join(new_lines)
-            for imp in imports_needed:
-                imp = imp.strip()
-                if imp and imp not in file_text:
-                    import_block += imp + "\n"
-            if import_block:
-                # Insert after the first non-empty line (preserves shebangs,
-                # module docstrings, package declarations in any language).
-                insert_idx = 0
-                for idx, line in enumerate(new_lines):
-                    stripped = line.strip()
-                    if stripped:
-                        insert_idx = idx + 1
-                        break
-                new_lines.insert(insert_idx, import_block)
 
         return new_lines
 

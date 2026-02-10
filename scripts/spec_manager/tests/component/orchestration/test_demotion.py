@@ -10,14 +10,12 @@ import json
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.demotion import (
     DemotionManager,
     DemotionTicket,
     RoutedPatch,
     RoutingItem,
 )
-
 
 # ======================================================================
 # DemotionTicket
@@ -49,6 +47,8 @@ class TestDemotionTicketConstruction:
         assert ticket.routing_payload is None
         assert ticket.apply_status == "PENDING"
         assert ticket.applied_patch_paths == []
+        assert ticket.origin_layer == "L1"
+        assert ticket.hop_trace == []
 
     def test_created_at_is_populated(self) -> None:
         """created_at is auto-populated with an ISO timestamp."""
@@ -101,11 +101,27 @@ class TestDemotionTicketSerialization:
         ticket = DemotionTicket()
         d = ticket.to_dict()
         expected_fields = {
-            "ticket_id", "created_at", "run_id", "slice_id", "source",
-            "gate", "target_layer", "severity", "failing_pins",
-            "failing_atoms", "failing_files", "diagnosis", "evidence_refs",
-            "recommended_spec_patch", "recommended_code_patch", "questions",
-            "routing_required", "routing_payload", "apply_status",
+            "ticket_id",
+            "created_at",
+            "run_id",
+            "slice_id",
+            "source",
+            "gate",
+            "target_layer",
+            "severity",
+            "origin_layer",
+            "hop_trace",
+            "failing_pins",
+            "failing_atoms",
+            "failing_files",
+            "diagnosis",
+            "evidence_refs",
+            "recommended_spec_patch",
+            "recommended_code_patch",
+            "questions",
+            "routing_required",
+            "routing_payload",
+            "apply_status",
             "applied_patch_paths",
         }
         assert expected_fields.issubset(d.keys())
@@ -120,6 +136,8 @@ class TestDemotionTicketSerialization:
             gate="coupling",
             target_layer="L2",
             severity="MINOR",
+            origin_layer="L2",
+            hop_trace=["L2", "L1"],
             failing_pins=["pin:a"],
             failing_atoms=["atom:x"],
             failing_files=["a.py", "b.py"],
@@ -142,6 +160,8 @@ class TestDemotionTicketSerialization:
         assert restored.gate == original.gate
         assert restored.target_layer == original.target_layer
         assert restored.severity == original.severity
+        assert restored.origin_layer == "L2"
+        assert restored.hop_trace == ["L2", "L1"]
         assert restored.failing_pins == original.failing_pins
         assert restored.failing_atoms == original.failing_atoms
         assert restored.failing_files == original.failing_files

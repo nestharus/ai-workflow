@@ -45,11 +45,16 @@ class DemotionTicket:
         "TEST_FAILURE",
         "LINEAGE",
         "REVIEW",
+        "GATE_FAILURE",
     ] = "ALGORITHMIC_GATE"
     gate: str | None = None
 
     target_layer: Literal["L1", "L2", "L3"] = "L1"
     severity: Literal["BLOCKER", "MAJOR", "MINOR"] = "BLOCKER"
+
+    # Multi-layer traceability
+    origin_layer: Literal["L1", "L2", "L3"] = "L1"
+    hop_trace: list[str] = field(default_factory=list)
 
     failing_pins: list[str] = field(default_factory=list)
     failing_atoms: list[str] = field(default_factory=list)

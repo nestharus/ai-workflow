@@ -140,7 +140,7 @@ class CollectBaselineStep:
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Collect file hashes and diff from previous iteration."""
-        from spec_manager.orchestration.evidence import ManifestRef, DiffRef
+        from spec_manager.orchestration.evidence import DiffRef, ManifestRef
 
         slice_root = Path(ctx.slice_root)
         if not slice_root.exists():
@@ -149,9 +149,7 @@ class CollectBaselineStep:
         # Collect manifest: list all source files + hashes
         files = []
         for p in sorted(slice_root.rglob("*")):
-            if p.is_file() and not any(
-                part.startswith(".") for part in p.parts
-            ):
+            if p.is_file() and not any(part.startswith(".") for part in p.parts):
                 files.append({"path": str(p.relative_to(slice_root))})
 
         bundle.manifest = ManifestRef(files=files)
@@ -196,11 +194,15 @@ class GapExplorationStep:
 
             gaps = []
             for ev in report.all_evidence:
-                gaps.append({
-                    "file": str(ev.file_path) if hasattr(ev, "file_path") else "",
-                    "description": str(ev.description) if hasattr(ev, "description") else str(ev),
-                    "kind": ev.kind.value if hasattr(ev, "kind") else "unknown",
-                })
+                gaps.append(
+                    {
+                        "file": str(ev.file_path) if hasattr(ev, "file_path") else "",
+                        "description": str(ev.description)
+                        if hasattr(ev, "description")
+                        else str(ev),
+                        "kind": ev.kind.value if hasattr(ev, "kind") else "unknown",
+                    }
+                )
 
             bundle.gaps = GapReportRef(open_gaps=gaps)
         except Exception as exc:
@@ -211,7 +213,13 @@ class GapExplorationStep:
 
 
 class PlanStep:
-    """Run P8 (planning) to decide what to implement next."""
+    """Run P8 (planning) to decide what to implement next.
+
+    After generating plan intentions from gaps, checks each intention's
+    decision requirements against the constraints store.  Uncovered
+    decisions become under-spec events that block the slice before
+    implementation begins.
+    """
 
     name = "PLAN"
 
@@ -226,19 +234,55 @@ class PlanStep:
         # Create plan intentions from gaps
         intentions = []
         for gap in bundle.gaps.open_gaps:
-            intentions.append({
-                "gap_id": gap.get("file", "unknown"),
-                "target_file": gap.get("file", ""),
-                "approach": f"Implement: {gap.get('description', '')}",
-                "acceptance_criteria": "Gap resolved, tests pass",
-            })
+            intentions.append(
+                {
+                    "gap_id": gap.get("file", "unknown"),
+                    "target_file": gap.get("file", ""),
+                    "approach": f"Implement: {gap.get('description', '')}",
+                    "acceptance_criteria": "Gap resolved, tests pass",
+                }
+            )
 
         bundle.plan = PlanRef(intentions=intentions)
+
+        # Run planning gate: check decision requirements against constraints
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
+        if workspace:
+            try:
+                from spec_manager.orchestration.under_spec.manager import (
+                    ConstraintsStore,
+                )
+                from spec_manager.orchestration.under_spec.planning_gate import (
+                    run_planning_gate,
+                )
+
+                store = ConstraintsStore(workspace)
+                gate_result = run_planning_gate(
+                    constraints_store=store,
+                    slice_id=ctx.slice_id,
+                    intentions=intentions,
+                )
+
+                if not gate_result.all_covered:
+                    # Inject under-spec events into the bundle so
+                    # UnderSpecCheckStep can block before implementation
+                    existing = bundle.implementation.under_spec_events or []
+                    bundle.implementation.under_spec_events = (
+                        existing + gate_result.under_spec_events
+                    )
+            except Exception as exc:
+                logger.debug("Planning gate skipped: %s", exc)
+
         return StepResult(status="OK")
 
 
 class ImplementStep:
-    """Run P9 (implementation) to fill gaps."""
+    """Run P9 (implementation) to fill gaps.
+
+    Delegates to :class:`ImplementationRunner` which calls the
+    ``pdd-function-implementor`` agent per unresolved function and
+    collects edits, pin/edge proposals, under-spec events, and tests.
+    """
 
     name = "IMPLEMENT"
 
@@ -250,15 +294,47 @@ class ImplementStep:
             bundle.implementation = ImplementationRef()
             return StepResult(status="OK")
 
-        # P9 delegates to core.edit_in_place which uses LLM
-        # For now, record intentions as the implementation output
-        bundle.implementation = ImplementationRef(
-            applied_edits=[],
-            pin_proposals=[],
-            edge_proposals=[],
-            under_spec_events=[],
-            tests_added=[],
-        )
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+        if not slice_root or not slice_root.exists():
+            bundle.implementation = ImplementationRef()
+            return StepResult(status="OK")
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        try:
+            from spec_manager.orchestration.implementation.runner import (
+                ImplementationRunner,
+            )
+
+            runner = ImplementationRunner(
+                workspace_root=workspace,
+                run_id=ctx.run_id,
+            )
+
+            iteration_dir = bundle.iter_dir(workspace)
+            run_result = runner.run_for_slice(
+                slice_root=slice_root,
+                iteration_dir=iteration_dir,
+                plan_intentions=bundle.plan.intentions,
+                gap_report=bundle.gaps.open_gaps,
+            )
+
+            bundle.implementation = ImplementationRef(
+                patch_path=run_result.patch_path,
+                applied_edits=run_result.applied_edits,
+                pin_proposals=run_result.pin_proposals,
+                edge_proposals=run_result.edge_proposals,
+                under_spec_events=run_result.under_spec_events,
+                tests_added=run_result.tests_added,
+            )
+
+            if run_result.notes_path:
+                return StepResult(status="OK", notes_path=run_result.notes_path)
+
+        except Exception as exc:
+            logger.warning("Implementation step failed: %s", exc)
+            bundle.implementation = ImplementationRef()
+            return StepResult(status="OK")
 
         return StepResult(status="OK")
 
@@ -298,18 +374,13 @@ class UnderSpecCheckStep:
 
         # Record decisions in the bundle
         bundle.under_spec.decisions = [
-            {"event_id": e.event_id, "question": e.question}
-            for e in outcome.resolved
+            {"event_id": e.event_id, "question": e.question} for e in outcome.resolved
         ]
-        bundle.under_spec.blockers = [
-            e.to_dict() for e in outcome.blocked
-        ]
+        bundle.under_spec.blockers = [e.to_dict() for e in outcome.blocked]
 
         # Record new constraint refs
         if outcome.constraints:
-            constraint_path = str(
-                workspace / "analysis" / "constraints" / f"{ctx.slice_id}.json"
-            )
+            constraint_path = str(workspace / "analysis" / "constraints" / f"{ctx.slice_id}.json")
             if constraint_path not in bundle.facts.constraints_refs:
                 bundle.facts.constraints_refs.append(constraint_path)
 
@@ -363,11 +434,13 @@ class AnalyzeStep:
                     analysis = cache.analyze_with_cache(
                         content, str(py_file.relative_to(slice_root))
                     )
-                    entries.append({
-                        "path": str(py_file.relative_to(slice_root)),
-                        "functions": str(len(analysis.functions)),
-                        "comments": str(len(analysis.comments)),
-                    })
+                    entries.append(
+                        {
+                            "path": str(py_file.relative_to(slice_root)),
+                            "functions": str(len(analysis.functions)),
+                            "comments": str(len(analysis.comments)),
+                        }
+                    )
                 except (OSError, UnicodeDecodeError) as exc:
                     logger.debug("Skipping %s: %s", py_file, exc)
 
@@ -466,11 +539,13 @@ class PromoteStep:
 
             gates_data = []
             for gr in report.gate_results:
-                gates_data.append({
-                    "gate_id": gr.gate_id,
-                    "passed": gr.passed,
-                    "summary": gr.summary,
-                })
+                gates_data.append(
+                    {
+                        "gate_id": gr.gate_id,
+                        "passed": gr.passed,
+                        "summary": gr.summary,
+                    }
+                )
             bundle.gates.gates = gates_data
 
             if not report.passed:
@@ -650,9 +725,7 @@ class PromotionLoop:
 
         while iteration < run_context.max_iterations:
             iteration += 1
-            logger.info(
-                "=== Slice '%s' iteration %d ===", ctx.slice_id, iteration
-            )
+            logger.info("=== Slice '%s' iteration %d ===", ctx.slice_id, iteration)
 
             bundle = EvidenceBundle(
                 run_id=run_context.run_id,
