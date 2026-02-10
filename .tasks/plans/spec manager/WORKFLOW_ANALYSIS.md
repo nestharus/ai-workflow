@@ -438,6 +438,82 @@ into the planning/routing flow.
 
 ---
 
+## Skeletons and Refinement
+
+### Each Layer Has a Typed Skeleton
+
+Each layer defines a **skeleton type** — the structural unit that layer operates on:
+
+| Layer | Skeleton Type | Granularity |
+|-------|--------------|-------------|
+| L1 (Code-as-Spec) | **Libraries** | Concern boundaries (vertical slices) |
+| L2 (Architecture) | **Architectural components** | Services, events, middleware |
+| L3 (Clean Code) | **Invariants on algorithm components** | Fine-grained function chunks |
+
+Skeletons are proposed by the entering refinement and refined by the exiting
+refinement. The skeleton defines what gets distributed, what gets promoted,
+and what the per-slice loop operates on at that layer.
+
+### Refinement Is an Algorithm Label
+
+"Refinement" refers to the algorithm — summarize, discover structure, assess
+quality, identify issues. The same algorithmic pattern applies at each layer,
+but the **skeleton type determines what is being refined**:
+
+* **Library refinement** — validates/refines library boundaries (concern
+  isolation, overlap detection, requirement coverage)
+* **Architectural refinement** — validates/refines architectural component
+  boundaries (service decomposition, event topology, middleware layering)
+* **Code quality refinement** — validates/refines function-level invariants
+  (algorithmic correctness, naming, complexity, duplication)
+
+### Refinement Runs at Bulk Promotion Boundaries
+
+For optimization, refinement does NOT run per-slice or per-batch. It runs
+when **all batches at a layer are complete** — i.e., at bulk promotion
+boundaries. Each refinement type runs twice per layer: once at entry (on
+the promoted input) and once at exit (on the complete clean output).
+
+```text
+Spec arrives (Phase 0 output)
+  → Library refinement (on intake output → produces constraints, analysis, skeletons)
+  → L1 dirty work (per-slice loop, batches promote to L1 clean over time)
+  → L1 clean fully complete (dirty == clean)
+  → Library refinement (on complete L1 clean)
+  → Architectural refinement (may cause L1 refactoring via demotion)
+  → Distribute to L2 dirty
+  → L2 dirty work (per-slice loop, batches promote to L2 clean)
+  → L2 clean fully complete (dirty == clean)
+  → Architectural refinement (on complete L2 clean)
+  → Code quality refinement (may cause L2 refactoring via demotion)
+  → Distribute to L3 dirty
+  → L3 dirty work (per-slice loop, batches promote to L3 clean)
+  → L3 clean fully complete (dirty == clean)
+  → Code quality refinement (on complete L3 clean)
+  → Ready for main
+```
+
+The transition refinement between layers (architectural refinement between
+L1→L2, code quality refinement between L2→L3) can trigger refactoring and
+demotion back down before the next layer's creative work begins.
+
+### Distribution Works Through Routing
+
+When promoting between layers, the output must be **distributed** to the
+next layer's skeleton structure. Distribution uses routing — the same
+summarize → discover → route pattern — but the routing complexity varies
+by skeleton type:
+
+* **Library routing** (L1): Vertical slices with summaries. Straightforward
+  concern-based matching.
+* **Architectural routing** (L2): More complex. Architecture is a graph, not
+  verticals. Routing must account for service boundaries, event flows,
+  middleware chains. Pins provide the L1→L2 routing mechanism.
+* **Shared mechanism**: All skeleton types share the same **summarization**
+  infrastructure. Summaries are routing hints, not final output.
+
+---
+
 ## Mapping P1-P10 to the Promotion Model
 
 P1-P10 are TOOLS invoked within the promotion cycle, not a sequential pipeline:
@@ -453,7 +529,7 @@ P1-P10 are TOOLS invoked within the promotion cycle, not a sequential pipeline:
 | P6 cross_library | Verify: connections between promoted modules |
 | P7 projection | Verify: lineage traces back to spec |
 | P8 task_planning | Plan: what to implement next, how to integrate |
-| P9 implementation | Implement: should write code (currently only reports) |
+| P9 implementation | Implement: write code (38/38 functions in treasury eval) |
 | P10 continuous_qa | Assess: overall quality + strategy evolution |
 | Refinement engine | Verify: coupling/cohesion check (post P4+) |
 
@@ -463,9 +539,10 @@ P1-P10 are TOOLS invoked within the promotion cycle, not a sequential pipeline:
 
 ### What We Ran
 
-Promotion 1 completed (52/52 requirements). Then ran P1-P10 as a single pass
-against empty PDD skeletons. Everything was correctly identified as gaps, but
-nothing was implemented because P9 doesn't write code.
+Promotion 1 completed (52/52 requirements). Then ran P1-P10 as a sequential
+pipeline against PDD skeletons. P9 implemented 38/38 functions with 0 errors
+and 0 gaps. P10 continuous QA completed (0 strategies, 0 gaps). However, this
+was a single sequential pass — not the iterative per-slice loop with CI.
 
 ### What Should Have Happened
 
@@ -502,7 +579,7 @@ After Promotion 1 produced PDD skeletons:
 * Gap detection (P3)
 * Atom extraction (P4)
 
-### Wrong Order / Wrong Time — ALL RESOLVED (Feb 9 2026)
+### Wrong Order / Wrong Time — PARTIALLY RESOLVED (Feb 10 2026)
 
 * ~~Worktree creation: after all phases → should be before implementation~~ — `WorktreeManager`
    wired before implementation in `PddLifecycle`
@@ -512,8 +589,19 @@ After Promotion 1 produced PDD skeletons:
    `IntakeQueue` + conditional Phase 0 in `PromotionLoop`
 * ~~Library quality check: never → should be after Promotion 1~~ —
    `intake/quality/validator.py` (5-dimension scoring)
+* ~~**POWER alignment: one-time post-pipeline → should be per-promotion in loop**~~ —
+   `AlignStep` added to `PromotionLoop` state machine (VERIFY→ALIGN→DONE?)
+* ~~**Library refinement: one-time post-pipeline → should be at bulk promotion
+  boundaries**~~ — `_library_refinement()` runs at L1 entry + exit in layer-aware
+  `pdd_lifecycle.py`
+* ~~**Architecture/Code Quality: standalone lifecycle phases → should be
+  layer-aware demotion-based processes**~~ — `_architectural_refinement()` and
+  `_code_quality_refinement()` emit DemotionTickets; wired as layer-typed
+  refinement in transitions and layer entry/exit
+* ~~**pdd_lifecycle.py reads spec.md → file doesn't exist**~~ — All methods now
+  read actual code from `spec_snapshot/*.py` directories. Code IS the spec.
 
-### Missing — ALL RESOLVED (Feb 9 2026)
+### Missing — RESOLVED (Feb 10 2026)
 
 * ~~**Implementation agent (P9)**~~ — `orchestration/implementation/runner.py`
    (`ImplementationRunner`: apply function bodies, write artifacts, emit
@@ -537,3 +625,12 @@ After Promotion 1 produced PDD skeletons:
 * ~~**Architectural implementation agent**~~ —
    `orchestration/architecture/agent_definition.py` (service/event/middleware
    assembly from promoted atoms)
+* ~~**POWER alignment step in PromotionLoop**~~ — `AlignStep` added to
+   `PromotionLoop` (VERIFY→ALIGN→DONE?). Uses `_check_alignment()` per-slice.
+* ~~**Typed skeleton refinement at layer transitions**~~ — `_run_transition()`
+   runs next layer's typed refinement at bulk promotion boundaries.
+   `_LAYER_REFINEMENT` mapping dispatches to `_library_refinement()`,
+   `_architectural_refinement()`, `_code_quality_refinement()`.
+* ~~**Layer-aware pdd_lifecycle.py**~~ — Redesigned as L1→L2→L3 layer
+   pipeline with entry/exit refinement per layer, transitions with demotion
+   rework, and per-slice PromotionLoop at each layer.
