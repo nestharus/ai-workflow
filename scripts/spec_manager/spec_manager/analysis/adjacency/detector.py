@@ -67,9 +67,7 @@ class AdjacencyReport:
             "num_components": self.num_components,
             "components": [c.to_dict() for c in self.components],
             "signal_type_counts": self.signal_type_counts,
-            "signal_type_weights": {
-                k: round(v, 4) for k, v in self.signal_type_weights.items()
-            },
+            "signal_type_weights": {k: round(v, 4) for k, v in self.signal_type_weights.items()},
             "disconnected_warnings": self.disconnected_warnings,
         }
 
@@ -102,9 +100,10 @@ class AdjacencyReport:
                 )
                 lines.append(f"### Component {comp.component_id}{classification_str}\n")
                 lines.append(f"- **Size**: {comp.size} nodes")
-                lines.append(
-                    f"- **Signal types**: {', '.join(s.value for s in sorted(comp.signal_types_present, key=lambda x: x.value))}"
+                signal_list = ", ".join(
+                    s.value for s in sorted(comp.signal_types_present, key=lambda x: x.value)
                 )
+                lines.append(f"- **Signal types**: {signal_list}")
                 lines.append(f"- **Total weight**: {comp.total_internal_weight:.2f}")
 
                 if comp.classification_reason:
@@ -138,9 +137,7 @@ class AdjacencyReport:
                     component_id=comp_data["component_id"],
                     nodes=set(comp_data["nodes"]),
                     size=comp_data["size"],
-                    signal_types_present={
-                        SignalType(s) for s in comp_data["signal_types_present"]
-                    },
+                    signal_types_present={SignalType(s) for s in comp_data["signal_types_present"]},
                     total_internal_weight=comp_data["total_internal_weight"],
                     classification=(
                         IsolationClassification(comp_data["classification"])
@@ -195,9 +192,7 @@ def build_unified_graph(
     """
     unified = AdjacencyGraph()
     graphs = [
-        g
-        for g in [call_graph, event_graph, store_graph, cooccurrence_graph]
-        if g is not None
+        g for g in [call_graph, event_graph, store_graph, cooccurrence_graph] if g is not None
     ]
 
     for graph in graphs:
@@ -309,12 +304,11 @@ def detect_disconnected_components(
                 f"store/co-occurrence links to other components. "
                 f"Likely missing explicit dependency."
             )
-        elif report.classification == IsolationClassification.TRULY_ISOLATED:
-            if report.size > 1:
-                warnings.append(
-                    f"Component {report.component_id}: {report.size} nodes are truly isolated "
-                    f"with no connections to other components."
-                )
+        elif report.classification == IsolationClassification.TRULY_ISOLATED and report.size > 1:
+            warnings.append(
+                f"Component {report.component_id}: {report.size} nodes are truly isolated "
+                f"with no connections to other components."
+            )
 
     return AdjacencyReport(
         total_nodes=len(unified_graph.nodes()),

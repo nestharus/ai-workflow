@@ -81,10 +81,7 @@ def _collect_py_files(directory: Path) -> list[Path]:
     """Collect all .py files under a directory, excluding __init__.py."""
     if not directory.exists():
         return []
-    return [
-        f for f in sorted(directory.rglob("*.py"))
-        if f.name != "__init__.py"
-    ]
+    return [f for f in sorted(directory.rglob("*.py")) if f.name != "__init__.py"]
 
 
 def _gate_result_to_tuple(result: GateCheckResult) -> tuple[bool, list[str]]:
@@ -95,8 +92,7 @@ def _gate_result_to_tuple(result: GateCheckResult) -> tuple[bool, list[str]]:
         for finding in result.findings:
             if isinstance(finding, dict):
                 # Build a descriptive error from the finding dict
-                parts = [f"{k}={v}" for k, v in finding.items()
-                         if k not in ("skipped", "reason")]
+                parts = [f"{k}={v}" for k, v in finding.items() if k not in ("skipped", "reason")]
                 if parts:
                     errors.append(", ".join(parts))
     return result.passed, errors
@@ -133,7 +129,9 @@ class ComplianceChecker:
         else:
             monogamy_ok, monogamy_errors = True, []
 
-        all_errors = no_comments_errors + no_stubs_errors + tests_errors + graph_errors + monogamy_errors
+        all_errors = (
+            no_comments_errors + no_stubs_errors + tests_errors + graph_errors + monogamy_errors
+        )
         passed = no_comments_ok and no_stubs_ok and tests_ok and graph_ok and monogamy_ok
 
         return ComplianceGateResult(
@@ -212,9 +210,7 @@ class ComplianceChecker:
             return True, []
 
         gate_spec = GateSpec(gate_id=GateId.CALL_GRAPH_CONNECTED)
-        result = check_call_graph_connected(
-            files, self._layout.run_root, gate_spec
-        )
+        result = check_call_graph_connected(files, self._layout.run_root, gate_spec)
         return _gate_result_to_tuple(result)
 
     def check_store_monogamy(self, slices: list[VerticalSlice]) -> tuple[bool, list[str]]:
@@ -235,9 +231,7 @@ class ComplianceChecker:
                 store_owners.setdefault(store_id, []).append(vs.slice_id)
 
         violations = {
-            store_id: owners
-            for store_id, owners in store_owners.items()
-            if len(owners) > 1
+            store_id: owners for store_id, owners in store_owners.items() if len(owners) > 1
         }
 
         if not violations:

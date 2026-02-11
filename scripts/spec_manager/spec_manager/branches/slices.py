@@ -197,40 +197,49 @@ class SliceNavigator:
 
         # Algorithmic layers
         algo_atoms = [
-            aid for aid in vs.atom_ids
+            aid
+            for aid in vs.atom_ids
             if (a := self._atom_registry.get(aid)) and a.kind == AtomKind.ALGORITHM
         ]
         if algo_atoms:
-            layers.append(HorizontalLayer(
-                layer_id=f"{slice_id}:algorithms",
-                name="Algorithms",
-                branch_kind=BranchKind.ALGORITHMIC,
-                item_ids=algo_atoms,
-            ))
+            layers.append(
+                HorizontalLayer(
+                    layer_id=f"{slice_id}:algorithms",
+                    name="Algorithms",
+                    branch_kind=BranchKind.ALGORITHMIC,
+                    item_ids=algo_atoms,
+                )
+            )
 
         store_atoms = [
-            aid for aid in vs.atom_ids
+            aid
+            for aid in vs.atom_ids
             if (a := self._atom_registry.get(aid)) and a.kind == AtomKind.STORE
         ]
         if store_atoms:
-            layers.append(HorizontalLayer(
-                layer_id=f"{slice_id}:stores",
-                name="Stores",
-                branch_kind=BranchKind.ALGORITHMIC,
-                item_ids=store_atoms,
-            ))
+            layers.append(
+                HorizontalLayer(
+                    layer_id=f"{slice_id}:stores",
+                    name="Stores",
+                    branch_kind=BranchKind.ALGORITHMIC,
+                    item_ids=store_atoms,
+                )
+            )
 
         shape_atoms = [
-            aid for aid in vs.atom_ids
+            aid
+            for aid in vs.atom_ids
             if (a := self._atom_registry.get(aid)) and a.kind == AtomKind.SHAPE
         ]
         if shape_atoms:
-            layers.append(HorizontalLayer(
-                layer_id=f"{slice_id}:shapes",
-                name="Shapes",
-                branch_kind=BranchKind.ALGORITHMIC,
-                item_ids=shape_atoms,
-            ))
+            layers.append(
+                HorizontalLayer(
+                    layer_id=f"{slice_id}:shapes",
+                    name="Shapes",
+                    branch_kind=BranchKind.ALGORITHMIC,
+                    item_ids=shape_atoms,
+                )
+            )
 
         # Architectural layers from pins
         arch_locations: dict[str, list[str]] = {
@@ -251,12 +260,14 @@ class SliceNavigator:
 
         for category, pin_ids in arch_locations.items():
             if pin_ids:
-                layers.append(HorizontalLayer(
-                    layer_id=f"{slice_id}:{category}",
-                    name=category.title(),
-                    branch_kind=BranchKind.ARCHITECTURAL,
-                    item_ids=pin_ids,
-                ))
+                layers.append(
+                    HorizontalLayer(
+                        layer_id=f"{slice_id}:{category}",
+                        name=category.title(),
+                        branch_kind=BranchKind.ARCHITECTURAL,
+                        item_ids=pin_ids,
+                    )
+                )
 
         return layers
 
@@ -305,8 +316,11 @@ class SliceNavigator:
 
         if vs.parent_slice_id is None:
             # Root slices: siblings are all other root slices
-            return [s for s in self._slices.values()
-                    if s.parent_slice_id is None and s.slice_id != slice_id]
+            return [
+                s
+                for s in self._slices.values()
+                if s.parent_slice_id is None and s.slice_id != slice_id
+            ]
         else:
             parent = self._slices.get(vs.parent_slice_id)
             if parent is None:
@@ -333,9 +347,7 @@ class SliceNavigator:
         violations: list[str] = []
         for store_id, owners in store_owners.items():
             if len(owners) > 1:
-                violations.append(
-                    f"Store {store_id} owned by multiple slices: {', '.join(owners)}"
-                )
+                violations.append(f"Store {store_id} owned by multiple slices: {', '.join(owners)}")
 
         return violations
 
@@ -348,9 +360,7 @@ class SliceNavigator:
             "slices": {sid: vs.to_dict() for sid, vs in self._slices.items()},
             "next_slice_number": self._next_slice_number,
         }
-        self._layout.slices_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8"
-        )
+        self._layout.slices_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     @classmethod
     def load(

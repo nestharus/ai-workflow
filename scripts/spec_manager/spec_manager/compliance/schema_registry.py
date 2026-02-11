@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 _logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class SchemaRegistry:
         SCHEMA_MAP: Mapping from schema IDs to filenames.
     """
 
-    SCHEMA_MAP: dict[str, str] = {
+    SCHEMA_MAP: ClassVar[dict[str, str]] = {
         "atoms": "atoms.schema.json",
         "section_map": "section_map.schema.json",
         "decomposition_output": "decomposition_output.schema.json",
@@ -90,7 +90,9 @@ class SchemaRegistry:
             json.JSONDecodeError: If schema file is not valid JSON.
         """
         if schema_id not in self.SCHEMA_MAP:
-            raise KeyError(f"Unknown schema ID: {schema_id}. Available: {list(self.SCHEMA_MAP.keys())}")
+            raise KeyError(
+                f"Unknown schema ID: {schema_id}. Available: {list(self.SCHEMA_MAP.keys())}"
+            )
 
         filename = self.SCHEMA_MAP[schema_id]
         schema_path = self._schema_dir / filename

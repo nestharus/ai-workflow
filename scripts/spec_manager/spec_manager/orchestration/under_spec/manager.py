@@ -59,8 +59,16 @@ class UnderSpecEvent:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> UnderSpecEvent:
+        import hashlib
+
+        event_id = d.get("event_id", "")
+        if not event_id:
+            # Generate deterministic ID from question content
+            question = d.get("question", "")
+            event_id = hashlib.sha256(question.encode()).hexdigest()[:12] if question else ""
+
         return cls(
-            event_id=d.get("event_id", ""),
+            event_id=event_id,
             kind=d.get("kind", "MISSING_CONSTRAINT"),
             question=d.get("question", ""),
             context=d.get("context", {}),
@@ -275,13 +283,9 @@ class UnderSpecManager:
         still_blocked: list[UnderSpecEvent] = []
 
         if self._mode == "interactive":
-            new_constraints, still_blocked = self._resolve_interactive(
-                slice_id, uncovered
-            )
+            new_constraints, still_blocked = self._resolve_interactive(slice_id, uncovered)
         else:
-            new_constraints, still_blocked = self._resolve_auto(
-                slice_id, uncovered
-            )
+            new_constraints, still_blocked = self._resolve_auto(slice_id, uncovered)
 
         # Phase 3: Validate and persist new constraints
         validated = []
@@ -307,8 +311,7 @@ class UnderSpecManager:
             )
 
         newly_resolved = [
-            e for e in uncovered
-            if e.event_id in {c.constraint_id for c in validated}
+            e for e in uncovered if e.event_id in {c.constraint_id for c in validated}
         ]
 
         return UnderSpecOutcome(
@@ -507,7 +510,4 @@ class UnderSpecManager:
             return False
 
         # Minimum length check
-        if len(answer) < 5:
-            return False
-
-        return True
+        return len(answer) >= 5

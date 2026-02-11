@@ -184,10 +184,7 @@ class PromotionScheduler:
                     result = future.result()
                     results.append(result)
 
-                    if (
-                        result.status == "FAILED"
-                        and self._config.stop_on_first_failure
-                    ):
+                    if result.status == "FAILED" and self._config.stop_on_first_failure:
                         logger.warning(
                             "Slice '%s' failed — cancelling remaining slices",
                             slice_id,
@@ -195,7 +192,7 @@ class PromotionScheduler:
                         cancel_event.set()
 
                 except Exception as exc:
-                    logger.error("Slice '%s' raised: %s", slice_id, exc)
+                    logger.exception("Slice '%s' raised", slice_id)
                     results.append(
                         SliceResult(
                             slice_id=slice_id,

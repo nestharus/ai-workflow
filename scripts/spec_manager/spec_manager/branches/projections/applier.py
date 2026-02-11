@@ -46,7 +46,6 @@ def apply_projection_proposals(
     for proposal in projection_proposals:
         from_pin = proposal.get("from_pin", "")
         to_arch_fqn = proposal.get("to_arch_fqn", "")
-        projection_type = proposal.get("type", "PASS_THROUGH")
 
         if not from_pin or not to_arch_fqn:
             result.skipped += 1
@@ -67,12 +66,11 @@ def apply_projection_proposals(
             else:
                 result.skipped += 1
                 result.errors.append(
-                    f"Registry does not support import_edges for projection {from_pin} -> {to_arch_fqn}"
+                    f"Registry does not support import_edges"
+                    f" for projection {from_pin} -> {to_arch_fqn}"
                 )
         except Exception as exc:
-            result.errors.append(
-                f"Failed to apply projection {from_pin} -> {to_arch_fqn}: {exc}"
-            )
+            result.errors.append(f"Failed to apply projection {from_pin} -> {to_arch_fqn}: {exc}")
 
     logger.info(
         "Applied %d projection proposals (%d skipped, %d errors)",

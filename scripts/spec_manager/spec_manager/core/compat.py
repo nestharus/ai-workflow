@@ -10,13 +10,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-LEGACY_ATOM_PATTERN = re.compile(
-    r"^ATOM-(?P<file_id>F\d{4})-L(?P<line_no>\d{4})$"
-)
+LEGACY_ATOM_PATTERN = re.compile(r"^ATOM-(?P<file_id>F\d{4})-L(?P<line_no>\d{4})$")
 
-NEW_ATOM_PATTERN = re.compile(
-    r"^ATOM-(?P<file_uid>F\d{4})-(?P<rev_id>R\d{4})-L(?P<line_no>\d{4})$"
-)
+NEW_ATOM_PATTERN = re.compile(r"^ATOM-(?P<file_uid>F\d{4})-(?P<rev_id>R\d{4})-L(?P<line_no>\d{4})$")
 
 DEFAULT_LEGACY_REV_ID = "R0001"
 

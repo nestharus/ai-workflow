@@ -99,9 +99,7 @@ class CallGraph:
 
     nodes: set[str] = field(default_factory=set)  # Qualified function names
     edges: list[tuple[str, str]] = field(default_factory=list)  # (caller, callee)
-    reverse_edges: dict[str, set[str]] = field(
-        default_factory=dict
-    )  # callee -> set of callers
+    reverse_edges: dict[str, set[str]] = field(default_factory=dict)  # callee -> set of callers
 
     def callees(self, function: str) -> set[str]:
         """Get direct callees of a function.
@@ -396,9 +394,7 @@ def discover_adjacent_details(
         if touch.store_name in modified_stores and touch.function_name not in seen:
             seen.add(touch.function_name)
             has_tests = test_coverage.get(touch.function_name, False)
-            relationship = (
-                "shared_event" if touch.store_name == "event_bus" else "shared_store"
-            )
+            relationship = "shared_event" if touch.store_name == "event_bus" else "shared_store"
             adjacencies.append(
                 AdjacentDetail(
                     source_function=modified_function,

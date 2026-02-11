@@ -11,7 +11,6 @@ from spec_manager.orchestration.demotion.triage import (
 
 
 class TestDemotionContextDefaults:
-
     def test_defaults(self) -> None:
         ctx = DemotionContext()
         assert ctx.active_layer == "L1"
@@ -25,7 +24,6 @@ class TestDemotionContextDefaults:
 
 
 class TestDemotionRoutingDefaults:
-
     def test_defaults(self) -> None:
         r = DemotionRouting()
         assert r.target_layer == "L1"
@@ -34,7 +32,6 @@ class TestDemotionRoutingDefaults:
 
 
 class TestTriageCategoryRouting:
-
     def test_style_routes_to_l3(self) -> None:
         ctx = DemotionContext(active_layer="L3", category="STYLE")
         r = triage(ctx)
@@ -55,10 +52,10 @@ class TestTriageCategoryRouting:
 
 
 class TestTriageGateRouting:
-
     def test_gate_routes_when_no_category(self) -> None:
         ctx = DemotionContext(
-            active_layer="L1", gate="NO_REMAINING_COMMENTS",
+            active_layer="L1",
+            gate="NO_REMAINING_COMMENTS",
         )
         r = triage(ctx)
         assert r.target_layer == "L1"
@@ -66,7 +63,6 @@ class TestTriageGateRouting:
 
 
 class TestTriageSourceRouting:
-
     def test_source_routes_when_no_category_or_gate(self) -> None:
         ctx = DemotionContext(active_layer="L3", source="REVIEW")
         r = triage(ctx)
@@ -75,7 +71,6 @@ class TestTriageSourceRouting:
 
 
 class TestTriageDefaultRouting:
-
     def test_defaults_to_l1_when_nothing_matches(self) -> None:
         ctx = DemotionContext(active_layer="L1")
         r = triage(ctx)
@@ -85,7 +80,6 @@ class TestTriageDefaultRouting:
 
 
 class TestConstrainToActive:
-
     def test_constrains_l3_target_to_l1(self) -> None:
         routing = DemotionRouting(target_layer="L3", reason="test", confidence=0.9)
         result = _constrain_to_active(routing, "L1")
@@ -101,7 +95,6 @@ class TestConstrainToActive:
 
 
 class TestTriageConfidenceVariation:
-
     def test_category_confidence_is_0_9(self) -> None:
         ctx = DemotionContext(active_layer="L1", category="SPEC")
         assert triage(ctx).confidence == 0.9

@@ -17,7 +17,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from spec_manager.orchestration.demotion import DemotionTicket
 from spec_manager.orchestration.demotion.router import DemotionRouter, RoutingBatch
 from spec_manager.orchestration.demotion.triage import DemotionContext
 
@@ -138,9 +137,7 @@ class DownwardFlowEngine:
             for file_path in ticket.failing_files:
                 trace = self._trace_file(file_path)
                 ticket.failing_atoms.extend(trace.traced_atoms)
-                ticket.failing_pins = list(
-                    set(ticket.failing_pins) | set(trace.located_pins)
-                )
+                ticket.failing_pins = list(set(ticket.failing_pins) | set(trace.located_pins))
 
         return batch
 
@@ -158,9 +155,7 @@ class DownwardFlowEngine:
             for file_path in ticket.failing_files:
                 trace = self._trace_file(file_path)
                 ticket.failing_atoms.extend(trace.traced_atoms)
-                ticket.failing_pins = list(
-                    set(ticket.failing_pins) | set(trace.located_pins)
-                )
+                ticket.failing_pins = list(set(ticket.failing_pins) | set(trace.located_pins))
 
         return batch
 
@@ -223,6 +218,7 @@ class DownwardFlowEngine:
         """Scan a file for pdd:pin= marker comments."""
         try:
             from pathlib import Path
+
             content = Path(file_path).read_text(encoding="utf-8")
             return _PIN_MARKER_RE.findall(content)
         except (OSError, UnicodeDecodeError):

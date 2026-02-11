@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from spec_manager.orchestration.under_spec.manager import ConstraintsStore
 from spec_manager.orchestration.under_spec.planning_gate import (
     CoverageResult,
@@ -11,7 +10,6 @@ from spec_manager.orchestration.under_spec.planning_gate import (
     check_decision_coverage,
     run_planning_gate,
 )
-
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -23,10 +21,24 @@ def constraints_store(tmp_path):
     store = ConstraintsStore(tmp_path)
     constraints_path = tmp_path / "analysis" / "constraints" / "test-slice.json"
     constraints_path.parent.mkdir(parents=True, exist_ok=True)
-    constraints_path.write_text(json.dumps([
-        {"constraint_id": "C1", "question": "What auth method to use?", "answer": "JWT", "resolved": True},
-        {"constraint_id": "C2", "question": "Which database?", "answer": "PostgreSQL", "resolved": True},
-    ]))
+    constraints_path.write_text(
+        json.dumps(
+            [
+                {
+                    "constraint_id": "C1",
+                    "question": "What auth method to use?",
+                    "answer": "JWT",
+                    "resolved": True,
+                },
+                {
+                    "constraint_id": "C2",
+                    "question": "Which database?",
+                    "answer": "PostgreSQL",
+                    "resolved": True,
+                },
+            ]
+        )
+    )
     return store
 
 

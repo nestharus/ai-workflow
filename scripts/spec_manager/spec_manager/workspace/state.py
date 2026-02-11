@@ -118,11 +118,7 @@ def _is_legacy_schema(data: dict[str, Any]) -> bool:
     Legacy schemas have no schema_version field, or have schema_version < 2.0.
     """
     version = data.get("schema_version")
-    if version is None:
-        return True
-    if version == "1.0":
-        return True
-    return False
+    return version is None or version == "1.0"
 
 
 @dataclass
@@ -179,10 +175,7 @@ class WorkspaceState:
     @staticmethod
     def _default_phases() -> dict[str, PhaseState]:
         """Create default v2.0 phase states."""
-        return {
-            phase_name: PhaseState(phase=phase_name)
-            for phase_name in _V2_PHASES
-        }
+        return {phase_name: PhaseState(phase=phase_name) for phase_name in _V2_PHASES}
 
     @staticmethod
     def detect_schema_version(state_file: Path) -> str | None:
@@ -298,15 +291,18 @@ class WorkspaceState:
             data = json.loads(raw_text)
         except (json.JSONDecodeError, ValueError) as exc:
             # Invalid JSON: log parse error and return fresh state
-            _write_migration_log_entry(migration_log_path, {
-                "timestamp": datetime.now().isoformat(),
-                "event_type": "parse_error_ignored",
-                "details": {
-                    "error": str(exc),
-                    "state_file": str(state_file),
-                    "action": "Created fresh v2.0 state due to parse error",
+            _write_migration_log_entry(
+                migration_log_path,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event_type": "parse_error_ignored",
+                    "details": {
+                        "error": str(exc),
+                        "state_file": str(state_file),
+                        "action": "Created fresh v2.0 state due to parse error",
+                    },
                 },
-            })
+            )
             return cls(spec_folder="")
 
         if not isinstance(data, dict):
@@ -317,53 +313,68 @@ class WorkspaceState:
 
         if _is_legacy_schema(data):
             # Legacy schema: migrate
-            _write_migration_log_entry(migration_log_path, {
-                "timestamp": datetime.now().isoformat(),
-                "event_type": "schema_detected",
-                "details": {
-                    "detected_version": detected_version,
-                    "state_file": str(state_file),
+            _write_migration_log_entry(
+                migration_log_path,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event_type": "schema_detected",
+                    "details": {
+                        "detected_version": detected_version,
+                        "state_file": str(state_file),
+                    },
                 },
-            })
-            _write_migration_log_entry(migration_log_path, {
-                "timestamp": datetime.now().isoformat(),
-                "event_type": "migration_started",
-                "details": {
-                    "schema_version_from": detected_version or "legacy",
-                    "schema_version_to": _CURRENT_SCHEMA_VERSION,
+            )
+            _write_migration_log_entry(
+                migration_log_path,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event_type": "migration_started",
+                    "details": {
+                        "schema_version_from": detected_version or "legacy",
+                        "schema_version_to": _CURRENT_SCHEMA_VERSION,
+                    },
                 },
-            })
+            )
 
             state = cls.from_dict(data)
 
-            _write_migration_log_entry(migration_log_path, {
-                "timestamp": datetime.now().isoformat(),
-                "event_type": "migration_completed",
-                "details": {
-                    "schema_version_from": detected_version or "legacy",
-                    "schema_version_to": _CURRENT_SCHEMA_VERSION,
+            _write_migration_log_entry(
+                migration_log_path,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event_type": "migration_completed",
+                    "details": {
+                        "schema_version_from": detected_version or "legacy",
+                        "schema_version_to": _CURRENT_SCHEMA_VERSION,
+                    },
                 },
-            })
+            )
 
             return state
         else:
             # V2.0 state: no migration needed
-            _write_migration_log_entry(migration_log_path, {
-                "timestamp": datetime.now().isoformat(),
-                "event_type": "schema_detected",
-                "details": {
-                    "detected_version": detected_version,
-                    "state_file": str(state_file),
+            _write_migration_log_entry(
+                migration_log_path,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event_type": "schema_detected",
+                    "details": {
+                        "detected_version": detected_version,
+                        "state_file": str(state_file),
+                    },
                 },
-            })
-            _write_migration_log_entry(migration_log_path, {
-                "timestamp": datetime.now().isoformat(),
-                "event_type": "migration_skipped",
-                "details": {
-                    "schema_version": detected_version,
-                    "reason": "Already at target schema version",
+            )
+            _write_migration_log_entry(
+                migration_log_path,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event_type": "migration_skipped",
+                    "details": {
+                        "schema_version": detected_version,
+                        "reason": "Already at target schema version",
+                    },
                 },
-            })
+            )
 
             return cls.from_dict(data)
 
@@ -374,9 +385,7 @@ class WorkspaceState:
             "schema_version": self.schema_version,
             "created_at": self.created_at,
             "current_phase": self.current_phase.value,
-            "phases": {
-                name: phase.to_dict() for name, phase in self.phases.items()
-            },
+            "phases": {name: phase.to_dict() for name, phase in self.phases.items()},
             "inputs": self.inputs,
             "processed": self.processed,
             "ambiguous_inputs": self.ambiguous_inputs,

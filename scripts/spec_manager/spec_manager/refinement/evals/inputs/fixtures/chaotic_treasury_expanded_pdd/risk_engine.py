@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
-
 
 CREDIT_LIMIT_USD = Decimal("50_000_000")
 MARGIN_CALL_THRESHOLD = Decimal("0.80")
@@ -42,9 +40,7 @@ class RiskEngine:
         # Margin call issued when exposure reaches 80% of limit
         pass
 
-    def check_concentration(
-        self, counterparty_id: str, total_exposure: Decimal
-    ) -> bool:
+    def check_concentration(self, counterparty_id: str, total_exposure: Decimal) -> bool:
         """Check concentration limit."""
         # No single counterparty may exceed 25% of total exposure
         pass

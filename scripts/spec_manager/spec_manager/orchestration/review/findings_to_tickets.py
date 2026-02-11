@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spec_manager.orchestration.demotion import DemotionTicket
-from spec_manager.orchestration.demotion.router import DemotionRouter, RoutingBatch
 from spec_manager.orchestration.downward_flow.engine import (
     DownwardFlowEngine,
     FailureEvidence,
@@ -99,12 +98,14 @@ def convert_findings(
 
         # UNDER_SPEC findings produce under-spec events
         if finding.category.upper() == "UNDER_SPEC":
-            result.under_spec_events.append({
-                "kind": "REVIEW_UNDER_SPEC",
-                "question": finding.description,
-                "needed_for": ", ".join(finding.files) if finding.files else "unknown",
-                "source": "REVIEW",
-            })
+            result.under_spec_events.append(
+                {
+                    "kind": "REVIEW_UNDER_SPEC",
+                    "question": finding.description,
+                    "needed_for": ", ".join(finding.files) if finding.files else "unknown",
+                    "source": "REVIEW",
+                }
+            )
             continue
 
         # Route through DownwardFlowEngine for pin tracing

@@ -3,14 +3,12 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from spec_manager.intake.quality.library_quality_validator import (
     DimensionScore,
     LibraryQualityReport,
     LibraryQualityValidator,
     validate_libraries,
 )
-
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -25,8 +23,7 @@ def phase0_output(tmp_path):
     # route_table.jsonl — 10 lines, all routed to lib-a
     route_table = output_dir / "route_table.jsonl"
     lines = [
-        json.dumps({"source_file": "spec.md", "line": i, "library_id": "lib-a"})
-        for i in range(10)
+        json.dumps({"source_file": "spec.md", "line": i, "library_id": "lib-a"}) for i in range(10)
     ]
     route_table.write_text("\n".join(lines))
 
@@ -37,10 +34,19 @@ def phase0_output(tmp_path):
 
     # libraries.json — two distinct libraries
     libs = output_dir / "libraries.json"
-    libs.write_text(json.dumps({"libraries": [
-        {"name": "AuthService", "description": "handles authentication and authorization"},
-        {"name": "PaymentProcessor", "description": "processes payments and refunds"},
-    ]}))
+    libs.write_text(
+        json.dumps(
+            {
+                "libraries": [
+                    {
+                        "name": "AuthService",
+                        "description": "handles authentication and authorization",
+                    },
+                    {"name": "PaymentProcessor", "description": "processes payments and refunds"},
+                ]
+            }
+        )
+    )
 
     return output_dir
 
@@ -65,10 +71,19 @@ def phase0_output_with_overlap(tmp_path):
     ledger.write_text("\n".join(entries))
 
     libs = output_dir / "libraries.json"
-    libs.write_text(json.dumps({"libraries": [
-        {"name": "AuthService", "description": "handles authentication and authorization"},
-        {"name": "PaymentProcessor", "description": "processes payments and refunds"},
-    ]}))
+    libs.write_text(
+        json.dumps(
+            {
+                "libraries": [
+                    {
+                        "name": "AuthService",
+                        "description": "handles authentication and authorization",
+                    },
+                    {"name": "PaymentProcessor", "description": "processes payments and refunds"},
+                ]
+            }
+        )
+    )
 
     return output_dir
 
@@ -81,8 +96,7 @@ def phase0_output_semantic_overlap(tmp_path):
 
     route_table = output_dir / "route_table.jsonl"
     lines = [
-        json.dumps({"source_file": "spec.md", "line": i, "library_id": "lib-a"})
-        for i in range(10)
+        json.dumps({"source_file": "spec.md", "line": i, "library_id": "lib-a"}) for i in range(10)
     ]
     route_table.write_text("\n".join(lines))
 
@@ -91,10 +105,22 @@ def phase0_output_semantic_overlap(tmp_path):
     ledger.write_text("\n".join(entries))
 
     libs = output_dir / "libraries.json"
-    libs.write_text(json.dumps({"libraries": [
-        {"name": "AuthServiceA", "description": "handles authentication and authorization for users"},
-        {"name": "AuthServiceB", "description": "handles authentication and authorization for admins"},
-    ]}))
+    libs.write_text(
+        json.dumps(
+            {
+                "libraries": [
+                    {
+                        "name": "AuthServiceA",
+                        "description": "handles authentication and authorization for users",
+                    },
+                    {
+                        "name": "AuthServiceB",
+                        "description": "handles authentication and authorization for admins",
+                    },
+                ]
+            }
+        )
+    )
 
     return output_dir
 
@@ -125,19 +151,23 @@ def test_dimension_score_advisory_mode():
 
 
 def test_report_gate_passed_all_gates_pass():
-    report = LibraryQualityReport(dimensions=[
-        DimensionScore(name="completeness", score=100.0, passed=True, mode="gate"),
-        DimensionScore(name="routing_overlap", score=100.0, passed=True, mode="gate"),
-        DimensionScore(name="dep_min", score=50.0, passed=False, mode="advisory"),
-    ])
+    report = LibraryQualityReport(
+        dimensions=[
+            DimensionScore(name="completeness", score=100.0, passed=True, mode="gate"),
+            DimensionScore(name="routing_overlap", score=100.0, passed=True, mode="gate"),
+            DimensionScore(name="dep_min", score=50.0, passed=False, mode="advisory"),
+        ]
+    )
     assert report.gate_passed is True
 
 
 def test_report_gate_passed_one_gate_fails():
-    report = LibraryQualityReport(dimensions=[
-        DimensionScore(name="completeness", score=100.0, passed=True, mode="gate"),
-        DimensionScore(name="routing_overlap", score=20.0, passed=False, mode="gate"),
-    ])
+    report = LibraryQualityReport(
+        dimensions=[
+            DimensionScore(name="completeness", score=100.0, passed=True, mode="gate"),
+            DimensionScore(name="routing_overlap", score=20.0, passed=False, mode="gate"),
+        ]
+    )
     assert report.gate_passed is False
 
 

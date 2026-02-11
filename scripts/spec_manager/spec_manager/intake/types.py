@@ -21,7 +21,9 @@ class RouteEntry:
     route_id: str  # unique ID, e.g. "R-000001"
     src: SourceSpan
     library: str  # library ID, e.g. "LIB-01"
-    category: str  # ANALYSIS | CONSTRAINTS | DETAIL/ALGORITHM | DETAIL/STORE | DETAIL/SHAPE | IGNORED
+    category: (
+        str  # ANALYSIS | CONSTRAINTS | DETAIL/ALGORITHM | DETAIL/STORE | DETAIL/SHAPE | IGNORED
+    )
     element_id: str  # e.g. "ALG-LIB01-001"
     notes: str = ""  # free-text from LLM explaining decision
     ref_stubs: list[str] = field(default_factory=list)  # unresolved cross-file references

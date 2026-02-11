@@ -10,7 +10,6 @@ from spec_manager.orchestration.review.findings_to_tickets import (
 
 
 class TestReviewFindingFromDict:
-
     def test_from_dict_populates_fields(self) -> None:
         data = {
             "category": "LOGIC",
@@ -37,7 +36,6 @@ class TestReviewFindingFromDict:
 
 
 class TestConversionResultDefaults:
-
     def test_defaults(self) -> None:
         r = ConversionResult()
         assert r.tickets == []
@@ -46,14 +44,15 @@ class TestConversionResultDefaults:
 
 
 class TestConvertFindingsLogic:
-
     def test_logic_finding_produces_ticket(self) -> None:
         result = convert_findings(
-            findings=[{
-                "category": "LOGIC",
-                "description": "Wrong calculation",
-                "files": ["calc.py"],
-            }],
+            findings=[
+                {
+                    "category": "LOGIC",
+                    "description": "Wrong calculation",
+                    "files": ["calc.py"],
+                }
+            ],
             active_layer="L1",
         )
         assert len(result.tickets) == 1
@@ -61,25 +60,28 @@ class TestConvertFindingsLogic:
 
     def test_logic_finding_routes_to_l1(self) -> None:
         result = convert_findings(
-            findings=[{
-                "category": "LOGIC",
-                "description": "Bug",
-                "files": ["x.py"],
-            }],
+            findings=[
+                {
+                    "category": "LOGIC",
+                    "description": "Bug",
+                    "files": ["x.py"],
+                }
+            ],
             active_layer="L1",
         )
         assert result.tickets[0].target_layer == "L1"
 
 
 class TestConvertFindingsUnderSpec:
-
     def test_under_spec_produces_event(self) -> None:
         result = convert_findings(
-            findings=[{
-                "category": "UNDER_SPEC",
-                "description": "Unclear behavior",
-                "files": ["x.py"],
-            }],
+            findings=[
+                {
+                    "category": "UNDER_SPEC",
+                    "description": "Unclear behavior",
+                    "files": ["x.py"],
+                }
+            ],
         )
         assert len(result.under_spec_events) == 1
         assert result.tickets == []
@@ -88,18 +90,19 @@ class TestConvertFindingsUnderSpec:
 
     def test_under_spec_with_multiple_files(self) -> None:
         result = convert_findings(
-            findings=[{
-                "category": "UNDER_SPEC",
-                "description": "Ambiguous",
-                "files": ["a.py", "b.py"],
-            }],
+            findings=[
+                {
+                    "category": "UNDER_SPEC",
+                    "description": "Ambiguous",
+                    "files": ["a.py", "b.py"],
+                }
+            ],
         )
         assert "a.py" in result.under_spec_events[0]["needed_for"]
         assert "b.py" in result.under_spec_events[0]["needed_for"]
 
 
 class TestConvertFindingsSkips:
-
     def test_skips_findings_with_no_category(self) -> None:
         result = convert_findings(
             findings=[

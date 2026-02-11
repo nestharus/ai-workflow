@@ -67,9 +67,7 @@ class EvidenceIndex:
         # Remove from entity index
         empty_keys = []
         for entity, entries in self.global_entity_index.items():
-            self.global_entity_index[entity] = [
-                (lid, pid) for lid, pid in entries if lid != lib_id
-            ]
+            self.global_entity_index[entity] = [(lid, pid) for lid, pid in entries if lid != lib_id]
             if not self.global_entity_index[entity]:
                 empty_keys.append(entity)
         for key in empty_keys:
@@ -82,9 +80,7 @@ class EvidenceIndex:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         data: dict[str, Any] = {
-            "specs": {
-                lib_id: spec.model_dump() for lib_id, spec in self.specs.items()
-            },
+            "specs": {lib_id: spec.model_dump() for lib_id, spec in self.specs.items()},
             "global_keyword_index": {
                 kw: [[lid, pid] for lid, pid in entries]
                 for kw, entries in self.global_keyword_index.items()
@@ -112,15 +108,11 @@ class EvidenceIndex:
 
         # Load global keyword index
         for kw, entries in data.get("global_keyword_index", {}).items():
-            index.global_keyword_index[kw] = [
-                (entry[0], entry[1]) for entry in entries
-            ]
+            index.global_keyword_index[kw] = [(entry[0], entry[1]) for entry in entries]
 
         # Load global entity index
         for ent, entries in data.get("global_entity_index", {}).items():
-            index.global_entity_index[ent] = [
-                (entry[0], entry[1]) for entry in entries
-            ]
+            index.global_entity_index[ent] = [(entry[0], entry[1]) for entry in entries]
 
         return index
 
@@ -168,8 +160,6 @@ def build_evidence_index(workspace_root: Path) -> EvidenceIndex:
             index.add_spec(spec)
             logger.info("Indexed hollowed spec for %s", spec.lib_id)
         except Exception as exc:
-            logger.warning(
-                "Failed to load hollowed spec from %s: %s", hollowed_path, exc
-            )
+            logger.warning("Failed to load hollowed spec from %s: %s", hollowed_path, exc)
 
     return index

@@ -143,14 +143,16 @@ class TradeoffAnalyzer:
             reasoning = decision_data.get("reasoning", "")
 
             if decision_text:
-                options.append(TradeoffOption(
-                    option_id="OPT-SYNTH",
-                    description=decision_text,
-                    pros=[reasoning] if reasoning else ["Synthesized from research findings"],
-                    cons=["Low confidence from research synthesis"],
-                    confidence=decision_confidence,
-                    source="web_research",
-                ))
+                options.append(
+                    TradeoffOption(
+                        option_id="OPT-SYNTH",
+                        description=decision_text,
+                        pros=[reasoning] if reasoning else ["Synthesized from research findings"],
+                        cons=["Low confidence from research synthesis"],
+                        confidence=decision_confidence,
+                        source="web_research",
+                    )
+                )
 
         # Parse findings for alternative options
         if findings_json:
@@ -163,25 +165,29 @@ class TradeoffAnalyzer:
                     if summary and summary != decision_text:
                         source = finding.get("source", "web_research")
                         relevance = finding.get("relevance", "")
-                        options.append(TradeoffOption(
-                            option_id=f"OPT-FIND-{i + 1:02d}",
-                            description=summary,
-                            pros=[relevance] if relevance else [],
-                            cons=["Individual finding; not synthesized"],
-                            confidence=max(0.1, decision_confidence - 0.1),
-                            source="web_research" if "http" in source else "inference",
-                        ))
+                        options.append(
+                            TradeoffOption(
+                                option_id=f"OPT-FIND-{i + 1:02d}",
+                                description=summary,
+                                pros=[relevance] if relevance else [],
+                                cons=["Individual finding; not synthesized"],
+                                confidence=max(0.1, decision_confidence - 0.1),
+                                source="web_research" if "http" in source else "inference",
+                            )
+                        )
 
         # Fallback: if no options were extracted, create a generic one
         if not options:
-            options.append(TradeoffOption(
-                option_id="OPT-DEFAULT",
-                description="Insufficient evidence to determine answer",
-                pros=[],
-                cons=["No research findings available"],
-                confidence=0.0,
-                source="inference",
-            ))
+            options.append(
+                TradeoffOption(
+                    option_id="OPT-DEFAULT",
+                    description="Insufficient evidence to determine answer",
+                    pros=[],
+                    cons=["No research findings available"],
+                    confidence=0.0,
+                    source="inference",
+                )
+            )
 
         # Pick the best
         best = max(options, key=lambda o: o.confidence)
@@ -192,8 +198,7 @@ class TradeoffAnalyzer:
             options=options,
             recommendation=best.description,
             recommendation_reasoning=(
-                f"Highest confidence option ({best.confidence:.0%}) "
-                f"from {best.source}"
+                f"Highest confidence option ({best.confidence:.0%}) from {best.source}"
             ),
             chosen_option_id=best.option_id,
         )

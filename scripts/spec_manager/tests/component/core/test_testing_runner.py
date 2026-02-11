@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import pytest
-
+from spec_manager.core.testing.registry import TestRunnerRegistry
 from spec_manager.core.testing.runner import (
     PytestRunner,
     TestFailure,
     TestRunResult,
 )
-from spec_manager.core.testing.registry import TestRunnerRegistry
-
 
 # ------------------------------------------------------------------
 # TestFailure dataclass
@@ -196,6 +194,7 @@ def test_registry_pick_with_pyproject(tmp_path):
 def test_registry_register_custom(tmp_path):
     class DummyRunner:
         runner_id = "dummy"
+
         def run(self, *, root, scope="SLICE", targets=None):
             return TestRunResult(passed=True, runner_id="dummy")
 

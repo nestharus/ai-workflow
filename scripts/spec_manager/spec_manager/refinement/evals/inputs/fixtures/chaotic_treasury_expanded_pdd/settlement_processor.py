@@ -33,12 +33,11 @@ class SettlementProcessor:
 
     def validate_instruction(self, instruction: SettlementInstruction) -> bool:
         """Validate settlement instruction fields."""
-        # Settlement instructions must contain counterparty ID, value date, currency pair, and notional amount
+        # Settlement instructions must contain counterparty ID,
+        # value date, currency pair, and notional amount
         pass
 
-    def process_netting(
-        self, instructions: list[SettlementInstruction]
-    ) -> list[dict[str, Any]]:
+    def process_netting(self, instructions: list[SettlementInstruction]) -> list[dict[str, Any]]:
         """Net instructions for same counterparty and value date."""
         # Netting threshold is $1,000,000 for same counterparty and value date
         # Instructions at or above netting threshold are processed gross
@@ -46,9 +45,7 @@ class SettlementProcessor:
         # Netted instructions carry both original constituent amounts and calculated net in payload
         pass
 
-    def convert_fx(
-        self, amount: Decimal, currency_pair: str
-    ) -> Decimal:
+    def convert_fx(self, amount: Decimal, currency_pair: str) -> Decimal:
         """Convert amount using FX rates."""
         # FX conversion uses ECB reference rate captured at T-1 with EUR triangulation fallback
         # FX rates older than 6 hours trigger a staleness alert
@@ -60,9 +57,7 @@ class SettlementProcessor:
         # Finality violations rejected and logged as audit events
         pass
 
-    def detect_duplicate(
-        self, instruction: SettlementInstruction
-    ) -> bool:
+    def detect_duplicate(self, instruction: SettlementInstruction) -> bool:
         """Detect duplicate instructions."""
         # Duplicate instructions within 5-second window are dropped
         pass

@@ -26,37 +26,99 @@ from spec_manager.labyrinth.generator.level_config import LevelConfig
 
 # Domain vocabulary for obfuscation
 RULE_VERBS = [
-    "reconcile", "cascade", "validate", "aggregate", "transform",
-    "dispatch", "evaluate", "normalize", "enrich", "classify",
-    "route", "filter", "merge", "split", "correlate",
-    "compute", "derive", "project", "reduce", "accumulate",
+    "reconcile",
+    "cascade",
+    "validate",
+    "aggregate",
+    "transform",
+    "dispatch",
+    "evaluate",
+    "normalize",
+    "enrich",
+    "classify",
+    "route",
+    "filter",
+    "merge",
+    "split",
+    "correlate",
+    "compute",
+    "derive",
+    "project",
+    "reduce",
+    "accumulate",
 ]
 
 RULE_NOUNS = [
-    "ledger_delta", "threshold_breach", "payment_batch", "credit_memo",
-    "invoice_line", "settlement_window", "margin_call", "risk_score",
-    "compliance_flag", "audit_trail", "revenue_stream", "cost_center",
-    "budget_variance", "accrual_entry", "depreciation_schedule",
-    "interest_rate", "exchange_differential", "tax_obligation",
-    "withholding_amount", "amortization_table", "capital_allocation",
-    "liquidity_ratio", "solvency_metric", "exposure_limit",
-    "counterparty_risk", "collateral_value", "mark_to_market",
-    "position_delta", "hedge_effectiveness", "basis_spread",
-    "yield_curve", "duration_gap",
+    "ledger_delta",
+    "threshold_breach",
+    "payment_batch",
+    "credit_memo",
+    "invoice_line",
+    "settlement_window",
+    "margin_call",
+    "risk_score",
+    "compliance_flag",
+    "audit_trail",
+    "revenue_stream",
+    "cost_center",
+    "budget_variance",
+    "accrual_entry",
+    "depreciation_schedule",
+    "interest_rate",
+    "exchange_differential",
+    "tax_obligation",
+    "withholding_amount",
+    "amortization_table",
+    "capital_allocation",
+    "liquidity_ratio",
+    "solvency_metric",
+    "exposure_limit",
+    "counterparty_risk",
+    "collateral_value",
+    "mark_to_market",
+    "position_delta",
+    "hedge_effectiveness",
+    "basis_spread",
+    "yield_curve",
+    "duration_gap",
 ]
 
 RULE_GROUPS = [
-    "ledger", "payments", "compliance", "risk", "reporting",
-    "settlement", "treasury", "credit", "trading", "operations",
-    "reconciliation", "valuation", "derivatives", "fixed_income",
-    "equity", "fx",
+    "ledger",
+    "payments",
+    "compliance",
+    "risk",
+    "reporting",
+    "settlement",
+    "treasury",
+    "credit",
+    "trading",
+    "operations",
+    "reconciliation",
+    "valuation",
+    "derivatives",
+    "fixed_income",
+    "equity",
+    "fx",
 ]
 
 FIELD_NAMES = [
-    "amount", "type", "currency", "status", "priority",
-    "category", "region", "department", "account_id", "entity_id",
-    "counterparty", "instrument", "maturity_date", "rate",
-    "volume", "notional",
+    "amount",
+    "type",
+    "currency",
+    "status",
+    "priority",
+    "category",
+    "region",
+    "department",
+    "account_id",
+    "entity_id",
+    "counterparty",
+    "instrument",
+    "maturity_date",
+    "rate",
+    "volume",
+    "notional",
 ]
 
 FIELD_VALUES: dict[str, list[Any]] = {
@@ -70,10 +132,22 @@ FIELD_VALUES: dict[str, list[Any]] = {
 }
 
 OUTPUT_FIELDS = [
-    "tax_rate", "route", "risk_level", "approval_status", "fee_amount",
-    "discount_rate", "penalty", "margin_requirement", "reserve_amount",
-    "adjusted_amount", "net_value", "gross_value", "accrued_interest",
-    "settlement_amount", "clearing_fee", "commission",
+    "tax_rate",
+    "route",
+    "risk_level",
+    "approval_status",
+    "fee_amount",
+    "discount_rate",
+    "penalty",
+    "margin_requirement",
+    "reserve_amount",
+    "adjusted_amount",
+    "net_value",
+    "gross_value",
+    "accrued_interest",
+    "settlement_amount",
+    "clearing_fee",
+    "commission",
 ]
 
 
@@ -113,7 +187,7 @@ class RuleFactory:
         self._rule_counter += 1
         rule_id = f"RULE-L{self._config.level}-{self._rule_counter:04d}"
         name = self._generate_name()
-        group = self._rng.choice(RULE_GROUPS[:self._config.num_rule_groups])
+        group = self._rng.choice(RULE_GROUPS[: self._config.num_rule_groups])
 
         conditions = self._generate_conditions()
         transform = self._generate_transform(rule_id)
@@ -130,9 +204,7 @@ class RuleFactory:
             output_topic=output_topic,
         )
 
-    def _generate_composite_rule(
-        self, available_rules: list[Rule]
-    ) -> CompositeRule:
+    def _generate_composite_rule(self, available_rules: list[Rule]) -> CompositeRule:
         """Generate a composite rule referencing existing rules."""
         self._rule_counter += 1
         rule_id = f"RULE-L{self._config.level}-{self._rule_counter:04d}"
@@ -169,9 +241,7 @@ class RuleFactory:
     def _generate_conditions(self) -> ConditionGroup:
         """Generate a condition group with random complexity."""
         num_conditions = self._rng.randint(1, self._config.max_conditions_per_rule)
-        group = ConditionGroup(
-            logic=self._rng.choice([LogicOperator.AND, LogicOperator.OR])
-        )
+        group = ConditionGroup(logic=self._rng.choice([LogicOperator.AND, LogicOperator.OR]))
 
         for _ in range(num_conditions):
             field_name = self._rng.choice(FIELD_NAMES)
@@ -182,11 +252,15 @@ class RuleFactory:
                 value = self._rng.choice(FIELD_VALUES[field_name])
             else:
                 # Numeric field
-                operator = self._rng.choice([
-                    ConditionOperator.GT, ConditionOperator.GTE,
-                    ConditionOperator.LT, ConditionOperator.LTE,
-                    ConditionOperator.EQ,
-                ])
+                operator = self._rng.choice(
+                    [
+                        ConditionOperator.GT,
+                        ConditionOperator.GTE,
+                        ConditionOperator.LT,
+                        ConditionOperator.LTE,
+                        ConditionOperator.EQ,
+                    ]
+                )
                 value = self._rng.randint(100, 100000)
 
             group.add(Condition(field_name=field_name, operator=operator, value=value))
@@ -197,9 +271,7 @@ class RuleFactory:
         """Generate a transform function for a rule."""
         # Pick random output fields and values
         num_outputs = self._rng.randint(1, 3)
-        output_fields = self._rng.sample(
-            OUTPUT_FIELDS, min(num_outputs, len(OUTPUT_FIELDS))
-        )
+        output_fields = self._rng.sample(OUTPUT_FIELDS, min(num_outputs, len(OUTPUT_FIELDS)))
 
         # Pre-compute the output values
         outputs: dict[str, Any] = {}

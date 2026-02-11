@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-
 DOMESTIC_TOLERANCE = Decimal("0.0001")
 CROSS_BORDER_TOLERANCE = Decimal("0.0005")
 AUTO_RESOLVE_THRESHOLD_USD = Decimal("1000")
@@ -31,9 +30,7 @@ class ReconciliationEntry:
 class ReconciliationService:
     """Ledger reconciliation engine."""
 
-    def match_entries(
-        self, settlement: dict[str, Any], ledger: ReconciliationEntry
-    ) -> bool:
+    def match_entries(self, settlement: dict[str, Any], ledger: ReconciliationEntry) -> bool:
         """Match settlement against ledger entry."""
         # Reconciliation matching on exact amount, counterparty, and value date
         # Domestic tolerance band of 0.01%

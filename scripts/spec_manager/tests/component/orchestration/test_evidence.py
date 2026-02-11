@@ -32,7 +32,6 @@ from spec_manager.orchestration.evidence import (
     VerificationRef,
 )
 
-
 # ======================================================================
 # Ref type construction
 # ======================================================================

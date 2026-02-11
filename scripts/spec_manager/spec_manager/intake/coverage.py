@@ -85,8 +85,11 @@ def check_coverage(
                 covered_lines += end - start + 1
                 ledger.append(
                     CoverageLedgerEntry(
-                        file=rel_path, start=start, end=end,
-                        status="routed", route_ids=sorted(route_ids),
+                        file=rel_path,
+                        start=start,
+                        end=end,
+                        status="routed",
+                        route_ids=sorted(route_ids),
                     )
                 )
             else:
@@ -95,7 +98,10 @@ def check_coverage(
                     i += 1
                 end = i - 1
                 entry = CoverageLedgerEntry(
-                    file=rel_path, start=start, end=end, status="uncovered",
+                    file=rel_path,
+                    start=start,
+                    end=end,
+                    status="uncovered",
                 )
                 uncovered_entries.append(entry)
 
@@ -159,13 +165,15 @@ def _classify_uncovered(
         for line_num in range(entry.start, entry.end + 1):
             if 1 <= line_num <= len(lines):
                 content_lines.append(f"{line_num}: {lines[line_num - 1]}")
-        uncovered_payload.append({
-            "id": f"{entry.file}:{entry.start}-{entry.end}",
-            "file": entry.file,
-            "start": entry.start,
-            "end": entry.end,
-            "content": content_lines,
-        })
+        uncovered_payload.append(
+            {
+                "id": f"{entry.file}:{entry.start}-{entry.end}",
+                "file": entry.file,
+                "start": entry.start,
+                "end": entry.end,
+                "content": content_lines,
+            }
+        )
 
     # Iteration loop: generate filter, review, refine
     current_payload = uncovered_payload
@@ -228,8 +236,7 @@ def _classify_uncovered(
             verdict = item.get("verdict")
             if verdict not in ("noise", "content"):
                 raise ValueError(
-                    f"Invalid verdict {verdict!r} for {item_id}. "
-                    f"Must be 'noise' or 'content'."
+                    f"Invalid verdict {verdict!r} for {item_id}. Must be 'noise' or 'content'."
                 )
             classifications[item_id] = verdict
             reasons[item_id] = item.get("reason", "")
@@ -243,8 +250,7 @@ def _classify_uncovered(
 
         # Build next iteration payload with only items marked "content"
         current_payload = [
-            p for p in current_payload
-            if classifications.get(p["id"], "content") == "content"
+            p for p in current_payload if classifications.get(p["id"], "content") == "content"
         ]
         if not current_payload:
             break
@@ -255,14 +261,23 @@ def _classify_uncovered(
         entry_id = f"{entry.file}:{entry.start}-{entry.end}"
         verdict = classifications.get(entry_id, "content")
         if verdict == "noise":
-            classified.append(CoverageLedgerEntry(
-                file=entry.file, start=entry.start, end=entry.end,
-                status="ignored", ignore_reason=reasons.get(entry_id, "formatting"),
-            ))
+            classified.append(
+                CoverageLedgerEntry(
+                    file=entry.file,
+                    start=entry.start,
+                    end=entry.end,
+                    status="ignored",
+                    ignore_reason=reasons.get(entry_id, "formatting"),
+                )
+            )
         else:
-            classified.append(CoverageLedgerEntry(
-                file=entry.file, start=entry.start, end=entry.end,
-                status="uncovered",
-            ))
+            classified.append(
+                CoverageLedgerEntry(
+                    file=entry.file,
+                    start=entry.start,
+                    end=entry.end,
+                    status="uncovered",
+                )
+            )
 
     return classified

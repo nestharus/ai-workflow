@@ -17,11 +17,9 @@ class BaselineScorer:
         Returns:
             Dict with rule_accuracy, integration_completeness, and broken flag.
         """
-        rule_accuracy = (
-            results.rule_tests_passed / max(1, results.rule_tests_total)
-        )
-        integration_completeness = (
-            results.integration_tests_passed / max(1, results.integration_tests_total)
+        rule_accuracy = results.rule_tests_passed / max(1, results.rule_tests_total)
+        integration_completeness = results.integration_tests_passed / max(
+            1, results.integration_tests_total
         )
 
         # "Broken" means BOTH dimensions fail

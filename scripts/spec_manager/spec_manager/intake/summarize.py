@@ -38,11 +38,7 @@ def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
             logger.warning("Skipping empty file: %s", source_file.name)
             continue
 
-        prompt = (
-            "## INPUT DATA\n\n"
-            f"File: {source_file.relative_to(source_dir)}\n\n"
-            f"{content}"
-        )
+        prompt = f"## INPUT DATA\n\nFile: {source_file.relative_to(source_dir)}\n\n{content}"
 
         last_json_error: json.JSONDecodeError | None = None
         for attempt in range(3):

@@ -19,6 +19,7 @@ class BaselineConfig:
         output_dir: Directory for outputs.
         timeout_seconds: Max time for model execution.
     """
+
     level: int = 1
     seed: int = 42
     model: str = "glm"

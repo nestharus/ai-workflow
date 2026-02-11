@@ -109,10 +109,9 @@ class RefinementExecutor:
             )
 
         except Exception as exc:
-            logger.error(
-                "Failed to execute %s operation: %s",
+            logger.exception(
+                "Failed to execute %s operation",
                 operation.op_type,
-                exc,
             )
             return ExecutionResult(
                 operation=operation,
@@ -194,9 +193,7 @@ class RefinementExecutor:
 
                     updated = replace(atom, vertical_slice=new_slice.slice_id)
                     self.branch_manager.register_atom(updated)
-                    changes.append(
-                        f"Moved '{entity_id}' to new slice '{new_slice.slice_id}'."
-                    )
+                    changes.append(f"Moved '{entity_id}' to new slice '{new_slice.slice_id}'.")
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to create split slice '{new_slice_name}': {exc}"
@@ -221,9 +218,7 @@ class RefinementExecutor:
 
                     updated = replace(atom, vertical_slice=target)
                     self.branch_manager.register_atom(updated)
-                    changes.append(
-                        f"Merged '{atom.atom_id}' from '{source_id}' to '{target}'."
-                    )
+                    changes.append(f"Merged '{atom.atom_id}' from '{source_id}' to '{target}'.")
 
         return changes
 
@@ -257,9 +252,7 @@ class RefinementExecutor:
 
                 updated = replace(atom, vertical_slice=None)
                 self.branch_manager.register_atom(updated)
-                changes.append(
-                    f"Unassigned '{atom.atom_id}' from removed slice '{source}'."
-                )
+                changes.append(f"Unassigned '{atom.atom_id}' from removed slice '{source}'.")
 
         return changes
 
@@ -270,9 +263,7 @@ class RefinementExecutor:
         for entity_id in op.entities:
             atom = self.branch_manager.get_atom(entity_id)
             if atom is None:
-                logger.warning(
-                    "Entity '%s' not found, skipping modify.", entity_id
-                )
+                logger.warning("Entity '%s' not found, skipping modify.", entity_id)
                 continue
             # Modifications would be applied here based on op details
             changes.append(f"Modified metadata for '{entity_id}'.")

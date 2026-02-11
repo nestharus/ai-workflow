@@ -115,12 +115,18 @@ class TemplateStrategyProposer:
         self.templates[FailureMode.VAGUE_ENTITY_REFERENCE] = StrategyDefinition(
             name="translation_entity_resolution",
             purpose="Resolve vague references in pseudocode comments to specific function names",
-            risk_addressed="Translation failure from comments referencing 'the algorithm' without specifics",
+            risk_addressed=(
+                "Translation failure from comments referencing 'the algorithm' without specifics"
+            ),
             version="1.0",
             phases=["translation"],
             when_conditions=["comment contains vague references", "function context available"],
             tools_used=["reference_resolver", "call_graph_analyzer"],
-            implementation_class="spec_manager.strategies.implementations.translation_entity_resolution.TranslationEntityResolutionStrategy",
+            implementation_class=(
+                "spec_manager.strategies.implementations"
+                ".translation_entity_resolution"
+                ".TranslationEntityResolutionStrategy"
+            ),
             risk_category="vague_references",
             metadata={
                 "status": "experimental",
@@ -475,9 +481,7 @@ class EvolutionStateStore:
             "fixture": gap.fixture,
             "strategies_attempted": gap.strategies_attempted,
             "timestamp": gap.timestamp.isoformat(),
-            "proposed_strategy": (
-                gap.proposed_strategy.name if gap.proposed_strategy else None
-            ),
+            "proposed_strategy": (gap.proposed_strategy.name if gap.proposed_strategy else None),
         }
 
         # Include translation context if present
@@ -604,4 +608,3 @@ class EvolutionStateStore:
             yaml.dump(data, f, default_flow_style=False)
 
         return path
-

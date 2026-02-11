@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -195,31 +194,35 @@ def _source_analysis_to_dict(analysis: SourceAnalysis) -> dict[str, Any]:
     """Serialize SourceAnalysis to a JSON-compatible dict."""
     functions = []
     for f in analysis.functions:
-        functions.append({
-            "name": f.name,
-            "qualified_name": f.qualified_name,
-            "start_line": f.start_line,
-            "end_line": f.end_line,
-            "is_async": f.is_async,
-            "is_stub": f.is_stub,
-            "stub_reason": f.stub_reason,
-            "has_docstring": f.has_docstring,
-            "docstring": f.docstring,
-            "decorators": list(f.decorators),
-            "args": list(f.args),
-            "return_annotation": f.return_annotation,
-            "body_start_line": f.body_start_line,
-            "body_line_count": f.body_line_count,
-        })
+        functions.append(
+            {
+                "name": f.name,
+                "qualified_name": f.qualified_name,
+                "start_line": f.start_line,
+                "end_line": f.end_line,
+                "is_async": f.is_async,
+                "is_stub": f.is_stub,
+                "stub_reason": f.stub_reason,
+                "has_docstring": f.has_docstring,
+                "docstring": f.docstring,
+                "decorators": list(f.decorators),
+                "args": list(f.args),
+                "return_annotation": f.return_annotation,
+                "body_start_line": f.body_start_line,
+                "body_line_count": f.body_line_count,
+            }
+        )
 
     comments = []
     for c in analysis.comments:
-        comments.append({
-            "line": c.line,
-            "col_offset": c.col_offset,
-            "text": c.text,
-            "raw": c.raw,
-            "enclosing_function": c.enclosing_function,
-        })
+        comments.append(
+            {
+                "line": c.line,
+                "col_offset": c.col_offset,
+                "text": c.text,
+                "raw": c.raw,
+                "enclosing_function": c.enclosing_function,
+            }
+        )
 
     return {"functions": functions, "comments": comments}

@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, call
 
 import pytest
-
 from spec_manager.orchestration.promotion_loop import (
     PromotionLoop,
     RunContext,
@@ -22,7 +21,6 @@ from spec_manager.orchestration.promotion_scheduler import (
     SchedulerConfig,
     SchedulerResult,
 )
-
 
 # ======================================================================
 # Helpers
@@ -432,7 +430,7 @@ class TestPromotionSchedulerRunWithGapPriority:
         refs = [_make_slice_ref("low"), _make_slice_ref("high")]
         gap_counts = {"low": 1, "high": 10}
 
-        result = scheduler.run(refs, _make_run_context(), gap_counts=gap_counts)
+        scheduler.run(refs, _make_run_context(), gap_counts=gap_counts)
 
         # Verify run_slices was called with reordered refs
         actual_call_refs = mock_loop.run_slices.call_args[0][0]

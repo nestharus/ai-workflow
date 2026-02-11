@@ -6,7 +6,6 @@ and handles reference-data unavailability with retry logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 VALIDATION_RETRY_INTERVAL_SECONDS = 10
@@ -21,9 +20,7 @@ class TransactionValidator:
         # Schema validation rejects instructions with invalid currency codes
         pass
 
-    def retry_on_reference_data_unavailable(
-        self, instruction: dict[str, Any]
-    ) -> bool:
+    def retry_on_reference_data_unavailable(self, instruction: dict[str, Any]) -> bool:
         """Retry validation when reference data is unavailable."""
         # Validation retries every 10 seconds for up to 2 minutes when reference-data unavailable
         pass

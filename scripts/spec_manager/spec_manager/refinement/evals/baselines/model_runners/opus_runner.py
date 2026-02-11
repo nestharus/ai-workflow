@@ -79,9 +79,7 @@ and write its helper file.
 class OpusRunner:
     """Runs Opus with full tool access so it can explore files and use sub-agents."""
 
-    def invoke(
-        self, spec_text: str, codebase_path: Path, workspace: Path
-    ) -> ModelOutput:
+    def invoke(self, spec_text: str, codebase_path: Path, workspace: Path) -> ModelOutput:
         """Invoke Opus with a short prompt pointing to spec + source files.
 
         Instead of inlining everything in the prompt, copies the labyrinth

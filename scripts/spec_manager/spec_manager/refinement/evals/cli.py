@@ -1,10 +1,12 @@
 """CLI commands for evaluation framework.
 
 Commands:
-    eval run     Run evaluation on specs
-    eval resume  Resume an interrupted evaluation
-    eval report  Generate report from a completed run
-    eval list    List available spec fixtures
+    eval run                        Run evaluation on specs
+    eval resume                     Resume an interrupted evaluation
+    eval report                     Generate report from a completed run
+    eval list                       List available spec fixtures
+    eval labyrinth <cmd>            Labyrinth evaluation framework
+    eval orchestration <cmd>        Orchestration-level QA (PromotionLoop / PddLifecycle)
 """
 
 from __future__ import annotations
@@ -473,6 +475,60 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     p_lab_research.add_argument("--level", type=int, default=1, help="Complexity level (1+)")
     p_lab_research.add_argument("--seed", type=int, default=42, help="Random seed")
 
+    # --- Orchestration commands ---
+
+    # eval orchestration (sub-subcommand group)
+    p_orch = eval_subparsers.add_parser(
+        "orchestration",
+        help="Orchestration-level evaluation",
+        description="Step-by-step QA for PromotionLoop and PddLifecycle",
+    )
+    orch_sub = p_orch.add_subparsers(dest="orchestration_command", required=True)
+
+    # eval orchestration setup
+    p_orch_setup = orch_sub.add_parser("setup", help="Set up eval workspace")
+    p_orch_setup.add_argument("--run-id", default="orchestration-qa", help="Run ID")
+
+    # eval orchestration slices
+    p_orch_slices = orch_sub.add_parser("slices", help="List available slices")
+    p_orch_slices.add_argument("--layer", required=True, choices=["l1", "l2", "l3"])
+    p_orch_slices.add_argument("--run-id", default="orchestration-qa")
+
+    # eval orchestration loop
+    p_orch_loop = orch_sub.add_parser("loop", help="Run PromotionLoop on a single slice")
+    p_orch_loop.add_argument("--layer", required=True, choices=["l1", "l2", "l3"])
+    p_orch_loop.add_argument("--slice", required=True, help="Slice ID")
+    p_orch_loop.add_argument("--run-id", default="orchestration-qa")
+
+    # eval orchestration layer
+    p_orch_layer = orch_sub.add_parser("layer", help="Run full layer via PddLifecycle")
+    p_orch_layer.add_argument("--layer", required=True, choices=["l1", "l2", "l3"])
+    p_orch_layer.add_argument("--run-id", default="orchestration-qa")
+
+    # eval orchestration transition
+    p_orch_transition = orch_sub.add_parser("transition", help="Run layer transition")
+    p_orch_transition.add_argument(
+        "--from-layer", required=True, choices=["l1", "l2"], dest="from_layer"
+    )
+    p_orch_transition.add_argument(
+        "--to-layer", required=True, choices=["l2", "l3"], dest="to_layer"
+    )
+    p_orch_transition.add_argument("--run-id", default="orchestration-qa")
+
+    # eval orchestration scoring
+    p_orch_scoring = orch_sub.add_parser("scoring", help="Run scoring on results")
+    p_orch_scoring.add_argument("--results-file", required=True, help="Path to results JSON file")
+    p_orch_scoring.add_argument("--run-id", default="orchestration-qa")
+
+    # eval orchestration report
+    p_orch_report = orch_sub.add_parser("report", help="Generate final report")
+    p_orch_report.add_argument("--results-file", required=True, help="Path to results JSON file")
+    p_orch_report.add_argument("--run-id", default="orchestration-qa")
+
+    # eval orchestration full
+    p_orch_full = orch_sub.add_parser("full", help="Run full PddLifecycle.run() pipeline")
+    p_orch_full.add_argument("--run-id", default="orchestration-qa")
+
 
 def cmd_labyrinth_build(args: argparse.Namespace) -> int:
     """Build a labyrinth instance."""
@@ -697,6 +753,204 @@ def cmd_labyrinth_research(args: argparse.Namespace) -> int:
     )
 
 
+# --- Orchestration command handlers ---
+
+
+def cmd_orchestration_setup(args: argparse.Namespace) -> int:
+    """Set up orchestration eval workspace."""
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        setup_orchestration_workspace,
+    )
+
+    manager, workspace_path = setup_orchestration_workspace(run_id=args.run_id)
+    print(f"Workspace created: {workspace_path}")
+    print(f"Run ID: {manager.run_id}")
+    return 0
+
+
+def cmd_orchestration_slices(args: argparse.Namespace) -> int:
+    """List available slices for a layer."""
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        discover_eval_slices,
+        setup_orchestration_workspace,
+    )
+
+    manager, _ws = setup_orchestration_workspace(run_id=args.run_id)
+    slices = discover_eval_slices(manager=manager, layer=args.layer)
+    print(f"Layer {args.layer} slices ({len(slices)}):")
+    for s in slices:
+        print(f"  - {s['slice_id']} (worktree: {s['worktree_path']})")
+    return 0
+
+
+def cmd_orchestration_loop(args: argparse.Namespace) -> int:
+    """Run PromotionLoop on a single slice."""
+    import json
+
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        run_promotion_loop_slice,
+        setup_orchestration_workspace,
+    )
+
+    manager, workspace_path = setup_orchestration_workspace(run_id=args.run_id)
+    result = run_promotion_loop_slice(
+        manager=manager,
+        layer=args.layer,
+        slice_id=args.slice,
+    )
+    print(f"Slice: {result['slice_id']}")
+    print(f"Status: {result['status']}")
+    print(f"Iterations: {result['iterations']}")
+    print(f"Remaining gaps: {result['remaining_gaps']}")
+    print(f"Demotion tickets: {result['demotion_count']}")
+    print(f"Duration: {result['duration_ms']:.0f}ms")
+    if result["error"]:
+        print(f"Error: {result['error']}")
+
+    result_path = workspace_path / f"eval_loop_{args.layer}_{args.slice}.json"
+    result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(f"Result saved: {result_path}")
+    return 0
+
+
+def cmd_orchestration_layer(args: argparse.Namespace) -> int:
+    """Run full layer evaluation via PddLifecycle._run_layer()."""
+    import json
+
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        run_lifecycle_layer,
+        setup_orchestration_workspace,
+    )
+
+    manager, workspace_path = setup_orchestration_workspace(run_id=args.run_id)
+    result = run_lifecycle_layer(manager=manager, layer=args.layer)
+
+    slices = result.get("slices", {}).get("slices", [])
+    print(f"Layer {args.layer} results ({len(slices)} slices):")
+    for s in slices:
+        line = f"  {s['slice_id']}: {s['status']}"
+        if s.get("iterations"):
+            line += f" ({s['iterations']} iterations)"
+        print(line)
+    print(f"Duration: {result.get('duration_ms', 0):.0f}ms")
+
+    results_path = workspace_path / f"eval_layer_{args.layer}.json"
+    results_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(f"Results saved: {results_path}")
+    return 0
+
+
+def cmd_orchestration_transition(args: argparse.Namespace) -> int:
+    """Run layer transition evaluation."""
+    import json
+
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        run_lifecycle_transition,
+        setup_orchestration_workspace,
+    )
+
+    manager, workspace_path = setup_orchestration_workspace(run_id=args.run_id)
+    result = run_lifecycle_transition(
+        manager=manager,
+        from_layer=args.from_layer,
+        to_layer=args.to_layer,
+    )
+    stuck = result.get("transition_stuck", False)
+    rounds = len(result.get("rework_rounds", []))
+    print(f"Transition {args.from_layer} -> {args.to_layer}:")
+    print(f"  Stuck: {stuck}")
+    print(f"  Rework rounds: {rounds}")
+    print(f"  Duration: {result.get('duration_ms', 0):.0f}ms")
+    if result.get("error"):
+        print(f"  Error: {result['error']}")
+
+    result_path = workspace_path / f"eval_transition_{args.from_layer}_{args.to_layer}.json"
+    result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(f"Result saved: {result_path}")
+    return 0
+
+
+def cmd_orchestration_scoring(args: argparse.Namespace) -> int:
+    """Run scoring on orchestration results."""
+    import json
+
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        run_scoring,
+        setup_orchestration_workspace,
+    )
+
+    manager, _ws = setup_orchestration_workspace(run_id=args.run_id)
+    results_data = json.loads(Path(args.results_file).read_text(encoding="utf-8"))
+    scorecard = run_scoring(manager=manager, run_results=results_data)
+    print("Scorecard:")
+    print(f"  Hard gates passed: {scorecard['hard_gates_passed']}/{scorecard['hard_gates_total']}")
+    print(f"  Overall: {'PASS' if scorecard['overall_pass'] else 'FAIL'}")
+    print(f"  Summary: {scorecard['summary']}")
+    print(f"  Scores: {scorecard['scores_path']}")
+    print(f"  Markdown: {scorecard['scorecard_md_path']}")
+    return 0
+
+
+def cmd_orchestration_report(args: argparse.Namespace) -> int:
+    """Generate final orchestration report."""
+    import json
+
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        run_final_report,
+        setup_orchestration_workspace,
+    )
+
+    manager, _ws = setup_orchestration_workspace(run_id=args.run_id)
+    results_data = json.loads(Path(args.results_file).read_text(encoding="utf-8"))
+    report_paths = run_final_report(manager=manager, run_results=results_data)
+    print("Reports generated:")
+    for label, path in report_paths.items():
+        print(f"  {label}: {path}")
+    return 0
+
+
+def cmd_orchestration_full(args: argparse.Namespace) -> int:
+    """Run full orchestration eval pipeline via PddLifecycle.run()."""
+    import json
+
+    from spec_manager.refinement.evals.phase_evals.orchestration import (
+        run_full_pipeline,
+        setup_orchestration_workspace,
+    )
+
+    print("=" * 60)
+    print("ORCHESTRATION EVAL: FULL PIPELINE")
+    print("=" * 60)
+
+    manager, workspace_path = setup_orchestration_workspace(run_id=args.run_id)
+    print(f"Workspace: {workspace_path}")
+    print(f"Run ID: {manager.run_id}")
+
+    result = run_full_pipeline(manager=manager)
+
+    # Display per-layer results
+    for layer_key in ("l1", "l2", "l3"):
+        layer_data = result.get(layer_key, {})
+        slices = layer_data.get("slices", {}).get("slices", [])
+        print(f"\n--- {layer_key.upper()} ({len(slices)} slices) ---")
+        for s in slices:
+            print(f"  {s['slice_id']}: {s['status']}")
+
+    # Display scorecard
+    scorecard = result.get("scorecard", {})
+    print("\n--- Scorecard ---")
+    print(f"  Overall: {'PASS' if scorecard.get('overall_pass') else 'FAIL'}")
+    print(f"  Summary: {scorecard.get('summary', '')}")
+
+    # Save results
+    results_path = workspace_path / "eval_full_results.json"
+    results_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+    print(f"\nResults saved: {results_path}")
+    print(f"Duration: {result.get('duration_ms', 0):.0f}ms")
+
+    return 0 if scorecard.get("overall_pass") else 1
+
+
 def handle_eval_command(args: argparse.Namespace) -> int:
     """Handle eval subcommand dispatch.
 
@@ -723,6 +977,19 @@ def handle_eval_command(args: argparse.Namespace) -> int:
             "research": cmd_labyrinth_research,
         }
         return labyrinth_commands[args.labyrinth_command](args)
+
+    if args.eval_command == "orchestration":
+        orchestration_commands = {
+            "setup": cmd_orchestration_setup,
+            "slices": cmd_orchestration_slices,
+            "loop": cmd_orchestration_loop,
+            "layer": cmd_orchestration_layer,
+            "transition": cmd_orchestration_transition,
+            "scoring": cmd_orchestration_scoring,
+            "report": cmd_orchestration_report,
+            "full": cmd_orchestration_full,
+        }
+        return orchestration_commands[args.orchestration_command](args)
 
     return commands[args.eval_command](args)
 

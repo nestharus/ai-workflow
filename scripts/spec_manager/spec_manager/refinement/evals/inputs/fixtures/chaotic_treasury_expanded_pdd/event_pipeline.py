@@ -7,7 +7,6 @@ dead-letter queue management, and transactional publishing guarantees.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 MAX_PAYLOAD_BYTES = 256 * 1024
 RETRY_BASE_SECONDS = 1

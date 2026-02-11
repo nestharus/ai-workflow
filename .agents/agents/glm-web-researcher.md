@@ -1,6 +1,6 @@
 ---
 description: Searches the web via Firecrawl and summarizes findings for ambiguity resolution
-model: opencode-glm
+model: glm
 output_format: json
 ---
 

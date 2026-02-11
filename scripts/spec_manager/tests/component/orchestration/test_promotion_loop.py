@@ -7,10 +7,9 @@ and run_slices() multi-slice processing.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from spec_manager.orchestration.demotion import DemotionTicket
 from spec_manager.orchestration.evidence import (
     EvidenceBundle,
@@ -37,7 +36,6 @@ from spec_manager.orchestration.promotion_loop import (
     VerifyStep,
 )
 
-
 # ======================================================================
 # Helpers
 # ======================================================================
@@ -59,9 +57,7 @@ class PersistentGapsStep:
     name = "PERSISTENT_GAPS"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        bundle.gaps = GapReportRef(
-            open_gaps=[{"file": "stub.py", "kind": "unimplemented"}]
-        )
+        bundle.gaps = GapReportRef(open_gaps=[{"file": "stub.py", "kind": "unimplemented"}])
         return StepResult(status="OK")
 
 
@@ -72,9 +68,7 @@ class BlockingStep:
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         bundle.implementation = ImplementationRef(
-            under_spec_events=[
-                {"kind": "MISSING_CONSTRAINT", "question": "What should X do?"}
-            ]
+            under_spec_events=[{"kind": "MISSING_CONSTRAINT", "question": "What should X do?"}]
         )
         bundle.status = "BLOCKED"
         return StepResult(
@@ -165,7 +159,9 @@ class TestCollectBaselineStep:
             slice_id="s1",
         )
         bundle = EvidenceBundle(
-            run_id="r1", slice_id="s1", iteration=1,
+            run_id="r1",
+            slice_id="s1",
+            iteration=1,
             workspace_root=str(tmp_path),
         )
 
@@ -316,14 +312,18 @@ class TestUnderSpecCheckStep:
         constraints_dir = tmp_path / "analysis" / "constraints"
         constraints_dir.mkdir(parents=True)
         (constraints_dir / "test-slice.json").write_text(
-            json.dumps([{
-                "constraint_id": "evt-1",
-                "question": "Which format?",
-                "answer": "Use JSON format for all data exchange.",
-                "source": "user",
-                "confidence": 1.0,
-                "validated": True,
-            }]),
+            json.dumps(
+                [
+                    {
+                        "constraint_id": "evt-1",
+                        "question": "Which format?",
+                        "answer": "Use JSON format for all data exchange.",
+                        "source": "user",
+                        "confidence": 1.0,
+                        "validated": True,
+                    }
+                ]
+            ),
             encoding="utf-8",
         )
 
@@ -340,8 +340,13 @@ class TestUnderSpecCheckStep:
 
         assert result.status == "OK"
 
-    def test_uncovered_events_return_blocked(self, tmp_path: Path) -> None:
+    @patch(
+        "spec_manager.refinement.interactive.research.coordinator.run_agent",
+        side_effect=RuntimeError("No LLM in test"),
+    )
+    def test_uncovered_events_return_blocked(self, _mock_agent, tmp_path: Path) -> None:
         """UnderSpecCheckStep with no matching constraints returns BLOCKED."""
+
         ctx = SliceContext(
             slice_id="test-slice",
             workspace_root=str(tmp_path),
@@ -467,6 +472,7 @@ class TestPromotionLoopRunSliceWithGaps:
             run_id="run-1",
             workspace_root=str(tmp_path),
             max_iterations=3,
+            max_iterations_by_layer={"l1": 3, "l2": 3, "l3": 3},
         )
 
         result = loop.run_slice(slice_ref, run_ctx)
@@ -498,6 +504,7 @@ class TestPromotionLoopRunSliceBlocked:
             run_id="run-1",
             workspace_root=str(tmp_path),
             max_iterations=10,
+            max_iterations_by_layer={"l1": 10, "l2": 10, "l3": 10},
         )
 
         result = loop.run_slice(slice_ref, run_ctx)
@@ -529,6 +536,7 @@ class TestPromotionLoopRunSliceMaxIterations:
             run_id="run-1",
             workspace_root=str(tmp_path),
             max_iterations=2,
+            max_iterations_by_layer={"l1": 2, "l2": 2, "l3": 2},
         )
 
         result = loop.run_slice(slice_ref, run_ctx)

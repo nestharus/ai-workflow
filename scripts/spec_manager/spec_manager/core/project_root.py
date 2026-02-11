@@ -32,8 +32,7 @@ def get_project_root() -> Path:
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         raise ProjectRootError(
-            "Cannot determine project root. "
-            "Are you inside a git repository?"
+            "Cannot determine project root. Are you inside a git repository?"
         ) from exc
     return Path(result.stdout.strip()).resolve()
 

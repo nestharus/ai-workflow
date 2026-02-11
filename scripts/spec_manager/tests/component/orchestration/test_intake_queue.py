@@ -10,14 +10,12 @@ import json
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.demotion import DemotionTicket, RoutingItem
 from spec_manager.orchestration.intake_queue import (
     QUEUE_DIR_NAME,
     IntakeQueue,
     route_items,
 )
-
 
 # ======================================================================
 # IntakeQueue: empty state
@@ -255,9 +253,7 @@ class TestIntakeQueueEnqueueFromTicket:
         assert len(items) == 1
         assert items[0].text == "Route this requirement"
 
-    def test_enqueue_from_ticket_without_routing_returns_none(
-        self, tmp_path: Path
-    ) -> None:
+    def test_enqueue_from_ticket_without_routing_returns_none(self, tmp_path: Path) -> None:
         """enqueue_from_ticket() returns None when routing_required=False."""
         queue = IntakeQueue(workspace_root=tmp_path)
         ticket = DemotionTicket(routing_required=False)
@@ -267,9 +263,7 @@ class TestIntakeQueueEnqueueFromTicket:
         assert result is None
         assert queue.is_empty() is True
 
-    def test_enqueue_from_ticket_uses_diagnosis_as_fallback(
-        self, tmp_path: Path
-    ) -> None:
+    def test_enqueue_from_ticket_uses_diagnosis_as_fallback(self, tmp_path: Path) -> None:
         """enqueue_from_ticket() uses ticket.diagnosis when payload has no text."""
         queue = IntakeQueue(workspace_root=tmp_path)
         ticket = DemotionTicket(

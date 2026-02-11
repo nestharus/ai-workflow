@@ -140,6 +140,9 @@ class TestPddLifecycleInit:
 class TestPddLifecycleRun:
     """Test the complete lifecycle run method."""
 
+    @patch.object(PddLifecycle, "_request_release_signoff")
+    @patch.object(PddLifecycle, "_run_governance_check")
+    @patch.object(PddLifecycle, "_request_l2_checkpoint")
     @patch.object(PddLifecycle, "_run_l1_with_approval")
     @patch.object(PddLifecycle, "_run_layer")
     @patch.object(PddLifecycle, "_run_transition")
@@ -152,6 +155,9 @@ class TestPddLifecycleRun:
         mock_transition: MagicMock,
         mock_layer: MagicMock,
         mock_l1_approval: MagicMock,
+        mock_l2_checkpoint: MagicMock,
+        mock_governance: MagicMock,
+        mock_release_signoff: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
         """Test that run() calls intake, L1, transitions, L2, L3, QA."""
@@ -163,6 +169,9 @@ class TestPddLifecycleRun:
         mock_transition.return_value = {"refinement": {}, "from": "l1", "to": "l2"}
         mock_layer.return_value = {"layer": "l2", "slices": {}}
         mock_qa.return_value = {"pass_rate": 1.0}
+        mock_l2_checkpoint.return_value = {"approved": True, "mode": "auto"}
+        mock_governance.return_value = {"passed": True}
+        mock_release_signoff.return_value = {"approved": True, "mode": "auto"}
 
         lifecycle = PddLifecycle(mock_manager)
         result = lifecycle.run()
@@ -189,6 +198,9 @@ class TestPddLifecycleRun:
         assert result["approval"]["approved"] is True
         assert result["qa"] == {"pass_rate": 1.0}
 
+    @patch.object(PddLifecycle, "_request_release_signoff")
+    @patch.object(PddLifecycle, "_run_governance_check")
+    @patch.object(PddLifecycle, "_request_l2_checkpoint")
     @patch.object(PddLifecycle, "_run_l1_with_approval")
     @patch.object(PddLifecycle, "_run_layer")
     @patch.object(PddLifecycle, "_run_transition")
@@ -201,6 +213,9 @@ class TestPddLifecycleRun:
         mock_transition: MagicMock,
         mock_layer: MagicMock,
         mock_l1_approval: MagicMock,
+        mock_l2_checkpoint: MagicMock,
+        mock_governance: MagicMock,
+        mock_release_signoff: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
         """Test that run() calls setup_layers and cleanup when worktree manager exists."""
@@ -209,6 +224,9 @@ class TestPddLifecycleRun:
         mock_transition.return_value = {}
         mock_layer.return_value = {}
         mock_qa.return_value = {}
+        mock_l2_checkpoint.return_value = {"approved": True, "mode": "auto"}
+        mock_governance.return_value = {"passed": True}
+        mock_release_signoff.return_value = {"approved": True, "mode": "auto"}
 
         mock_wm = MagicMock()
         mock_wm.setup_layers.return_value = {"base_ref": "HEAD", "worktrees": []}
@@ -293,16 +311,19 @@ class TestRunLayer:
 class TestRunTransition:
     """Test the _run_transition method."""
 
+    @patch.object(PddLifecycle, "_run_governance_check")
     @patch.object(PddLifecycle, "_run_slices_at_layer")
     @patch.object(PddLifecycle, "_architectural_refinement")
     def test_l1_to_l2_no_demotions(
         self,
         mock_arch_refine: MagicMock,
         mock_slices: MagicMock,
+        mock_governance: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
         """Test L1→L2 transition without demotions."""
         mock_arch_refine.return_value = {"demotion_tickets": 0}
+        mock_governance.return_value = {"passed": True}
 
         lifecycle = PddLifecycle(mock_manager)
         result = lifecycle._run_transition("l1", "l2")
@@ -311,36 +332,49 @@ class TestRunTransition:
         assert result["to"] == "l2"
         mock_arch_refine.assert_called_once()
         mock_slices.assert_not_called()  # No rework needed
+        assert result["transition_stuck"] is False
 
+    @patch.object(PddLifecycle, "_run_governance_check")
     @patch.object(PddLifecycle, "_run_slices_at_layer")
     @patch.object(PddLifecycle, "_architectural_refinement")
     def test_l1_to_l2_with_demotions(
         self,
         mock_arch_refine: MagicMock,
         mock_slices: MagicMock,
+        mock_governance: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
         """Test L1→L2 transition with demotions triggers L1 rework."""
-        mock_arch_refine.return_value = {"demotion_tickets": 2}
+        # First call has demotions, second call (after rework) has none
+        mock_arch_refine.side_effect = [
+            {"demotion_tickets": 2},
+            {"demotion_tickets": 0},
+        ]
         mock_slices.return_value = {"all_complete": True}
+        mock_governance.return_value = {"passed": True}
 
         lifecycle = PddLifecycle(mock_manager)
         result = lifecycle._run_transition("l1", "l2")
 
-        mock_arch_refine.assert_called_once()
+        assert mock_arch_refine.call_count == 2
         mock_slices.assert_called_once_with("l1")  # Rework at L1
-        assert "rework" in result
+        assert "rework_rounds" in result
+        assert len(result["rework_rounds"]) == 2
+        assert "rework" in result["rework_rounds"][0]  # First round had rework
 
+    @patch.object(PddLifecycle, "_run_governance_check")
     @patch.object(PddLifecycle, "_run_slices_at_layer")
     @patch.object(PddLifecycle, "_code_quality_refinement")
     def test_l2_to_l3_transition(
         self,
         mock_cq_refine: MagicMock,
         mock_slices: MagicMock,
+        mock_governance: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
         """Test L2→L3 transition calls code quality refinement."""
         mock_cq_refine.return_value = {"demotion_tickets": 0}
+        mock_governance.return_value = {"passed": True}
 
         lifecycle = PddLifecycle(mock_manager)
         result = lifecycle._run_transition("l2", "l3")
@@ -349,16 +383,22 @@ class TestRunTransition:
         assert result["to"] == "l3"
         mock_cq_refine.assert_called_once()
 
+    @patch.object(PddLifecycle, "_run_readiness_ci")
+    @patch.object(PddLifecycle, "_run_governance_check")
     @patch.object(PddLifecycle, "_run_slices_at_layer")
     @patch.object(PddLifecycle, "_architectural_refinement")
     def test_transition_propagates_with_worktree_manager(
         self,
         mock_arch_refine: MagicMock,
         mock_slices: MagicMock,
+        mock_governance: MagicMock,
+        mock_readiness_ci: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
         """Test that transition propagates clean → next dirty."""
         mock_arch_refine.return_value = {"demotion_tickets": 0}
+        mock_governance.return_value = {"passed": True}
+        mock_readiness_ci.return_value = {"passed": True}
 
         mock_wm = MagicMock()
         prop_result = MagicMock()

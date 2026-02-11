@@ -24,7 +24,10 @@ def _mock_classify_all_uncovered(entries, file_lines, output_dir):
 
     return [
         CoverageLedgerEntry(
-            file=e.file, start=e.start, end=e.end, status="uncovered",
+            file=e.file,
+            start=e.start,
+            end=e.end,
+            status="uncovered",
         )
         for e in entries
     ]
@@ -36,8 +39,11 @@ def _mock_classify_all_ignored(entries, file_lines, output_dir):
 
     return [
         CoverageLedgerEntry(
-            file=e.file, start=e.start, end=e.end,
-            status="ignored", ignore_reason="test noise",
+            file=e.file,
+            start=e.start,
+            end=e.end,
+            status="ignored",
+            ignore_reason="test noise",
         )
         for e in entries
     ]

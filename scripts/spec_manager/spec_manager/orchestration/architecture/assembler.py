@@ -14,6 +14,7 @@ The assembler:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -165,39 +166,31 @@ class ArchitectureAssembler:
 
         # Include pin registry excerpt
         if pins_snapshot_path and pins_snapshot_path.exists():
-            try:
+            with contextlib.suppress(OSError, json.JSONDecodeError, UnicodeDecodeError):
                 pins_data = json.loads(pins_snapshot_path.read_text(encoding="utf-8"))
                 parts.append("## PIN REGISTRY\n```json\n")
                 parts.append(json.dumps(pins_data, indent=2)[:5000])
                 parts.append("\n```\n")
-            except Exception:
-                pass
 
         # Include graph snapshot excerpt
         if graph_snapshot_path and graph_snapshot_path.exists():
-            try:
+            with contextlib.suppress(OSError, json.JSONDecodeError, UnicodeDecodeError):
                 graph_data = json.loads(graph_snapshot_path.read_text(encoding="utf-8"))
                 parts.append("## ADJACENCY GRAPH\n```json\n")
                 parts.append(json.dumps(graph_data, indent=2)[:5000])
                 parts.append("\n```\n")
-            except Exception:
-                pass
 
         # Include analysis
         if analysis_path and analysis_path.exists():
-            try:
+            with contextlib.suppress(OSError, UnicodeDecodeError):
                 analysis = analysis_path.read_text(encoding="utf-8")
                 parts.append(f"## LIBRARY ANALYSIS\n{analysis[:3000]}\n")
-            except Exception:
-                pass
 
         # Include constraints
         if constraints_path and constraints_path.exists():
-            try:
+            with contextlib.suppress(OSError, UnicodeDecodeError):
                 constraints = constraints_path.read_text(encoding="utf-8")
                 parts.append(f"## CONSTRAINTS\n{constraints[:2000]}\n")
-            except Exception:
-                pass
 
         # List existing architecture files
         arch_files = []
@@ -221,9 +214,7 @@ class ArchitectureAssembler:
 
         return "\n".join(parts)
 
-    def _call_architecture_agent(
-        self, context: str
-    ) -> dict[str, Any] | None:
+    def _call_architecture_agent(self, context: str) -> dict[str, Any] | None:
         """Call the pdd-architecture-implementor agent."""
         try:
             from spec_manager.core.agent_utils import run_agent

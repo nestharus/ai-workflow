@@ -109,9 +109,7 @@ class FileUidRegistry:
         return {
             "schema_version": "1.0",
             "next_seq": self.next_seq,
-            "entries": {
-                path: entry.to_dict() for path, entry in self.entries.items()
-            },
+            "entries": {path: entry.to_dict() for path, entry in self.entries.items()},
         }
 
     @classmethod

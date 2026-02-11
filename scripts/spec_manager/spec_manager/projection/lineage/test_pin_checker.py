@@ -90,21 +90,15 @@ def check_test_pin_alignment(
     detector = PinDriftDetector(lineage_table, atoms)
 
     # Step 5: Detect test signature drift
-    drift_items = detector.detect_test_signature_drift(
-        baseline_store, test_pin_map
-    )
+    drift_items = detector.detect_test_signature_drift(baseline_store, test_pin_map)
 
     # Step 6: Compute coverage statistics
     total_pin_functions = len(registry.pin_functions)
-    pin_ids_with_tests = {
-        a.pin_func_id for a in test_pin_map.associations
-    }
+    pin_ids_with_tests = {a.pin_func_id for a in test_pin_map.associations}
     pin_functions_with_tests = len(pin_ids_with_tests)
     pin_functions_without_tests = total_pin_functions - pin_functions_with_tests
     test_coverage_ratio = (
-        pin_functions_with_tests / total_pin_functions
-        if total_pin_functions > 0
-        else 0.0
+        pin_functions_with_tests / total_pin_functions if total_pin_functions > 0 else 0.0
     )
 
     # Step 7: Optionally update baseline
@@ -116,9 +110,7 @@ def check_test_pin_alignment(
             save_baseline(new_store, baseline_path)
             baseline_updated = True
         else:
-            updated_store, _changes = update_baseline(
-                baseline_store, test_pin_map, force=True
-            )
+            updated_store, _changes = update_baseline(baseline_store, test_pin_map, force=True)
             save_baseline(updated_store, baseline_path)
             baseline_updated = True
 

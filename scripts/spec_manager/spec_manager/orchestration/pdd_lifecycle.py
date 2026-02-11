@@ -94,6 +94,11 @@ class PddLifecycle:
             per-library implementation.
         max_approval_iterations: Max L1→review→patch loops before
             auto-approving (prevents infinite loops).
+        max_demotions_per_layer: Per-layer demotion budget (budget #3).
+            If total demotions across all slices in a layer exceed this,
+            a warning is logged and escalation metadata is emitted.
+        max_pipeline_passes: Overall pipeline pass cap (budget #4).
+            Maximum number of times the L1→L2→L3 pipeline can run.
     """
 
     def __init__(
@@ -107,6 +112,8 @@ class PddLifecycle:
         max_refinement_iterations: int = 5,
         worktree_manager: WorktreeManager | None = None,
         max_approval_iterations: int = 3,
+        max_demotions_per_layer: int = 50,
+        max_pipeline_passes: int = 2,
     ) -> None:
         self.manager = manager
         self.orchestrator = PddOrchestrator(manager)
@@ -117,6 +124,8 @@ class PddLifecycle:
         self.max_refinement_iterations = max_refinement_iterations
         self.worktree_manager: WorktreeManager | None = worktree_manager
         self.max_approval_iterations = max_approval_iterations
+        self.max_demotions_per_layer = max_demotions_per_layer
+        self.max_pipeline_passes = max_pipeline_passes
 
     # ------------------------------------------------------------------
     # Public API
@@ -128,34 +137,136 @@ class PddLifecycle:
         Returns:
             Summary dict with results from each layer and transition.
         """
+        from spec_manager.orchestration.run_state import RunConfig, RunStateManager
+
         results: dict[str, Any] = {}
+
+        # Initialize run state tracking
+        state_mgr = RunStateManager(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
+        self._state_mgr = state_mgr
+        state_mgr.ensure_directories()
+        state_mgr.write_config(
+            RunConfig(
+                run_id=self.manager.run_id,
+                mode=self.mode,
+                input_folder=str(self.manager.structure.input_folder)
+                if hasattr(self.manager.structure, "input_folder")
+                else "",
+                max_approval_iterations=self.max_approval_iterations,
+            )
+        )
+        state_mgr.update_state(phase="intake", active_layer="")
 
         # Phase 0: Intake (raw prose → code-as-spec, if needed)
         results["intake"] = self._run_intake()
+        state_mgr.update_state(phase="intake_done")
+
+        # Overall pipeline pass cap (budget #4)
+        results["pipeline_pass"] = 1
+        results["max_pipeline_passes"] = self.max_pipeline_passes
+
+        self._record_git_ref(f"pdd/{self.manager.run_id}/base")
 
         # Setup layer worktrees if managed
         if self.worktree_manager:
             results["setup"] = self.worktree_manager.setup_layers()
 
         # L1: Code-as-Spec (with human approval loop)
+        state_mgr.update_state(phase="l1", active_layer="l1")
         l1_result, approval = self._run_l1_with_approval()
         results["l1"] = l1_result
         results["approval"] = approval
+        self._record_git_ref(f"pdd/{self.manager.run_id}/l1-approved")
+        state_mgr.update_state(
+            layers_completed=["l1"],
+            phase="l1_l2_transition",
+            active_layer="l1",
+        )
 
         # L1→L2 transition: architectural refinement (may demote to L1)
         results["l1_l2_transition"] = self._run_transition("l1", "l2")
+        state_mgr.update_state(
+            transitions_completed=["l1_l2"],
+            phase="l2",
+            active_layer="l2",
+        )
 
         # L2: Architecture
         results["l2"] = self._run_layer("l2")
+        self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
+
+        # Optional L2 checkpoint: approve architecture topology before L3
+        if self.mode == "interactive":
+            results["l2_checkpoint"] = self._request_l2_checkpoint(results["l2"])
+        state_mgr.update_state(
+            layers_completed=["l1", "l2"],
+            phase="l2_l3_transition",
+            active_layer="l2",
+        )
 
         # L2→L3 transition: code quality refinement (may demote to L2)
         results["l2_l3_transition"] = self._run_transition("l2", "l3")
+        state_mgr.update_state(
+            transitions_completed=["l1_l2", "l2_l3"],
+            phase="l3",
+            active_layer="l3",
+        )
 
         # L3: Clean Code
         results["l3"] = self._run_layer("l3")
+        self._record_git_ref(f"pdd/{self.manager.run_id}/l3/clean")
+        state_mgr.update_state(
+            layers_completed=["l1", "l2", "l3"],
+            phase="qa",
+            active_layer="",
+        )
 
         # Final QA eval
         results["qa"] = self.qa()
+
+        # Scoring
+        from spec_manager.orchestration.scoring import RunReporter
+
+        reporter = RunReporter(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
+        scorecard = reporter.compute(results)
+        reporter.write(scorecard)
+        results["scorecard"] = scorecard.to_dict()
+
+        # Final report
+        from spec_manager.orchestration.final_report import FinalReportGenerator
+
+        report_gen = FinalReportGenerator(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
+        report_path, scorecard_json_path = report_gen.generate(results, scorecard)
+        results["final_report_path"] = str(report_path)
+        results["scorecard_json_path"] = str(scorecard_json_path)
+
+        # Final whole-run governance gate
+        final_governance = self._run_governance_check(
+            "final",
+            check_artifacts=True,
+            check_report=True,
+        )
+        results["final_governance"] = final_governance
+        if not final_governance.get("passed", True):
+            logger.warning(
+                "Final governance gate failed: %s",
+                final_governance.get("error", ""),
+            )
+
+        # Release signoff (auto-approve in auto mode)
+        results["release_signoff"] = self._request_release_signoff(results)
+        self._record_git_ref(f"pdd/{self.manager.run_id}/release")
+
+        state_mgr.update_state(phase="done")
 
         # Cleanup worktrees
         if self.worktree_manager:
@@ -226,17 +337,21 @@ class PddLifecycle:
         logger.info("=== Layer %s: DONE ===", layer.upper())
         return results
 
-    def _run_transition(self, from_layer: Layer, to_layer: Layer) -> dict[str, Any]:
-        """Run transition between layers.
+    def _run_transition(
+        self, from_layer: Layer, to_layer: Layer, *, max_rounds: int = 3
+    ) -> dict[str, Any]:
+        """Run transition between layers with demotion round cap.
 
         The next layer's typed refinement runs as a transition gate.
         If it emits demotion tickets, the previous layer's slices are
-        re-run to address the demoted issues.  After rework, clean is
-        propagated to the next layer's dirty.
+        re-run to address the demoted issues.  This loop repeats up to
+        ``max_rounds`` times.  After rework, clean is propagated to the
+        next layer's dirty.
 
         Args:
             from_layer: Layer that just completed.
             to_layer: Layer about to start.
+            max_rounds: Maximum demotion rework rounds before declaring stuck.
 
         Returns:
             Transition results including refinement and optional rework.
@@ -245,20 +360,65 @@ class PddLifecycle:
         results: dict[str, Any] = {"from": from_layer, "to": to_layer}
 
         refinement_method = getattr(self, _LAYER_REFINEMENT[to_layer])
-        refinement_result = refinement_method()
-        results["refinement"] = refinement_result
 
-        # Handle demotion: re-run previous layer's slices
-        demotions = refinement_result.get("demotion_tickets", 0)
-        if demotions > 0:
+        rework_rounds: list[dict[str, Any]] = []
+        transition_stuck = False
+
+        for round_num in range(1, max_rounds + 1):
+            refinement_result = refinement_method()
+            demotions = refinement_result.get("demotion_tickets", 0)
+
+            round_result: dict[str, Any] = {
+                "round": round_num,
+                "refinement": refinement_result,
+                "demotions": demotions,
+            }
+
+            if demotions <= 0:
+                rework_rounds.append(round_result)
+                break
+
             logger.info(
-                "Transition %s→%s: %d demotions, re-running %s slices",
+                "Transition %s→%s round %d/%d: %d demotions, re-running %s slices",
                 from_layer,
                 to_layer,
+                round_num,
+                max_rounds,
                 demotions,
                 from_layer,
             )
-            results["rework"] = self._run_slices_at_layer(from_layer)
+            round_result["rework"] = self._run_slices_at_layer(from_layer)
+            rework_rounds.append(round_result)
+
+            if round_num == max_rounds and demotions > 0:
+                transition_stuck = True
+                logger.warning(
+                    "Transition %s→%s: stuck after %d rounds with %d demotions remaining",
+                    from_layer,
+                    to_layer,
+                    max_rounds,
+                    demotions,
+                )
+
+        results["refinement"] = rework_rounds[-1]["refinement"] if rework_rounds else {}
+        results["rework_rounds"] = rework_rounds
+        results["transition_stuck"] = transition_stuck
+        if transition_stuck:
+            results["error"] = f"Transition {from_layer}→{to_layer} stuck after {max_rounds} rounds"
+
+        # Transition governance gate: no open governance FAIL + required artifacts present
+        governance = self._run_governance_check(
+            f"transition_{from_layer}_{to_layer}",
+            check_artifacts=True,
+        )
+        results["governance"] = governance
+        if not governance.get("passed", True):
+            logger.warning(
+                "Transition %s→%s governance gate failed: %s",
+                from_layer,
+                to_layer,
+                governance.get("error", ""),
+            )
 
         # Propagate clean → next layer's dirty
         if self.worktree_manager:
@@ -269,6 +429,19 @@ class PddLifecycle:
                 "to_layer": prop.to_layer,
                 "error": prop.error,
             }
+
+            # Downstream readiness CI: smoke test on the new dirty worktree
+            if prop.success:
+                readiness = self._run_readiness_ci(to_layer)
+                results["readiness_ci"] = readiness
+                if not readiness.get("passed", True):
+                    results["readiness_blocked"] = True
+                    logger.warning(
+                        "Downstream readiness CI failed for %s dirty — transition %s→%s blocked",
+                        to_layer,
+                        from_layer,
+                        to_layer,
+                    )
 
         return results
 
@@ -313,7 +486,6 @@ class PddLifecycle:
             run_id=self.manager.run_id,
             mode="auto" if self.mode != "interactive" else "interactive",
             workspace_root=str(self.manager.workspace_path),
-            max_iterations=20,
         )
 
         loop = PromotionLoop(
@@ -328,6 +500,52 @@ class PddLifecycle:
         sched_result = scheduler.run(slice_refs, run_context)
         slice_results = sched_result.slice_results
 
+        # Per-layer demotion budget check (budget #3)
+        total_layer_demotions = sum(len(sr.demotion_tickets) for sr in slice_results)
+        budget_exceeded = total_layer_demotions > self.max_demotions_per_layer
+        if budget_exceeded:
+            logger.warning(
+                "Layer %s demotion budget exceeded: %d > %d — escalating",
+                layer,
+                total_layer_demotions,
+                self.max_demotions_per_layer,
+            )
+
+        # CI backpressure: tick pipeline after each completed slice
+        ci_ticks: list[dict[str, Any]] = []
+        candidate_in_flight = False
+        for sr in slice_results:
+            if sr.status == "COMPLETE" and self.worktree_manager:
+                if candidate_in_flight:
+                    logger.info(
+                        "Backpressure: waiting for candidate before processing slice '%s'",
+                        sr.slice_id,
+                    )
+                tick = self.worktree_manager.tick_pipeline(active_layer=layer)
+                ci_ticks.append(
+                    {
+                        "slice_id": sr.slice_id,
+                        "main_updated": tick.main_updated,
+                        "demotions": len(tick.demotion_tickets),
+                    }
+                )
+                candidate_in_flight = bool(tick.demotion_tickets)
+
+                # Write CI batch receipt
+                if hasattr(self, "_state_mgr"):
+                    batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
+                    batch_dir.mkdir(parents=True, exist_ok=True)
+                    batch_id = f"batch_{sr.slice_id}_{len(ci_ticks)}"
+                    receipt = {
+                        "batch_id": batch_id,
+                        "slice_id": sr.slice_id,
+                        "layer": layer,
+                        "main_updated": tick.main_updated,
+                        "demotions": len(tick.demotion_tickets),
+                    }
+                    receipt_path = batch_dir / f"{batch_id}.json"
+                    receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+
         return {
             "layer": layer,
             "slices": [
@@ -340,7 +558,10 @@ class PddLifecycle:
                 }
                 for r in slice_results
             ],
+            "ci_ticks": ci_ticks,
             "all_complete": all(r.status == "COMPLETE" for r in slice_results),
+            "total_layer_demotions": total_layer_demotions,
+            "budget_exceeded": budget_exceeded,
         }
 
     def _discover_slices(self, layer: Layer) -> list[Any]:
@@ -494,6 +715,36 @@ class PddLifecycle:
             "reason": "max_iterations_reached",
         }
 
+    def _write_approval_artifact(
+        self,
+        layer: str,
+        approved: bool,
+        iteration: int = 0,
+        **extra: Any,
+    ) -> None:
+        """Write a decision.json artifact for an approval checkpoint.
+
+        Args:
+            layer: Approval layer (e.g., "l1", "l2", "release").
+            approved: Whether the checkpoint was approved.
+            iteration: Iteration number (relevant for L1 loops).
+            **extra: Additional metadata to include in the artifact.
+        """
+        if not hasattr(self, "_state_mgr"):
+            return
+        approvals_dir = self._state_mgr.run_dir / "approvals" / layer
+        approvals_dir.mkdir(parents=True, exist_ok=True)
+        decision: dict[str, Any] = {
+            "layer": layer,
+            "iteration": iteration,
+            "approved": approved,
+            "mode": self.mode,
+        }
+        decision.update(extra)
+        (approvals_dir / "decision.json").write_text(
+            json.dumps(decision, indent=2), encoding="utf-8"
+        )
+
     def _request_approval(self, result: dict[str, Any], iteration: int) -> dict[str, Any]:
         """Request human approval of the L1 output.
 
@@ -506,6 +757,7 @@ class PddLifecycle:
             ``feedback`` string.
         """
         if self.mode in ("auto", "steering"):
+            self._write_approval_artifact("l1", approved=True, iteration=iteration)
             return {"approved": True, "iteration": iteration, "mode": self.mode}
 
         # Interactive mode — prompt user
@@ -529,6 +781,7 @@ class PddLifecycle:
             choice = "a"
 
         if choice == "a" or choice == "":
+            self._write_approval_artifact("l1", approved=True, iteration=iteration)
             return {"approved": True, "iteration": iteration, "mode": "interactive"}
 
         if choice == "q":
@@ -546,6 +799,7 @@ class PddLifecycle:
         feedback_path = reports_dir / f"feedback_iteration_{iteration}.txt"
         feedback_path.write_text(feedback, encoding="utf-8")
 
+        self._write_approval_artifact("l1", approved=False, iteration=iteration)
         return {
             "approved": False,
             "iteration": iteration,
@@ -553,6 +807,78 @@ class PddLifecycle:
             "feedback_path": str(feedback_path),
             "mode": "interactive",
         }
+
+    def _request_l2_checkpoint(self, l2_result: dict[str, Any]) -> dict[str, Any]:
+        """Optional L2 checkpoint: approve architecture topology before L3.
+
+        Only prompted in interactive mode.  Auto/steering modes auto-approve.
+
+        Args:
+            l2_result: Results from the L2 layer.
+
+        Returns:
+            Checkpoint result dict.
+        """
+        if self.mode in ("auto", "steering"):
+            self._write_approval_artifact("l2", approved=True)
+            return {"approved": True, "mode": self.mode}
+
+        print("\n" + "=" * 60)
+        print("PDD L2 (Architecture) COMPLETE — Optional Checkpoint")
+        print("=" * 60)
+        print("\nArchitecture layer is done. Review component topology before L3.")
+        print("Options:")
+        print("  [a] Approve — proceed to L3 (Clean Code)")
+        print("  [q] Quit — abort lifecycle")
+
+        try:
+            choice = input("\nYour choice [a/q]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = "a"
+
+        if choice == "q":
+            raise KeyboardInterrupt("User aborted lifecycle at L2 checkpoint")
+
+        self._write_approval_artifact("l2", approved=True)
+        return {"approved": True, "mode": "interactive"}
+
+    def _request_release_signoff(self, results: dict[str, Any]) -> dict[str, Any]:
+        """Release signoff after L3 + final governance.
+
+        Auto-approve in auto/steering modes.
+
+        Args:
+            results: Full run results.
+
+        Returns:
+            Signoff result dict.
+        """
+        if self.mode in ("auto", "steering"):
+            self._write_approval_artifact("release", approved=True)
+            return {"approved": True, "mode": self.mode}
+
+        scorecard = results.get("scorecard", {})
+        passed = scorecard.get("overall_pass", True)
+
+        print("\n" + "=" * 60)
+        print("PDD Pipeline COMPLETE — Release Signoff")
+        print("=" * 60)
+        print(f"\nOverall scorecard: {'PASS' if passed else 'FAIL'}")
+        final_gov = results.get("final_governance", {})
+        if not final_gov.get("passed", True):
+            print(f"Governance: FAIL — {final_gov.get('error', '')}")
+        print("\nOptions:")
+        print("  [a] Approve release")
+        print("  [r] Reject release")
+
+        try:
+            choice = input("\nYour choice [a/r]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = "a"
+
+        approved = choice != "r"
+        self._write_approval_artifact("release", approved=approved)
+        return {"approved": approved, "mode": "interactive"}
 
     # ------------------------------------------------------------------
     # Intake
@@ -814,8 +1140,130 @@ class PddLifecycle:
         }
 
     # ------------------------------------------------------------------
+    # Governance helpers
+    # ------------------------------------------------------------------
+
+    def _run_governance_check(
+        self,
+        checkpoint: str,
+        *,
+        check_artifacts: bool = False,
+        check_report: bool = False,
+    ) -> dict[str, Any]:
+        """Run governance validation at a pipeline checkpoint.
+
+        Checks:
+        - No open governance FAIL findings
+        - Required artifacts present (if check_artifacts)
+        - Report completeness (if check_report)
+
+        Args:
+            checkpoint: Name of the checkpoint (e.g., "transition_l1_l2", "final").
+            check_artifacts: Whether to verify artifact presence.
+            check_report: Whether to verify final report.
+
+        Returns:
+            Dict with ``passed`` bool and findings.
+        """
+        run_id = self.manager.run_id
+        workspace = self.manager.workspace_path
+        run_dir = workspace / ".pdd_runs" / run_id
+        reports_dir = workspace / "reports" / "pdd" / run_id
+        findings: list[str] = []
+
+        if check_artifacts:
+            # Verify evidence directories exist
+            slices_dir = run_dir / "slices"
+            if not slices_dir.exists() or not any(slices_dir.iterdir()):
+                findings.append("No evidence bundles found in slices directory")
+            # Verify demotion ledger exists (it's OK if empty)
+            demotions_dir = run_dir / "demotions"
+            if not demotions_dir.exists():
+                findings.append("Demotions directory missing")
+
+        if check_report:
+            report_path = reports_dir / "final_report.md"
+            if not report_path.exists():
+                findings.append("Final report missing")
+            scorecard_path = reports_dir / "scorecard.json"
+            if not scorecard_path.exists():
+                findings.append("Scorecard JSON missing")
+
+        passed = len(findings) == 0
+        return {
+            "checkpoint": checkpoint,
+            "passed": passed,
+            "findings": findings,
+            "error": "; ".join(findings) if findings else "",
+        }
+
+    # ------------------------------------------------------------------
+    # CI helpers
+    # ------------------------------------------------------------------
+
+    def _run_readiness_ci(self, layer: Layer) -> dict[str, Any]:
+        """Run tier-aware smoke check on a layer's dirty worktree.
+
+        Uses :class:`TierRunner` to dispatch the appropriate test tiers
+        for the given layer.  Validates that the downstream dirty worktree
+        is runnable before creative work begins.
+
+        Args:
+            layer: The layer whose dirty worktree to test.
+
+        Returns:
+            Dict with ``passed`` bool, tier results, and optional ``error``.
+        """
+        from spec_manager.orchestration.test_tiers import TierConfig, TierRunner
+
+        if not self.worktree_manager:
+            return {"passed": True, "note": "No worktree manager — skipping readiness CI"}
+
+        dirty_path = self.worktree_manager.get_layer_worktree(layer, "dirty")
+        if not dirty_path or not dirty_path.exists():
+            return {"passed": True, "note": f"No dirty worktree for {layer}"}
+
+        runner = TierRunner(config=TierConfig(), cwd=dirty_path)
+        tier_results = runner.run_for_layer(layer)
+        all_passed = all(r.passed for r in tier_results)
+
+        result: dict[str, Any] = {
+            "passed": all_passed,
+            "tiers": [r.to_dict() for r in tier_results],
+        }
+        if not all_passed:
+            failed = [r for r in tier_results if not r.passed]
+            result["error"] = f"Tier {failed[0].tier} failed: {failed[0].error[:500]}"
+
+        return result
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _record_git_ref(self, ref_name: str) -> None:
+        """Record a git ref milestone for the run.
+
+        Writes ref metadata to the run directory so downstream tooling
+        can reconstruct the pipeline timeline.
+
+        Args:
+            ref_name: Ref name (e.g., ``pdd/<run_id>/l1-approved``).
+        """
+        if not hasattr(self, "_state_mgr"):
+            return
+        import time
+
+        refs_dir = self._state_mgr.run_dir / "refs"
+        refs_dir.mkdir(parents=True, exist_ok=True)
+        ref_data = {
+            "ref": ref_name,
+            "run_id": self.manager.run_id,
+            "timestamp": time.time(),
+        }
+        (refs_dir / f"{ref_name.replace('/', '_')}.json").write_text(
+            json.dumps(ref_data, indent=2), encoding="utf-8"
+        )
 
     def _gather_library_content(self, lib_dir: Path) -> str:
         """Gather content for a library from its detail files.

@@ -10,14 +10,12 @@ from spec_manager.orchestration.implementation.types import (
     UnderSpecEvent,
 )
 
-
 # ======================================================================
 # PinProposal
 # ======================================================================
 
 
 class TestPinProposal:
-
     def test_defaults(self) -> None:
         p = PinProposal(pin_id="PIN-1", fqn="foo:bar", file="foo.py")
         assert p.pin_id == "PIN-1"
@@ -78,7 +76,6 @@ class TestPinProposal:
 
 
 class TestEdgeProposal:
-
     def test_defaults(self) -> None:
         e = EdgeProposal(src="PIN-1", dst="PIN-2")
         assert e.src == "PIN-1"
@@ -132,7 +129,6 @@ class TestEdgeProposal:
 
 
 class TestTestArtifact:
-
     def test_defaults(self) -> None:
         t = TestArtifact(path="test_foo.py", purpose="unit test")
         assert t.path == "test_foo.py"
@@ -179,7 +175,6 @@ class TestTestArtifact:
 
 
 class TestUnderSpecEvent:
-
     def test_defaults(self) -> None:
         u = UnderSpecEvent()
         assert u.kind == "MISSING_CONSTRAINT"
@@ -238,7 +233,6 @@ class TestUnderSpecEvent:
 
 
 class TestFunctionTarget:
-
     def test_defaults(self) -> None:
         ft = FunctionTarget(file="foo.py", fqn="foo:bar")
         assert ft.file == "foo.py"
@@ -273,7 +267,6 @@ class TestFunctionTarget:
 
 
 class TestEditEntry:
-
     def test_defaults(self) -> None:
         e = EditEntry(path="foo.py")
         assert e.path == "foo.py"
@@ -297,7 +290,6 @@ class TestEditEntry:
 
 
 class TestImplementorOutput:
-
     def test_defaults(self) -> None:
         out = ImplementorOutput()
         assert isinstance(out.function_target, FunctionTarget)

@@ -12,7 +12,6 @@ from spec_manager.orchestration.downward_flow.engine import (
 
 
 class TestFailureEvidenceDefaults:
-
     def test_defaults(self) -> None:
         e = FailureEvidence()
         assert e.source == ""
@@ -25,7 +24,6 @@ class TestFailureEvidenceDefaults:
 
 
 class TestTraceResultDefaults:
-
     def test_defaults(self) -> None:
         t = TraceResult()
         assert t.located_pins == []
@@ -34,7 +32,6 @@ class TestTraceResultDefaults:
 
 
 class TestDownwardFlowEngineTraceAndRoute:
-
     def test_dispatches_test_failures(self) -> None:
         engine = DownwardFlowEngine(run_id="r1", active_layer="L1")
         evidence = FailureEvidence(
@@ -67,7 +64,6 @@ class TestDownwardFlowEngineTraceAndRoute:
 
 
 class TestDownwardFlowEngineTraceFile:
-
     def test_no_pin_registry_returns_empty(self) -> None:
         engine = DownwardFlowEngine(run_id="r1", pin_registry=None)
         result = engine._trace_file("/nonexistent/path.py")
@@ -76,14 +72,9 @@ class TestDownwardFlowEngineTraceFile:
 
 
 class TestDownwardFlowEngineScanMarkers:
-
     def test_finds_pdd_pin_markers(self, tmp_path: Path) -> None:
         f = tmp_path / "service.py"
-        f.write_text(
-            "# pdd:pin=PIN-ARCH-001\n"
-            "def handle(): pass\n"
-            "# pdd:pin=PIN-ATOM-002\n"
-        )
+        f.write_text("# pdd:pin=PIN-ARCH-001\ndef handle(): pass\n# pdd:pin=PIN-ATOM-002\n")
         engine = DownwardFlowEngine()
         pins = engine._scan_markers(str(f))
         assert "PIN-ARCH-001" in pins
@@ -103,7 +94,6 @@ class TestDownwardFlowEngineScanMarkers:
 
 
 class TestDownwardFlowEngineTestFailures:
-
     def test_sets_origin_layer_and_hop_trace(self) -> None:
         engine = DownwardFlowEngine(run_id="r1", active_layer="L1")
         evidence = FailureEvidence(
@@ -117,7 +107,6 @@ class TestDownwardFlowEngineTestFailures:
 
 
 class TestDownwardFlowEngineReviewFindings:
-
     def test_enriches_tickets_with_origin(self) -> None:
         engine = DownwardFlowEngine(run_id="r1", active_layer="L2")
         evidence = FailureEvidence(

@@ -132,9 +132,7 @@ class LibraryIdAllocator:
         return {
             "schema_version": "1.0",
             "next_seq": self.next_seq,
-            "entries": {
-                key: entry.to_dict() for key, entry in self.entries.items()
-            },
+            "entries": {key: entry.to_dict() for key, entry in self.entries.items()},
         }
 
     @classmethod

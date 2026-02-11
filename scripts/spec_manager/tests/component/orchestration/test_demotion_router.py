@@ -7,7 +7,6 @@ from spec_manager.orchestration.demotion.triage import DemotionContext
 
 
 class TestRoutingBatchDefaults:
-
     def test_defaults(self) -> None:
         batch = RoutingBatch()
         assert batch.tickets == []
@@ -15,7 +14,6 @@ class TestRoutingBatchDefaults:
 
 
 class TestDemotionRouterRoute:
-
     def test_route_produces_ticket_and_routing(self) -> None:
         router = DemotionRouter(run_id="r1", active_layer="L1")
         ctx = DemotionContext(
@@ -45,7 +43,6 @@ class TestDemotionRouterRoute:
 
 
 class TestDemotionRouterRouteGateFailures:
-
     def test_skips_passed_gates(self) -> None:
         router = DemotionRouter(run_id="r1")
         batch = router.route_gate_failures(
@@ -104,7 +101,6 @@ class TestDemotionRouterRouteGateFailures:
 
 
 class TestDemotionRouterRouteTestFailures:
-
     def test_produces_tickets_from_test_failures(self) -> None:
         router = DemotionRouter(run_id="r1", active_layer="L1")
         batch = router.route_test_failures(
@@ -122,7 +118,6 @@ class TestDemotionRouterRouteTestFailures:
 
 
 class TestDemotionRouterRouteReviewFindings:
-
     def test_routes_by_category(self) -> None:
         router = DemotionRouter(run_id="r1", active_layer="L3")
         batch = router.route_review_findings(

@@ -60,9 +60,7 @@ def _format_patch_line(
     if patch_path == "(patch missing)":
         logger.warning("Patch path missing for task %s", task_id)
     status = patch_info.get("status")
-    status_text = (
-        f" (status: {status})" if isinstance(status, str) and status.strip() else ""
-    )
+    status_text = f" (status: {status})" if isinstance(status, str) and status.strip() else ""
     label = f"{task_id}: {patch_path}" if include_task_id else f"Patch: {patch_path}"
     return f"{indent}- {label}{status_text}"
 
@@ -95,9 +93,7 @@ def load_trace_indexes(manager: WorkspaceManager) -> dict[str, Any]:
     trace_index = _read_json(trace_index_path)
     indexes = trace_index.get("indexes") if isinstance(trace_index, dict) else None
     if not isinstance(indexes, dict):
-        raise json.JSONDecodeError(
-            "Trace index missing 'indexes' key", json.dumps(trace_index), 0
-        )
+        raise json.JSONDecodeError("Trace index missing 'indexes' key", json.dumps(trace_index), 0)
 
     index_paths = {
         "atom_to_section": indexes.get("atom_to_section"),
@@ -140,9 +136,7 @@ def format_atom_trace(
     sha256 = atom_entry.get("sha256") if isinstance(atom_entry.get("sha256"), str) else "unknown"
 
     section_to_elements = indexes.get("section_to_elements")
-    elements = (
-        section_to_elements.get(section_id) if isinstance(section_to_elements, dict) else []
-    )
+    elements = section_to_elements.get(section_id) if isinstance(section_to_elements, dict) else []
     if not isinstance(elements, list):
         elements = []
 
@@ -293,9 +287,7 @@ def format_element_trace(
         lines.append(f"- {task_id}")
         patch_info = task_to_patches.get(task_id)
         lines.append(
-            _format_patch_line(
-                task_id, patch_info, manager, indent="  ", include_task_id=False
-            )
+            _format_patch_line(task_id, patch_info, manager, indent="  ", include_task_id=False)
         )
 
     return "\n".join(lines)
@@ -322,9 +314,7 @@ def format_task_trace(
         [
             element_id
             for element_id, tasks in element_to_tasks.items()
-            if isinstance(element_id, str)
-            and isinstance(tasks, list)
-            and task_id in tasks
+            if isinstance(element_id, str) and isinstance(tasks, list) and task_id in tasks
         ]
     )
 

@@ -16,9 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
-
 
 # ======================================================================
 # _extract_body
@@ -26,7 +24,6 @@ from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
 
 
 class TestExtractBody:
-
     def test_returns_body_when_present(self) -> None:
         data = {"body": "        return 42\n"}
         assert PddOrchestrator._extract_body(data) == "        return 42\n"
@@ -55,11 +52,7 @@ class TestExtractBody:
         data = {
             "edits": [
                 {
-                    "unified_diff": (
-                        "+++ b/foo.py\n"
-                        "@@ -5,1 +5,2 @@\n"
-                        "+        x = 1\n"
-                    ),
+                    "unified_diff": ("+++ b/foo.py\n@@ -5,1 +5,2 @@\n+        x = 1\n"),
                 },
             ],
         }
@@ -79,10 +72,7 @@ class TestExtractBody:
             "body": "   \n  ",
             "edits": [
                 {
-                    "unified_diff": (
-                        "@@ -1,1 +1,1 @@\n"
-                        "+        return True\n"
-                    ),
+                    "unified_diff": ("@@ -1,1 +1,1 @@\n+        return True\n"),
                 },
             ],
         }
@@ -116,7 +106,6 @@ class TestExtractBody:
 
 
 class TestInsertImports:
-
     def test_inserts_after_last_import(self) -> None:
         lines = [
             '"""Module doc."""\n',
@@ -197,7 +186,6 @@ class TestInsertImports:
 
 
 class TestApplyFunctionBody:
-
     def _make_func(
         self,
         line_start: int,
@@ -212,13 +200,16 @@ class TestApplyFunctionBody:
 
     def test_replaces_body_preserving_signature(self) -> None:
         lines = [
-            "def foo():\n",            # 1
-            '    """Docstring."""\n',   # 2
-            "    pass\n",              # 3
+            "def foo():\n",  # 1
+            '    """Docstring."""\n',  # 2
+            "    pass\n",  # 3
         ]
         func = self._make_func(1, 3, 3)
         result = PddOrchestrator._apply_function_body(
-            lines, func, "    return 42\n", [],
+            lines,
+            func,
+            "    return 42\n",
+            [],
         )
         assert result[0] == "def foo():\n"
         assert result[1] == '    """Docstring."""\n'
@@ -233,7 +224,10 @@ class TestApplyFunctionBody:
         ]
         func = self._make_func(1, 2, 2)
         result = PddOrchestrator._apply_function_body(
-            lines, func, "    return 1\n", ["import json"],
+            lines,
+            func,
+            "    return 1\n",
+            ["import json"],
         )
         text = "".join(result)
         assert "import json" not in text
@@ -247,7 +241,10 @@ class TestApplyFunctionBody:
         func = self._make_func(1, 3, 2)
         new_body = "    x = 1\n    y = 2\n    return x + y\n"
         result = PddOrchestrator._apply_function_body(
-            lines, func, new_body, [],
+            lines,
+            func,
+            new_body,
+            [],
         )
         assert result[0] == "def foo():\n"
         assert "x = 1" in "".join(result)
@@ -257,7 +254,10 @@ class TestApplyFunctionBody:
         lines = ["def foo():\n", "    pass\n"]
         func = self._make_func(1, 2, 0)  # body_start_line=0 -> idx=-1
         result = PddOrchestrator._apply_function_body(
-            lines, func, "    return 1\n", [],
+            lines,
+            func,
+            "    return 1\n",
+            [],
         )
         assert result == lines
         assert result is not lines
@@ -265,26 +265,32 @@ class TestApplyFunctionBody:
     def test_bottom_up_preserves_earlier_functions(self) -> None:
         """Simulate bottom-up: process func2 then func1, no import drift."""
         lines = [
-            "import os\n",            # 1
-            "\n",                      # 2
-            "def func1():\n",          # 3
-            "    # spec1\n",           # 4
-            "    pass\n",              # 5
-            "\n",                      # 6
-            "def func2():\n",          # 7
-            "    # spec2\n",           # 8
-            "    pass\n",              # 9
+            "import os\n",  # 1
+            "\n",  # 2
+            "def func1():\n",  # 3
+            "    # spec1\n",  # 4
+            "    pass\n",  # 5
+            "\n",  # 6
+            "def func2():\n",  # 7
+            "    # spec2\n",  # 8
+            "    pass\n",  # 9
         ]
         func2 = self._make_func(7, 9, 8)
         func1 = self._make_func(3, 5, 4)
 
         # Process bottom-up: func2 first
         lines = PddOrchestrator._apply_function_body(
-            lines, func2, "    return 2\n", [],
+            lines,
+            func2,
+            "    return 2\n",
+            [],
         )
         # Then func1 — line numbers should still be valid
         lines = PddOrchestrator._apply_function_body(
-            lines, func1, "    return 1\n", [],
+            lines,
+            func1,
+            "    return 1\n",
+            [],
         )
 
         text = "".join(lines)
@@ -304,7 +310,6 @@ class TestApplyFunctionBody:
 
 
 class TestBuildProjectContext:
-
     def _make_project_state(self, tmp_path: Path) -> SimpleNamespace:
         """Create a fake project state with two files."""
         # File A
@@ -337,7 +342,7 @@ class TestBuildProjectContext:
             "\n"
             "from decimal import Decimal\n"
             "\n"
-            "THRESHOLD = Decimal(\"100\")\n"
+            'THRESHOLD = Decimal("100")\n'
             "\n"
             "class ServiceB:\n"
             "\n"
@@ -393,7 +398,6 @@ class TestBuildProjectContext:
 
 
 class TestBuildImplementationPrompt:
-
     def _make_func(self) -> SimpleNamespace:
         return SimpleNamespace(
             line_start=5,

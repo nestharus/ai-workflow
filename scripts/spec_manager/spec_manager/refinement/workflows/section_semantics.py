@@ -30,60 +30,68 @@ IMPLEMENTOR_SECTIONS: frozenset[str] = frozenset({"Details", "Overview"})
 
 # --- Heuristic keyword lists ---
 # Keywords that suggest implementation-level detail (algorithms, code).
-_IMPLEMENTATION_KEYWORDS: frozenset[str] = frozenset({
-    "algorithm",
-    "iterate",
-    "loop",
-    "step 1",
-    "step 2",
-    "step 3",
-    "pseudocode",
-    "function(",
-    "def ",
-    "return ",
-    "parse(",
-    "for each",
-    "while ",
-    "if (",
-})
+_IMPLEMENTATION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "algorithm",
+        "iterate",
+        "loop",
+        "step 1",
+        "step 2",
+        "step 3",
+        "pseudocode",
+        "function(",
+        "def ",
+        "return ",
+        "parse(",
+        "for each",
+        "while ",
+        "if (",
+    }
+)
 
 # Keywords that suggest architectural rationale (belongs in Analysis).
-_RATIONALE_KEYWORDS: frozenset[str] = frozenset({
-    "because",
-    "rationale",
-    "tradeoff",
-    "trade-off",
-    "we chose",
-    "decision:",
-    "alternative",
-    "rejected because",
-    "considered",
-    "pros and cons",
-})
+_RATIONALE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "because",
+        "rationale",
+        "tradeoff",
+        "trade-off",
+        "we chose",
+        "decision:",
+        "alternative",
+        "rejected because",
+        "considered",
+        "pros and cons",
+    }
+)
 
 # Keywords that suggest requirements / directives (belongs in Details).
-_REQUIREMENT_KEYWORDS: frozenset[str] = frozenset({
-    "must",
-    "shall",
-    "required",
-    "mandatory",
-    "the system will",
-    "the service shall",
-    "when a ",
-    "if the ",
-})
+_REQUIREMENT_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "must",
+        "shall",
+        "required",
+        "mandatory",
+        "the system will",
+        "the service shall",
+        "when a ",
+        "if the ",
+    }
+)
 
 # Keywords that suggest planning constraints.
-_CONSTRAINT_KEYWORDS: frozenset[str] = frozenset({
-    "priority",
-    "ordering",
-    "before",
-    "after",
-    "dependency",
-    "blocked by",
-    "prerequisite",
-    "deadline",
-})
+_CONSTRAINT_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "priority",
+        "ordering",
+        "before",
+        "after",
+        "dependency",
+        "blocked by",
+        "prerequisite",
+        "deadline",
+    }
+)
 
 
 def _has_keywords(text: str, keywords: frozenset[str]) -> list[str]:

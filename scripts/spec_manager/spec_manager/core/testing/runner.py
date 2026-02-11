@@ -136,14 +136,10 @@ class PytestRunner:
 
         except subprocess.TimeoutExpired:
             result.passed = False
-            result.failures = [
-                TestFailure(message="Test execution timed out (300s)")
-            ]
+            result.failures = [TestFailure(message="Test execution timed out (300s)")]
         except FileNotFoundError:
             result.passed = False
-            result.failures = [
-                TestFailure(message="pytest not found in PATH")
-            ]
+            result.failures = [TestFailure(message="pytest not found in PATH")]
 
         result.duration_ms = (time.monotonic() - start) * 1000
         return result
@@ -154,7 +150,7 @@ class PytestRunner:
         failures: list[TestFailure] = []
         lines = stdout.splitlines()
 
-        for i, line in enumerate(lines):
+        for line in lines:
             if line.startswith("FAILED "):
                 # Format: "FAILED path/to/test.py::test_name - message"
                 parts = line[7:].split(" - ", 1)

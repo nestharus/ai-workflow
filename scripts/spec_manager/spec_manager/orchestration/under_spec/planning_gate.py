@@ -71,9 +71,12 @@ def check_decision_coverage(
 
         # Match by question substring similarity
         constraint_q = constraint.question.lower().strip()
-        if constraint_q and decision_question:
-            if constraint_q in decision_question or decision_question in constraint_q:
-                covering.append(constraint.constraint_id or constraint.question[:50])
+        if (
+            constraint_q
+            and decision_question
+            and (constraint_q in decision_question or decision_question in constraint_q)
+        ):
+            covering.append(constraint.constraint_id or constraint.question[:50])
 
     if covering:
         return CoverageResult(
@@ -122,24 +125,30 @@ def run_planning_gate(
             )
 
             if coverage.covered:
-                result.covered_decisions.append({
-                    "decision_id": decision.get("decision_id", ""),
-                    "question": decision.get("question", ""),
-                    "covering_constraints": coverage.covering_constraints,
-                })
+                result.covered_decisions.append(
+                    {
+                        "decision_id": decision.get("decision_id", ""),
+                        "question": decision.get("question", ""),
+                        "covering_constraints": coverage.covering_constraints,
+                    }
+                )
             else:
-                result.uncovered_decisions.append({
-                    "decision_id": decision.get("decision_id", ""),
-                    "question": decision.get("question", ""),
-                    "intention_id": intention.get("intention_id", ""),
-                })
-                result.under_spec_events.append({
-                    "kind": "MISSING_CONSTRAINT",
-                    "question": decision.get("question", ""),
-                    "options": decision.get("options", []),
-                    "needed_for": decision.get("needed_for", intention.get("target_file", "")),
-                    "evidence_paths": [],
-                })
+                result.uncovered_decisions.append(
+                    {
+                        "decision_id": decision.get("decision_id", ""),
+                        "question": decision.get("question", ""),
+                        "intention_id": intention.get("intention_id", ""),
+                    }
+                )
+                result.under_spec_events.append(
+                    {
+                        "kind": "MISSING_CONSTRAINT",
+                        "question": decision.get("question", ""),
+                        "options": decision.get("options", []),
+                        "needed_for": decision.get("needed_for", intention.get("target_file", "")),
+                        "evidence_paths": [],
+                    }
+                )
 
     if result.uncovered_decisions:
         logger.info(

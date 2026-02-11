@@ -16,7 +16,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,9 +33,7 @@ class DemotionTicket:
     """
 
     ticket_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     run_id: str = ""
     slice_id: str = ""
 
@@ -76,15 +74,19 @@ class DemotionTicket:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""
         import dataclasses
+
         return dataclasses.asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DemotionTicket:
         """Deserialize from a dict."""
-        return cls(**{
-            k: v for k, v in data.items()
-            if k in {f.name for f in __import__("dataclasses").fields(cls)}
-        })
+        return cls(
+            **{
+                k: v
+                for k, v in data.items()
+                if k in {f.name for f in __import__("dataclasses").fields(cls)}
+            }
+        )
 
 
 @dataclass
@@ -118,8 +120,9 @@ class DemotionManager:
         results = manager.apply(ticket, slice_root=Path("..."))
     """
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(self, workspace_root: Path, run_id: str = "") -> None:
         self.workspace_root = workspace_root
+        self.run_id = run_id
 
     def apply(
         self,
@@ -190,6 +193,9 @@ class DemotionManager:
         # 5. Record lineage
         self._record_lineage(ticket, slice_root, result)
 
+        # 6. Append to demotion ledger (JSONL)
+        self._append_to_ledger(ticket, result)
+
         return result
 
     def _write_patch(
@@ -245,19 +251,19 @@ class DemotionManager:
         ticket.applied_patch_paths.append(str(stub_path))
         return stub_path
 
-    def _create_gap_evidence(
-        self, ticket: DemotionTicket
-    ) -> list[dict[str, Any]]:
+    def _create_gap_evidence(self, ticket: DemotionTicket) -> list[dict[str, Any]]:
         """Create GapEvidence entries from a demotion ticket."""
         evidence = []
         for file_path in ticket.failing_files:
-            evidence.append({
-                "source": f"demotion:{ticket.ticket_id}",
-                "file": file_path,
-                "description": ticket.diagnosis,
-                "severity": ticket.severity,
-                "gate": ticket.gate,
-            })
+            evidence.append(
+                {
+                    "source": f"demotion:{ticket.ticket_id}",
+                    "file": file_path,
+                    "description": ticket.diagnosis,
+                    "severity": ticket.severity,
+                    "gate": ticket.gate,
+                }
+            )
         return evidence
 
     def _record_lineage(
@@ -280,3 +286,30 @@ class DemotionManager:
             ),
             encoding="utf-8",
         )
+
+    def _append_to_ledger(
+        self,
+        ticket: DemotionTicket,
+        result: dict[str, Any],
+    ) -> None:
+        """Append a JSONL entry to the demotion ledger."""
+        run_id = self.run_id or ticket.run_id
+        if not run_id:
+            return
+        ledger_dir = self.workspace_root / ".pdd_runs" / run_id / "demotions"
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        ledger_path = ledger_dir / "ledger.jsonl"
+        entry = {
+            "ticket_id": ticket.ticket_id,
+            "created_at": ticket.created_at,
+            "source": ticket.source,
+            "origin_layer": ticket.origin_layer,
+            "target_layer": ticket.target_layer,
+            "severity": ticket.severity,
+            "diagnosis": ticket.diagnosis[:500],
+            "failing_files": ticket.failing_files,
+            "apply_status": ticket.apply_status,
+            "applied": result.get("applied", False),
+        }
+        with ledger_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")

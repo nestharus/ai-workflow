@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.under_spec.manager import (
     Constraint,
     ConstraintsStore,
@@ -19,7 +18,6 @@ from spec_manager.orchestration.under_spec.manager import (
     UnderSpecManager,
     UnderSpecOutcome,
 )
-
 
 # ======================================================================
 # UnderSpecEvent
@@ -66,10 +64,12 @@ class TestUnderSpecEventFromDict:
 
     def test_from_dict_source_file_takes_precedence(self) -> None:
         """from_dict() prefers source_file over file key."""
-        event = UnderSpecEvent.from_dict({
-            "source_file": "new.py",
-            "file": "legacy.py",
-        })
+        event = UnderSpecEvent.from_dict(
+            {
+                "source_file": "new.py",
+                "file": "legacy.py",
+            }
+        )
         assert event.source_file == "new.py"
 
 
@@ -188,9 +188,7 @@ class TestUnderSpecOutcome:
 
     def test_is_blocked_when_blocked_events_present(self) -> None:
         """is_blocked returns True when there are blocked events."""
-        outcome = UnderSpecOutcome(
-            blocked=[UnderSpecEvent(event_id="b1", question="Why?")]
-        )
+        outcome = UnderSpecOutcome(blocked=[UnderSpecEvent(event_id="b1", question="Why?")])
         assert outcome.is_blocked is True
 
     def test_not_blocked_when_no_blocked_events(self) -> None:
@@ -284,15 +282,21 @@ class TestConstraintsStoreSaveAndLoad:
         store = ConstraintsStore(tmp_path)
 
         # Save first batch
-        store.save("merge-slice", [
-            Constraint(constraint_id="c-1", answer="First answer"),
-        ])
+        store.save(
+            "merge-slice",
+            [
+                Constraint(constraint_id="c-1", answer="First answer"),
+            ],
+        )
 
         # Save second batch (includes c-1 duplicate and c-2 new)
-        store.save("merge-slice", [
-            Constraint(constraint_id="c-1", answer="Duplicate"),
-            Constraint(constraint_id="c-2", answer="Second answer"),
-        ])
+        store.save(
+            "merge-slice",
+            [
+                Constraint(constraint_id="c-1", answer="Duplicate"),
+                Constraint(constraint_id="c-2", answer="Second answer"),
+            ],
+        )
 
         loaded = store.load("merge-slice")
         assert len(loaded) == 2
@@ -303,9 +307,12 @@ class TestConstraintsStoreSaveAndLoad:
     def test_save_creates_directory(self, tmp_path: Path) -> None:
         """save() creates the constraints directory if it doesn't exist."""
         store = ConstraintsStore(tmp_path)
-        store.save("new-slice", [
-            Constraint(constraint_id="c-1", answer="Answer here"),
-        ])
+        store.save(
+            "new-slice",
+            [
+                Constraint(constraint_id="c-1", answer="Answer here"),
+            ],
+        )
 
         constraints_dir = tmp_path / "analysis" / "constraints"
         assert constraints_dir.exists()
@@ -319,10 +326,13 @@ class TestConstraintsStoreFindCovering:
         store = ConstraintsStore(tmp_path)
 
         # Save constraints covering evt-1 and evt-3
-        store.save("test-slice", [
-            Constraint(constraint_id="evt-1", answer="Answer 1"),
-            Constraint(constraint_id="evt-3", answer="Answer 3"),
-        ])
+        store.save(
+            "test-slice",
+            [
+                Constraint(constraint_id="evt-1", answer="Answer 1"),
+                Constraint(constraint_id="evt-3", answer="Answer 3"),
+            ],
+        )
 
         events = [
             UnderSpecEvent(event_id="evt-1", question="Q1"),
@@ -354,10 +364,13 @@ class TestConstraintsStoreFindCovering:
     def test_all_covered(self, tmp_path: Path) -> None:
         """find_covering() returns all events as covered when fully covered."""
         store = ConstraintsStore(tmp_path)
-        store.save("full-slice", [
-            Constraint(constraint_id="evt-1", answer="A1"),
-            Constraint(constraint_id="evt-2", answer="A2"),
-        ])
+        store.save(
+            "full-slice",
+            [
+                Constraint(constraint_id="evt-1", answer="A1"),
+                Constraint(constraint_id="evt-2", answer="A2"),
+            ],
+        )
 
         events = [
             UnderSpecEvent(event_id="evt-1"),
@@ -396,16 +409,19 @@ class TestUnderSpecManagerResolveCoveredEvents:
         """resolve() with constraint-covered events returns resolved outcome."""
         # Pre-create constraints
         store = ConstraintsStore(tmp_path)
-        store.save("covered-slice", [
-            Constraint(
-                constraint_id="evt-1",
-                question="Which format?",
-                answer="Use JSON format for all data exchange.",
-                source="user",
-                confidence=1.0,
-                validated=True,
-            ),
-        ])
+        store.save(
+            "covered-slice",
+            [
+                Constraint(
+                    constraint_id="evt-1",
+                    question="Which format?",
+                    answer="Use JSON format for all data exchange.",
+                    source="user",
+                    confidence=1.0,
+                    validated=True,
+                ),
+            ],
+        )
 
         manager = UnderSpecManager(workspace_root=tmp_path)
         events = [

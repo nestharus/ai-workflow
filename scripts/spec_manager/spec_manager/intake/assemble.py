@@ -28,9 +28,7 @@ def _read_source_lines(source_dir: Path, file_path: str) -> list[str]:
     return full_path.read_text(encoding="utf-8").splitlines()
 
 
-def _extract_verbatim(
-    source_lines: list[str], start: int, end: int
-) -> str:
+def _extract_verbatim(source_lines: list[str], start: int, end: int) -> str:
     """Extract verbatim text for a line range (1-based inclusive)."""
     # Convert to 0-based indexing
     start_idx = max(0, start - 1)
@@ -62,9 +60,7 @@ def assemble_output(
     lib_lookup = {lib.lib_id: lib for lib in libraries}
 
     # Group routes by library, then by category
-    lib_cat_routes: dict[str, dict[str, list[RouteEntry]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    lib_cat_routes: dict[str, dict[str, list[RouteEntry]]] = defaultdict(lambda: defaultdict(list))
     for route in routes:
         if route.category == "IGNORED":
             continue
@@ -79,9 +75,7 @@ def assemble_output(
         sys_dir = output_dir / "system"
         sys_dir.mkdir(parents=True, exist_ok=True)
 
-        has_details = any(
-            cat.startswith("DETAIL/") for cat in sys_cat_routes
-        )
+        has_details = any(cat.startswith("DETAIL/") for cat in sys_cat_routes)
         if has_details:
             (sys_dir / "details").mkdir(parents=True, exist_ok=True)
 
@@ -103,22 +97,16 @@ def assemble_output(
 
             for route in cat_routes:
                 if route.src.file not in source_cache:
-                    source_cache[route.src.file] = _read_source_lines(
-                        source_dir, route.src.file
-                    )
+                    source_cache[route.src.file] = _read_source_lines(source_dir, route.src.file)
                 source_lines = source_cache[route.src.file]
-                text = _extract_verbatim(
-                    source_lines, route.src.start, route.src.end
-                )
+                text = _extract_verbatim(source_lines, route.src.start, route.src.end)
                 parts.append(f"\n([={route.element_id}])")
                 parts.append(f"<!-- source: {route.src.file}:{route.src.start}-{route.src.end} -->")
                 parts.append(text)
                 parts.append("")
 
             out_file.write_text("\n".join(parts), encoding="utf-8")
-            logger.info(
-                "Assembled system/%s: %d entries", output_path, len(cat_routes)
-            )
+            logger.info("Assembled system/%s: %d entries", output_path, len(cat_routes))
 
     for lib_id in sorted(lib_cat_routes.keys()):
         lib = lib_lookup.get(lib_id)
@@ -127,9 +115,7 @@ def assemble_output(
         lib_dir.mkdir(parents=True, exist_ok=True)
 
         # Create details subdirectory if needed
-        has_details = any(
-            cat.startswith("DETAIL/") for cat in lib_cat_routes[lib_id]
-        )
+        has_details = any(cat.startswith("DETAIL/") for cat in lib_cat_routes[lib_id])
         if has_details:
             (lib_dir / "details").mkdir(parents=True, exist_ok=True)
 
@@ -155,15 +141,11 @@ def assemble_output(
             for route in cat_routes:
                 # Get source lines (cached)
                 if route.src.file not in source_cache:
-                    source_cache[route.src.file] = _read_source_lines(
-                        source_dir, route.src.file
-                    )
+                    source_cache[route.src.file] = _read_source_lines(source_dir, route.src.file)
                 source_lines = source_cache[route.src.file]
 
                 # Extract verbatim text
-                text = _extract_verbatim(
-                    source_lines, route.src.start, route.src.end
-                )
+                text = _extract_verbatim(source_lines, route.src.start, route.src.end)
 
                 # Add element annotation and content
                 parts.append(f"\n([={route.element_id}])")

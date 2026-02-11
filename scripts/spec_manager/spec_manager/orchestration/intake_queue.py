@@ -57,13 +57,16 @@ class IntakeQueue:
         self._root.mkdir(parents=True, exist_ok=True)
         path = self._root / f"{item.item_id}.json"
         path.write_text(
-            json.dumps({
-                "item_id": item.item_id,
-                "text": item.text,
-                "source_path": item.source_path,
-                "desired_slice_hint": item.desired_slice_hint,
-                "tags": item.tags,
-            }, indent=2),
+            json.dumps(
+                {
+                    "item_id": item.item_id,
+                    "text": item.text,
+                    "source_path": item.source_path,
+                    "desired_slice_hint": item.desired_slice_hint,
+                    "tags": item.tags,
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         logger.debug("Enqueued routing item %s", item.item_id)
@@ -110,13 +113,15 @@ class IntakeQueue:
         for path in sorted(self._root.glob("*.json")):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                items.append(RoutingItem(
-                    item_id=data.get("item_id", path.stem),
-                    text=data.get("text", ""),
-                    source_path=data.get("source_path"),
-                    desired_slice_hint=data.get("desired_slice_hint"),
-                    tags=data.get("tags", []),
-                ))
+                items.append(
+                    RoutingItem(
+                        item_id=data.get("item_id", path.stem),
+                        text=data.get("text", ""),
+                        source_path=data.get("source_path"),
+                        desired_slice_hint=data.get("desired_slice_hint"),
+                        tags=data.get("tags", []),
+                    )
+                )
             except (json.JSONDecodeError, KeyError) as exc:
                 logger.warning("Failed to read queue item %s: %s", path, exc)
         return items

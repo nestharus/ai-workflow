@@ -91,8 +91,6 @@ class TestCoverageLedgerEntry:
         assert entry.route_ids == []
 
     def test_defaults(self) -> None:
-        entry = CoverageLedgerEntry(
-            file="a.md", start=1, end=1, status="uncovered"
-        )
+        entry = CoverageLedgerEntry(file="a.md", start=1, end=1, status="uncovered")
         assert entry.route_ids == []
         assert entry.ignore_reason == ""

@@ -126,9 +126,7 @@ class AmbiguityResearchStrategy(Strategy):
                 issues.append(f"Spec research failed: {exc}")
 
         if research_hits:
-            actions.append(
-                f"Found {len(research_hits)} relevant spec sections for comment"
-            )
+            actions.append(f"Found {len(research_hits)} relevant spec sections for comment")
             evidence_records.append(
                 {
                     "category": "research",
@@ -187,12 +185,49 @@ class AmbiguityResearchStrategy(Strategy):
         # Remove comment markers and stopwords
         stripped = re.sub(r"^#\s*", "", comment.strip())
         stopwords = {
-            "the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "being", "have", "has", "had", "do", "does", "did", "will",
-            "would", "could", "should", "may", "might", "must", "shall",
-            "to", "of", "in", "for", "on", "with", "at", "by", "from",
-            "and", "or", "but", "if", "then", "else", "this", "that",
-            "it", "its",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "shall",
+            "to",
+            "of",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "and",
+            "or",
+            "but",
+            "if",
+            "then",
+            "else",
+            "this",
+            "that",
+            "it",
+            "its",
         }
 
         words = re.findall(r"\b[a-zA-Z_]\w+\b", stripped)

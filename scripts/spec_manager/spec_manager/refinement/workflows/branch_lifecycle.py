@@ -190,7 +190,9 @@ def run_branch_promote(
         outputs: dict[str, Any] = {
             "promoted_count": len(result.promoted_atoms),
             "skipped_count": len(result.skipped_atoms),
-            "compliance_passed": result.compliance_result.passed if result.compliance_result else None,
+            "compliance_passed": result.compliance_result.passed
+            if result.compliance_result
+            else None,
             "new_pin_ids": result.pin_ids_created,
             "skip_compliance": skip_compliance,
         }
@@ -312,5 +314,5 @@ def run_branch_init_from_edit_in_place(
         return {"success": True, "outputs": combined_outputs}
 
     except Exception as exc:
-        logger.error("Edit-in-place integration failed: %s", exc)
+        logger.exception("Edit-in-place integration failed")
         return {"success": False, "error": str(exc)}

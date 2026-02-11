@@ -35,6 +35,7 @@ class LevelConfig:
         num_bus_topics: Number of distinct bus topics.
         target_model: Target model this level is designed to break.
     """
+
     level: int
     num_rules: int
     num_integration_points: int

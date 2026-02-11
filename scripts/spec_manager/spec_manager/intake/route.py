@@ -39,15 +39,20 @@ Ask: "Could I achieve the same GOAL with a completely different approach?"
 - If NO -> it describes the goal itself (CONSTRAINTS)
 
 ### Classification Examples
-| Statement | Category | Why |
-|-----------|----------|-----|
-| "TM MUST perform ticket status transitions under locks/ticket.<id>.lock" | DETAIL/ALGORITHM | Different impl could use DB transactions |
-| "blocker_kind MUST be present when status == blocked" | DETAIL/SHAPE | Field validation rule |
-| "Steps MUST emit step_start / step_stop events" | DETAIL/ALGORITHM | Prescribes specific event names |
-| "Trust > Friction > Performance" | CONSTRAINTS | Guiding principle, survives reimplementation |
-| "No silent termination" | CONSTRAINTS | Constrains ALL algorithms regardless of impl |
-| "We chose file-based queues because..." | ANALYSIS | Decision rationale |
-| "The system processes tickets through a lifecycle" | DETAIL/ALGORITHM | Describes system behavior (expressible as functions) |
+- "TM MUST perform ticket status transitions under locks"
+  -> DETAIL/ALGORITHM (different impl could use DB transactions)
+- "blocker_kind MUST be present when status == blocked"
+  -> DETAIL/SHAPE (field validation rule)
+- "Steps MUST emit step_start / step_stop events"
+  -> DETAIL/ALGORITHM (prescribes specific event names)
+- "Trust > Friction > Performance"
+  -> CONSTRAINTS (guiding principle, survives reimplementation)
+- "No silent termination"
+  -> CONSTRAINTS (constrains ALL algorithms regardless of impl)
+- "We chose file-based queues because..."
+  -> ANALYSIS (decision rationale)
+- "The system processes tickets through a lifecycle"
+  -> DETAIL/ALGORITHM (expressible as functions)
 """
 
 
@@ -66,26 +71,20 @@ def _build_library_context(libraries: list[LibraryDef]) -> str:
     return "\n".join(parts)
 
 
-def _parse_route_entries(
-    data: dict, source_file: str
-) -> list[RouteEntry]:
+def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
     """Parse JSON routing output into RouteEntry objects."""
     entries: list[RouteEntry] = []
     route_counter = len(entries)
 
     if "routes" not in data:
         raise ValueError(
-            f"Routing JSON for {source_file} missing 'routes' key. "
-            f"Got keys: {sorted(data.keys())}"
+            f"Routing JSON for {source_file} missing 'routes' key. Got keys: {sorted(data.keys())}"
         )
 
     for route_data in data["routes"]:
         category = route_data.get("category")
         if category is None:
-            raise ValueError(
-                f"Route in {source_file} missing 'category'. "
-                f"Route data: {route_data}"
-            )
+            raise ValueError(f"Route in {source_file} missing 'category'. Route data: {route_data}")
 
         route_counter += 1
         route_id = f"R-{route_counter:06d}"
@@ -250,9 +249,7 @@ def route_sources(
         for source_file in pending_files:
             logger.info("Routing %s", source_file.name)
             try:
-                entries = _route_file(
-                    source_file, source_dir, library_context, output_dir
-                )
+                entries = _route_file(source_file, source_dir, library_context, output_dir)
                 all_routes.extend(entries)
             except ValueError as e:
                 error_msg = str(e)
@@ -290,9 +287,7 @@ def route_sources(
         summaries_dir = output_dir / "summaries"
         if summaries_dir.exists():
             for f in sorted(summaries_dir.glob("*.json")):
-                existing_summaries.append(
-                    json.loads(f.read_text(encoding="utf-8"))
-                )
+                existing_summaries.append(json.loads(f.read_text(encoding="utf-8")))
 
         unroutable_file_ids = [f.stem for f in failed_files]
         new_libraries = discover_libraries(

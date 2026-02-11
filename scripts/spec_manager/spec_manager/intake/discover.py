@@ -42,23 +42,18 @@ def discover_libraries(
     if existing_libraries and unroutable_files:
         prompt_parts.append("### Existing Libraries (KEEP ALL)\n\n")
         for lib in existing_libraries:
-            prompt_parts.append(
-                f"- **{lib.lib_id}**: {lib.name} — {lib.description}\n"
-            )
+            prompt_parts.append(f"- **{lib.lib_id}**: {lib.name} — {lib.description}\n")
         prompt_parts.append(
-            f"\n### Unroutable Files\n\n"
-            f"The following files contain non-constraint content that could "
-            f"not be routed to any existing library. Additional libraries "
-            f"are needed based on cohesion/coupling analysis:\n\n"
+            "\n### Unroutable Files\n\n"
+            "The following files contain non-constraint content that could "
+            "not be routed to any existing library. Additional libraries "
+            "are needed based on cohesion/coupling analysis:\n\n"
         )
         for file_id in unroutable_files:
             prompt_parts.append(f"- {file_id}\n")
         prompt_parts.append("\n")
 
-    prompt_parts.append(
-        "File summaries:\n\n"
-        f"{json.dumps(summaries, indent=2, ensure_ascii=False)}"
-    )
+    prompt_parts.append(f"File summaries:\n\n{json.dumps(summaries, indent=2, ensure_ascii=False)}")
     prompt = "".join(prompt_parts)
 
     last_json_error: json.JSONDecodeError | None = None

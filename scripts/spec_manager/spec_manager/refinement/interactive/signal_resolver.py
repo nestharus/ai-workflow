@@ -136,9 +136,7 @@ class SteeringOnlyResolver:
         from spec_manager.refinement.interactive.steering.steering_script import SteeringScript
 
         if not isinstance(steering_script, SteeringScript):
-            raise TypeError(
-                f"Expected SteeringScript, got {type(steering_script).__name__}"
-            )
+            raise TypeError(f"Expected SteeringScript, got {type(steering_script).__name__}")
         self._steering = steering_script
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:

@@ -100,6 +100,9 @@ class RunContext:
     mode: Literal["interactive", "auto"] = "auto"
     workspace_root: str = ""
     max_iterations: int = 20
+    max_iterations_by_layer: dict[str, int] = field(
+        default_factory=lambda: {"l1": 20, "l2": 30, "l3": 15}
+    )
     config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -123,7 +126,7 @@ class SliceResult:
     """Final result of running the promotion loop on one slice."""
 
     slice_id: str = ""
-    status: Literal["COMPLETE", "BLOCKED", "FAILED", "MAX_ITERATIONS"] = "COMPLETE"
+    status: Literal["COMPLETE", "BLOCKED", "FAILED", "MAX_ITERATIONS", "STAGNATED"] = "COMPLETE"
     iterations: int = 0
     remaining_gaps: int = 0
     demotion_tickets: list[DemotionTicket] = field(default_factory=list)
@@ -278,53 +281,71 @@ class GapExplorationStep:
                     logger.debug("Failed to read ticket file %s: %s", ticket_file, exc)
                     continue
 
-        prompt = (
-            "## TASK\n"
-            "Identify architecture continuity gaps in this slice.\n"
-            "Look for:\n"
-            "- Unconsumed promoted pins (atoms not wired into any component)\n"
-            "- Missing component files or entrypoints\n"
-            "- Missing event handlers or middleware registrations\n"
-            "- Business logic inlined in architectural code (should be in atoms)\n"
-            "- Extra components/wiring not declared in any manifest\n\n"
-            'Return JSON: {"gaps": [{"kind": ..., "component_id": ..., "file": ..., '
-            '"description": ..., "expected": ...}]}\n\n'
-            "## CODE\n\n" + "\n\n".join(code_summaries[:15])
-        )
+        # L2 ReviewPack: 5 specialized architecture reviewers
+        l2_reviewers = [
+            ("pdd-l2-arch-boundary-reviewer", "ARCH_BOUNDARY"),
+            ("pdd-l2-topology-reviewer", "TOPOLOGY"),
+            ("pdd-l2-pin-edge-reviewer", "PIN_COVERAGE"),
+            ("pdd-l2-arch-drift-reviewer", "ARCH_DRIFT"),
+            ("pdd-l2-governance-reviewer", "GOVERNANCE"),
+        ]
+
+        # Pattern library for review context
+        from spec_manager.orchestration.pattern_library import PatternLibrary
+
+        pattern_lib = PatternLibrary()
+
+        all_gaps: list[dict[str, Any]] = []
+        code_section = "\n\n".join(code_summaries[:15])
+        ticket_section = ""
         if open_tickets:
-            prompt += "\n\n## OPEN DEMOTION TICKETS\n" + "\n".join(
+            ticket_section = "\n\n## OPEN DEMOTION TICKETS\n" + "\n".join(
                 f"- {t}" for t in open_tickets[:10]
             )
 
-        try:
-            from spec_manager.core.agent_utils import run_agent
-            from spec_manager.core.json_extraction import _extract_json_payload
-            from spec_manager.refinement.formats import _strip_code_fences
-
-            output = run_agent(
-                agent_name="opus-architecture-proposer",
-                prompt=prompt,
-                workspace=workspace,
+        for reviewer_name, dimension in l2_reviewers:
+            pattern_section = pattern_lib.get_review_prompt_section(dimension)
+            reviewer_prompt = (
+                f"## TASK\n"
+                f"Review this architecture slice for {dimension} issues.\n\n"
+                f"{pattern_section}\n\n"
+                f"## CODE\n\n{code_section}"
+                f"{ticket_section}\n"
             )
-            cleaned = _strip_code_fences(output)
-            data = json.loads(_extract_json_payload(cleaned))
 
-            gaps = []
-            for g in data.get("gaps", []):
-                gaps.append(
-                    {
-                        "kind": g.get("kind", "architecture_gap"),
-                        "component_id": g.get("component_id", ""),
-                        "file": g.get("file", ""),
-                        "description": g.get("description", ""),
-                        "expected": g.get("expected", ""),
-                    }
+            try:
+                from spec_manager.core.agent_utils import run_agent
+                from spec_manager.core.json_extraction import _extract_json_payload
+                from spec_manager.refinement.formats import _strip_code_fences
+
+                output = run_agent(
+                    agent_name=reviewer_name,
+                    prompt=reviewer_prompt,
+                    workspace=workspace,
                 )
+                cleaned = _strip_code_fences(output)
+                data = json.loads(_extract_json_payload(cleaned))
 
-            bundle.gaps = GapReportRef(open_gaps=gaps)
-        except Exception as exc:
-            logger.warning("L2 gap exploration failed: %s", exc)
-            bundle.gaps = GapReportRef(open_gaps=[])
+                for finding in data.get("findings", []):
+                    all_gaps.append(
+                        {
+                            "kind": f"l2_{dimension.lower()}_finding",
+                            "reviewer": reviewer_name,
+                            "dimension": dimension,
+                            "component_id": finding.get("location", {}).get("symbol", ""),
+                            "file": finding.get("location", {}).get("file", ""),
+                            "description": finding.get("evidence", ""),
+                            "severity": finding.get("severity", "MINOR"),
+                            "required_change_type": finding.get(
+                                "required_change_type", "wiring_only"
+                            ),
+                            "suggested_fix": finding.get("suggested_fix", ""),
+                        }
+                    )
+            except Exception as exc:
+                logger.debug("L2 reviewer %s failed: %s", reviewer_name, exc)
+
+        bundle.gaps = GapReportRef(open_gaps=all_gaps)
 
         return StepResult(status="OK")
 
@@ -344,10 +365,14 @@ class GapExplorationStep:
             bundle.gaps = GapReportRef(open_gaps=[])
             return StepResult(status="OK")
 
-        # Gather code from slice
+        # Gather code from slice — L3 slices are per-file (cq-{stem}),
+        # so only review the matching file, not all files in the worktree
         code_files: dict[str, str] = {}
+        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
         for py_file in sorted(slice_root.rglob("*.py")):
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                if target_stem and py_file.stem != target_stem:
+                    continue
                 try:
                     code_files[str(py_file.relative_to(slice_root))] = py_file.read_text(
                         encoding="utf-8"
@@ -364,24 +389,44 @@ class GapExplorationStep:
             "chatgpt-completeness-reviewer",
             "chatgpt-consistency-reviewer",
             "chatgpt-correctness-reviewer",
+            "pdd-l3-drift-reviewer",
         ]
+
+        # Pattern library for review context
+        from spec_manager.orchestration.pattern_library import PatternLibrary
+
+        pattern_lib = PatternLibrary()
+
+        # Map reviewer names to pattern dimensions
+        _REVIEWER_DIMENSIONS: dict[str, str] = {
+            "chatgpt-clarity-reviewer": "CLARITY",
+            "chatgpt-completeness-reviewer": "CORRECTNESS",
+            "chatgpt-consistency-reviewer": "CONSISTENCY",
+            "chatgpt-correctness-reviewer": "CORRECTNESS",
+            "pdd-l3-drift-reviewer": "DRIFT",
+        }
 
         all_gaps: list[dict[str, Any]] = []
 
         for file_path, code_content in code_files.items():
-            prompt = (
-                "## TASK\n"
-                "Review the following code for quality issues.\n"
-                "For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
-                "category (style/maintainability/logic/architecture/drift),\n"
-                "required_change_type (refactor_only/wiring_only/behavior_change),\n"
-                "and description.\n"
-                'Return JSON: {"findings": [...]}\n\n'
-                f"File: {file_path}\n\n"
-                f"```\n{code_content[:4000]}\n```\n"
-            )
-
             for reviewer in reviewers:
+                dimension = _REVIEWER_DIMENSIONS.get(reviewer, "")
+                pattern_section = (
+                    pattern_lib.get_review_prompt_section(dimension) if dimension else ""
+                )
+                reviewer_prompt = (
+                    "## TASK\n"
+                    "Review the following code for quality issues.\n"
+                    "For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
+                    "category (style/maintainability/logic/architecture/drift),\n"
+                    "required_change_type (refactor_only/wiring_only/behavior_change),\n"
+                    "and description.\n"
+                    'Return JSON: {"findings": [...]}\n\n'
+                    f"{pattern_section}\n\n"
+                    f"File: {file_path}\n\n"
+                    f"```\n{code_content[:4000]}\n```\n"
+                )
+
                 try:
                     from spec_manager.core.agent_utils import run_agent
                     from spec_manager.core.json_extraction import _extract_json_payload
@@ -389,7 +434,7 @@ class GapExplorationStep:
 
                     output = run_agent(
                         agent_name=reviewer,
-                        prompt=prompt,
+                        prompt=reviewer_prompt,
                         workspace=workspace,
                     )
                     cleaned = _strip_code_fences(output)
@@ -682,6 +727,10 @@ class ImplementStep:
         except Exception as exc:
             logger.warning("L2 implementation failed: %s", exc)
             bundle.implementation = ImplementationRef()
+            return StepResult(
+                status="RETRY",
+                error=f"L2 implementation parse error: {exc}",
+            )
 
         return StepResult(status="OK")
 
@@ -698,10 +747,13 @@ class ImplementStep:
         intentions_text = json.dumps(bundle.plan.intentions, indent=2)
         gaps_text = json.dumps(bundle.gaps.open_gaps[:20], indent=2)
 
-        # Gather code for the files being refactored
+        # Gather code for the files being refactored — scope to slice file for L3
         code_summaries: list[str] = []
         target_files = {i.get("target_file", "") for i in bundle.plan.intentions}
+        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
         for py_file in sorted(slice_root.rglob("*.py")):
+            if target_stem and py_file.stem != target_stem:
+                continue
             rel = (
                 str(py_file.relative_to(slice_root))
                 if slice_root in py_file.parents or py_file.parent == slice_root
@@ -761,6 +813,10 @@ class ImplementStep:
         except Exception as exc:
             logger.warning("L3 implementation failed: %s", exc)
             bundle.implementation = ImplementationRef()
+            return StepResult(
+                status="RETRY",
+                error=f"L3 implementation parse error: {exc}",
+            )
 
         return StepResult(status="OK")
 
@@ -976,11 +1032,14 @@ class AnalyzeStep:
         entries: list[dict[str, str]] = []
         total_lines = 0
         total_functions = 0
+        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
 
         for py_file in sorted(slice_root.rglob("*.py")):
             if not py_file.is_file():
                 continue
             if any(part.startswith(".") for part in py_file.parts):
+                continue
+            if target_stem and py_file.stem != target_stem:
                 continue
             try:
                 content = py_file.read_text(encoding="utf-8")
@@ -1116,10 +1175,12 @@ class PromoteStep:
             bundle.gates.gates = gates_data
 
             if not report.passed:
+                first_gate = report.blockers[0].gate_id if report.blockers else None
                 ticket = DemotionTicket(
                     run_id=ctx.run_id,
                     slice_id=ctx.slice_id,
                     source="GATE_FAILURE",
+                    gate=first_gate,
                     target_layer="L1",
                     severity="BLOCKER",
                     diagnosis=f"Gates failed: {[b.summary for b in report.blockers]}",
@@ -1132,6 +1193,21 @@ class PromoteStep:
 
         except Exception as exc:
             logger.warning("L1 promotion gates failed: %s", exc)
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=[
+                    DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="GATE_FAILURE",
+                        gate="L1_GATE_ERROR",
+                        target_layer="L1",
+                        severity="BLOCKER",
+                        diagnosis=f"L1 gate evaluation failed: {exc}",
+                    )
+                ],
+                error=f"L1 gate error: {exc}",
+            )
 
         return StepResult(status="OK")
 
@@ -1207,6 +1283,7 @@ class PromoteStep:
                             run_id=ctx.run_id,
                             slice_id=ctx.slice_id,
                             source="GATE_FAILURE",
+                            gate=g.get("gate_id"),
                             origin_layer="L2",
                             target_layer=target,
                             severity="BLOCKER",
@@ -1221,6 +1298,22 @@ class PromoteStep:
 
         except Exception as exc:
             logger.warning("L2 promotion gates failed: %s", exc)
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=[
+                    DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="GATE_FAILURE",
+                        gate="L2_GATE_PARSE_ERROR",
+                        origin_layer="L2",
+                        target_layer="L2",
+                        severity="BLOCKER",
+                        diagnosis=f"L2 gate evaluation failed to parse: {exc}",
+                    )
+                ],
+                error=f"L2 gate parse error: {exc}",
+            )
 
         return StepResult(status="OK")
 
@@ -1285,9 +1378,12 @@ class PromoteStep:
                 error=f"L3: {len(quality_gaps)} quality findings still open",
             )
 
-        # Run diff-impact classifier to ensure no behavior change
+        # Run diff-impact classifier to ensure no behavior change — scope to slice file
         code_summaries: list[str] = []
+        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
         for py_file in sorted(slice_root.rglob("*.py")):
+            if target_stem and py_file.stem != target_stem:
+                continue
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
                 try:
                     content = py_file.read_text(encoding="utf-8")
@@ -1371,6 +1467,22 @@ class PromoteStep:
 
             except Exception as exc:
                 logger.warning("L3 diff-impact classifier failed: %s", exc)
+                return StepResult(
+                    status="RETRY",
+                    emitted_tickets=[
+                        DemotionTicket(
+                            run_id=ctx.run_id,
+                            slice_id=ctx.slice_id,
+                            source="GATE_FAILURE",
+                            gate="L3_DIFF_IMPACT_PARSE_ERROR",
+                            origin_layer="L3",
+                            target_layer="L3",
+                            severity="BLOCKER",
+                            diagnosis=f"L3 diff-impact classifier failed to parse: {exc}",
+                        )
+                    ],
+                    error=f"L3 diff-impact parse error: {exc}",
+                )
 
         return StepResult(status="OK")
 
@@ -1386,12 +1498,18 @@ class PromoteStep:
 
 
 class IntegrateStep:
-    """Merge slice into dirty, tick CI pipeline."""
+    """Merge slice into dirty, tick CI pipeline.
+
+    On CI failure, invokes an Investigator agent (budget=2 attempts)
+    before falling through to demotion.  If the Investigator produces
+    a fix, the fix is applied and CI is retried.
+    """
 
     name = "INTEGRATE"
 
-    def __init__(self, worktree_manager: Any = None) -> None:
+    def __init__(self, worktree_manager: Any = None, *, investigator_budget: int = 2) -> None:
         self._wm = worktree_manager
+        self._investigator_budget = investigator_budget
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Merge grandchild → dirty, tick pipeline."""
@@ -1417,10 +1535,109 @@ class IntegrateStep:
 
         # 2. Tick CI pipeline
         tick_result = self._wm.tick_pipeline(active_layer=ctx.layer)
+
+        if not tick_result.demotion_tickets:
+            return StepResult(status="OK")
+
+        # 3. CI failed — try Investigator before demotion
+        investigator_result = self._try_investigator(ctx, tick_result)
+        if investigator_result and investigator_result.get("fixed"):
+            # Re-tick pipeline after fix
+            tick_result = self._wm.tick_pipeline(active_layer=ctx.layer)
+            if not tick_result.demotion_tickets:
+                return StepResult(status="OK")
+
+        # 4. Investigator failed or didn't fix — emit demotion tickets
+        tickets = []
         for dt_ref in tick_result.demotion_tickets:
             logger.warning("Pipeline demotion: %s", dt_ref)
+            tickets.append(
+                DemotionTicket(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    source="TEST_FAILURE",
+                    target_layer="L1",
+                    severity="BLOCKER",
+                    diagnosis=f"CI failure after integration: {dt_ref}",
+                )
+            )
+
+        if tickets:
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=tickets,
+                error=f"CI pipeline failed with {len(tickets)} demotion(s)",
+            )
 
         return StepResult(status="OK")
+
+    def _try_investigator(self, ctx: SliceContext, tick_result: Any) -> dict[str, Any] | None:
+        """Invoke Investigator agent to fix CI failures.
+
+        Args:
+            ctx: Slice context.
+            tick_result: The failing pipeline tick result.
+
+        Returns:
+            Dict with ``fixed`` bool, or None if investigator unavailable.
+        """
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
+        if not workspace:
+            return None
+
+        for attempt in range(1, self._investigator_budget + 1):
+            logger.info(
+                "Investigator attempt %d/%d for slice '%s'",
+                attempt,
+                self._investigator_budget,
+                ctx.slice_id,
+            )
+            try:
+                import json
+
+                from spec_manager.core.agent_utils import run_agent
+                from spec_manager.core.json_extraction import _extract_json_payload
+                from spec_manager.refinement.formats import _strip_code_fences
+
+                prompt = (
+                    "## TASK\n"
+                    "CI tests failed after integrating a slice. Investigate and fix.\n"
+                    "You must respect layer constraints:\n"
+                    f"- Current layer: {ctx.layer}\n"
+                    "- L1: may change function bodies\n"
+                    "- L2: wiring only, no new logic\n"
+                    "- L3: refactor only, no behavior change\n\n"
+                    'Return JSON: {"fixed": true/false, "patch": "...", '
+                    '"root_cause": "...", "evidence": "..."}\n\n'
+                    f"Failing tickets: {tick_result.demotion_tickets[:5]}\n"
+                    f"Slice: {ctx.slice_id}\n"
+                )
+
+                output = run_agent(
+                    agent_name="pdd-investigator",
+                    prompt=prompt,
+                    workspace=workspace,
+                )
+                cleaned = _strip_code_fences(output)
+                data = json.loads(_extract_json_payload(cleaned))
+
+                if data.get("fixed"):
+                    logger.info(
+                        "Investigator fixed CI failure (attempt %d): %s",
+                        attempt,
+                        data.get("root_cause", "unknown"),
+                    )
+                    return {"fixed": True, "attempt": attempt, "data": data}
+
+            except Exception as exc:
+                logger.debug("Investigator attempt %d failed: %s", attempt, exc)
+
+        logger.info(
+            "Investigator exhausted budget (%d attempts) for slice '%s'",
+            self._investigator_budget,
+            ctx.slice_id,
+        )
+        return {"fixed": False}
 
 
 class VerifyStep:
@@ -1840,12 +2057,29 @@ class PromotionLoop:
             if clean:
                 ctx.clean_sibling_root = str(clean)
 
+        # Layer-specific iteration limit
+        max_iters = run_context.max_iterations_by_layer.get(
+            slice_ref.layer, run_context.max_iterations
+        )
+
         all_tickets: list[DemotionTicket] = []
         iteration = 0
 
-        while iteration < run_context.max_iterations:
+        # Stagnation detection: track gap counts over iterations.
+        # Uses a sliding window — if min gap count over the last N iterations
+        # hasn't improved compared to the N iterations before that, it's stagnated.
+        gap_history: list[int] = []
+        stagnation_window = 3
+
+        # Per-ticket retry budget: track (failing_files_key, gate) → count
+        retry_tracker: dict[tuple[str, str], int] = {}
+        retry_budget = 3
+
+        bundle: EvidenceBundle | None = None
+
+        while iteration < max_iters:
             iteration += 1
-            logger.info("=== Slice '%s' iteration %d ===", ctx.slice_id, iteration)
+            logger.info("=== Slice '%s' iteration %d/%d ===", ctx.slice_id, iteration, max_iters)
 
             bundle = EvidenceBundle(
                 run_id=run_context.run_id,
@@ -1864,9 +2098,36 @@ class PromotionLoop:
 
                 if result.emitted_tickets:
                     all_tickets.extend(result.emitted_tickets)
-                    # Apply demotion tickets
+                    # Apply demotion tickets + track retries per unique failure pattern
+                    seen_keys: set[tuple[str, str]] = set()
                     for ticket in result.emitted_tickets:
                         self._dm.apply(ticket, Path(ctx.slice_root))
+                        files_key = (
+                            ",".join(sorted(ticket.failing_files)) if ticket.failing_files else ""
+                        )
+                        gate_key = ticket.gate or ticket.source or ""
+                        tracker_key = (files_key, gate_key)
+                        seen_keys.add(tracker_key)
+
+                    # Increment once per unique pattern per iteration (not per ticket)
+                    for tracker_key in seen_keys:
+                        retry_tracker[tracker_key] = retry_tracker.get(tracker_key, 0) + 1
+                        if retry_tracker[tracker_key] > retry_budget:
+                            logger.warning(
+                                "Slice '%s': per-ticket retry budget exceeded "
+                                "for (%s, %s) — escalating",
+                                ctx.slice_id,
+                                tracker_key[0],
+                                tracker_key[1],
+                            )
+                            return SliceResult(
+                                slice_id=ctx.slice_id,
+                                status="STAGNATED",
+                                iterations=iteration,
+                                remaining_gaps=len(bundle.gaps.open_gaps),
+                                demotion_tickets=all_tickets,
+                                error=f"Per-ticket retry budget exceeded for gate={tracker_key[1]}",
+                            )
 
                 if result.status == "BLOCKED":
                     # Slice is blocked — return with blocked status
@@ -1896,11 +2157,42 @@ class PromotionLoop:
                         error=result.error,
                     )
 
+            # Stagnation detection runs on EVERY iteration (including retries).
+            # Uses sliding window: compare min(recent window) vs min(previous window).
+            # If the recent window minimum hasn't improved, the slice is stagnated.
+            remaining = len(bundle.gaps.open_gaps)
+            gap_history.append(remaining)
+
+            if len(gap_history) >= 2 * stagnation_window:
+                prev_window = gap_history[-(2 * stagnation_window) : -stagnation_window]
+                recent_window = gap_history[-stagnation_window:]
+                if min(recent_window) >= min(prev_window):
+                    logger.warning(
+                        "Slice '%s': stagnation detected — min gaps not improving "
+                        "(recent=%d, previous=%d, window=%d)",
+                        ctx.slice_id,
+                        min(recent_window),
+                        min(prev_window),
+                        stagnation_window,
+                    )
+                    bundle.save(Path(run_context.workspace_root))
+                    return SliceResult(
+                        slice_id=ctx.slice_id,
+                        status="STAGNATED",
+                        iterations=iteration,
+                        remaining_gaps=remaining,
+                        demotion_tickets=all_tickets,
+                        error=(
+                            f"Stagnation: min gaps not improving for {stagnation_window} iterations"
+                        ),
+                    )
+
             if retry:
+                # Save bundle at end of iteration even on retry for inspectability
+                bundle.save(Path(run_context.workspace_root))
                 continue
 
             # Check termination
-            remaining = len(bundle.gaps.open_gaps)
             if remaining == 0:
                 bundle.status = "COMPLETE"
                 bundle.save(Path(run_context.workspace_root))

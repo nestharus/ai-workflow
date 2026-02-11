@@ -36,7 +36,7 @@ _logger = logging.getLogger(__name__)
 
 # Try to import jsonschema for validation
 try:
-    import jsonschema
+    import jsonschema  # noqa: F401
     from jsonschema import Draft202012Validator, ValidationError
 
     _HAS_JSONSCHEMA = True
@@ -142,7 +142,7 @@ def validate_artifact_contract(
     try:
         schema = registry.get_schema(schema_id)
     except KeyError as e:
-        _logger.error(f"Unknown schema ID: {schema_id}")
+        _logger.exception(f"Unknown schema ID: {schema_id}")
         return ContractValidationResult(
             artifact_id=artifact_id,
             schema_id=schema_id,
@@ -151,7 +151,7 @@ def validate_artifact_contract(
             warnings=[],
         )
     except FileNotFoundError as e:
-        _logger.error(f"Schema file not found: {e}")
+        _logger.exception("Schema file not found")
         return ContractValidationResult(
             artifact_id=artifact_id,
             schema_id=schema_id,
@@ -168,7 +168,9 @@ def validate_artifact_contract(
         if validation_errors:
             for error in validation_errors:
                 # Format the error path and message
-                path = ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "root"
+                path = (
+                    ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "root"
+                )
                 errors.append(f"[{path}] {error.message}")
 
             return ContractValidationResult(
@@ -188,7 +190,7 @@ def validate_artifact_contract(
         )
 
     except Exception as e:
-        _logger.exception(f"Unexpected error during validation: {e}")
+        _logger.exception("Unexpected error during validation")
         return ContractValidationResult(
             artifact_id=artifact_id,
             schema_id=schema_id,

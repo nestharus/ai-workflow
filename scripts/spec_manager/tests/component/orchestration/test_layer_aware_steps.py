@@ -18,7 +18,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from spec_manager.orchestration.demotion import DemotionTicket
 from spec_manager.orchestration.demotion.triage import (
     DemotionContext,
@@ -44,7 +43,6 @@ from spec_manager.orchestration.promotion_loop import (
     StepResult,
     VerifyStep,
 )
-
 
 # ======================================================================
 # Helpers
@@ -410,31 +408,47 @@ class TestGapExplorationStepLayerDispatch:
         )
         bundle = _make_bundle()
 
-        agent_response = json.dumps({"gaps": [
-            {"kind": "unconsumed_pin", "component_id": "auth", "file": "app.py",
-             "description": "Pin not consumed", "expected": "Wire to Router"},
-        ]})
+        # L2 now uses 5 specialized reviewers, each returning {"findings": [...]}
+        agent_response = json.dumps(
+            {
+                "findings": [
+                    {
+                        "location": {"symbol": "auth", "file": "app.py"},
+                        "evidence": "Pin not consumed",
+                        "severity": "MAJOR",
+                        "required_change_type": "wiring_only",
+                        "suggested_fix": "Wire to Router",
+                    },
+                ]
+            }
+        )
 
         step = GapExplorationStep()
-        with patch(
-            "spec_manager.orchestration.promotion_loop.run_agent",
-            return_value=agent_response,
-            create=True,
-        ), patch(
-            "spec_manager.core.agent_utils.run_agent",
-            return_value=agent_response,
-        ), patch(
-            "spec_manager.core.json_extraction._extract_json_payload",
-            return_value=agent_response,
-        ), patch(
-            "spec_manager.refinement.formats._strip_code_fences",
-            side_effect=lambda x: x,
+        with (
+            patch(
+                "spec_manager.orchestration.promotion_loop.run_agent",
+                return_value=agent_response,
+                create=True,
+            ),
+            patch(
+                "spec_manager.core.agent_utils.run_agent",
+                return_value=agent_response,
+            ),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                return_value=agent_response,
+            ),
+            patch(
+                "spec_manager.refinement.formats._strip_code_fences",
+                side_effect=lambda x: x,
+            ),
         ):
             result = step.run(ctx, bundle)
 
         assert result.status == "OK"
         assert len(bundle.gaps.open_gaps) >= 1
-        assert bundle.gaps.open_gaps[0]["kind"] == "unconsumed_pin"
+        # Each reviewer produces findings tagged with l2_{dimension}_finding
+        assert "l2_" in bundle.gaps.open_gaps[0]["kind"]
 
     def test_l3_calls_explore_l3(self, tmp_path: Path) -> None:
         """At L3, GapExplorationStep calls _explore_l3 (quality reviewers)."""
@@ -449,27 +463,39 @@ class TestGapExplorationStepLayerDispatch:
         )
         bundle = _make_bundle()
 
-        reviewer_response = json.dumps({"findings": [
-            {"description": "Unused variable x", "severity": "MINOR",
-             "category": "style", "required_change_type": "refactor_only"},
-        ]})
+        reviewer_response = json.dumps(
+            {
+                "findings": [
+                    {
+                        "description": "Unused variable x",
+                        "severity": "MINOR",
+                        "category": "style",
+                        "required_change_type": "refactor_only",
+                    },
+                ]
+            }
+        )
 
         step = GapExplorationStep()
-        with patch(
-            "spec_manager.core.agent_utils.run_agent",
-            return_value=reviewer_response,
-        ), patch(
-            "spec_manager.core.json_extraction._extract_json_payload",
-            return_value=reviewer_response,
-        ), patch(
-            "spec_manager.refinement.formats._strip_code_fences",
-            side_effect=lambda x: x,
+        with (
+            patch(
+                "spec_manager.core.agent_utils.run_agent",
+                return_value=reviewer_response,
+            ),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                return_value=reviewer_response,
+            ),
+            patch(
+                "spec_manager.refinement.formats._strip_code_fences",
+                side_effect=lambda x: x,
+            ),
         ):
             result = step.run(ctx, bundle)
 
         assert result.status == "OK"
-        # 4 reviewers each produce 1 finding for 1 file = 4 gaps
-        assert len(bundle.gaps.open_gaps) == 4
+        # 5 reviewers each produce 1 finding for 1 file = 5 gaps
+        assert len(bundle.gaps.open_gaps) == 5
         assert all(g["kind"] == "quality_finding" for g in bundle.gaps.open_gaps)
 
     def test_l2_empty_slice_returns_no_gaps(self, tmp_path: Path) -> None:
@@ -513,10 +539,12 @@ class TestPlanStepLayerDispatch:
         """L1 gaps produce function implementation intentions."""
         ctx = _make_ctx(layer="l1")
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"file": "auth.py", "description": "stub function login()"},
-            {"file": "db.py", "description": "missing connect()"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {"file": "auth.py", "description": "stub function login()"},
+                {"file": "db.py", "description": "missing connect()"},
+            ]
+        )
 
         step = PlanStep()
         result = step.run(ctx, bundle)
@@ -531,10 +559,15 @@ class TestPlanStepLayerDispatch:
         """L2 gaps produce wiring intentions with layer_constraint=wiring_only."""
         ctx = _make_ctx(layer="l2")
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"file": "router.py", "component_id": "auth-router",
-             "description": "unconsumed pin login_handler"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {
+                    "file": "router.py",
+                    "component_id": "auth-router",
+                    "description": "unconsumed pin login_handler",
+                },
+            ]
+        )
 
         step = PlanStep()
         result = step.run(ctx, bundle)
@@ -551,11 +584,13 @@ class TestPlanStepLayerDispatch:
         """L3 gaps produce refactor intentions grouped by file, sorted by severity."""
         ctx = _make_ctx(layer="l3")
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"file": "utils.py", "description": "long method", "severity": "MAJOR"},
-            {"file": "utils.py", "description": "unused import", "severity": "MINOR"},
-            {"file": "auth.py", "description": "deep nesting", "severity": "BLOCKER"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {"file": "utils.py", "description": "long method", "severity": "MAJOR"},
+                {"file": "utils.py", "description": "unused import", "severity": "MINOR"},
+                {"file": "auth.py", "description": "deep nesting", "severity": "BLOCKER"},
+            ]
+        )
 
         step = PlanStep()
         result = step.run(ctx, bundle)
@@ -577,10 +612,12 @@ class TestPlanStepLayerDispatch:
         """L3 plan groups findings by file and sorts MINOR before MAJOR."""
         ctx = _make_ctx(layer="l3")
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"file": "x.py", "description": "major issue", "severity": "MAJOR"},
-            {"file": "x.py", "description": "minor issue", "severity": "MINOR"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {"file": "x.py", "description": "major issue", "severity": "MAJOR"},
+                {"file": "x.py", "description": "minor issue", "severity": "MINOR"},
+            ]
+        )
 
         step = PlanStep()
         step.run(ctx, bundle)
@@ -619,12 +656,10 @@ class TestAnalyzeStepLayerDispatch:
         slice_root = tmp_path / "slice"
         slice_root.mkdir()
         _write_py_file(
-            slice_root, "module_a.py",
-            "def foo():\n    pass\n\ndef bar():\n    return 1\n"
+            slice_root, "module_a.py", "def foo():\n    pass\n\ndef bar():\n    return 1\n"
         )
         _write_py_file(
-            slice_root, "module_b.py",
-            "class Thing:\n    def method(self):\n        pass\n"
+            slice_root, "module_b.py", "class Thing:\n    def method(self):\n        pass\n"
         )
 
         ctx = _make_ctx(layer="l3", slice_root=str(slice_root), workspace_root=str(tmp_path))
@@ -703,7 +738,9 @@ class TestVerifyStep:
         response_str = json.dumps(response_dict)
         return (
             patch("spec_manager.core.agent_utils.run_agent", return_value=response_str),
-            patch("spec_manager.core.json_extraction._extract_json_payload", return_value=response_str),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=response_str
+            ),
             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
         )
 
@@ -722,9 +759,14 @@ class TestVerifyStep:
         # We need to handle two separate calls, so we use side_effect
         agent_responses = [json.dumps(governance_resp), json.dumps(l1_resp)]
 
-        with patch("spec_manager.core.agent_utils.run_agent", side_effect=agent_responses), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", side_effect=agent_responses), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", side_effect=agent_responses),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                side_effect=agent_responses,
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = VerifyStep()
             result = step.run(ctx, bundle)
 
@@ -740,15 +782,31 @@ class TestVerifyStep:
         bundle = _make_bundle(workspace_root=str(tmp_path))
 
         governance_resp = json.dumps({"status": "PASS", "findings": []})
-        l2_resp = json.dumps({"findings": [
-            {"dimension": "PIN_COVERAGE", "category": "architecture",
-             "severity": "MAJOR", "required_change_type": "wiring_only",
-             "location": {"file": "router.py"}, "evidence": "orphan pin"},
-        ]})
+        l2_resp = json.dumps(
+            {
+                "findings": [
+                    {
+                        "dimension": "PIN_COVERAGE",
+                        "category": "architecture",
+                        "severity": "MAJOR",
+                        "required_change_type": "wiring_only",
+                        "location": {"file": "router.py"},
+                        "evidence": "orphan pin",
+                    },
+                ]
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", side_effect=[governance_resp, l2_resp]), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", side_effect=[governance_resp, l2_resp]), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch(
+                "spec_manager.core.agent_utils.run_agent", side_effect=[governance_resp, l2_resp]
+            ),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                side_effect=[governance_resp, l2_resp],
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = VerifyStep()
             result = step.run(ctx, bundle)
 
@@ -765,15 +823,31 @@ class TestVerifyStep:
         bundle = _make_bundle(workspace_root=str(tmp_path))
 
         governance_resp = json.dumps({"status": "PASS", "findings": []})
-        l3_resp = json.dumps({"findings": [
-            {"dimension": "CORRECTNESS", "category": "logic",
-             "severity": "BLOCKER", "required_change_type": "behavior_change",
-             "location": {"file": "calc.py"}, "evidence": "off-by-one"},
-        ]})
+        l3_resp = json.dumps(
+            {
+                "findings": [
+                    {
+                        "dimension": "CORRECTNESS",
+                        "category": "logic",
+                        "severity": "BLOCKER",
+                        "required_change_type": "behavior_change",
+                        "location": {"file": "calc.py"},
+                        "evidence": "off-by-one",
+                    },
+                ]
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", side_effect=[governance_resp, l3_resp]), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", side_effect=[governance_resp, l3_resp]), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch(
+                "spec_manager.core.agent_utils.run_agent", side_effect=[governance_resp, l3_resp]
+            ),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                side_effect=[governance_resp, l3_resp],
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = VerifyStep()
             result = step.run(ctx, bundle)
 
@@ -788,17 +862,28 @@ class TestVerifyStep:
         ctx = _make_ctx(layer="l2", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle(workspace_root=str(tmp_path))
 
-        governance_resp = json.dumps({
-            "status": "FAIL",
-            "findings": [
-                {"severity": "BLOCKER", "evidence": "Missing oversight receipt",
-                 "location": {"file": "deploy.py"}, "required_change_type": "refactor_only"},
-            ],
-        })
+        governance_resp = json.dumps(
+            {
+                "status": "FAIL",
+                "findings": [
+                    {
+                        "severity": "BLOCKER",
+                        "evidence": "Missing oversight receipt",
+                        "location": {"file": "deploy.py"},
+                        "required_change_type": "refactor_only",
+                    },
+                ],
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=governance_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=governance_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=governance_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                return_value=governance_resp,
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = VerifyStep()
             result = step.run(ctx, bundle)
 
@@ -815,9 +900,13 @@ class TestVerifyStep:
 
         empty_resp = json.dumps({"status": "PASS", "findings": []})
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=empty_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=empty_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=empty_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=empty_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = VerifyStep()
             result = step.run(ctx, bundle)
 
@@ -832,15 +921,31 @@ class TestVerifyStep:
         bundle = _make_bundle(workspace_root=str(tmp_path))
 
         governance_resp = json.dumps({"status": "PASS", "findings": []})
-        l1_resp = json.dumps({"findings": [
-            {"dimension": "CONNECTIVITY", "category": "architecture",
-             "severity": "BLOCKER", "required_change_type": "wiring_only",
-             "location": {"file": "api.py"}, "evidence": "orphan dependency"},
-        ]})
+        l1_resp = json.dumps(
+            {
+                "findings": [
+                    {
+                        "dimension": "CONNECTIVITY",
+                        "category": "architecture",
+                        "severity": "BLOCKER",
+                        "required_change_type": "wiring_only",
+                        "location": {"file": "api.py"},
+                        "evidence": "orphan dependency",
+                    },
+                ]
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", side_effect=[governance_resp, l1_resp]), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", side_effect=[governance_resp, l1_resp]), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch(
+                "spec_manager.core.agent_utils.run_agent", side_effect=[governance_resp, l1_resp]
+            ),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload",
+                side_effect=[governance_resp, l1_resp],
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = VerifyStep()
             result = step.run(ctx, bundle)
 
@@ -877,20 +982,28 @@ class TestPromoteStepL2:
         ctx = _make_ctx(layer="l2", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle()
 
-        gate_resp = json.dumps({"gates": [
-            {"gate_id": "NO_INLINED_ATOM_LOGIC", "passed": True, "summary": "Clean"},
-            {"gate_id": "FUNCTION_RECOMPOSITION", "passed": True, "summary": "OK"},
-            {"gate_id": "PIN_CONSUMPTION_COVERAGE", "passed": True, "summary": "OK"},
-            {"gate_id": "EDGE_REALIZATION", "passed": True, "summary": "OK"},
-            {"gate_id": "NO_ORPHAN_COMPONENTS", "passed": True, "summary": "OK"},
-            {"gate_id": "EVENT_HANDLER_COVERAGE", "passed": True, "summary": "OK"},
-            {"gate_id": "CONFIG_EXTERNALIZATION", "passed": True, "summary": "OK"},
-            {"gate_id": "ARCH_DRIFT_PASS", "passed": True, "summary": "OK"},
-        ]})
+        gate_resp = json.dumps(
+            {
+                "gates": [
+                    {"gate_id": "NO_INLINED_ATOM_LOGIC", "passed": True, "summary": "Clean"},
+                    {"gate_id": "FUNCTION_RECOMPOSITION", "passed": True, "summary": "OK"},
+                    {"gate_id": "PIN_CONSUMPTION_COVERAGE", "passed": True, "summary": "OK"},
+                    {"gate_id": "EDGE_REALIZATION", "passed": True, "summary": "OK"},
+                    {"gate_id": "NO_ORPHAN_COMPONENTS", "passed": True, "summary": "OK"},
+                    {"gate_id": "EVENT_HANDLER_COVERAGE", "passed": True, "summary": "OK"},
+                    {"gate_id": "CONFIG_EXTERNALIZATION", "passed": True, "summary": "OK"},
+                    {"gate_id": "ARCH_DRIFT_PASS", "passed": True, "summary": "OK"},
+                ]
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=gate_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=gate_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=gate_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=gate_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = PromoteStep()
             result = step.run(ctx, bundle)
 
@@ -907,14 +1020,26 @@ class TestPromoteStepL2:
         ctx = _make_ctx(layer="l2", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle()
 
-        gate_resp = json.dumps({"gates": [
-            {"gate_id": "PIN_CONSUMPTION_COVERAGE", "passed": False,
-             "summary": "3 pins unconsumed", "required_change_type": "wiring_only"},
-        ]})
+        gate_resp = json.dumps(
+            {
+                "gates": [
+                    {
+                        "gate_id": "PIN_CONSUMPTION_COVERAGE",
+                        "passed": False,
+                        "summary": "3 pins unconsumed",
+                        "required_change_type": "wiring_only",
+                    },
+                ]
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=gate_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=gate_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=gate_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=gate_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = PromoteStep()
             result = step.run(ctx, bundle)
 
@@ -932,15 +1057,26 @@ class TestPromoteStepL2:
         ctx = _make_ctx(layer="l2", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle()
 
-        gate_resp = json.dumps({"gates": [
-            {"gate_id": "NO_INLINED_ATOM_LOGIC", "passed": False,
-             "summary": "Business logic in handler.py",
-             "required_change_type": "behavior_change"},
-        ]})
+        gate_resp = json.dumps(
+            {
+                "gates": [
+                    {
+                        "gate_id": "NO_INLINED_ATOM_LOGIC",
+                        "passed": False,
+                        "summary": "Business logic in handler.py",
+                        "required_change_type": "behavior_change",
+                    },
+                ]
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=gate_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=gate_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=gate_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=gate_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = PromoteStep()
             result = step.run(ctx, bundle)
 
@@ -960,10 +1096,17 @@ class TestPromoteStepL3:
 
         ctx = _make_ctx(layer="l3", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"kind": "quality_finding", "file": "a.py", "category": "style",
-             "severity": "MINOR", "description": "unused variable"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {
+                    "kind": "quality_finding",
+                    "file": "a.py",
+                    "category": "style",
+                    "severity": "MINOR",
+                    "description": "unused variable",
+                },
+            ]
+        )
 
         step = PromoteStep()
         result = step.run(ctx, bundle)
@@ -979,10 +1122,17 @@ class TestPromoteStepL3:
 
         ctx = _make_ctx(layer="l3", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"kind": "quality_finding", "file": "calc.py", "category": "logic",
-             "severity": "BLOCKER", "description": "Incorrect subtraction"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {
+                    "kind": "quality_finding",
+                    "file": "calc.py",
+                    "category": "logic",
+                    "severity": "BLOCKER",
+                    "description": "Incorrect subtraction",
+                },
+            ]
+        )
 
         step = PromoteStep()
         result = step.run(ctx, bundle)
@@ -999,10 +1149,17 @@ class TestPromoteStepL3:
 
         ctx = _make_ctx(layer="l3", slice_root=str(slice_root), workspace_root=str(tmp_path))
         bundle = _make_bundle()
-        bundle.gaps = GapReportRef(open_gaps=[
-            {"kind": "quality_finding", "file": "api.py", "category": "architecture",
-             "severity": "MAJOR", "description": "Cross-boundary call"},
-        ])
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {
+                    "kind": "quality_finding",
+                    "file": "api.py",
+                    "category": "architecture",
+                    "severity": "MAJOR",
+                    "description": "Cross-boundary call",
+                },
+            ]
+        )
 
         step = PromoteStep()
         result = step.run(ctx, bundle)
@@ -1021,15 +1178,21 @@ class TestPromoteStepL3:
         bundle = _make_bundle()
         bundle.gaps = GapReportRef(open_gaps=[])  # no quality gaps
 
-        diff_resp = json.dumps({
-            "impact": "refactor_only",
-            "confidence": 0.95,
-            "evidence": "Only rename changes detected",
-        })
+        diff_resp = json.dumps(
+            {
+                "impact": "refactor_only",
+                "confidence": 0.95,
+                "evidence": "Only rename changes detected",
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=diff_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=diff_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=diff_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=diff_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = PromoteStep()
             result = step.run(ctx, bundle)
 
@@ -1048,15 +1211,21 @@ class TestPromoteStepL3:
         bundle = _make_bundle()
         bundle.gaps = GapReportRef(open_gaps=[])
 
-        diff_resp = json.dumps({
-            "impact": "behavior_change",
-            "confidence": 0.9,
-            "evidence": "New endpoint added",
-        })
+        diff_resp = json.dumps(
+            {
+                "impact": "behavior_change",
+                "confidence": 0.9,
+                "evidence": "New endpoint added",
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=diff_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=diff_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=diff_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=diff_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = PromoteStep()
             result = step.run(ctx, bundle)
 
@@ -1075,15 +1244,21 @@ class TestPromoteStepL3:
         bundle = _make_bundle()
         bundle.gaps = GapReportRef(open_gaps=[])
 
-        diff_resp = json.dumps({
-            "impact": "wiring_only",
-            "confidence": 0.85,
-            "evidence": "Route registration changed",
-        })
+        diff_resp = json.dumps(
+            {
+                "impact": "wiring_only",
+                "confidence": 0.85,
+                "evidence": "Route registration changed",
+            }
+        )
 
-        with patch("spec_manager.core.agent_utils.run_agent", return_value=diff_resp), \
-             patch("spec_manager.core.json_extraction._extract_json_payload", return_value=diff_resp), \
-             patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x):
+        with (
+            patch("spec_manager.core.agent_utils.run_agent", return_value=diff_resp),
+            patch(
+                "spec_manager.core.json_extraction._extract_json_payload", return_value=diff_resp
+            ),
+            patch("spec_manager.refinement.formats._strip_code_fences", side_effect=lambda x: x),
+        ):
             step = PromoteStep()
             result = step.run(ctx, bundle)
 

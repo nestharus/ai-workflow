@@ -19,7 +19,6 @@ from spec_manager.core.code_analysis import (
     clear_cache,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test-only helpers (Python AST / tokenize)
 # ---------------------------------------------------------------------------
@@ -94,9 +93,7 @@ def _extract_decorator_name_ast(decorator: ast.expr) -> str:
     return ast.dump(decorator)
 
 
-def _local_python_analyzer(
-    content: str, filepath: str, workspace: object
-) -> SourceAnalysis:
+def _local_python_analyzer(content: str, filepath: str, workspace: object) -> SourceAnalysis:
     """Test double: analyze Python source using AST/tokenize.
 
     This is ONLY used in tests. Production code uses LLM via code_analysis.
@@ -151,10 +148,7 @@ def _local_python_analyzer(
                 ret_ann = ast.unparse(node.returns)
 
             # Compute body_start_line: first line after signature + docstring
-            if has_ds and len(node.body) > 1:
-                ds_end = node.body[0].end_lineno or node.body[0].lineno
-                body_start = ds_end + 1
-            elif has_ds:
+            if (has_ds and len(node.body) > 1) or has_ds:
                 ds_end = node.body[0].end_lineno or node.body[0].lineno
                 body_start = ds_end + 1
             elif node.body:

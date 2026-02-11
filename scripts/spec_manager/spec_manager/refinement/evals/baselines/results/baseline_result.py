@@ -26,6 +26,7 @@ class BaselineResult:
         seed: Random seed used.
         errors: Any errors encountered.
     """
+
     model_name: str
     level: int
     rule_accuracy: float = 0.0

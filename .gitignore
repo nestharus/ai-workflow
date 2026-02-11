@@ -54,6 +54,7 @@ out/
 **/surgeon_logs/
 runs/
 *.zip
+.pdd_runs/
 
 # Local config / secrets
 .env

@@ -350,6 +350,8 @@ convention = "google"
 "scripts/planner/**/*.py" = ["ANN401"]
 "scripts/spec_refinement/qa/**/*.py" = ["ANN401"]  # QA validators need flexible JSON payloads
 "scripts/spec_manager/spec_manager/**/*.py" = ["ANN401", "D"]  # ANN401: flexible type signatures; D: docstrings deferred to codebase maturity
+"scripts/spec_manager/spec_manager/refinement/evals/baselines/**/*.py" = ["E501"]  # Prompt strings with long lines
+"scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures/**/*.py" = ["E501"]  # PDD skeleton fixtures with spec comments
 "scripts/spec_manager/spec_manager/core/gaps.py" = ["ANN001", "E501", "S311", "S112"]  # Complex type inference module with domain-specific long lines
 "scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
 

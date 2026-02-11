@@ -122,8 +122,7 @@ class ImplementationRunner:
             unresolved = [
                 f
                 for f in file_state.functions
-                if f.translation_state
-                in (TranslationState.UNRESOLVED, TranslationState.STUB)
+                if f.translation_state in (TranslationState.UNRESOLVED, TranslationState.STUB)
             ]
             if not unresolved:
                 continue
@@ -138,18 +137,13 @@ class ImplementationRunner:
             lines = file_content.splitlines(keepends=True)
 
             # Process bottom-up to preserve line numbers
-            for func in sorted(
-                unresolved, key=lambda f: f.line_start, reverse=True
-            ):
+            for func in sorted(unresolved, key=lambda f: f.line_start, reverse=True):
                 if count >= max_functions:
                     result.functions_skipped += 1
                     continue
 
                 spec_texts = [c.text for c in func.spec_comments]
-                if (
-                    not spec_texts
-                    and func.translation_state == TranslationState.STUB
-                ):
+                if not spec_texts and func.translation_state == TranslationState.STUB:
                     result.functions_skipped += 1
                     continue
 
@@ -159,15 +153,15 @@ class ImplementationRunner:
                     result.functions_skipped += 1
                     continue
 
-                output = self._call_implementor(
-                    func, file_content, file_state, slice_root
-                )
+                output = self._call_implementor(func, file_content, file_state, slice_root)
 
                 if output is None:
-                    result.errors.append({
-                        "function": func.qualified_name,
-                        "error": "Agent returned no output",
-                    })
+                    result.errors.append(
+                        {
+                            "function": func.qualified_name,
+                            "error": "Agent returned no output",
+                        }
+                    )
                     continue
 
                 # Collect under-spec events (blockers)
@@ -186,22 +180,26 @@ class ImplementationRunner:
                             output.body,
                             output.imports_needed,
                         )
-                        all_edits.append({
-                            "function": func.qualified_name,
-                            "file": source_path.name,
-                            "method": "body_replace",
-                        })
+                        all_edits.append(
+                            {
+                                "function": func.qualified_name,
+                                "file": source_path.name,
+                                "method": "body_replace",
+                            }
+                        )
                         count += 1
                         result.functions_implemented += 1
                 else:
                     # New format: unified diffs
                     for edit in output.edits:
-                        all_edits.append({
-                            "function": func.qualified_name,
-                            "file": edit.path,
-                            "method": "unified_diff",
-                            "diff": edit.unified_diff,
-                        })
+                        all_edits.append(
+                            {
+                                "function": func.qualified_name,
+                                "file": edit.path,
+                                "method": "unified_diff",
+                                "diff": edit.unified_diff,
+                            }
+                        )
                     count += 1
                     result.functions_implemented += 1
 
@@ -263,9 +261,7 @@ class ImplementationRunner:
             data = json.loads(_extract_json_payload(cleaned))
             return ImplementorOutput.from_dict(data)
         except Exception as exc:
-            logger.warning(
-                "Implementor failed for %s: %s", func.qualified_name, exc
-            )
+            logger.warning("Implementor failed for %s: %s", func.qualified_name, exc)
             return None
 
     def _build_prompt(
@@ -279,9 +275,7 @@ class ImplementationRunner:
         func_text = "\n".join(lines[func.line_start - 1 : func.line_end])
         spec_requirements = [c.text for c in func.spec_comments]
 
-        first_func_line = min(
-            (f.line_start for f in file_state.functions), default=len(lines)
-        )
+        first_func_line = min((f.line_start for f in file_state.functions), default=len(lines))
         file_header = "\n".join(lines[: first_func_line - 1])
 
         class_methods: list[str] = []

@@ -18,6 +18,7 @@ class ComparisonReport:
         results: All baseline results indexed by (model, level).
         summary: Summary statistics.
     """
+
     results: list[BaselineResult] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
 

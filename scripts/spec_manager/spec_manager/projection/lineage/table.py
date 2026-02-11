@@ -27,9 +27,9 @@ class ProjectionLineageTable:
         self.edges: list[ProjectionLineageEdge] = []
         self._by_from: dict[str, list[ProjectionLineageEdge]] = defaultdict(list)
         self._by_to: dict[str, list[ProjectionLineageEdge]] = defaultdict(list)
-        self._by_transformation: dict[
-            ProjectionType, list[ProjectionLineageEdge]
-        ] = defaultdict(list)
+        self._by_transformation: dict[ProjectionType, list[ProjectionLineageEdge]] = defaultdict(
+            list
+        )
 
     # --- Mutation ---
 
@@ -78,9 +78,7 @@ class ProjectionLineageTable:
         Returns:
             Number of edges removed.
         """
-        to_remove = [
-            e for e in self.edges if e.from_unit == unit_id or e.to_unit == unit_id
-        ]
+        to_remove = [e for e in self.edges if e.from_unit == unit_id or e.to_unit == unit_id]
         removed_count = len(to_remove)
 
         for edge in to_remove:

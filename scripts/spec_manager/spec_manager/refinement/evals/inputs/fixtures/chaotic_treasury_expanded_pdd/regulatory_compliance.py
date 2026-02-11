@@ -6,10 +6,8 @@ suspicious activity flagging, and structuring detection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
-
 
 REPORTING_THRESHOLD_USD = Decimal("10_000_000")
 CROSS_BORDER_HOLD_THRESHOLD_USD = Decimal("5_000_000")
@@ -38,7 +36,9 @@ class RegulatoryCompliance:
         pass
 
     def detect_structuring(
-        self, transactions: list[dict[str, Any]], counterparty_id: str
+        self,
+        transactions: list[dict[str, Any]],
+        counterparty_id: str,
     ) -> bool:
         """Detect structuring attempts."""
         # Structuring detection aggregates sub-threshold transactions against $10M reporting threshold

@@ -15,6 +15,7 @@ Dimension 5 is advisory (warn-only, can be promoted to gate later).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -136,9 +137,7 @@ class LibraryQualityValidator:
 
         report.overall_passed = report.gate_passed
         report.issues = [
-            {"dimension": d.name, "issues": d.issues}
-            for d in report.dimensions
-            if d.issues
+            {"dimension": d.name, "issues": d.issues} for d in report.dimensions if d.issues
         ]
 
         return report
@@ -180,14 +179,10 @@ class LibraryQualityValidator:
             issues=issues,
         )
 
-    def _check_routing_overlap(
-        self, route_table: list[dict[str, Any]]
-    ) -> DimensionScore:
+    def _check_routing_overlap(self, route_table: list[dict[str, Any]]) -> DimensionScore:
         """Check for source lines routed to multiple libraries."""
         if not route_table:
-            return DimensionScore(
-                name="routing_overlap", score=100.0, passed=True
-            )
+            return DimensionScore(name="routing_overlap", score=100.0, passed=True)
 
         # Count libraries per source line
         line_libs: dict[str, set[str]] = {}
@@ -207,8 +202,7 @@ class LibraryQualityValidator:
         issues = []
         if not passed:
             issues.append(
-                f"Overlap ratio {overlap_ratio:.2%} exceeds threshold "
-                f"{self._overlap_threshold:.2%}"
+                f"Overlap ratio {overlap_ratio:.2%} exceeds threshold {self._overlap_threshold:.2%}"
             )
 
         return DimensionScore(
@@ -219,17 +213,13 @@ class LibraryQualityValidator:
             issues=issues,
         )
 
-    def _check_semantic_overlap(
-        self, libraries: list[dict[str, Any]]
-    ) -> DimensionScore:
+    def _check_semantic_overlap(self, libraries: list[dict[str, Any]]) -> DimensionScore:
         """Check for semantic overlap between library pairs.
 
         Uses deterministic heuristics first; LLM judge can be added later.
         """
         if len(libraries) < 2:
-            return DimensionScore(
-                name="semantic_overlap", score=100.0, passed=True
-            )
+            return DimensionScore(name="semantic_overlap", score=100.0, passed=True)
 
         # Deterministic check: compare library names/descriptions for overlap
         max_overlap = 0.0
@@ -246,9 +236,7 @@ class LibraryQualityValidator:
                 words_a = set(desc_a.split())
                 words_b = set(desc_b.split())
                 if words_a and words_b:
-                    overlap = len(words_a & words_b) / max(
-                        len(words_a), len(words_b)
-                    )
+                    overlap = len(words_a & words_b) / max(len(words_a), len(words_b))
                     max_overlap = max(max_overlap, overlap)
 
                     if overlap > self._semantic_overlap_threshold:
@@ -268,17 +256,13 @@ class LibraryQualityValidator:
             issues=issues,
         )
 
-    def _check_concern_isolation(
-        self, libraries: list[dict[str, Any]]
-    ) -> DimensionScore:
+    def _check_concern_isolation(self, libraries: list[dict[str, Any]]) -> DimensionScore:
         """Check that each library has a single clear purpose.
 
         Uses deterministic heuristics; LLM cohesion judge can be added later.
         """
         if not libraries:
-            return DimensionScore(
-                name="concern_isolation", score=100.0, passed=True
-            )
+            return DimensionScore(name="concern_isolation", score=100.0, passed=True)
 
         cohesion_scores: list[float] = []
         issues: list[str] = []
@@ -313,9 +297,7 @@ class LibraryQualityValidator:
             issues=issues,
         )
 
-    def _check_dependency_minimality(
-        self, libraries: list[dict[str, Any]]
-    ) -> DimensionScore:
+    def _check_dependency_minimality(self, libraries: list[dict[str, Any]]) -> DimensionScore:
         """Check that no library is a god-library with too many deps.
 
         Advisory dimension — warns but does not block.
@@ -356,10 +338,8 @@ class LibraryQualityValidator:
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line:
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
         return entries
 
     @staticmethod
@@ -372,10 +352,8 @@ class LibraryQualityValidator:
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line:
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
         return entries
 
     @staticmethod

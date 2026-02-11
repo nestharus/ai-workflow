@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from spec_manager.core.code_analysis import (
     RawCommentInfo,
     RawFunctionInfo,
@@ -23,7 +22,6 @@ from spec_manager.orchestration.source_analysis_cache import (
     SourceAnalysisCache,
     _source_analysis_to_dict,
 )
-
 
 # ======================================================================
 # Helpers
@@ -268,16 +266,12 @@ class TestSourceAnalysisCacheVersionMismatch:
     def test_version_mismatch_returns_cache_miss(self, tmp_path: Path) -> None:
         """get() returns None when cached entry has different analyzer version."""
         # Write a cache entry with version "v1"
-        cache_v1 = SourceAnalysisCache(
-            workspace_root=tmp_path, run_id="r1", analyzer_version="v1"
-        )
+        cache_v1 = SourceAnalysisCache(workspace_root=tmp_path, run_id="r1", analyzer_version="v1")
         content_hash = "g" * 64
         cache_v1.put(content_hash, SourceAnalysis())
 
         # Read with version "v2"
-        cache_v2 = SourceAnalysisCache(
-            workspace_root=tmp_path, run_id="r1", analyzer_version="v2"
-        )
+        cache_v2 = SourceAnalysisCache(workspace_root=tmp_path, run_id="r1", analyzer_version="v2")
         result = cache_v2.get(content_hash)
 
         assert result is None
@@ -285,9 +279,7 @@ class TestSourceAnalysisCacheVersionMismatch:
 
     def test_same_version_returns_hit(self, tmp_path: Path) -> None:
         """get() returns cached entry when versions match."""
-        cache = SourceAnalysisCache(
-            workspace_root=tmp_path, run_id="r1", analyzer_version="v1"
-        )
+        cache = SourceAnalysisCache(workspace_root=tmp_path, run_id="r1", analyzer_version="v1")
         content_hash = "h" * 64
         cache.put(content_hash, SourceAnalysis())
 
@@ -329,7 +321,7 @@ class TestSourceAnalysisCacheAnalyzeWithCache:
         content = "def world(): pass\n"
 
         # First call: populates cache
-        result1 = cache.analyze_with_cache(content, "world.py")
+        cache.analyze_with_cache(content, "world.py")
 
         # Second call: should hit cache
         result2 = cache.analyze_with_cache(content, "world.py")

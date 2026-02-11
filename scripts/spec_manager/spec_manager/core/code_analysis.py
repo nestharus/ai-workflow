@@ -10,12 +10,14 @@ content hash so repeated analysis of the same file is free.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.refinement.formats import _strip_code_fences
@@ -128,10 +130,8 @@ def _parse_analysis_response(raw_output: str) -> SourceAnalysis:
     except (json.JSONDecodeError, ValueError):
         extracted = _extract_json_payload(cleaned)
         if extracted:
-            try:
+            with contextlib.suppress(json.JSONDecodeError, ValueError):
                 data = json.loads(extracted)
-            except (json.JSONDecodeError, ValueError):
-                pass
 
     if data is None:
         logger.error("Failed to parse code analyzer response: %s", raw_output[:200])

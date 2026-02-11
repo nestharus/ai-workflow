@@ -50,7 +50,9 @@ class TestAssembleOutput:
         """Assembled output is verbatim from source (no rewriting)."""
         source_dir = tmp_path / "src"
         source_dir.mkdir()
-        original = "The system MUST process all orders within 24 hours.\nNo silent termination is allowed."
+        original = (
+            "The system MUST process all orders within 24 hours.\nNo silent termination is allowed."
+        )
         _write_md(source_dir, "spec.md", original)
 
         output_dir = tmp_path / "out"

@@ -70,9 +70,7 @@ class PhaseResolver:
                 iteration=iteration,
             )
 
-            signals = self._detector.detect_signals(
-                current_text, workspace, work_context
-            )
+            signals = self._detector.detect_signals(current_text, workspace, work_context)
 
             if not signals:
                 logger.info(

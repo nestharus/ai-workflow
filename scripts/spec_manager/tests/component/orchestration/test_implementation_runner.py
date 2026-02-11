@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from spec_manager.orchestration.implementation.runner import (
-    ImplementationRunResult,
     ImplementationRunner,
+    ImplementationRunResult,
 )
 from spec_manager.orchestration.implementation.types import (
     EdgeProposal,
@@ -33,7 +33,6 @@ class MockFunc:
 
 
 class TestImplementationRunResult:
-
     def test_defaults(self) -> None:
         r = ImplementationRunResult()
         assert r.patch_path == ""
@@ -81,7 +80,6 @@ class TestImplementationRunResult:
 
 
 class TestApplyFunctionBody:
-
     def test_body_replacement_preserves_surrounding_code(self) -> None:
         lines = [
             "import os\n",
@@ -94,9 +92,7 @@ class TestApplyFunctionBody:
         func = MockFunc(body_start_line=4, line_end=4)
         new_body = "    return 42\n"
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, []
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
 
         assert result[0] == "import os\n"
         assert result[1] == "\n"
@@ -113,9 +109,7 @@ class TestApplyFunctionBody:
         func = MockFunc(body_start_line=2, line_end=2)
         new_body = "    x = 1\n    y = 2\n    return x + y\n"
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, []
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
 
         assert result[0] == "def func():\n"
         assert result[1] == "    x = 1\n"
@@ -130,9 +124,7 @@ class TestApplyFunctionBody:
         func = MockFunc(body_start_line=2, line_end=2)
         new_body = "    return 0"
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, []
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
 
         assert "    return 0\n" in result
 
@@ -147,9 +139,7 @@ class TestApplyFunctionBody:
         new_body = "    return json.dumps({})\n"
         imports = ["import json"]
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, imports
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, imports)
 
         text = "".join(result)
         assert "import json" in text
@@ -165,9 +155,7 @@ class TestApplyFunctionBody:
         new_body = "    return os.getcwd()\n"
         imports = ["import os"]
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, imports
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, imports)
 
         text = "".join(result)
         assert text.count("import os") == 1
@@ -180,9 +168,7 @@ class TestApplyFunctionBody:
         func = MockFunc(body_start_line=0, line_end=2)
         new_body = "    return 1\n"
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, []
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
 
         assert result == lines
         assert result is not lines
@@ -198,9 +184,7 @@ class TestApplyFunctionBody:
         new_body = "    return 1\n"
         imports = ["import json", "import sys"]
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, imports
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, imports)
 
         text = "".join(result)
         assert "import json" in text
@@ -214,9 +198,7 @@ class TestApplyFunctionBody:
         func = MockFunc(body_start_line=2, line_end=2)
         new_body = "    return 1\n"
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, []
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
 
         assert result[0] == "def func():\n"
         assert result[1] == "    return 1\n"
@@ -233,9 +215,7 @@ class TestApplyFunctionBody:
         func = MockFunc(body_start_line=2, line_end=4)
         new_body = "    return 99\n"
 
-        result = ImplementationRunner._apply_function_body(
-            lines, func, new_body, []
-        )
+        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
 
         assert result[0] == "def func():\n"
         assert result[1] == "    return 99\n"
@@ -249,14 +229,11 @@ class TestApplyFunctionBody:
 
 
 class TestWriteArtifacts:
-
     def test_writes_pin_proposals(self, tmp_path: Path) -> None:
         result = ImplementationRunResult()
         pins = [PinProposal(pin_id="PIN-1", fqn="foo:bar", file="foo.py")]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, pins, [], [], [], []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, pins, [], [], [], [])
 
         path = tmp_path / "pin_proposals.json"
         assert path.exists()
@@ -268,9 +245,7 @@ class TestWriteArtifacts:
         result = ImplementationRunResult()
         edges = [EdgeProposal(src="PIN-1", dst="PIN-2")]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], edges, [], [], []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], edges, [], [], [])
 
         path = tmp_path / "edge_proposals.json"
         assert path.exists()
@@ -283,9 +258,7 @@ class TestWriteArtifacts:
         result = ImplementationRunResult()
         events = [UnderSpecEvent(kind="MISSING_CONSTRAINT", question="Why?")]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], [], events, [], []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], events, [], [])
 
         path = tmp_path / "under_spec_events.json"
         assert path.exists()
@@ -298,9 +271,7 @@ class TestWriteArtifacts:
         result = ImplementationRunResult()
         tests = [TestArtifact(path="test_foo.py", purpose="unit test")]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], [], [], tests, []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], [], tests, [])
 
         path = tmp_path / "tests_added.json"
         assert path.exists()
@@ -312,9 +283,7 @@ class TestWriteArtifacts:
         result = ImplementationRunResult()
         notes = ["First note", "Second note"]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], [], [], [], notes
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], [], [], notes)
 
         path = tmp_path / "notes.md"
         assert path.exists()
@@ -327,9 +296,7 @@ class TestWriteArtifacts:
     def test_skips_empty_collections(self, tmp_path: Path) -> None:
         result = ImplementationRunResult()
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], [], [], [], []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], [], [], [])
 
         assert not (tmp_path / "pin_proposals.json").exists()
         assert not (tmp_path / "edge_proposals.json").exists()
@@ -341,9 +308,7 @@ class TestWriteArtifacts:
         result = ImplementationRunResult()
         pins = [PinProposal(pin_id="PIN-1", fqn="f", file="f.py")]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, pins, [], [], [], []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, pins, [], [], [], [])
 
         assert result.patch_path == str(tmp_path / "patch.diff")
 
@@ -355,9 +320,7 @@ class TestWriteArtifacts:
         tests = [TestArtifact(path="t.py", purpose="p")]
         notes = ["note"]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, pins, edges, events, tests, notes
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, pins, edges, events, tests, notes)
 
         assert (tmp_path / "pin_proposals.json").exists()
         assert (tmp_path / "edge_proposals.json").exists()
@@ -369,9 +332,7 @@ class TestWriteArtifacts:
         result = ImplementationRunResult()
         pins = [PinProposal(pin_id="PIN-1", fqn="f", file="f.py")]
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, pins, [], [], [], []
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, pins, [], [], [], [])
 
         content = (tmp_path / "pin_proposals.json").read_text(encoding="utf-8")
         assert "\n" in content

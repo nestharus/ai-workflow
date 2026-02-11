@@ -52,9 +52,29 @@ fixes bugs, and re-runs until the step passes. Only then does it advance
 to the next step. This is NOT a full pipeline run with a judge — it is
 manual step-by-step debugging.
 
+#### Output chaining and preservation
+
+Each step consumes the output of the previous step as its input. Outputs
+must be preserved so later steps receive realistic inputs and so results
+can be inspected after the fact.
+
+1. **Preserve every step's output** — save to a named directory (e.g.
+   `evals/<run_id>/step_N/`) before advancing. Never discard intermediate
+   artifacts.
+2. **Feed output forward** — the next step's input is the previous step's
+   output, not the original fixture. For example: L1 produces implemented
+   code → L2 receives that implemented code as input → L3 receives L2's
+   output. Running L3 on the original skeleton is testing an impossible
+   scenario.
+3. **Re-run cascades** — if you fix a bug in step N, re-run step N AND
+   re-run all subsequent steps with step N's new output. Their prior
+   outputs are now stale.
+
 #### Process per step
 
-1. **Run the step** against the treasury spec in an isolated workspace
+1. **Run the step** against the treasury spec in an isolated workspace,
+   using the output of the previous step as input (or the original fixture
+   if this is the first step)
 2. **Inspect the output** — read actual LLM responses, check structure,
    verify content quality
 3. **If a bug is found**:
@@ -69,13 +89,17 @@ manual step-by-step debugging.
       agent definitions, tests, other pipeline steps, types, schemas.
    e. **Re-run the step** from scratch to verify the fix
    f. **If the fix introduced new failures**, go back to step 3
-4. **When the step passes**, advance to the next step
+4. **When the step passes**, preserve output and advance to the next step
 5. **If a later step reveals a problem in an earlier step**, go back and
    fix the earlier step, then re-run all steps from that point forward
+   with updated outputs
 
 #### Anti-patterns (DO NOT)
 
 * **DO NOT run all steps in one go** — you miss bugs that cascade
+* **DO NOT run steps on the original fixture when a prior step produces
+  output** — e.g. running L3 on skeleton code instead of L1-implemented
+  code tests an impossible scenario. Always chain outputs.
 * **DO NOT use silent defaults** — if LLM output is invalid, raise an error.
   Silent defaults hide bugs and are a form of reward hacking.
 
