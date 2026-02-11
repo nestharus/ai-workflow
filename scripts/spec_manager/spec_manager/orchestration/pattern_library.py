@@ -167,8 +167,7 @@ def _default_core_patterns() -> list[Pattern]:
             ),
             dimension="ARCH_BOUNDARY",
             fix_guidance=(
-                "Remove internal-detail references and route through the declared "
-                "public interface."
+                "Remove internal-detail references and route through the declared public interface."
             ),
         ),
         # ---- TOPOLOGY (4 patterns) ----
@@ -181,8 +180,7 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="TP-002",
             principle=(
-                "Handler chains must be complete: every event that is emitted must "
-                "have a consumer."
+                "Handler chains must be complete: every event that is emitted must have a consumer."
             ),
             dimension="TOPOLOGY",
             fix_guidance="Add a handler for the unconsumed event or remove the emission.",
@@ -218,8 +216,7 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="PC-003",
             principle=(
-                "Every edge declared in the architecture must be realized in the "
-                "implementation."
+                "Every edge declared in the architecture must be realized in the implementation."
             ),
             dimension="PIN_COVERAGE",
             fix_guidance="Implement the declared edge or remove it from the architecture manifest.",
@@ -237,13 +234,11 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="AD-002",
             principle=(
-                "No component may exist in the implementation without a "
-                "corresponding declaration."
+                "No component may exist in the implementation without a corresponding declaration."
             ),
             dimension="ARCH_DRIFT",
             fix_guidance=(
-                "Declare the component in the manifest or remove it from the "
-                "implementation."
+                "Declare the component in the manifest or remove it from the implementation."
             ),
         ),
         Pattern(
@@ -254,8 +249,7 @@ def _default_core_patterns() -> list[Pattern]:
             ),
             dimension="ARCH_DRIFT",
             fix_guidance=(
-                "Move the embedded value to a configuration source and reference it "
-                "indirectly."
+                "Move the embedded value to a configuration source and reference it indirectly."
             ),
         ),
         # ---- GOVERNANCE (3 patterns) ----
@@ -268,8 +262,7 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="GV-002",
             principle=(
-                "No artifact may be modified without an authorized promotion or "
-                "demotion ticket."
+                "No artifact may be modified without an authorized promotion or demotion ticket."
             ),
             dimension="GOVERNANCE",
             fix_guidance="Route the change through the promotion loop or create a demotion ticket.",
@@ -277,8 +270,7 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="GV-003",
             principle=(
-                "Evidence bundles must contain all required references before a gate "
-                "can pass."
+                "Evidence bundles must contain all required references before a gate can pass."
             ),
             dimension="GOVERNANCE",
             fix_guidance="Populate the missing evidence references in the bundle.",
@@ -296,8 +288,7 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="CL-002",
             principle=(
-                "Function and type names must accurately describe what they do, not "
-                "how they do it."
+                "Function and type names must accurately describe what they do, not how they do it."
             ),
             dimension="CLARITY",
             fix_guidance=(
@@ -314,8 +305,7 @@ def _default_core_patterns() -> list[Pattern]:
             ),
             dimension="CONSISTENCY",
             fix_guidance=(
-                "Align the inconsistent API to match the established convention in "
-                "the component."
+                "Align the inconsistent API to match the established convention in the component."
             ),
         ),
         Pattern(
@@ -356,8 +346,7 @@ def _default_core_patterns() -> list[Pattern]:
         Pattern(
             pattern_id="CR-002",
             principle=(
-                "Every error path must terminate in a defined recovery or "
-                "propagation action."
+                "Every error path must terminate in a defined recovery or propagation action."
             ),
             dimension="CORRECTNESS",
             fix_guidance="Add error handling that either recovers or propagates with context.",

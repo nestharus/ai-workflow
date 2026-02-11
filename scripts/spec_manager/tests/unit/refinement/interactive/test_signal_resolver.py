@@ -12,6 +12,7 @@ from spec_manager.refinement.interactive.signal_resolver import (
     AutoSignalResolver,
     FileSignalResolver,
     InteractiveSignalResolver,
+    PlannerSignalResolver,
     SignalResolver,
     SteeringOnlyResolver,
     create_resolver,
@@ -74,19 +75,16 @@ def test_auto_resolver_delegates_to_auto_responder() -> None:
 
 
 def test_interactive_resolver_auto_first() -> None:
-    """InteractiveSignalResolver uses auto-responder result when available."""
+    """InteractiveSignalResolver uses planner result when available."""
     signal = _make_signal()
     expected = SteeringResponse(
         ambiguity_id="SIG-001",
-        response_text="auto answer",
-        source="steering_script",
+        response_text="planner answer",
+        source="planner",
     )
 
     with (
-        patch(
-            "spec_manager.refinement.interactive.steering.auto_responder.AutoResponder.respond",
-            return_value=expected,
-        ),
+        patch.object(PlannerSignalResolver, "resolve", return_value=expected),
         patch(
             "spec_manager.refinement.interactive.steering.interactive_io.InteractiveIO.ask_signal",
         ) as mock_ask,
@@ -99,7 +97,7 @@ def test_interactive_resolver_auto_first() -> None:
 
 
 def test_interactive_resolver_fallback_to_stdin() -> None:
-    """InteractiveSignalResolver falls back to InteractiveIO when auto returns None."""
+    """InteractiveSignalResolver falls back to InteractiveIO when planner returns None."""
     signal = _make_signal()
     stdin_response = SteeringResponse(
         ambiguity_id="SIG-001",
@@ -108,10 +106,7 @@ def test_interactive_resolver_fallback_to_stdin() -> None:
     )
 
     with (
-        patch(
-            "spec_manager.refinement.interactive.steering.auto_responder.AutoResponder.respond",
-            return_value=None,
-        ),
+        patch.object(PlannerSignalResolver, "resolve", return_value=None),
         patch(
             "spec_manager.refinement.interactive.steering.interactive_io.InteractiveIO.ask_signal",
             return_value=stdin_response,
@@ -183,9 +178,9 @@ def test_file_resolver_posts_and_reads(tmp_path: Path) -> None:
 
 
 def test_create_resolver_auto() -> None:
-    """create_resolver('auto') returns an AutoSignalResolver."""
+    """create_resolver('auto') returns a PlannerSignalResolver."""
     resolver = create_resolver("auto")
-    assert isinstance(resolver, AutoSignalResolver)
+    assert isinstance(resolver, PlannerSignalResolver)
 
 
 def test_create_resolver_interactive() -> None:
@@ -225,15 +220,17 @@ def test_create_resolver_file_no_workspace() -> None:
 
 
 def test_signal_resolver_protocol_check() -> None:
-    """All four resolver implementations satisfy the SignalResolver protocol."""
+    """All resolver implementations satisfy the SignalResolver protocol."""
     script = SteeringScript.from_file(STEERING_FIXTURE)
 
     auto = AutoSignalResolver()
+    planner = PlannerSignalResolver()
     interactive = InteractiveSignalResolver()
     steering = SteeringOnlyResolver(script)
     file_resolver = FileSignalResolver(signals_dir=Path("/tmp/test-signals"))
 
     assert isinstance(auto, SignalResolver)
+    assert isinstance(planner, SignalResolver)
     assert isinstance(interactive, SignalResolver)
     assert isinstance(steering, SignalResolver)
     assert isinstance(file_resolver, SignalResolver)

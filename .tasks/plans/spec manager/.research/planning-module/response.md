@@ -1,6 +1,6 @@
-## 1) Planning Module architecture (core abstractions, API, and how it replaces AutoResponder/AutoSignalResolver)
+# 1) Planning Module architecture (core abstractions, API, and how it replaces AutoResponder/AutoSignal8SignalResolver)
 
-### The big idea
+## The big idea
 
 Introduce a **Planner** that is the *single* auto-mode decision authority across:
 
@@ -11,7 +11,7 @@ Research becomes a **tool** the planner can invoke when needed.
 
 ---
 
-### Module layout
+## Module layout
 
 Create a new package: `spec_manager/planning/`
 
@@ -22,7 +22,8 @@ Recommended submodules (minimal but complete):
   * public types: `PlanningRequest`, `PlanningResult`, `PlanningContext`, `Planner`
 * `spec_manager/planning/router.py`
 
-  * `LayerRouter`, `CapabilityRouter` (routes to layer planners + per-capability strategies)
+  * `LayerRouter`, `CapabilityRouter` (routes to layer planners +
+    per-capability strategies)
 * `spec_manager/planning/layers/`
 
   * `l1.py`: `L1Planner` (+ L1 discovery + L1 skeleton plan generator)
@@ -30,32 +31,36 @@ Recommended submodules (minimal but complete):
   * `l3.py`: `L3Planner`
 * `spec_manager/planning/tools/`
 
-  * `research_tool.py`: adapter over `ResearchCoordinator` (+ optional BrennerBot tool)
-  * `integration_tool.py`: integration analysis (skeleton extraction → graph → diff/risk)
+  * `research_tool.py`: adapter over `ResearchCoordinator`
+    (+ optional BrennerBot tool)
+  * `integration_tool.py`: integration analysis
+    (skeleton extraction → graph → diff/risk)
   * `constraints_tool.py`: adapter over `ConstraintsStore`/`UnderSpecManager`
   * `evidence_tool.py`: adapter over `EvidenceStoreResearcher`/`EvidenceIndex`
 * `spec_manager/planning/jit/`
 
-  * `state_machine.py`: pause/resume planning state machine (adapted from article_writer)
+  * `state_machine.py`: pause/resume planning state machine
+    (adapted from article_writer)
   * `actions.py`: `NextAction` pattern for planning micro-phases
 * `spec_manager/planning/trace.py`
 
-  * `PlannerTrace`, `DecisionRecord`, `ToolCallRecord`, `ModelCallRecord`, `ReplayBundle`
+  * `PlannerTrace`, `DecisionRecord`, `ToolCallRecord`,
+    `ModelCallRecord`, `ReplayBundle`
 
-This keeps “planning” cohesive without rewriting PromotionLoop.
+This keeps "planning" cohesive without rewriting PromotionLoop.
 
 ---
 
-### Core abstractions
+## Core abstractions
 
-#### 1) `PlanningRequest`
+### 1) `PlanningRequest`
 
 A single request type that can represent:
 
-* “resolve this ambiguity signal”
-* “turn these gaps into a plan”
-* “resolve these under-spec events”
-* “produce integration analysis for this slice/layer”
+* "resolve this ambiguity signal"
+* "turn these gaps into a plan"
+* "resolve these under-spec events"
+* "produce integration analysis for this slice/layer"
 
 ```python
 # spec_manager/planning/api.py
@@ -78,12 +83,13 @@ class PlanningContext:
     iteration: int | None
     layer: Layer
     mode: Literal["auto", "interactive"]
+   
     workspace_root: str
     slice_root: str | None = None
     # optional structured state:
     bundle_ref: Any | None = None     # EvidenceBundle or lightweight view
-    signal_ref: Any | None = None     # InputSignal or Ambiguity
-    metadata: dict[str, Any] = None
+    signal_ref: Any | None = None     #InputSignal or Ambiguity
+    metadata: dict[str, Any] | None = None
 
 @dataclass
 class PlanningRequest:
@@ -93,7 +99,7 @@ class PlanningRequest:
     constraints_hint: dict[str, Any] | None = None
 ```
 
-#### 2) `PlanningResult`
+### 2) `PlanningResult`
 
 A result that can represent:
 
@@ -106,11 +112,12 @@ A result that can represent:
 @dataclass
 class PlanningResult:
     status: Literal["OK", "BLOCKED", "NEEDS_INPUT", "NOOP", "ERROR"]
-    outputs: dict[str, Any]           # dynamic artifacts: plan, decisions, questions, graphs
+    outputs: dict[str, Any]           # dynamic artifacts: plan, decisions,
+                                      # questions, graphs
     trace_id: str
 ```
 
-#### 3) `Planner` (public API)
+### 3) `Planner` (public API)
 
 Single entrypoint plus convenience wrappers:
 
@@ -118,43 +125,51 @@ Single entrypoint plus convenience wrappers:
 class Planner:
     def plan(self, req: PlanningRequest) -> PlanningResult: ...
 
-    # Adapters for existing call sites (don’t leak planning internals):
+    # Adapters for existing call sites (don't leak planning internalsforternals):
     def resolve_signal(self, signal) -> "SteeringResponse | None": ...
     def plan_from_gaps(self, ctx, gaps: list[dict]) -> list[dict]: ...
-    def resolve_under_spec(self, ctx, events: list[dict]) -> dict[str, Any]: ...
+    def resolve_under_spec(self, ctx,: dict[str, Any]: ...
 ```
 
 ---
 
-### How it replaces/wraps `AutoResponder` and `AutoSignalResolver`
+## How it replaces/wraps `AutoResponder` and `AutoSignalResolver`
 
-#### Replace `AutoSignalResolver` with a Planner-backed resolver (no PromotionLoop changes required)
+### Replace `AutoSignalResolver` with a Planner-backed resolver
+
+(no PromotionLoop changes required)
 
 Add a new resolver implementation:
 
 * `PlannerSignalResolver` implements the existing `SignalResolver` protocol.
 * Internally calls `Planner.resolve_signal(signal)`.
 
-**Drop-in change:** update `create_resolver(mode="auto")` to return `PlannerSignalResolver` instead of `AutoSignalResolver` when `use_planner=True` (feature flag for migration).
+**Drop-in change:** update `create_resolver(mode="auto")` to return
+`PlannerSignalResolver` instead of `AutoSignalResolver` when `use_planner=True`
+(feature flag for migration).
 
-#### What happens to `AutoResponder`?
+### What happens to `AutoResponder`?
 
-Treat it as a *legacy policy stage* and migrate it into `planning/tools/research_tool.py`:
+Treat it as a *legacy policy stage* and migrate it into
+`planning/tools/research_tool.py`:
 
 * SteeringScript match
 * Evidence store lookup
 * ResearchCoordinator fallback
 
-Planner calls those stages as **tools** in a controlled order, rather than being the system.
+Planner calls those stages as **tools** in a controlled order,
+rather than being the system.
 
 Concretely:
 
-* `AutoResponder.respond()` becomes a helper used by `ResearchTool.answer()` (or is inlined).
-* Existing behavior preserved while planner adds integration analysis + design planning.
+* `AutoResponder.respond()` becomes a helper used by
+  `ResearchTool.answer()` (or is inlined).
+* Existing behavior preserved while planner adds
+  integration analysis + design planning.
 
 ---
 
-### Planner internal data flow (single request)
+## Planner internal data flow (single request)
 
 ```text
 PlanningRequest
@@ -166,30 +181,33 @@ PlanningRequest
            INTEGRATION_ANALYSIS (graph + diff + risks)
            DECIDE (constraints/steering/evidence/research as needed)
            DESIGN (plan synthesis)
-           VALIDATE (coverage + constraints + “block on ambiguity”)
+           VALIDATE (coverage + constraints + "block on ambiguity")
       → Trace.persist()
   → PlanningResult(outputs + trace_id)
 ```
 
-This is the key architectural shift: **planning is not “a response.” Planning is a multi-phase decision workflow with state.**
+This is the key architectural shift: **planning is not "a response."
+Planning is a multi-phase decision workflow with state.**
 
 ---
 
-## 2) Layer-aware planner hierarchy (general planner + skeleton planners + discovery + research dimensions)
+## 2) Layer-aware planner hierarchy
+
+General planner + skeleton planners + discovery + research dimensions
 
 ### Hierarchy
 
 Implement a two-level planner structure:
 
-1. **GeneralPlanner (root)**
+#### 1. GeneralPlanner (root)
 
 * owns routing, tool orchestration, model routing, trace
 * delegates layer specifics
 
-2. **Layer planners (L1/L2/L3)**
+#### 2. Layer planners (L1/L2/L3)
 
-* each owns discovery strategy + skeleton planner
-* each knows how to turn (gaps + context) into plans for that layer
+ ** each owns discovery strategy + skeleton planner
+ ** each knows how to turn (gaps + context) into plans for that layer
 
 ```text
 Planner (General)
@@ -207,15 +225,16 @@ Planner (General)
        └─ L3LayerResearchAdapter
 
 (shared)
-  ├─ ResearchTool (EvidenceStore + Firecrawl + optional BrennerBot)
-  ├─ IntegrationAnalyzer (skeleton → graph → diff/risk)
-  ├─ ConstraintsTool (constraints + under-spec lifecycle)
-  └─ Trace/Replay
+IF
+   ├─ ResearchTool (EvidenceStore + Firecrawl + optional BrennerBot)
+   ├─ IntegrationAnalyzer (skeleton → graph, + diff/risk)
+   ├─ ConstraintsTool (constraints + under-spec lifecycle)
+   └─ Trace/Replay
 ```
 
 ---
 
-### “Layer-specific discovery routing” (no parsing; LLM does pattern recognition)
+## "Layer-specific discovery routing" (no parsing; LLM does pattern recognition)
 
 Each layer planner implements:
 
@@ -223,29 +242,33 @@ Each layer planner implements:
 class LayerPlanner(Protocol):
     layer: Layer
     def discover(self, ctx: PlanningContext) -> dict[str, Any]: ...
-    def build_plan(self, ctx: PlanningContext, gaps: list[dict], discovery: dict) -> dict[str, Any]: ...
-    def resolve_under_spec(self, ctx: PlanningContext, events: list[dict], discovery: dict) -> dict[str, Any]: ...
+    def build_plan(self, ctx: PlanningContext, gaps: list[dict],
+                  discovery: dict) -> dict[str, Any]: ...
+    def resolve_under_spec(self, ctx: PlanningContext,
+                          events: list[dict],
+                          discovery: dict) -> dict[str, Any]: ...
 ```
 
 **Discovery outputs are graphs/skeletons** (dynamic JSON), not ASTs.
 
-#### L1 Discovery (code concerns)
+### L1 Discovery (code concerns)
 
-* Input: slice files (not just `.py`, ideally “all text-like files”)
+* Input: slice files (not just `.py`, ideally "all text-like files")
 * Output: **code-as-spec skeleton graph**
 
   * nodes: `function`, `class`, `spec_comment_block`
   * edges: `declares`, `mentions`, `calls` (best-effort, LLM-derived)
 
-#### L2 Discovery (architecture)
+### L2 Discovery (architecture)
 
-* Input: component manifests, pins registry, entrypoints, event handlers, “arch files”
+* Input: component manifests, pins registry, entrypoints,
+  event handlers, "arch files"
 * Output: **architecture topology graph**
 
   * nodes: `component`, `pin`, `edge`, `handler`, `route`
   * edges: `provides`, `consumes`, `wired_to`, `declared_in`
 
-#### L3 Discovery (quality)
+### L3 Discovery (quality)
 
 * Input: changed files + quality receipts + diffs
 * Output: **quality graph**
@@ -255,25 +278,28 @@ class LayerPlanner(Protocol):
 
 ---
 
-### Research dimensions (layer research vs web research)
+## Research dimensions (layer research vs web research)
 
-Treat “research” as a routed capability with explicit dimension:
+Treat "research" as a routed capability with explicit dimension:
 
-* **Local evidence research**
+### Local evidence research
 
-  * Evidence store search (existing `EvidenceIndex`)
-  * Prior constraints / prior decisions (constraints store)
-* **Layer research**
+* Evidence store search (existing `EvidenceIndex`)
+* Prior constraints / prior decisions (constraints store)
 
-  * L1: “code-as-spec interpretation” (what does the skeleton imply?)
-  * L2: architecture pattern lookup (within repo + internal docs)
-  * L3: refactor best practices (repo conventions + receipts)
-* **Web research**
+### Layer research
 
-  * Firecrawl pipeline (GLM tool use)
-* **External research tool**
+* L1: "code-as-spec interpretation" (what does the skeleton imply?)
+* L2: architecture pattern lookup (within repo + internal docs)
+* L3: refactor best practices (repo conventions + receipts)
 
-  * optional BrennerBot (see section 6)
+### Web research
+
+* Firecrawl pipeline (GLM tool use)
+
+### External research tool
+
+* optional BrennerBot (see section 6)
 
 The planner chooses dimension based on:
 
@@ -286,51 +312,55 @@ The planner chooses dimension based on:
 
 ### Principle: route by **work type**, not by pipeline stage
 
-The current research coordinator always does Opus → GLM → GPT. Planning should instead dispatch *only what’s needed*.
+The current research coordinator always does Opus → GLM → GPT.
+Planning should instead dispatch *only what's needed*.
 
 ### Model strengths (operational)
 
-* **Opus**: deep reasoning, integration tradeoffs, adversarial critique, “what am I missing?”
-* **GPT‑5.2 XHigh**: structured synthesis, plan generation, balanced judgment, writing executable plans
-* **GLM‑4.7**: tool-heavy work (web research), breadth-first retrieval, search iteration
+* **Opus**: deep reasoning, integration tradeoffs,
+  adversarial critique, "what am I missing?"
+* **GPT‑5.2 XHigh**: structured synthesis, plan generation,
+  balanced judgment, writing executable plans
+* **GLM‑4.7**: tool-heavy work (web research),
+  breadth-first retrieval, search iteration
 
-### Routing matrix (planner tasks → model)
-
-| Planner task type                                                      | Primary model | Secondary model (only if gated) |
-| ---------------------------------------------------------------------- | ------------: | ------------------------------: |
-| Integration analysis (graph diff, risk, blast radius)                  |          Opus | GPT (format + plan integration) |
-| Plan synthesis (intentions/wiring/refactor steps, acceptance criteria) | GPT‑5.2 XHigh |                 Opus (critique) |
-| Under-spec resolution from local repo context                          |          Opus |              GPT (final answer) |
-| Web research execution (Firecrawl/search loops)                        |       GLM‑4.7 |                 GPT (synthesis) |
-| “What should we research?” (query generation, hypotheses)              |          Opus |                               — |
-| “Is this plan coherent + minimal?” (plan lint)                         |          Opus |                               — |
-| Normalization into required JSON/dict shapes                           |           GPT |                               — |
+| Planner task type                                               | Primary model | Secondary model (only if gated) |
+| --------------------------------------------------------------- | ------------: | ------------------------------: |
+| Integration analysis (graph diff, risk, blast radius)           |          Opus | GPT (format + plan integration) |
+| Plan synthesis (intentions/wiring/refactor steps,               |               |                 Opus (critique) |
+| acceptance criteria)                                            | GPT‑5.2 XHigh |                               — |
+| Under-spec resolution from local repo context                   |          Opus |              GPT (final answer) |
+| Web research execution (Firecrawl/search loops)                 |       GLM‑4.7 |                 GPT (synthesis) |
+| "What should we research?"                                      |          Opus |                               — |
+| (query generation, hypotheses)                                 |               |                               — |
+| "Is this plan coherent + minimal?" (plan lint)                  |          Opus |                               — |
+| Normalization into required JSON/dict shapes                    |           GPT |                               — |
 
 ### Non-brute-force dispatch policy (important)
 
-Implement a gated “escalate only when needed” policy:
+Implement a gated "escalate only when needed" policy:
 
-1. **Try deterministic/local first**
+#### 1. **Try deterministic/local first**
 
 * constraints store coverage
 * steering script match
 * evidence store search
 
-2. **Try integration analysis**
+#### 2. **Try integration analysis**
 
 * if code/architecture already implies answer, decide without web
 
-3. **Only then do web**
+#### 3. **Only then do web**
 
-* if (and only if) planner flags “requires external facts”
+* if (and only if) planner flags "requires external facts"
 
-4. **Critique only when risk is high**
+#### 4. **Critique only when risk is high**
 
 * architecture wiring changes (L2)
 * refactors spanning multiple files (L3)
 * low confidence decisions
 
-This avoids the “always run three models” anti-pattern.
+This avoids the "always run three models" anti-pattern.
 
 ---
 
@@ -342,7 +372,8 @@ You can integrate without rewriting the 10-step PromotionLoop:
 
 #### A) GAP step integration
 
-* Keep `GapExplorationStep`’s current layer dispatch (it already matches the step dispatch table).
+* Keep `GapExplorationStep`'s current layer dispatch
+  (it already matches the step dispatch table).
 * After gaps are collected, call:
 
 ```python
@@ -358,7 +389,7 @@ Planner output for GAP should:
 * cluster/dedupe gaps
 * prioritize gaps (smallest safe first)
 * attach *integration notes* (what files/components are implicated)
-* emit “decision requirements” (what constraints are needed before implementing)
+* emit "decision requirements" (what constraints are needed before implementing)
 
 Store these as additional fields in the bundle (dynamic structures).
 
@@ -384,7 +415,7 @@ Planner should generate:
 
 * L1: function intentions referencing skeleton nodes
 * L2: wiring plan referencing graph edges/pins/components
-* L3: refactor plan grouped by function-span with “no behavior change” criteria
+* L3: refactor plan grouped by function-span with "no behavior change" criteria
 
 #### C) UNDER_SPEC integration
 
@@ -400,14 +431,15 @@ Do **not** delete `UnderSpecManager`; make it call planner for resolution.
 
 Concretely:
 
-* Add an injectable resolver interface to UnderSpecManager (or pass `Planner`):
+* Add an injectable resolver interface to UnderSpecManager
+  (or pass `Planner`):
 
   * `resolver.resolve(event, ctx) -> DecisionOutcome`
 
 Planner output:
 
 * either a resolved constraint payload
-* or a blocked question (with structured options + “what evidence would decide”)
+* or a blocked question (with structured options + "what evidence would decide")
 
 This unifies:
 
@@ -417,7 +449,8 @@ This unifies:
 
 ### Longer-term option: collapse GAP+PLAN+UNDER_SPEC into one planner step
 
-After wrap-first stabilizes, you can introduce a single `PlanningStep` that internally runs the planner micro-state-machine:
+After wrap-first stabilizes, you can introduce a single `PlanningStep`
+that internally runs the planner micro-state-machine:
 
 * DISCOVER → GAP → PLAN → UNDER_SPEC
   but keeps the PromotionLoop macro-state-machine unchanged.
@@ -428,33 +461,35 @@ After wrap-first stabilizes, you can introduce a single `PlanningStep` that inte
 
 ### What to reuse directly
 
-1. **State machine core** (pause/resume + WAITING_INPUT)
+#### 1. **State machine core** (pause/resume + WAITING_INPUT)
 
 * The planner needs this for:
 
   * under-spec questions (interactive mode)
   * multi-tool planning sequences (integration → research → design → validate)
-  * “ask for more inputs” without guessing
+  * "ask for more inputs" without guessing
 
-2. **NextAction pattern**
+#### 2. **NextAction pattern**
 
 * Use `NextAction` to make planner execution explicit and testable:
 
-  * `CALL_AGENT` (Opus/GPT agent)
-  * `RUN_TOOL` (evidence store search, firecrawl)
+  * `CALL_AGENT`时长Opus/GPT agent)
+  * `RUN_TOOL` (evidence store search, firecrawl）
   * `USER_INPUT` (interactive under-spec)
   * `COMPLETE`
 
-3. **Context logging**
+#### 3. **Context logging**
 
-* Article writer’s `ContextLogger` pattern maps cleanly to:
+* Article writer's `ContextLogger` pattern maps cleanly to:
 
   * `PlannerTrace` (structured audit log + replay)
 
 ### What to adapt (rename + re-scope)
 
-1. **Phase enum**
-   Instead of article phases (DRAFT/REVISE), planner phases should be:
+#### 1. **Phase enum**
+
+Instead of article phases (DRAFT/REVISE),
+planner phases should be:
 
 ```text
 INIT
@@ -467,8 +502,9 @@ VALIDATE
 COMPLETE
 ```
 
-2. **ReviewPack concept**
-   Turn “5 reviewers for L2/L3” into a first-class `ReviewPack`:
+#### 2. **ReviewPack concept**
+
+Turn "5 reviewers for L2/L3" into a first-class `ReviewPack`:
 
 * `ReviewPack(name, agents[], merge_strategy, acceptance_checks[])`
 * Planner can dynamically construct packs based on:
@@ -479,14 +515,15 @@ COMPLETE
 
 This generalizes beyond GAP (it can also validate plans).
 
-3. **extract_skeleton**
-   Replace “document skeleton extraction” with **layer skeleton extraction**:
+#### 3. **extract_skeleton**
+
+Replace "document skeleton extraction" with **layer skeleton extraction**:
 
 * L1: code skeleton graph
 * L2: architecture topology graph
 * L3: quality graph
 
-Implementation remains “LLM for pattern recognition.”
+Implementation remains "LLM for pattern recognition."
 
 ### What must be purpose-built
 
@@ -501,58 +538,82 @@ Implementation remains “LLM for pattern recognition.”
 
 ### What BrennerBot does well
 
-* **Explicit loop structure + operatorized thinking**
+#### Explicit loop structure + operatorized thinking
 
-  * BrennerBot describes an “11-phase loop” and four core cognitive operators (Level‑Split, Exclusion‑Test, Object‑Transpose, Scale‑Check) as reusable moves for rigorous inquiry. ([BrennerBot][1])
-* **Multi-agent role separation**
+* BrennerBot describes an "11-phase loop" and four core cognitive
+  operators (Level‑Split, Exclusion‑Test, Object‑Transpose,
+  Scale‑Check) as reusable moves for rigorous inquiry. ([BrennerBot][1])
 
-  * The project explicitly assigns distinct responsibilities to different agents/models (hypothesis generation, test design, adversarial critique). ([GitHub][2])
-* **Auditable artifacts + evidence hygiene**
+#### Multi-agent role separation
 
-  * It emphasizes durable artifacts (hypothesis slates, discriminative tests, assumption ledgers) and an evidence-pack workflow with stable IDs intended for citation. ([GitHub][2])
-* **Deterministic merge + coordination bus**
+* The project explicitly assigns distinct responsibilities to different
+  agents/models (hypothesis generation, test design,
+  adversarial critique). ([GitHub][2])
 
-  * It’s built around Agent Mail as a coordination bus with a thread-id “join key” contract tying conversations, execution sessions, and artifacts together. ([GitHub][2])
+#### Auditable artifacts + evidence hygiene
 
-### Where it’s wasteful for spec-manager purposes
+* It emphasizes durable artifacts (hypothesis slates,
+  discriminative tests, assumption ledgers) and an evidence-pack
+  workflow with stable IDs intended for citation. ([GitHub][2])
 
-* **Human-in-the-loop cockpit runtime**
+#### Deterministic merge + coordination bus
 
-  * BrennerBot’s reference architecture expects humans to manage multiple terminal sessions (ntm/tmux) and compile artifacts, rather than programmatic dynamic dispatch. ([GitHub][2])
-* **Triangulation as a default habit**
+* It's built around Agent Mail as a coordination bus with a thread-id
+  "join key" contract tying conversations, execution sessions,
+  and artifacts together. ([GitHub][2])
 
-  * It recommends “triangulation” by reading/producing multiple model syntheses to control narrative bias. That’s valuable for scientific research, but often overkill for engineering planning where you can gate by risk/confidence. ([GitHub][2])
+### Where it's wasteful for spec-manager purposes
+
+#### Human-in-the-loop cockpit runtime
+
+* BrennerBot's reference architecture expects humans to manage multiple
+  terminal sessions (ntm/tmux) and compile artifacts, rather than
+  programmatic dynamic dispatch. ([GitHub][ Ministers])
+
+#### Triangulation as a default habit
+
+* It recommends "triangulation" by reading/producing multiple model
+  syntheses to control narrative bias. That's valuable for scientific
+  research, but often overkill for engineering planning where you can
+  gate by risk/confidence. ([GitHub][2])
 
 ### What the planner should learn from BrennerBot (directly transferable)
 
-* **Operator library as planning operators**
+#### Operator library as planning operators
 
-  * Level‑Split → separate “spec vs implementation vs integration”
-  * Exclusion‑Test → generate discriminative checks (“what evidence would falsify this plan?”)
-  * Object‑Transpose → propose alternative wiring/entrypoint structures
-  * Scale‑Check → blast-radius and complexity sanity checks
-* **Join-key contract**
+* Level‑Split → separate "spec vs implementation vs integration"
+* Exclusion‑Test → generate discriminative checks
+  ("what evidence would falsify this plan?")
+* Object‑Transpose → propose alternative wiring/entrypoint structures
+* Scale‑Check → blast-radius and complexity sanity checks
 
-  * Use a stable `trace_id` (run_id/slice_id/iteration/capability/event_id) that ties:
+#### Join-key contract
 
-    * planner trace
-    * model calls
-    * artifacts produced
-    * eval comparisons
+* Use a stable `trace_id` (run_id/slice_id/iteration/capability/event_id)
+  that ties并发:
+
+  * planner trace
+  * model calls
+  * artifacts produced
+  * eval comparisons
 
 ### Should spec-manager call BrennerBot as an external tool?
 
 Recommendation: **optional, narrow use**
 
-* Use BrennerBot-style workflows as a *specialized external research tool* only when:
+* Use BrennerBot-style workflows as a *specialized external research tool*
+  only when:
 
-  * an under-spec event is fundamentally a research problem (not a code-integration problem)
+  * an under-spec event is fundamentally a research problem
+    (not a code-integration problem)
   * you benefit from hypothesis/test framing and adversarial critique
+
 * Otherwise, build competing capabilities inside the planner:
 
-  * because spec-manager needs programmatic routing + automatic tool use (Firecrawl/evidence store/constraints), not human-managed terminals.
+  * because spec-manager needs programmatic routing + automatic tool use
+    (Firecrawl/evidence store/constraints), not human-managed terminals.
 
-In other words: borrow the methodology; don’t inherit the runtime.
+In other words: borrow the methodology; don't inherit the runtime.
 
 ---
 
@@ -579,16 +640,19 @@ Contents:
 * `decision.json` (final PlanningResult + confidence + rationale)
 * `calls/`
 
-  * `model_calls.jsonl` (one line per run_agent call: agent_name/model/prompt_hash/output_hash)
+  * `model_calls.jsonl` (one line per run_agent call:
+    agent_name/model/prompt_hash/output_hash)
   * `tool_calls.jsonl` (evidence store queries, firecrawl outputs, etc.)
+
 * `artifacts/`
 
   * `integration_graph.json` (if produced)
   * `plan.json` (intentions)
   * `under_spec_questions.json` (if blocked)
-* `replay.json`
+  * `replay.json`
 
-  * enough to re-run planner in “replay mode” without touching the repo state
+  * enough to re re-run planner in "replay mode"
+    without touching the repo state
 
 ### Decision record schema (what the evaluator compares to ground truth)
 
@@ -601,56 +665,66 @@ Each decision should include:
 * `alternatives_considered` (at least 2 when non-trivial)
 * `discriminative_checks` (what would change the decision)
 
-This makes QA comparisons meaningful: the evaluator can score not just correctness, but *epistemic hygiene* and failure mode.
+This makes QA comparisons meaningful: the evaluator can score
+not just correctness, but *epistemic hygiene* and failure mode.
 
 ### Debugging hooks
 
 Add a `PlannerDebugView` helper that can render (from trace):
 
-* “why did you choose this?” (from stored rationale)
-* “what evidence did you use?”
-* “which model touched this decision?”
-* “what would have made you block earlier?”
+* "why did you choose this?" (from stored rationale)
+* "what evidence did you use?"
+* "which model touched this decision?"
+* "what would have made you block earlier?"
 
 No new runtime UI required—just deterministic files.
 
 ---
 
-## 8) Migration path (no test breaks, incremental cutover)
+## 8) Implementation order (direct replacement, no feature flags)
 
-### Phase 0 — add planner with adapters (no behavior changes)
+This is not production code — implement directly without compatibility shims.
 
-* Implement `Planner`, but internally:
+### Step 1 — Core types and Planner API
 
-  * route `RESOLVE_SIGNAL` to the existing AutoResponder/ResearchCoordinator chain
-  * record traces (optional, behind flag)
+* Implement `planning/api.py`: PlanningRequest, PlanningResult,
+  PlanningContext, Planner
+* Implement `planning/trace.py`: PlannerTrace, DecisionRecord,
+  ToolCallRecord, ModelCallRecord
+* Implement `planning/jit/state_machine.py` + `actions.py`:
+  planning micro-state-machine
 
-### Phase 1 — replace AutoSignalResolver in auto mode (safe cutover)
+### Step 2 — Layer planners and tools
 
-* Add `PlannerSignalResolver` implementing `SignalResolver`.
-* Update `create_resolver(mode="auto")` to return planner-backed resolver behind `--use-planner`.
-* Keep `InteractiveSignalResolver` behavior unchanged (planner first, then prompt).
+* Implement `spec_manager/planning/layers/l1.py, l2.py, l3.py`:
+  Layer-specific planners with discovery + skeleton planning
+* Implement `spec_manager/planning/tools/`:
+  research_tool, integration_tool, constraints_tool, evidence_tool
+* Implement `spec_manager/planning/router.py`: LayerRouter, CapabilityRouter
 
-### Phase 2 — UnderSpecCheck uses planner (centralizes ambiguity resolution)
+### Step 3 — Replace AutoSignalResolver
 
-* Inject planner into UnderSpecManager as the resolver.
-* Keep constraints persistence/validation in UnderSpecManager.
+* Add `PlannerSignalResolver` implementing `SignalResolver`
+* Update `create_resolver(mode="auto")` to return
+  `PlannerSignalResolver` directly
+* Move steering/evidence/research logic into
+  `spec_manager/planning/tools/research_tool.py`
+* Delete `AutoResponder` as a public actor
+  (inline remaining logic into planner tools)
 
-### Phase 3 — PlanStep uses planner (replace simplistic intention generation)
+### Step 4 — Replace PromotionLoop step internals
 
-* Replace `_plan_l1/_plan_l2/_plan_l3` with `planner.plan(capability="PLAN")`.
-* Keep planning gate unchanged initially; later let planner produce explicit decision requirements.
+* Replace `_plan_l1/_plan_l2/_plan_l3` with
+  `planner.plan(capability="PLAN")`
+* Inject planner into UnderSpecManager as the resolver
+* Wire GAP post-processing through planner for
+  clustering/prioritization
 
-### Phase 4 — GAP post-processing via planner (optional)
+### Step 5 — Update tests
 
-* Keep existing gap detectors but let planner cluster/prioritize + attach integration notes.
+* Update all tests that reference AutoResponder/AutoSignalResolver
+* Add tests for Planner, layer planners, tools, trace
 
-### Phase 5 — deprecate AutoResponder as a public actor
-
-* Move steering/evidence/research logic into planner tools.
-* Leave AutoResponder as a thin compatibility wrapper until tests are updated.
-
-This path preserves the current behavior while progressively shifting authority to the planner.
-
-[1]: https://brennerbot.org/ "BrennerBot"
-[2]: https://github.com/Dicklesworthstone/brenner_bot "GitHub - Dicklesworthstone/brenner_bot: Harness the scientific methods of Sydney Brenner using AI Agents"
+[1]: <https://brennerbot.org/> "BrennerBot"
+[2]: <https://github.com/Dicklesworthstone/brenner_bot> \
+     "GitHub - Dicklesworthstone/brenner_bot: Harness the scientific methods of 悉尼 Brenner using AI Agents"

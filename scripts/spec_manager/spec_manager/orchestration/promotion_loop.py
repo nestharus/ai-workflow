@@ -474,9 +474,17 @@ class PlanStep:
     After generating intentions, checks decision requirements against
     the constraints store.  Uncovered decisions become under-spec events
     that block the slice before implementation begins.
+
+    When a *planner* is provided, routes plan generation through the
+    planner module instead of the static _plan_l1/_plan_l2/_plan_l3
+    methods.  The planner provides richer context-aware planning
+    including integration analysis and constraint checking.
     """
 
     name = "PLAN"
+
+    def __init__(self, planner: Any = None) -> None:
+        self._planner = planner
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Generate layer-appropriate implementation plan from gaps."""
@@ -486,7 +494,10 @@ class PlanStep:
             bundle.plan = PlanRef(intentions=[])
             return StepResult(status="OK")
 
-        if ctx.layer == "l1":
+        # Route through planner if available
+        if self._planner is not None:
+            intentions = self._plan_via_planner(ctx, bundle)
+        elif ctx.layer == "l1":
             intentions = self._plan_l1(bundle.gaps.open_gaps)
         elif ctx.layer == "l2":
             intentions = self._plan_l2(bundle.gaps.open_gaps)
@@ -524,6 +535,21 @@ class PlanStep:
                 logger.debug("Planning gate skipped: %s", exc)
 
         return StepResult(status="OK")
+
+    def _plan_via_planner(self, ctx: SliceContext, bundle: EvidenceBundle) -> list[dict[str, Any]]:
+        """Route plan generation through the planner module."""
+        from spec_manager.planner.api import PlanningContext
+
+        planning_ctx = PlanningContext(
+            run_id=ctx.run_id,
+            slice_id=ctx.slice_id,
+            layer=ctx.layer,
+            mode=ctx.mode,
+            workspace_root=ctx.workspace_root,
+            slice_root=ctx.slice_root,
+            bundle_ref=bundle,
+        )
+        return self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
 
     @staticmethod
     def _plan_l1(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -829,9 +855,15 @@ class UnderSpecCheckStep:
     2. Attempts resolution (interactive or auto).
     3. Validates any new constraints.
     4. Returns resolved/blocked partition.
+
+    When a *planner* is provided, the planner is injected into the
+    UnderSpecManager as the resolution strategy.
     """
 
     name = "UNDER_SPEC_CHECK"
+
+    def __init__(self, planner: Any = None) -> None:
+        self._planner = planner
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Check for under-specification events from implementation."""
@@ -851,6 +883,7 @@ class UnderSpecCheckStep:
         manager = UnderSpecManager(
             workspace_root=workspace,
             mode=ctx.mode,
+            planner=self._planner,
         )
         outcome = manager.resolve(slice_id=ctx.slice_id, events=events)
 
@@ -2008,10 +2041,12 @@ class PromotionLoop:
         workspace_root: Path = Path("."),
         demotion_manager: DemotionManager | None = None,
         steps: list[Any] | None = None,
+        planner: Any = None,
     ) -> None:
         self._wm = worktree_manager
         self._workspace_root = workspace_root
         self._dm = demotion_manager or DemotionManager(workspace_root)
+        self._planner = planner
 
         # Build step instances
         if steps is not None:
@@ -2021,6 +2056,8 @@ class PromotionLoop:
             for step_cls in DEFAULT_STEPS:
                 if step_cls is IntegrateStep:
                     self._steps.append(step_cls(worktree_manager=self._wm))
+                elif step_cls is PlanStep or step_cls is UnderSpecCheckStep:
+                    self._steps.append(step_cls(planner=self._planner))
                 else:
                     self._steps.append(step_cls())
 

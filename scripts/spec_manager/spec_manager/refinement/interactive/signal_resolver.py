@@ -38,7 +38,7 @@ class SignalResolver(Protocol):
 class AutoSignalResolver:
     """Resolves signals via ``AutoResponder`` (steering script / research).
 
-    Use case: CLI ``--auto`` mode.
+    Use case: CLI ``--auto`` mode (legacy path — prefer ``PlannerSignalResolver``).
     """
 
     def __init__(
@@ -61,8 +61,109 @@ class AutoSignalResolver:
         return self._auto_responder.respond(signal)
 
 
+class PlannerSignalResolver:
+    """Resolves signals via the planner module.
+
+    The planner routes to the appropriate layer planner first, then
+    falls back to research tools (steering → evidence → web).
+
+    Use case: CLI ``--auto`` mode (default).
+    """
+
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        steering_script: object | None = None,
+        evidence_index: object | None = None,
+        use_research: bool = False,
+    ) -> None:
+        from spec_manager.planner.api import Planner
+        from spec_manager.planner.tools.evidence_tool import EvidenceTool
+        from spec_manager.planner.tools.research_tool import ResearchTool
+
+        ws = workspace or Path(".")
+
+        # Build evidence searcher from index if available
+        evidence_searcher = None
+        if evidence_index is not None:
+            try:
+                from spec_manager.refinement.hollowed_spec.searcher import EvidenceSearcher
+
+                evidence_searcher = EvidenceSearcher(evidence_index)
+            except Exception:
+                logger.debug("Could not create EvidenceSearcher from index")
+
+        # Build research coordinator if web research enabled
+        research_coordinator = None
+        if use_research:
+            try:
+                from spec_manager.refinement.interactive.research.coordinator import (
+                    ResearchCoordinator,
+                )
+
+                research_coordinator = ResearchCoordinator(evidence_index=evidence_index)
+            except Exception:
+                logger.debug("Could not create ResearchCoordinator")
+
+        research_tool = ResearchTool(
+            evidence_searcher=evidence_searcher,
+            research_coordinator=research_coordinator,
+            steering_script=steering_script,
+            workspace=ws,
+        )
+        evidence_tool = EvidenceTool(evidence_searcher=evidence_searcher)
+
+        self._planner = Planner(
+            workspace_root=ws,
+            mode="auto",
+            research_tool=research_tool,
+            evidence_tool=evidence_tool,
+        )
+        self._research_tool = research_tool
+
+    def resolve(self, signal: InputSignal) -> SteeringResponse | None:
+        from spec_manager.planner.api import PlanningContext
+        from spec_manager.planner.tools.research_tool import ResearchQuery
+
+        # Try planner layer-specific resolution first
+        ctx = PlanningContext(layer="any", mode="auto")
+        response = self._planner.resolve_signal(signal, ctx)
+        if response is not None:
+            return self._to_steering_response(signal, response, source="planner")
+
+        # Fall back to research tool (steering → evidence → web)
+        question = getattr(signal, "question", "") or getattr(signal, "suggested_question", "")
+        if not question:
+            question = getattr(signal, "encountered_text", str(signal))
+
+        result = self._research_tool.research(ResearchQuery(question=question))
+        if result.has_answer:
+            return self._to_steering_response(
+                signal,
+                result.synthesis,
+                source=f"research:{result.findings[0].source if result.findings else 'unknown'}",
+            )
+
+        return None
+
+    @staticmethod
+    def _to_steering_response(
+        signal: InputSignal, response: object, source: str = "planner"
+    ) -> SteeringResponse:
+        signal_id = getattr(signal, "signal_id", getattr(signal, "ambiguity_id", ""))
+        text = (
+            str(response) if not isinstance(response, dict) else response.get("text", str(response))
+        )
+        return SteeringResponse(
+            ambiguity_id=signal_id,
+            response_text=text,
+            source=source,
+            signal=signal,
+        )
+
+
 class InteractiveSignalResolver:
-    """Auto-resolve first, fall back to stdin prompt.
+    """Planner-resolve first, fall back to stdin prompt.
 
     Use case: CLI default (interactive) mode.
     """
@@ -75,20 +176,19 @@ class InteractiveSignalResolver:
         evidence_index: object | None = None,
     ) -> None:
         from spec_manager.refinement.interactive.question_generator import QuestionGenerator
-        from spec_manager.refinement.interactive.steering.auto_responder import AutoResponder
         from spec_manager.refinement.interactive.steering.interactive_io import InteractiveIO
 
-        self._auto_responder = AutoResponder(
-            steering_script=steering_script,
-            use_research=use_research,
+        self._planner_resolver = PlannerSignalResolver(
             workspace=workspace,
+            steering_script=steering_script,
             evidence_index=evidence_index,
+            use_research=use_research,
         )
         self._interactive_io = InteractiveIO()
         self._question_gen = QuestionGenerator()
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:
-        auto_response = self._auto_responder.respond(signal)
+        auto_response = self._planner_resolver.resolve(signal)
         if auto_response is not None:
             return auto_response
 
@@ -189,11 +289,11 @@ def create_resolver(
             logger.warning("Failed to load evidence index: %s", exc)
 
     if mode == "auto":
-        return AutoSignalResolver(
-            steering_script=steering,
-            use_research=use_research,
+        return PlannerSignalResolver(
             workspace=workspace,
+            steering_script=steering,
             evidence_index=evidence_index,
+            use_research=use_research,
         )
 
     if mode == "interactive":

@@ -128,6 +128,63 @@ class PddLifecycle:
         self.max_pipeline_passes = max_pipeline_passes
 
     # ------------------------------------------------------------------
+    # Planner construction
+    # ------------------------------------------------------------------
+
+    def _build_planner(self) -> Any:
+        """Build a Planner instance with tools wired from lifecycle config."""
+        from spec_manager.planner.api import Planner
+        from spec_manager.planner.tools.evidence_tool import EvidenceTool
+        from spec_manager.planner.tools.research_tool import ResearchTool
+
+        # Build evidence searcher if evidence store is enabled
+        evidence_searcher = None
+        if self.use_evidence_store:
+            try:
+                from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+                from spec_manager.refinement.hollowed_spec.searcher import (
+                    EvidenceSearcher,
+                )
+
+                index_path = (
+                    self.manager.workspace_path
+                    / "workspace"
+                    / "indexes"
+                    / "evidence_store_index.json"
+                )
+                if index_path.exists():
+                    index = EvidenceIndex.load(index_path)
+                    evidence_searcher = EvidenceSearcher(index)
+            except Exception as exc:
+                logger.debug("Could not load evidence searcher: %s", exc)
+
+        # Build steering script if path provided
+        steering_script = None
+        if self.steering_path:
+            try:
+                from spec_manager.refinement.interactive.steering.steering_script import (
+                    SteeringScript,
+                )
+
+                steering_script = SteeringScript.from_file(self.steering_path)
+            except Exception as exc:
+                logger.debug("Could not load steering script: %s", exc)
+
+        research_tool = ResearchTool(
+            evidence_searcher=evidence_searcher,
+            steering_script=steering_script,
+            workspace=self.manager.workspace_path,
+        )
+        evidence_tool = EvidenceTool(evidence_searcher=evidence_searcher)
+
+        return Planner(
+            workspace_root=self.manager.workspace_path,
+            mode=self.mode,
+            research_tool=research_tool,
+            evidence_tool=evidence_tool,
+        )
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -488,9 +545,12 @@ class PddLifecycle:
             workspace_root=str(self.manager.workspace_path),
         )
 
+        planner = self._build_planner()
+
         loop = PromotionLoop(
             worktree_manager=self.worktree_manager,
             workspace_root=self.manager.workspace_path,
+            planner=planner,
         )
 
         scheduler = PromotionScheduler(

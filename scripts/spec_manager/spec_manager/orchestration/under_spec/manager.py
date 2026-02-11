@@ -235,16 +235,19 @@ class UnderSpecManager:
     Args:
         workspace_root: Repository root path.
         mode: Resolution mode (interactive or auto).
+        planner: Optional planner instance for resolution.
     """
 
     def __init__(
         self,
         workspace_root: Path,
         mode: Literal["interactive", "auto"] = "auto",
+        planner: Any = None,
     ) -> None:
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
+        self._planner = planner
 
     def resolve(
         self,
@@ -363,11 +366,73 @@ class UnderSpecManager:
         slice_id: str,
         events: list[UnderSpecEvent],
     ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
-        """Resolve via ResearchCoordinator.
+        """Resolve via planner (preferred) or ResearchCoordinator (fallback).
 
-        Research may propose constraints, but they must pass validation
-        before the slice unblocks.
+        The planner routes to layer-specific resolution and research tools.
+        Constraints must pass validation before the slice unblocks.
         """
+        # Try planner-based resolution first
+        if self._planner is not None:
+            return self._resolve_via_planner(slice_id, events)
+
+        return self._resolve_via_coordinator(events)
+
+    def _resolve_via_planner(
+        self,
+        slice_id: str,
+        events: list[UnderSpecEvent],
+    ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
+        """Resolve under-spec events via the planner module."""
+        constraints: list[Constraint] = []
+        blocked: list[UnderSpecEvent] = []
+
+        try:
+            from spec_manager.planner.api import PlanningContext
+
+            event_dicts = [e.to_dict() for e in events]
+            ctx = PlanningContext(
+                slice_id=slice_id,
+                layer="any",
+                mode="auto",
+                workspace_root=str(self._workspace),
+            )
+            result = self._planner.resolve_under_spec(ctx, event_dicts)
+
+            resolved_ids = set()
+
+            # Extract constraints from planner result
+            for key, value in result.get("constraints", {}).items():
+                if isinstance(value, str) and value.strip():
+                    matching = [e for e in events if e.event_id == key or e.question == key]
+                    for event in matching:
+                        constraints.append(
+                            Constraint(
+                                constraint_id=event.event_id,
+                                question=event.question,
+                                answer=value,
+                                source="research",
+                                confidence=0.7,
+                                validated=False,
+                            )
+                        )
+                        resolved_ids.add(event.event_id)
+
+            # Remaining events are blocked
+            for event in events:
+                if event.event_id not in resolved_ids:
+                    blocked.append(event)
+
+        except Exception as exc:
+            logger.warning("Planner resolution failed: %s", exc)
+            blocked = list(events)
+
+        return constraints, blocked
+
+    def _resolve_via_coordinator(
+        self,
+        events: list[UnderSpecEvent],
+    ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
+        """Resolve via ResearchCoordinator (legacy fallback)."""
         constraints: list[Constraint] = []
         blocked: list[UnderSpecEvent] = []
 
