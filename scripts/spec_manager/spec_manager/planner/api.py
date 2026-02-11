@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -99,11 +100,15 @@ class Planner:
         research_tool: Any = None,
         integration_tool: Any = None,
         evidence_tool: Any = None,
+        override_provider: Callable[[PlanningRequest], PlanningResult | None] | None = None,
+        model_id: str = "",
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._mode = mode
+        self._model_id = model_id
         self._layer_router = LayerRouter()
         self._capability_router = CapabilityRouter()
+        self._override_provider = override_provider
 
         if register_defaults:
             self._register_default_planners(
@@ -160,31 +165,98 @@ class Planner:
         """Route *req* to the correct layer planner and capability handler.
 
         Returns a ``PlanningResult`` with a unique ``trace_id`` for
-        every invocation regardless of outcome.
+        every invocation regardless of outcome.  Every call persists a
+        trace (including errors) and appends to ``index.jsonl``.
         """
+        from spec_manager.planner.trace import (
+            DecisionRecord,
+            PlannerTrace,
+            compute_decision_key,
+        )
+
         trace_id = _new_trace_id()
         layer = req.context.layer
+        ctx = req.context
+
+        decision_key = compute_decision_key(
+            layer=str(layer),
+            capability=req.capability,
+            slice_id=ctx.slice_id,
+            iteration=ctx.iteration,
+            inputs=req.inputs,
+        )
+
+        trace = PlannerTrace.start(
+            trace_id,
+            _request_snapshot(req),
+            decision_key=decision_key,
+            run_id=ctx.run_id,
+            model_id=self._model_id,
+            layer=str(layer),
+            capability=req.capability,
+            slice_id=ctx.slice_id,
+        )
 
         logger.debug(
-            "planner.plan  trace=%s  capability=%s  layer=%s  slice=%s",
+            "planner.plan  trace=%s  key=%s  capability=%s  layer=%s  slice=%s",
             trace_id,
+            decision_key,
             req.capability,
             layer,
-            req.context.slice_id,
+            ctx.slice_id,
         )
+
+        # Override hook (for counterfactual testing / ground truth injection)
+        if self._override_provider is not None:
+            override_result = self._override_provider(req)
+            if override_result is not None:
+                override_result.trace_id = trace_id
+                trace.status = override_result.status
+                trace.overridden = True
+                trace.set_decision(
+                    DecisionRecord(
+                        decision_text=f"OVERRIDDEN: {override_result.status}",
+                    )
+                )
+                trace.add_artifact("override_outputs", override_result.outputs)
+                self._persist_trace(trace)
+                return override_result
 
         try:
             planner = self._layer_router.select(layer)
             result = self._capability_router.route(planner, req)
             result.trace_id = trace_id
+            trace.status = result.status
+            trace.set_decision(
+                DecisionRecord(
+                    decision_text=result.status,
+                )
+            )
+            trace.add_artifact("outputs", result.outputs)
+            self._persist_trace(trace)
             return result
         except Exception as exc:
             logger.exception("planner.plan failed  trace=%s", trace_id)
-            return PlanningResult(
+            result = PlanningResult(
                 status="ERROR",
                 trace_id=trace_id,
                 error=str(exc),
             )
+            trace.status = "ERROR"
+            trace.set_decision(
+                DecisionRecord(
+                    decision_text=f"ERROR: {exc}",
+                )
+            )
+            self._persist_trace(trace)
+            return result
+
+    def _persist_trace(self, trace: Any) -> None:
+        """Best-effort trace persistence — never raise."""
+        try:
+            trace.persist(self._workspace_root)
+        except Exception:
+            logger.debug("Failed to persist trace %s", trace.trace_id, exc_info=True)
 
     # ------------------------------------------------------------------
     # Convenience adapters for existing call sites
@@ -243,3 +315,20 @@ class Planner:
 def _new_trace_id() -> str:
     """Return a short unique trace identifier."""
     return uuid.uuid4().hex[:12]
+
+
+def _request_snapshot(req: PlanningRequest) -> dict[str, Any]:
+    """Build a JSON-safe snapshot of the request for trace storage."""
+    ctx = req.context
+    return {
+        "capability": req.capability,
+        "layer": ctx.layer,
+        "run_id": ctx.run_id,
+        "slice_id": ctx.slice_id,
+        "iteration": ctx.iteration,
+        "mode": ctx.mode,
+        "workspace_root": ctx.workspace_root,
+        "slice_root": ctx.slice_root,
+        "inputs_keys": sorted(req.inputs.keys()),
+        "has_constraints_hint": req.constraints_hint is not None,
+    }

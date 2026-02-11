@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -13,6 +15,7 @@ from spec_manager.planner.api import (
     PlanningContext,
     PlanningRequest,
     PlanningResult,
+    _request_snapshot,
 )
 from spec_manager.planner.router import LayerPlanner
 
@@ -232,3 +235,204 @@ class TestPlannerRegistration:
             req = PlanningRequest(capability="GAP", context=ctx)
             result = planner.plan(req)
             assert result.status == "OK"
+
+
+# ---------------------------------------------------------------------------
+# Override provider
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerOverrideProvider:
+    def _make_planner(
+        self,
+        tmp_path: Path,
+        override_provider: Any,
+    ) -> Planner:
+        """Build a Planner with an override_provider and mock layer planners."""
+        planner = Planner(
+            workspace_root=tmp_path,
+            register_defaults=False,
+            override_provider=override_provider,
+        )
+        planner.register_layer_planner("l1", _MockLayerPlanner("l1"))
+        return planner
+
+    def test_override_provider_returns_result_bypasses_routing(self, tmp_path: Path) -> None:
+        """When override_provider returns a PlanningResult, routing is bypassed."""
+        override_result = PlanningResult(
+            status="OK",
+            outputs={"overridden": True},
+        )
+
+        def provider(req: PlanningRequest) -> PlanningResult | None:
+            return override_result
+
+        planner = self._make_planner(tmp_path, provider)
+        ctx = PlanningContext(layer="l1", slice_id="s1")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        result = planner.plan(req)
+
+        assert result.status == "OK"
+        assert result.outputs == {"overridden": True}
+
+    def test_override_provider_returns_none_proceeds_normally(self, tmp_path: Path) -> None:
+        """When override_provider returns None, normal routing proceeds."""
+
+        def provider(req: PlanningRequest) -> PlanningResult | None:
+            return None
+
+        planner = self._make_planner(tmp_path, provider)
+        ctx = PlanningContext(layer="l1", slice_id="s1")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        result = planner.plan(req)
+
+        # Should succeed through normal routing to _MockLayerPlanner
+        assert result.status == "OK"
+
+    def test_override_result_has_trace_id_set(self, tmp_path: Path) -> None:
+        """Overridden results get a trace_id assigned."""
+        override_result = PlanningResult(status="OK", outputs={})
+
+        def provider(req: PlanningRequest) -> PlanningResult | None:
+            return override_result
+
+        planner = self._make_planner(tmp_path, provider)
+        ctx = PlanningContext(layer="l1")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        result = planner.plan(req)
+
+        assert result.trace_id != ""
+        assert len(result.trace_id) == 12
+
+
+# ---------------------------------------------------------------------------
+# Planner model_id
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerModelId:
+    def test_planner_constructor_accepts_model_id(self, tmp_path: Path) -> None:
+        """Planner can be constructed with model_id keyword."""
+        planner = Planner(
+            workspace_root=tmp_path,
+            register_defaults=False,
+            model_id="opus-4",
+        )
+        assert planner._model_id == "opus-4"
+
+    def test_model_id_flows_through_to_traces(self, tmp_path: Path) -> None:
+        """model_id set on Planner propagates into persisted trace data."""
+        planner = Planner(
+            workspace_root=tmp_path,
+            register_defaults=False,
+            model_id="sonnet-5",
+        )
+        planner.register_layer_planner("l1", _MockLayerPlanner("l1"))
+        ctx = PlanningContext(layer="l1", slice_id="slice-m")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        result = planner.plan(req)
+
+        # Verify model_id in persisted replay.json
+        trace_dir = tmp_path / "analysis" / "planner_traces" / result.trace_id
+        replay_path = trace_dir / "replay.json"
+        assert replay_path.exists()
+        replay_data = json.loads(replay_path.read_text(encoding="utf-8"))
+        assert replay_data["model_id"] == "sonnet-5"
+
+
+# ---------------------------------------------------------------------------
+# Auto-persist on success / error
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerAutoPersist:
+    def test_plan_persists_trace_on_success(self, tmp_path: Path) -> None:
+        """plan() persists a trace directory on successful invocation."""
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        planner.register_layer_planner("l1", _MockLayerPlanner("l1"))
+
+        ctx = PlanningContext(layer="l1", slice_id="s1")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        result = planner.plan(req)
+
+        trace_dir = tmp_path / "analysis" / "planner_traces" / result.trace_id
+        assert trace_dir.exists()
+        assert (trace_dir / "replay.json").exists()
+
+    def test_plan_persists_trace_on_error(self, tmp_path: Path) -> None:
+        """plan() persists a trace even when the layer planner raises."""
+
+        class _RaisingPlanner(_MockLayerPlanner):
+            def discover(self, ctx: Any) -> dict[str, Any]:
+                raise RuntimeError("deliberate error")
+
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        planner.register_layer_planner("l1", _RaisingPlanner("l1"))
+
+        ctx = PlanningContext(layer="l1", slice_id="s-err")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        result = planner.plan(req)
+
+        assert result.status == "ERROR"
+        assert "deliberate error" in result.error
+
+        trace_dir = tmp_path / "analysis" / "planner_traces" / result.trace_id
+        assert trace_dir.exists()
+        assert (trace_dir / "replay.json").exists()
+
+        # Verify the persisted trace records the error status
+        replay_data = json.loads((trace_dir / "replay.json").read_text(encoding="utf-8"))
+        assert replay_data["status"] == "ERROR"
+
+
+# ---------------------------------------------------------------------------
+# _request_snapshot
+# ---------------------------------------------------------------------------
+
+
+class TestRequestSnapshot:
+    def test_captures_all_expected_fields(self) -> None:
+        """_request_snapshot() includes capability, layer, run_id, slice_id, etc."""
+        ctx = PlanningContext(
+            layer="l2",
+            run_id="run-42",
+            slice_id="slice-x",
+            iteration=3,
+            mode="auto",
+            workspace_root="/ws",
+            slice_root="/ws/slice-x",
+        )
+        req = PlanningRequest(
+            capability="PLAN",
+            context=ctx,
+            inputs={"gaps": [], "extra": "val"},
+            constraints_hint={"max_depth": 5},
+        )
+        snap = _request_snapshot(req)
+
+        assert snap["capability"] == "PLAN"
+        assert snap["layer"] == "l2"
+        assert snap["run_id"] == "run-42"
+        assert snap["slice_id"] == "slice-x"
+        assert snap["iteration"] == 3
+        assert snap["mode"] == "auto"
+        assert sorted(snap["inputs_keys"]) == ["extra", "gaps"]
+        assert snap["has_constraints_hint"] is True
+
+    def test_inputs_keys_sorted(self) -> None:
+        """inputs_keys in the snapshot are sorted."""
+        ctx = PlanningContext(layer="l1")
+        req = PlanningRequest(
+            capability="GAP",
+            context=ctx,
+            inputs={"z_key": 1, "a_key": 2, "m_key": 3},
+        )
+        snap = _request_snapshot(req)
+        assert snap["inputs_keys"] == ["a_key", "m_key", "z_key"]
+
+    def test_no_constraints_hint(self) -> None:
+        """has_constraints_hint is False when constraints_hint is None."""
+        ctx = PlanningContext(layer="l1")
+        req = PlanningRequest(capability="GAP", context=ctx)
+        snap = _request_snapshot(req)
+        assert snap["has_constraints_hint"] is False

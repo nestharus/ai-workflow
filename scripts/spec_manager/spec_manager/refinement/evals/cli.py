@@ -475,6 +475,74 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     p_lab_research.add_argument("--level", type=int, default=1, help="Complexity level (1+)")
     p_lab_research.add_argument("--seed", type=int, default=42, help="Random seed")
 
+    # --- Planner commands ---
+
+    p_planner = eval_subparsers.add_parser(
+        "planner",
+        help="Planner evaluation and trace analysis",
+        description="Evaluate planner decisions against ground truth and analyze traces",
+    )
+    planner_sub = p_planner.add_subparsers(dest="planner_command", required=True)
+
+    # eval planner score
+    p_pl_score = planner_sub.add_parser("score", help="Score planner traces against ground truth")
+    p_pl_score.add_argument("--run-id", default="", help="Run ID to score (empty = all traces)")
+    p_pl_score.add_argument("--gt", required=True, help="Path to planner ground truth YAML")
+    p_pl_score.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner trace list
+    p_pl_list = planner_sub.add_parser("list", help="List planner traces")
+    p_pl_list.add_argument("--run-id", default="", help="Filter by run ID")
+    p_pl_list.add_argument("--slice", default="", help="Filter by slice ID")
+    p_pl_list.add_argument("--capability", default="", help="Filter by capability")
+    p_pl_list.add_argument("--layer", default="", help="Filter by layer")
+    p_pl_list.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner trace show
+    p_pl_show = planner_sub.add_parser("show", help="Show a specific trace")
+    p_pl_show.add_argument("trace_id", help="Trace ID to show")
+    p_pl_show.add_argument("--calls", action="store_true", help="Include model/tool calls")
+    p_pl_show.add_argument("--artifacts", action="store_true", help="Include artifacts")
+    p_pl_show.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner trace replay
+    p_pl_replay = planner_sub.add_parser("replay", help="Replay a planner decision")
+    p_pl_replay.add_argument("trace_id", help="Trace ID to replay")
+    p_pl_replay.add_argument("--override", help="Path to override YAML/JSON")
+    p_pl_replay.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner trace diff
+    p_pl_diff = planner_sub.add_parser("diff", help="Diff two traces")
+    p_pl_diff.add_argument("trace_a", help="First trace ID")
+    p_pl_diff.add_argument("trace_b", help="Second trace ID")
+    p_pl_diff.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner trace summarize
+    p_pl_summary = planner_sub.add_parser("summarize", help="Summarize traces for a run")
+    p_pl_summary.add_argument("--run-id", required=True, help="Run ID to summarize")
+    p_pl_summary.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner export-gt
+    p_pl_export = planner_sub.add_parser("export-gt", help="Export GT template from traces")
+    p_pl_export.add_argument("--run-id", required=True, help="Run ID to export from")
+    p_pl_export.add_argument("--out", required=True, help="Output YAML path")
+    p_pl_export.add_argument("--spec-id", default="chaotic_treasury_expanded", help="Spec ID")
+    p_pl_export.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
     # --- Orchestration commands ---
 
     # eval orchestration (sub-subcommand group)
@@ -753,6 +821,203 @@ def cmd_labyrinth_research(args: argparse.Namespace) -> int:
     )
 
 
+# --- Planner command handlers ---
+
+
+def cmd_planner_score(args: argparse.Namespace) -> int:
+    """Score planner traces against ground truth."""
+    from spec_manager.refinement.evals.planner.harness import PlannerEvalHarness
+
+    workspace = Path(args.workspace)
+    gt_path = Path(args.gt)
+    harness = PlannerEvalHarness(workspace, gt_path=gt_path)
+    result = harness.score_existing_traces(args.run_id)
+
+    print(f"Traces evaluated: {result.traces_evaluated}")
+    print(f"GT cases matched: {result.gt_cases_matched}")
+    print(f"GT cases unmatched: {result.gt_cases_unmatched}")
+
+    if result.scorecard:
+        sc = result.scorecard
+        print(f"\nOverall: {'PASS' if sc.overall_pass else 'FAIL'}")
+        hard_gates_pass = sum(1 for g in sc.hard_gates if g.status == "PASS")
+        print(f"Hard gates: {hard_gates_pass}/{len(sc.hard_gates)}")
+        for g in sc.hard_gates:
+            print(f"  {g.name}: {g.status} (raw={g.raw:.2f})")
+        soft_signals_pass = sum(1 for s in sc.soft_signals if s.status == "PASS")
+        print(f"Soft signals: {soft_signals_pass}/{len(sc.soft_signals)}")
+        for s in sc.soft_signals:
+            print(f"  {s.name}: {s.status} (raw={s.raw:.2f})")
+
+    if result.errors:
+        print(f"\nErrors: {len(result.errors)}")
+        for e in result.errors:
+            print(f"  - {e}")
+
+    return 0 if (result.scorecard and result.scorecard.overall_pass) else 1
+
+
+def cmd_planner_list(args: argparse.Namespace) -> int:
+    """List planner traces."""
+    from spec_manager.refinement.evals.planner.trace_loader import filter_traces, load_index
+
+    workspace = Path(args.workspace)
+    entries = load_index(workspace)
+
+    kwargs = {}
+    if args.run_id:
+        kwargs["run_id"] = args.run_id
+    if args.slice:
+        kwargs["slice_id"] = args.slice
+    if args.capability:
+        kwargs["capability"] = args.capability
+    if args.layer:
+        kwargs["layer"] = args.layer
+
+    filtered = filter_traces(entries, **kwargs) if kwargs else entries
+
+    print(f"Traces: {len(filtered)}")
+    print(f"{'TRACE_ID':<14} {'LAYER':<5} {'CAPABILITY':<22} {'SLICE':<12} {'STATUS':<8}")
+    print("-" * 65)
+    for e in filtered:
+        print(f"{e.trace_id:<14} {e.layer:<5} {e.capability:<22} {e.slice_id:<12} {e.status:<8}")
+
+    return 0
+
+
+def cmd_planner_show(args: argparse.Namespace) -> int:
+    """Show a specific planner trace."""
+    import json
+
+    from spec_manager.refinement.evals.planner.trace_loader import load_trace
+
+    workspace = Path(args.workspace)
+    trace = load_trace(workspace, args.trace_id)
+
+    print(f"Trace: {trace.trace_id}")
+    print(f"Decision Key: {trace.decision_key}")
+    print(f"Status: {trace.status}")
+    print(f"Overridden: {trace.overridden}")
+    print(f"\nRequest: {json.dumps(trace.request, indent=2)}")
+    print(f"\nDecision: {json.dumps(trace.decision, indent=2)}")
+
+    if args.calls:
+        print(f"\nModel calls ({len(trace.model_calls)}):")
+        for mc in trace.model_calls:
+            print(f"  {json.dumps(mc)}")
+        print(f"\nTool calls ({len(trace.tool_calls)}):")
+        for tc in trace.tool_calls:
+            print(f"  {json.dumps(tc)}")
+
+    if args.artifacts:
+        print(f"\nArtifacts ({len(trace.artifacts)}):")
+        for name, data in trace.artifacts.items():
+            print(f"  {name}: {json.dumps(data, indent=2)[:500]}")
+
+    return 0
+
+
+def cmd_planner_replay(args: argparse.Namespace) -> int:
+    """Replay a planner decision."""
+    from spec_manager.refinement.evals.planner.harness import EvalConfig, PlannerEvalHarness
+
+    workspace = Path(args.workspace)
+    config = EvalConfig(
+        workspace_root=workspace,
+        mode="replay",
+        replay_trace_id=args.trace_id,
+        override_path=Path(args.override) if args.override else None,
+    )
+    harness = PlannerEvalHarness(workspace)
+    result = harness.run_and_score(config)
+
+    if result.verdicts:
+        v = result.verdicts[0]
+        print(f"Replay result: {'SAME' if v.passed else 'DIFFERENT'}")
+        print(f"Detail: {v.detail}")
+    if result.errors:
+        for e in result.errors:
+            print(f"Error: {e}")
+
+    return 0
+
+
+def cmd_planner_diff(args: argparse.Namespace) -> int:
+    """Diff two planner traces."""
+    import json
+
+    from spec_manager.refinement.evals.planner.trace_loader import load_trace
+
+    workspace = Path(args.workspace)
+    a = load_trace(workspace, args.trace_a)
+    b = load_trace(workspace, args.trace_b)
+
+    print(f"Trace A: {a.trace_id} ({a.status})")
+    print(f"Trace B: {b.trace_id} ({b.status})")
+    print(f"Status: {'SAME' if a.status == b.status else 'DIFFERENT'}")
+
+    # Diff outputs
+    a_out = a.artifacts.get("outputs", {})
+    b_out = b.artifacts.get("outputs", {})
+    all_keys = sorted(set(list(a_out.keys()) + list(b_out.keys())))
+
+    for key in all_keys:
+        a_val = json.dumps(a_out.get(key), sort_keys=True)
+        b_val = json.dumps(b_out.get(key), sort_keys=True)
+        status = "SAME" if a_val == b_val else "DIFF"
+        print(f"  {key}: {status}")
+
+    print(f"\nModel calls: A={len(a.model_calls)}, B={len(b.model_calls)}")
+    print(f"Tool calls: A={len(a.tool_calls)}, B={len(b.tool_calls)}")
+
+    return 0
+
+
+def cmd_planner_summarize(args: argparse.Namespace) -> int:
+    """Summarize planner traces for a run."""
+    from spec_manager.refinement.evals.planner.trace_loader import (
+        load_traces_for_run,
+        trace_stats,
+    )
+
+    workspace = Path(args.workspace)
+    traces = load_traces_for_run(workspace, args.run_id)
+    stats = trace_stats(traces)
+
+    print(f"Run: {args.run_id}")
+    print(f"Total traces: {stats['total_traces']}")
+    print("\nBy capability:")
+    for cap, count in sorted(stats.get("by_capability", {}).items()):
+        print(f"  {cap}: {count}")
+    print("\nBy layer:")
+    for layer, count in sorted(stats.get("by_layer", {}).items()):
+        print(f"  {layer}: {count}")
+    print("\nBy status:")
+    for status, count in sorted(stats.get("by_status", {}).items()):
+        print(f"  {status}: {count}")
+    print(f"\nModel calls total: {stats.get('model_calls_total', 0)}")
+    print(f"Tool calls total: {stats.get('tool_calls_total', 0)}")
+    print(f"Errors: {stats.get('error_count', 0)}")
+    print(f"Overridden: {stats.get('overridden_count', 0)}")
+
+    return 0
+
+
+def cmd_planner_export_gt(args: argparse.Namespace) -> int:
+    """Export ground truth template from planner traces."""
+    from spec_manager.refinement.evals.planner.export_gt import GroundTruthExporter
+
+    workspace = Path(args.workspace)
+    exporter = GroundTruthExporter(workspace)
+    out_path = exporter.export(
+        run_id=args.run_id,
+        out_path=Path(args.out),
+        spec_id=args.spec_id,
+    )
+    print(f"Ground truth template exported: {out_path}")
+    return 0
+
+
 # --- Orchestration command handlers ---
 
 
@@ -977,6 +1242,18 @@ def handle_eval_command(args: argparse.Namespace) -> int:
             "research": cmd_labyrinth_research,
         }
         return labyrinth_commands[args.labyrinth_command](args)
+
+    if args.eval_command == "planner":
+        planner_commands = {
+            "score": cmd_planner_score,
+            "list": cmd_planner_list,
+            "show": cmd_planner_show,
+            "replay": cmd_planner_replay,
+            "diff": cmd_planner_diff,
+            "summarize": cmd_planner_summarize,
+            "export-gt": cmd_planner_export_gt,
+        }
+        return planner_commands[args.planner_command](args)
 
     if args.eval_command == "orchestration":
         orchestration_commands = {
