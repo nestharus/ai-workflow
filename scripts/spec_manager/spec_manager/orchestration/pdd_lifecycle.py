@@ -347,8 +347,9 @@ class PddLifecycle:
         """Discover work slices for a given layer.
 
         - L1: slices = libraries (concern boundaries)
-        - L2: slices = architectural components (per library)
-        - L3: slices = code files (per file)
+        - L2: slices = architectural components from component manifest,
+              falling back to per-library wrappers if no manifest exists
+        - L3: slices = code files (per file, with finding clusters internally)
 
         Args:
             layer: Layer to discover slices for.
@@ -361,7 +362,6 @@ class PddLifecycle:
         slice_refs: list[SliceRef] = []
 
         if layer == "l1":
-            # L1: slices come from libraries
             libraries_dir = self.manager.structure.libraries_dir
             if libraries_dir.exists():
                 for lib_dir in sorted(libraries_dir.iterdir()):
@@ -374,22 +374,52 @@ class PddLifecycle:
                                 worktree_path=str(lib_dir),
                             )
                         )
+
         elif layer == "l2":
-            # L2: slices come from architectural components (per library)
-            libraries_dir = self.manager.structure.libraries_dir
-            if libraries_dir.exists():
-                for lib_dir in sorted(libraries_dir.iterdir()):
-                    if lib_dir.is_dir():
-                        slice_refs.append(
-                            SliceRef(
-                                slice_id=f"arch-{lib_dir.name}",
-                                layer=layer,
-                                library_id=lib_dir.name,
-                                worktree_path=str(lib_dir),
+            # Try component manifest first (produced by architectural refinement)
+            manifest_path = self.manager.structure.root / "reports" / "component_manifest.json"
+            if manifest_path.exists():
+                try:
+                    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    for comp in data.get("components", []):
+                        comp_id = comp.get("component_id", comp.get("id", ""))
+                        if comp_id:
+                            # Determine worktree path from component's files
+                            files = comp.get("files", [])
+                            wt_path = str(self.manager.structure.spec_snapshot_dir)
+                            if files:
+                                first_file = Path(files[0])
+                                if first_file.parent != Path("."):
+                                    wt_path = str(
+                                        self.manager.structure.spec_snapshot_dir / first_file.parent
+                                    )
+                            slice_refs.append(
+                                SliceRef(
+                                    slice_id=f"arch-{comp_id}",
+                                    layer=layer,
+                                    worktree_path=wt_path,
+                                )
                             )
-                        )
+                except (json.JSONDecodeError, OSError) as exc:
+                    logger.warning("Failed to read component manifest: %s", exc)
+
+            # Fallback: wrap libraries as architectural slices
+            if not slice_refs:
+                libraries_dir = self.manager.structure.libraries_dir
+                if libraries_dir.exists():
+                    for lib_dir in sorted(libraries_dir.iterdir()):
+                        if lib_dir.is_dir():
+                            slice_refs.append(
+                                SliceRef(
+                                    slice_id=f"arch-{lib_dir.name}",
+                                    layer=layer,
+                                    library_id=lib_dir.name,
+                                    worktree_path=str(lib_dir),
+                                )
+                            )
+
         elif layer == "l3":
-            # L3: slices come from code files
+            # L3: one slice per code file (finding clusters handled internally)
             spec_snapshot_dir = self.manager.structure.spec_snapshot_dir
             if spec_snapshot_dir.exists():
                 for py_file in sorted(spec_snapshot_dir.rglob("*.py")):

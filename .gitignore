@@ -53,6 +53,7 @@ agent_prompts/
 out/
 **/surgeon_logs/
 runs/
+*.zip
 
 # Local config / secrets
 .env

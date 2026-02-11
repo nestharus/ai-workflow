@@ -15,6 +15,57 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+# ------------------------------------------------------------------
+# Canonical Finding schema (used by reviewers, gates, and VerifyStep)
+# ------------------------------------------------------------------
+
+
+@dataclass
+class Finding:
+    """Canonical finding emitted by any reviewer, gate, or verification step.
+
+    Language-agnostic: never requires imports, AST nodes, or framework-specific
+    concepts.  Findings flow through the triage system to become DemotionTickets
+    when the required change is illegal at the current layer.
+    """
+
+    dimension: str = (
+        ""  # e.g., ARCH_BOUNDARY, PIN_COVERAGE, CLARITY, CORRECTNESS, DRIFT, GOVERNANCE
+    )
+    category: str = "style"  # style | maintainability | architecture | logic | drift | governance
+    severity: str = "MINOR"  # BLOCKER | MAJOR | MINOR
+    location: dict[str, Any] = field(
+        default_factory=dict
+    )  # {file, symbol?, start_line?, end_line?}
+    evidence: str = ""  # short snippet or description
+    required_change_type: str = (
+        "refactor_only"  # refactor_only | wiring_only | behavior_change | spec_change
+    )
+    suggested_fix: str = ""
+    confidence: float = 0.7
+    tags: list[str] = field(default_factory=list)  # optional pattern IDs
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain dict."""
+        import dataclasses
+
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Finding:
+        """Reconstruct from a dict."""
+        return cls(
+            dimension=data.get("dimension", ""),
+            category=data.get("category", "style"),
+            severity=data.get("severity", "MINOR"),
+            location=data.get("location", {}),
+            evidence=data.get("evidence", ""),
+            required_change_type=data.get("required_change_type", "refactor_only"),
+            suggested_fix=data.get("suggested_fix", ""),
+            confidence=data.get("confidence", 0.7),
+            tags=data.get("tags", []),
+        )
+
 
 # ------------------------------------------------------------------
 # Sub-reference types (pointers to step output files)
@@ -255,7 +306,14 @@ class EvidenceBundle:
 
     def iter_dir(self, base: Path) -> Path:
         """Return the iteration directory path under *base*."""
-        return base / ".pdd_runs" / self.run_id / "slices" / self.slice_id / f"iter_{self.iteration:03d}"
+        return (
+            base
+            / ".pdd_runs"
+            / self.run_id
+            / "slices"
+            / self.slice_id
+            / f"iter_{self.iteration:03d}"
+        )
 
     def save(self, base: Path) -> Path:
         """Write ``bundle.json`` to the iteration directory."""

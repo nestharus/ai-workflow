@@ -168,12 +168,28 @@ class CollectBaselineStep:
 
 
 class GapExplorationStep:
-    """Run P3 (compliance detection) to find remaining gaps."""
+    """Find remaining gaps — layer-aware.
+
+    - L1: P3 compliance (spec comments + stub functions)
+    - L2: Architecture continuity gaps (unconsumed pins, missing components,
+      missing event handlers, logic in arch files, manifest drift)
+    - L3: Quality closure gaps (run reviewers → findings are gaps)
+    """
 
     name = "GAP_EXPLORATION"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Scan for spec comments and stub functions."""
+        """Dispatch to layer-specific gap exploration."""
+        if ctx.layer == "l1":
+            return self._explore_l1(ctx, bundle)
+        if ctx.layer == "l2":
+            return self._explore_l2(ctx, bundle)
+        if ctx.layer == "l3":
+            return self._explore_l3(ctx, bundle)
+        return StepResult(status="OK")
+
+    def _explore_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L1: scan for spec comments and stub functions."""
         from spec_manager.orchestration.evidence import GapReportRef
 
         slice_root = Path(ctx.slice_root)
@@ -209,42 +225,230 @@ class GapExplorationStep:
 
             bundle.gaps = GapReportRef(open_gaps=gaps)
         except Exception as exc:
-            logger.warning("Gap exploration failed: %s", exc)
+            logger.warning("L1 gap exploration failed: %s", exc)
             bundle.gaps = GapReportRef(open_gaps=[])
 
         return StepResult(status="OK")
 
+    def _explore_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L2: architecture continuity gaps via LLM analysis.
+
+        Gaps are: unconsumed pins, missing components/files for manifest
+        targets, missing event handlers, logic-like code in architectural
+        files, manifest drift.
+        """
+        import json
+
+        from spec_manager.orchestration.evidence import GapReportRef
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+
+        if not slice_root or not slice_root.exists():
+            bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
+
+        # Gather code summaries from slice for LLM analysis
+        code_summaries: list[str] = []
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                    lines = content.split("\n")[:80]
+                    code_summaries.append(
+                        f"### {py_file.relative_to(slice_root)}\n```\n" + "\n".join(lines) + "\n```"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        if not code_summaries:
+            bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
+
+        # Also include any open demotion tickets targeting L2
+        open_tickets: list[str] = []
+        demotions_dir = workspace / "analysis" / "demotion"
+        if demotions_dir.exists():
+            for ticket_file in demotions_dir.glob("*.json"):
+                try:
+                    data = json.loads(ticket_file.read_text(encoding="utf-8"))
+                    if data.get("target_layer") == "L2":
+                        open_tickets.append(data.get("diagnosis", ""))
+                except Exception as exc:
+                    logger.debug("Failed to read ticket file %s: %s", ticket_file, exc)
+                    continue
+
+        prompt = (
+            "## TASK\n"
+            "Identify architecture continuity gaps in this slice.\n"
+            "Look for:\n"
+            "- Unconsumed promoted pins (atoms not wired into any component)\n"
+            "- Missing component files or entrypoints\n"
+            "- Missing event handlers or middleware registrations\n"
+            "- Business logic inlined in architectural code (should be in atoms)\n"
+            "- Extra components/wiring not declared in any manifest\n\n"
+            'Return JSON: {"gaps": [{"kind": ..., "component_id": ..., "file": ..., '
+            '"description": ..., "expected": ...}]}\n\n'
+            "## CODE\n\n" + "\n\n".join(code_summaries[:15])
+        )
+        if open_tickets:
+            prompt += "\n\n## OPEN DEMOTION TICKETS\n" + "\n".join(
+                f"- {t}" for t in open_tickets[:10]
+            )
+
+        try:
+            from spec_manager.core.agent_utils import run_agent
+            from spec_manager.core.json_extraction import _extract_json_payload
+            from spec_manager.refinement.formats import _strip_code_fences
+
+            output = run_agent(
+                agent_name="opus-architecture-proposer",
+                prompt=prompt,
+                workspace=workspace,
+            )
+            cleaned = _strip_code_fences(output)
+            data = json.loads(_extract_json_payload(cleaned))
+
+            gaps = []
+            for g in data.get("gaps", []):
+                gaps.append(
+                    {
+                        "kind": g.get("kind", "architecture_gap"),
+                        "component_id": g.get("component_id", ""),
+                        "file": g.get("file", ""),
+                        "description": g.get("description", ""),
+                        "expected": g.get("expected", ""),
+                    }
+                )
+
+            bundle.gaps = GapReportRef(open_gaps=gaps)
+        except Exception as exc:
+            logger.warning("L2 gap exploration failed: %s", exc)
+            bundle.gaps = GapReportRef(open_gaps=[])
+
+        return StepResult(status="OK")
+
+    def _explore_l3(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L3: quality closure gaps — run reviewers, findings are gaps.
+
+        Each reviewer finding that hasn't been resolved is an open gap.
+        """
+        import json
+
+        from spec_manager.orchestration.evidence import GapReportRef
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+
+        if not slice_root or not slice_root.exists():
+            bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
+
+        # Gather code from slice
+        code_files: dict[str, str] = {}
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                try:
+                    code_files[str(py_file.relative_to(slice_root))] = py_file.read_text(
+                        encoding="utf-8"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        if not code_files:
+            bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
+
+        reviewers = [
+            "chatgpt-clarity-reviewer",
+            "chatgpt-completeness-reviewer",
+            "chatgpt-consistency-reviewer",
+            "chatgpt-correctness-reviewer",
+        ]
+
+        all_gaps: list[dict[str, Any]] = []
+
+        for file_path, code_content in code_files.items():
+            prompt = (
+                "## TASK\n"
+                "Review the following code for quality issues.\n"
+                "For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
+                "category (style/maintainability/logic/architecture/drift),\n"
+                "required_change_type (refactor_only/wiring_only/behavior_change),\n"
+                "and description.\n"
+                'Return JSON: {"findings": [...]}\n\n'
+                f"File: {file_path}\n\n"
+                f"```\n{code_content[:4000]}\n```\n"
+            )
+
+            for reviewer in reviewers:
+                try:
+                    from spec_manager.core.agent_utils import run_agent
+                    from spec_manager.core.json_extraction import _extract_json_payload
+                    from spec_manager.refinement.formats import _strip_code_fences
+
+                    output = run_agent(
+                        agent_name=reviewer,
+                        prompt=prompt,
+                        workspace=workspace,
+                    )
+                    cleaned = _strip_code_fences(output)
+                    data = json.loads(_extract_json_payload(cleaned))
+
+                    for finding in data.get("findings", []):
+                        all_gaps.append(
+                            {
+                                "kind": "quality_finding",
+                                "file": file_path,
+                                "reviewer": reviewer,
+                                "description": finding.get("description", ""),
+                                "severity": finding.get("severity", "MINOR"),
+                                "category": finding.get("category", "style"),
+                                "required_change_type": finding.get(
+                                    "required_change_type", "refactor_only"
+                                ),
+                            }
+                        )
+                except Exception as exc:
+                    logger.debug("L3 reviewer %s failed for %s: %s", reviewer, file_path, exc)
+
+        bundle.gaps = GapReportRef(open_gaps=all_gaps)
+        return StepResult(status="OK")
+
 
 class PlanStep:
-    """Run P8 (planning) to decide what to implement next.
+    """Generate implementation plan from gaps — layer-aware.
 
-    After generating plan intentions from gaps, checks each intention's
-    decision requirements against the constraints store.  Uncovered
-    decisions become under-spec events that block the slice before
-    implementation begins.
+    - L1: Convert spec gaps into function implementation intentions (P8)
+    - L2: Convert architecture gaps into a wiring plan (which component
+      to adjust, how to connect pins, handlers/routes to add)
+    - L3: Convert quality findings into a refactor plan (group by
+      function/span, sequence smallest safe refactors first, define
+      "no behavior change" acceptance criteria)
+
+    After generating intentions, checks decision requirements against
+    the constraints store.  Uncovered decisions become under-spec events
+    that block the slice before implementation begins.
     """
 
     name = "PLAN"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Generate implementation plan from gaps."""
+        """Generate layer-appropriate implementation plan from gaps."""
         from spec_manager.orchestration.evidence import PlanRef
 
         if not bundle.gaps.open_gaps:
             bundle.plan = PlanRef(intentions=[])
             return StepResult(status="OK")
 
-        # Create plan intentions from gaps
-        intentions = []
-        for gap in bundle.gaps.open_gaps:
-            intentions.append(
-                {
-                    "gap_id": gap.get("file", "unknown"),
-                    "target_file": gap.get("file", ""),
-                    "approach": f"Implement: {gap.get('description', '')}",
-                    "acceptance_criteria": "Gap resolved, tests pass",
-                }
-            )
+        if ctx.layer == "l1":
+            intentions = self._plan_l1(bundle.gaps.open_gaps)
+        elif ctx.layer == "l2":
+            intentions = self._plan_l2(bundle.gaps.open_gaps)
+        elif ctx.layer == "l3":
+            intentions = self._plan_l3(bundle.gaps.open_gaps)
+        else:
+            intentions = []
 
         bundle.plan = PlanRef(intentions=intentions)
 
@@ -267,8 +471,6 @@ class PlanStep:
                 )
 
                 if not gate_result.all_covered:
-                    # Inject under-spec events into the bundle so
-                    # UnderSpecCheckStep can block before implementation
                     existing = bundle.implementation.under_spec_events or []
                     bundle.implementation.under_spec_events = (
                         existing + gate_result.under_spec_events
@@ -278,19 +480,83 @@ class PlanStep:
 
         return StepResult(status="OK")
 
+    @staticmethod
+    def _plan_l1(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """L1: each gap becomes a function implementation intention."""
+        intentions = []
+        for gap in gaps:
+            intentions.append(
+                {
+                    "gap_id": gap.get("file", "unknown"),
+                    "target_file": gap.get("file", ""),
+                    "approach": f"Implement: {gap.get('description', '')}",
+                    "acceptance_criteria": "Gap resolved, tests pass",
+                }
+            )
+        return intentions
+
+    @staticmethod
+    def _plan_l2(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """L2: each gap becomes a wiring/assembly intention."""
+        intentions = []
+        for gap in gaps:
+            component_id = gap.get("component_id", "")
+            intentions.append(
+                {
+                    "gap_id": gap.get("file", component_id or "unknown"),
+                    "component_id": component_id,
+                    "target_file": gap.get("file", ""),
+                    "approach": f"Wire: {gap.get('description', '')}",
+                    "acceptance_criteria": "Component assembled, pins connected, no inlined logic",
+                    "layer_constraint": "wiring_only",
+                }
+            )
+        return intentions
+
+    @staticmethod
+    def _plan_l3(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """L3: group findings by file, sequence smallest refactors first."""
+        # Group by file
+        by_file: dict[str, list[dict[str, Any]]] = {}
+        for gap in gaps:
+            f = gap.get("file", "unknown")
+            by_file.setdefault(f, []).append(gap)
+
+        intentions = []
+        for file_path, file_gaps in sorted(by_file.items()):
+            # Sort: MINOR first (smallest, safest refactors)
+            severity_order = {"MINOR": 0, "MAJOR": 1, "BLOCKER": 2}
+            file_gaps.sort(key=lambda g: severity_order.get(g.get("severity", "MINOR"), 0))
+
+            descriptions = [g.get("description", "") for g in file_gaps[:5]]
+            intentions.append(
+                {
+                    "gap_id": file_path,
+                    "target_file": file_path,
+                    "approach": f"Refactor {len(file_gaps)} findings: {'; '.join(descriptions)}",
+                    "acceptance_criteria": "No behavior change, all reviewers pass",
+                    "layer_constraint": "refactor_only",
+                    "finding_count": len(file_gaps),
+                }
+            )
+        return intentions
+
 
 class ImplementStep:
-    """Run P9 (implementation) to fill gaps.
+    """Execute the plan — layer-aware.
 
-    Delegates to :class:`ImplementationRunner` which calls the
-    ``pdd-function-implementor`` agent per unresolved function and
-    collects edits, pin/edge proposals, under-spec events, and tests.
+    - L1: Fill function bodies from spec comments via ImplementationRunner (P9)
+    - L2: "Architectural assembler" — create/adjust component entrypoints,
+      connect pins, add missing handlers/routes, refactor wiring.
+      Must NOT invent business logic; emits under-spec or demotion if required.
+    - L3: "Clean-code refactorer" — apply targeted refactors for planned
+      finding set.  Must NOT change behavior; emits demotion if logic touched.
     """
 
     name = "IMPLEMENT"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Execute implementation plan."""
+        """Dispatch to layer-specific implementation."""
         from spec_manager.orchestration.evidence import ImplementationRef
 
         if not bundle.plan.intentions:
@@ -301,6 +567,21 @@ class ImplementStep:
         if not slice_root or not slice_root.exists():
             bundle.implementation = ImplementationRef()
             return StepResult(status="OK")
+
+        if ctx.layer == "l1":
+            return self._implement_l1(ctx, bundle, slice_root)
+        if ctx.layer == "l2":
+            return self._implement_l2(ctx, bundle, slice_root)
+        if ctx.layer == "l3":
+            return self._implement_l3(ctx, bundle, slice_root)
+
+        return StepResult(status="OK")
+
+    def _implement_l1(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L1: fill function bodies via ImplementationRunner (P9)."""
+        from spec_manager.orchestration.evidence import ImplementationRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
@@ -335,9 +616,151 @@ class ImplementStep:
                 return StepResult(status="OK", notes_path=run_result.notes_path)
 
         except Exception as exc:
-            logger.warning("Implementation step failed: %s", exc)
+            logger.warning("L1 implementation failed: %s", exc)
             bundle.implementation = ImplementationRef()
-            return StepResult(status="OK")
+
+        return StepResult(status="OK")
+
+    def _implement_l2(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L2: architectural assembler — wiring, dispatch, lifecycle, IO boundaries."""
+        import json
+
+        from spec_manager.orchestration.evidence import ImplementationRef
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        # Gather current code for context
+        code_summaries: list[str] = []
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                    lines = content.split("\n")[:60]
+                    code_summaries.append(
+                        f"### {py_file.relative_to(slice_root)}\n```\n" + "\n".join(lines) + "\n```"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        intentions_text = json.dumps(bundle.plan.intentions, indent=2)
+
+        prompt = (
+            "## TASK\n"
+            "You are an Architectural Assembler. Apply minimal patches to wire components:\n"
+            "- Create/adjust component entrypoints\n"
+            "- Connect pins in correct order\n"
+            "- Add missing handlers/routes\n"
+            "- Refactor wiring to satisfy boundaries\n\n"
+            "CONSTRAINT: Do NOT invent business logic. If the gap requires new logic,\n"
+            "return it as an under_spec_event instead of implementing it.\n\n"
+            'Return JSON: {"edits": [{"file": ..., "description": ...}], '
+            '"under_spec_events": [{"question": ..., "context": ...}]}\n\n'
+            f"## PLAN\n{intentions_text}\n\n"
+            "## CURRENT CODE\n\n" + "\n\n".join(code_summaries[:10])
+        )
+
+        try:
+            from spec_manager.core.agent_utils import run_agent
+            from spec_manager.core.json_extraction import _extract_json_payload
+            from spec_manager.refinement.formats import _strip_code_fences
+
+            output = run_agent(
+                agent_name="opus-architecture-proposer",
+                prompt=prompt,
+                workspace=workspace,
+            )
+            cleaned = _strip_code_fences(output)
+            data = json.loads(_extract_json_payload(cleaned))
+
+            bundle.implementation = ImplementationRef(
+                applied_edits=data.get("edits", []),
+                under_spec_events=data.get("under_spec_events", []),
+            )
+
+        except Exception as exc:
+            logger.warning("L2 implementation failed: %s", exc)
+            bundle.implementation = ImplementationRef()
+
+        return StepResult(status="OK")
+
+    def _implement_l3(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L3: clean-code refactorer — targeted refactors, no behavior change."""
+        import json
+
+        from spec_manager.orchestration.evidence import ImplementationRef
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        intentions_text = json.dumps(bundle.plan.intentions, indent=2)
+        gaps_text = json.dumps(bundle.gaps.open_gaps[:20], indent=2)
+
+        # Gather code for the files being refactored
+        code_summaries: list[str] = []
+        target_files = {i.get("target_file", "") for i in bundle.plan.intentions}
+        for py_file in sorted(slice_root.rglob("*.py")):
+            rel = (
+                str(py_file.relative_to(slice_root))
+                if slice_root in py_file.parents or py_file.parent == slice_root
+                else ""
+            )
+            if (rel in target_files or not target_files) and py_file.is_file():
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                    code_summaries.append(
+                        f"### {py_file.relative_to(slice_root)}\n```\n{content[:3000]}\n```"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        prompt = (
+            "## TASK\n"
+            "You are a Clean-Code Refactorer. Apply targeted refactors to "
+            "resolve quality findings.\n\n"
+            "CONSTRAINT: Do NOT change behavior. All refactors must be behavior-preserving.\n"
+            "If a finding requires a logic change, return it as a demotion_needed item.\n\n"
+            'Return JSON: {"edits": [{"file": ..., "description": ...}], '
+            '"demotion_needed": [{"file": ..., "reason": ..., "target_layer": "L1"|"L2"}]}\n\n'
+            f"## REFACTOR PLAN\n{intentions_text}\n\n"
+            f"## FINDINGS TO ADDRESS\n{gaps_text}\n\n"
+            "## CURRENT CODE\n\n" + "\n\n".join(code_summaries[:10])
+        )
+
+        try:
+            from spec_manager.core.agent_utils import run_agent
+            from spec_manager.core.json_extraction import _extract_json_payload
+            from spec_manager.refinement.formats import _strip_code_fences
+
+            output = run_agent(
+                agent_name="chatgpt-correctness-reviewer",
+                prompt=prompt,
+                workspace=workspace,
+            )
+            cleaned = _strip_code_fences(output)
+            data = json.loads(_extract_json_payload(cleaned))
+
+            # Convert demotion_needed to under_spec_events for downstream processing
+            under_spec = []
+            for d in data.get("demotion_needed", []):
+                under_spec.append(
+                    {
+                        "question": f"Logic change required: {d.get('reason', '')}",
+                        "context": d.get("file", ""),
+                        "demotion_target": d.get("target_layer", "L1"),
+                    }
+                )
+
+            bundle.implementation = ImplementationRef(
+                applied_edits=data.get("edits", []),
+                under_spec_events=under_spec,
+            )
+
+        except Exception as exc:
+            logger.warning("L3 implementation failed: %s", exc)
+            bundle.implementation = ImplementationRef()
 
         return StepResult(status="OK")
 
@@ -398,21 +821,36 @@ class UnderSpecCheckStep:
 
 
 class AnalyzeStep:
-    """Run P1 + P2 (structure + decomposition) on implemented code.
+    """Analyze slice after implementation — layer-aware.
 
-    Uses :class:`SourceAnalysisCache` to persist analysis results across
-    iterations. Only files whose content hash changed since the last
-    iteration are re-analyzed.
+    - L1: P1 + P2 (structure + decomposition) via SourceAnalysisCache
+    - L2: Build/update architecture graph cache (components, entrypoints,
+      pins, edges, events, middleware ordering, dependencies)
+    - L3: Compute diff summary + structural metrics (size, duplication
+      hotspots, refactor impact candidates)
     """
 
     name = "ANALYZE"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Analyze slice after implementation."""
+        """Dispatch to layer-specific analysis."""
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
         if not slice_root or not slice_root.exists():
             return StepResult(status="OK")
 
+        if ctx.layer == "l1":
+            return self._analyze_l1(ctx, bundle, slice_root)
+        if ctx.layer == "l2":
+            return self._analyze_l2(ctx, bundle, slice_root)
+        if ctx.layer == "l3":
+            return self._analyze_l3(ctx, bundle, slice_root)
+
+        return StepResult(status="OK")
+
+    def _analyze_l1(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L1: source analysis via cache (P1 + P2)."""
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         try:
@@ -425,7 +863,6 @@ class AnalyzeStep:
                 run_id=ctx.run_id,
             )
 
-            # Analyze all source files in the slice
             entries: list[dict[str, str]] = []
             for py_file in sorted(slice_root.rglob("*.py")):
                 if not py_file.is_file():
@@ -457,33 +894,163 @@ class AnalyzeStep:
             )
 
         except Exception as exc:
-            logger.warning("Analysis step failed: %s", exc)
+            logger.warning("L1 analysis failed: %s", exc)
+
+        return StepResult(status="OK")
+
+    def _analyze_l2(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L2: build architecture graph summary (components, pins, edges)."""
+        import json
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        # Gather file summaries for LLM analysis
+        code_summaries: list[str] = []
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                    code_summaries.append(
+                        f"### {py_file.relative_to(slice_root)}\n```\n" + content[:1500] + "\n```"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        if not code_summaries:
+            return StepResult(status="OK")
+
+        prompt = (
+            "## TASK\n"
+            "Analyze the architecture of this code and produce a component graph summary.\n"
+            "Identify: components, entrypoints, pins/atoms used, edges (calls/events/deps),\n"
+            "middleware ordering, and dependency direction.\n\n"
+            'Return JSON: {"components": [...], "edges": [...], '
+            '"stats": {"total_components": N, "total_edges": N}}\n\n'
+            "## CODE\n\n" + "\n\n".join(code_summaries[:15])
+        )
+
+        try:
+            from spec_manager.core.agent_utils import run_agent
+            from spec_manager.core.json_extraction import _extract_json_payload
+            from spec_manager.refinement.formats import _strip_code_fences
+
+            output = run_agent(
+                agent_name="opus-architecture-proposer",
+                prompt=prompt,
+                workspace=workspace,
+            )
+            cleaned = _strip_code_fences(output)
+            data = json.loads(_extract_json_payload(cleaned))
+
+            # Store in source_index for downstream consumption
+            entries = []
+            for comp in data.get("components", []):
+                entries.append(
+                    {
+                        "path": comp.get("file", ""),
+                        "component_id": comp.get("id", ""),
+                        "type": comp.get("type", ""),
+                    }
+                )
+            bundle.source_index.entries = entries
+            bundle.source_index.path = "architecture_graph.index.json"
+
+            stats = data.get("stats", {})
+            logger.info(
+                "L2 analysis: %d components, %d edges",
+                stats.get("total_components", 0),
+                stats.get("total_edges", 0),
+            )
+
+        except Exception as exc:
+            logger.warning("L2 analysis failed: %s", exc)
+
+        return StepResult(status="OK")
+
+    def _analyze_l3(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L3: diff summary + structural metrics."""
+        entries: list[dict[str, str]] = []
+        total_lines = 0
+        total_functions = 0
+
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if not py_file.is_file():
+                continue
+            if any(part.startswith(".") for part in py_file.parts):
+                continue
+            try:
+                content = py_file.read_text(encoding="utf-8")
+                lines = content.split("\n")
+                # Simple function count (heuristic — actual analysis done by reviewers)
+                func_count = sum(1 for line in lines if line.strip().startswith("def "))
+                total_lines += len(lines)
+                total_functions += func_count
+                entries.append(
+                    {
+                        "path": str(py_file.relative_to(slice_root)),
+                        "lines": str(len(lines)),
+                        "functions": str(func_count),
+                    }
+                )
+            except (OSError, UnicodeDecodeError):
+                continue
+
+        bundle.source_index.entries = entries
+        bundle.source_index.path = "quality_metrics.index.json"
+
+        logger.info(
+            "L3 analysis: %d files, %d lines, %d functions",
+            len(entries),
+            total_lines,
+            total_functions,
+        )
 
         return StepResult(status="OK")
 
 
 class PromoteStep:
-    """Run P4 + P5 + gates + refinement engine.
+    """Run compliance gates — layer-aware.
 
-    Delegates to:
-    - P4: ``branches.manager.collapse_codebase`` (atoms/stores/shapes)
-    - P5: ``pin_functions.orchestrator`` + ``branches.promotion``
-    - Gates: ``compliance.promotion`` (algorithmic + architectural)
-    - Refinement: ``refinement_engine.detector`` (coupling/cohesion)
+    - L1: P4 + P5 + algorithmic/architectural gates via LayerPromotionGate
+    - L2: 8 architecture gates (NO_INLINED_ATOM_LOGIC, FUNCTION_RECOMPOSITION,
+      PIN_CONSUMPTION_COVERAGE, EDGE_REALIZATION, NO_ORPHAN_COMPONENTS,
+      EVENT_HANDLER_COVERAGE, CONFIG_EXTERNALIZATION, ARCH_DRIFT_PASS)
+    - L3: 5 code quality gates (ALL_QUALITY_REVIEWERS_PASS, NO_LOGIC_CHANGE,
+      NO_ARCH_BOUNDARY_VIOLATIONS, DRIFT_PASS, TESTS_PASS) + re-run reviewers
 
-    Accepts pin/edge proposals from bundle.implementation to merge
-    with scan results (mode="both").
+    On failure:
+    - L1: DemotionTicket → L1
+    - L2: wiring-only fix → retry L2; needs new atom logic → demote to L1
+    - L3: refactor-only → retry L3; logic-affecting → demote to L1;
+      boundary-affecting → demote to L2
     """
 
     name = "PROMOTE"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Extract atoms, promote through compliance gates."""
+        """Dispatch to layer-specific promotion gates."""
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
 
         if not slice_root or not slice_root.exists():
             return StepResult(status="OK")
 
+        if ctx.layer == "l1":
+            return self._promote_l1(ctx, bundle, slice_root)
+        if ctx.layer == "l2":
+            return self._promote_l2(ctx, bundle, slice_root)
+        if ctx.layer == "l3":
+            return self._promote_l3(ctx, bundle, slice_root)
+
+        return StepResult(status="OK")
+
+    def _promote_l1(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L1: pin scan + compliance gates via LayerPromotionGate."""
         pin_proposals = bundle.implementation.pin_proposals
         edge_proposals = bundle.implementation.edge_proposals
         registry = None
@@ -494,14 +1061,12 @@ class PromoteStep:
             )
 
             orchestrator = PinFunctionOrchestrator(project_root=slice_root)
-
             mode = "both" if (pin_proposals or edge_proposals) else "scan"
             registry = orchestrator.scan(
                 mode=mode,
                 pin_proposals=pin_proposals,
                 edge_proposals=edge_proposals,
             )
-
             bundle.pins_snapshot.path = "pins.snapshot.json"
             bundle.pins_snapshot.schema_version = registry.schema_version
 
@@ -523,7 +1088,6 @@ class PromoteStep:
             config = PromotionGateConfig.default()
             config.project_root = str(slice_root)
 
-            # Pre-load file analyses via cache for evidence-based gates
             workspace = Path(ctx.workspace_root) if ctx.workspace_root else slice_root
             cache = SourceAnalysisCache(workspace_root=workspace, run_id=ctx.run_id)
 
@@ -567,7 +1131,246 @@ class PromoteStep:
                 )
 
         except Exception as exc:
-            logger.warning("Promotion gates failed: %s", exc)
+            logger.warning("L1 promotion gates failed: %s", exc)
+
+        return StepResult(status="OK")
+
+    def _promote_l2(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L2: architecture compliance gates via LLM evaluation."""
+        import json
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        # Gather code for gate evaluation
+        code_summaries: list[str] = []
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                    code_summaries.append(
+                        f"### {py_file.relative_to(slice_root)}\n```\n" + content[:1500] + "\n```"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        if not code_summaries:
+            return StepResult(status="OK")
+
+        l2_gates = [
+            "NO_INLINED_ATOM_LOGIC",
+            "FUNCTION_RECOMPOSITION",
+            "PIN_CONSUMPTION_COVERAGE",
+            "EDGE_REALIZATION",
+            "NO_ORPHAN_COMPONENTS",
+            "EVENT_HANDLER_COVERAGE",
+            "CONFIG_EXTERNALIZATION",
+            "ARCH_DRIFT_PASS",
+        ]
+
+        prompt = (
+            "## TASK\n"
+            "Evaluate this code against L2 (Architecture) compliance gates.\n"
+            "For each gate, determine PASS or FAIL with a brief explanation.\n\n"
+            "Gates to evaluate:\n"
+            + "\n".join(f"- {g}" for g in l2_gates)
+            + '\n\nReturn JSON: {"gates": [{"gate_id": ..., "passed": true/false, "summary": ..., '
+            '"required_change_type": "wiring_only"|"behavior_change"}]}\n\n'
+            "## CODE\n\n" + "\n\n".join(code_summaries[:12])
+        )
+
+        try:
+            from spec_manager.core.agent_utils import run_agent
+            from spec_manager.core.json_extraction import _extract_json_payload
+            from spec_manager.refinement.formats import _strip_code_fences
+
+            output = run_agent(
+                agent_name="opus-architecture-proposer",
+                prompt=prompt,
+                workspace=workspace,
+            )
+            cleaned = _strip_code_fences(output)
+            data = json.loads(_extract_json_payload(cleaned))
+
+            gates_data = data.get("gates", [])
+            bundle.gates.gates = gates_data
+
+            failed = [g for g in gates_data if not g.get("passed", True)]
+            if failed:
+                tickets = []
+                for g in failed:
+                    change_type = g.get("required_change_type", "wiring_only")
+                    target = "L1" if change_type == "behavior_change" else "L2"
+                    tickets.append(
+                        DemotionTicket(
+                            run_id=ctx.run_id,
+                            slice_id=ctx.slice_id,
+                            source="GATE_FAILURE",
+                            origin_layer="L2",
+                            target_layer=target,
+                            severity="BLOCKER",
+                            diagnosis=g.get("summary", f"Gate {g.get('gate_id', '')} failed"),
+                        )
+                    )
+                return StepResult(
+                    status="RETRY",
+                    emitted_tickets=tickets,
+                    error=f"L2 gates failed: {[g.get('gate_id') for g in failed]}",
+                )
+
+        except Exception as exc:
+            logger.warning("L2 promotion gates failed: %s", exc)
+
+        return StepResult(status="OK")
+
+    def _promote_l3(
+        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
+    ) -> StepResult:
+        """L3: quality reviewers + diff-impact classifier."""
+        import json
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        # Check if there are still open quality gaps
+        open_gaps = bundle.gaps.open_gaps
+        quality_gaps = [g for g in open_gaps if g.get("kind") == "quality_finding"]
+
+        if quality_gaps:
+            # Still have unresolved findings — not ready to promote
+            tickets = []
+            for g in quality_gaps:
+                cat = g.get("category", "style")
+                if cat in ("logic", "correctness"):
+                    tickets.append(
+                        DemotionTicket(
+                            run_id=ctx.run_id,
+                            slice_id=ctx.slice_id,
+                            source="REVIEW",
+                            origin_layer="L3",
+                            target_layer="L1",
+                            severity=g.get("severity", "MAJOR"),
+                            diagnosis=g.get("description", "Quality finding requires logic change"),
+                            failing_files=[g["file"]] if g.get("file") else [],
+                        )
+                    )
+                elif cat == "architecture":
+                    tickets.append(
+                        DemotionTicket(
+                            run_id=ctx.run_id,
+                            slice_id=ctx.slice_id,
+                            source="REVIEW",
+                            origin_layer="L3",
+                            target_layer="L2",
+                            severity=g.get("severity", "MAJOR"),
+                            diagnosis=g.get("description", "Quality finding requires arch change"),
+                            failing_files=[g["file"]] if g.get("file") else [],
+                        )
+                    )
+
+            if tickets:
+                error_msg = (
+                    f"L3: {len(quality_gaps)} quality findings unresolved "
+                    f"({len(tickets)} demotions)"
+                )
+                return StepResult(
+                    status="RETRY",
+                    emitted_tickets=tickets,
+                    error=error_msg,
+                )
+
+            # Non-demotion findings: retry to fix in L3
+            return StepResult(
+                status="RETRY",
+                error=f"L3: {len(quality_gaps)} quality findings still open",
+            )
+
+        # Run diff-impact classifier to ensure no behavior change
+        code_summaries: list[str] = []
+        for py_file in sorted(slice_root.rglob("*.py")):
+            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                    code_summaries.append(
+                        f"### {py_file.relative_to(slice_root)}\n```\n" + content[:2000] + "\n```"
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        if code_summaries:
+            prompt = (
+                "## TASK\n"
+                "Classify the impact of recent changes in this code.\n"
+                "Determine if changes are:\n"
+                "- refactor_only (behavior preserved)\n"
+                "- behavior_change (logic modified)\n"
+                "- wiring_only (architecture wiring changed)\n\n"
+                'Return JSON: {"impact": "refactor_only"|"behavior_change"|"wiring_only", '
+                '"confidence": 0-1, "evidence": "..."}\n\n'
+                "## CODE\n\n" + "\n\n".join(code_summaries[:10])
+            )
+
+            try:
+                from spec_manager.core.agent_utils import run_agent
+                from spec_manager.core.json_extraction import _extract_json_payload
+                from spec_manager.refinement.formats import _strip_code_fences
+
+                output = run_agent(
+                    agent_name="chatgpt-correctness-reviewer",
+                    prompt=prompt,
+                    workspace=workspace,
+                )
+                cleaned = _strip_code_fences(output)
+                data = json.loads(_extract_json_payload(cleaned))
+
+                impact = data.get("impact", "refactor_only")
+                if impact == "behavior_change":
+                    ticket = DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="REVIEW",
+                        origin_layer="L3",
+                        target_layer="L1",
+                        severity="BLOCKER",
+                        diagnosis=(
+                            f"Diff-impact classifier: behavior change detected — "
+                            f"{data.get('evidence', '')}"
+                        ),
+                    )
+                    return StepResult(
+                        status="RETRY",
+                        emitted_tickets=[ticket],
+                        error="L3: NO_LOGIC_CHANGE gate failed",
+                    )
+                if impact == "wiring_only":
+                    ticket = DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="REVIEW",
+                        origin_layer="L3",
+                        target_layer="L2",
+                        severity="MAJOR",
+                        diagnosis=(
+                            f"Diff-impact classifier: wiring change detected — "
+                            f"{data.get('evidence', '')}"
+                        ),
+                    )
+                    return StepResult(
+                        status="RETRY",
+                        emitted_tickets=[ticket],
+                        error="L3: NO_ARCH_BOUNDARY_VIOLATIONS gate failed",
+                    )
+
+                bundle.gates.gates = [
+                    {
+                        "gate_id": "DIFF_IMPACT_CLASSIFIER",
+                        "passed": True,
+                        "summary": f"Impact: {impact}, confidence: {data.get('confidence', 0)}",
+                    }
+                ]
+
+            except Exception as exc:
+                logger.warning("L3 diff-impact classifier failed: %s", exc)
 
         return StepResult(status="OK")
 
@@ -621,16 +1424,201 @@ class IntegrateStep:
 
 
 class VerifyStep:
-    """Run P6 + P7 + architectural gates (post-integration)."""
+    """Run layer-aware post-integration verification.
+
+    Per layer:
+    - L1: cross-library connectivity (P6) + lineage (P7)
+    - L2: pin consumption + topology + no inlined logic + manifest drift
+    - L3: reviewer closure + no-logic-change + drift
+
+    All layers:
+    - Governance/oversight check (fail closed on FAIL)
+    - Finding → DemotionTicket triage
+    """
 
     name = "VERIFY"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Cross-library connectivity + lineage verification."""
-        # P6: adjacency runner (cross-library)
-        # P7: lineage + generators
-        # Architectural quality gates
-        return StepResult(status="OK")
+        """Run governance checks + layer-specific verification."""
+        import json
+        import time
+
+        from spec_manager.orchestration.evidence import Finding
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        findings: list[dict[str, Any]] = []
+        notes: dict[str, Any] = {
+            "layer": ctx.layer,
+            "slice_id": ctx.slice_id,
+            "timestamp": time.time(),
+            "findings": [],
+        }
+
+        def emit_finding(**kw: Any) -> None:
+            f = Finding(
+                dimension=kw.get("dimension", "VERIFY"),
+                category=kw.get("category", "drift"),
+                severity=kw.get("severity", "MINOR"),
+                required_change_type=kw.get("required_change_type", "refactor_only"),
+                location=kw.get("location", {}),
+                evidence=kw.get("evidence", ""),
+                suggested_fix=kw.get("suggested_fix", ""),
+                confidence=kw.get("confidence", 0.7),
+                tags=kw.get("tags", []),
+            )
+            findings.append(f.to_dict())
+
+        def triage_to_ticket(f: dict[str, Any]) -> DemotionTicket | None:
+            required = f.get("required_change_type", "refactor_only")
+            cat = f.get("category", "style")
+            sev = f.get("severity", "MINOR")
+
+            if cat == "governance":
+                target = ctx.layer.upper()
+            elif required == "behavior_change":
+                target = "L1"
+            elif cat == "architecture" or required == "wiring_only":
+                target = "L2"
+            else:
+                return None
+
+            loc = f.get("location") or {}
+            failing_files = [loc["file"]] if loc.get("file") else []
+
+            return DemotionTicket(
+                run_id=ctx.run_id,
+                slice_id=ctx.slice_id,
+                source="VERIFY",
+                origin_layer=ctx.layer.upper(),
+                target_layer=target,
+                severity=sev if sev in ("BLOCKER", "MAJOR", "MINOR") else "MINOR",
+                diagnosis=f.get("evidence", "")[:500] or f.get("dimension", "Verification finding"),
+                failing_files=failing_files,
+            )
+
+        def run_agent_json(agent_name: str, prompt: str) -> dict[str, Any]:
+            try:
+                from spec_manager.core.agent_utils import run_agent
+                from spec_manager.core.json_extraction import (
+                    _extract_json_payload,
+                )
+                from spec_manager.refinement.formats import _strip_code_fences
+
+                out = run_agent(
+                    agent_name=agent_name,
+                    prompt=prompt,
+                    workspace=workspace,
+                )
+                cleaned = _strip_code_fences(out)
+                return json.loads(_extract_json_payload(cleaned))
+            except Exception:
+                return {}
+
+        # 0) Governance / oversight
+        oversight_prompt = (
+            "## TASK\n"
+            "Act as Pipeline Oversight Enforcer for this slice.\n"
+            "Check: missing receipts, undocumented deviations, decision injection patterns.\n"
+            "Return JSON: "
+            '{"status": "PASS"|"WARN"|"FAIL", "findings": [{"severity": ..., "evidence": ..., '
+            '"location": {}, "required_change_type": ...}]}\n\n'
+            f"Slice: {ctx.slice_id}\nLayer: {ctx.layer}\n"
+        )
+        oversight = run_agent_json("pipeline-oversight-enforcer", oversight_prompt)
+        if oversight:
+            status = oversight.get("status", "PASS")
+            for of in oversight.get("findings", []) or []:
+                emit_finding(
+                    dimension="GOVERNANCE",
+                    category="governance",
+                    severity=of.get("severity", "MAJOR"),
+                    required_change_type=of.get("required_change_type", "refactor_only"),
+                    location=of.get("location", {}),
+                    evidence=of.get("evidence", "Oversight finding"),
+                    confidence=0.8,
+                )
+            if status == "FAIL":
+                tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
+                notes["findings"] = findings
+                iteration_dir = bundle.iter_dir(workspace)
+                iteration_dir.mkdir(parents=True, exist_ok=True)
+                notes_path = iteration_dir / "verify.notes.json"
+                notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
+                return StepResult(
+                    status="RETRY",
+                    emitted_tickets=tickets,
+                    notes_path=str(notes_path),
+                    error="VERIFY: governance FAIL",
+                )
+
+        # 1) Layer-specific verification
+        if ctx.layer == "l1":
+            prompt = (
+                "## TASK\n"
+                "Verify L1 post-integration correctness:\n"
+                "1) Cross-library connectivity (P6): promoted interfaces connect; no orphan "
+                "dependencies.\n"
+                "2) Lineage (P7): architecture-facing surfaces trace back to spec/atoms; flag "
+                "orphans.\n"
+                'Return JSON: {"findings": [...]} with required_change_type in {'
+                "refactor_only, wiring_only, behavior_change}.\n\n"
+                "Provide file locations when possible.\n"
+            )
+            data = run_agent_json("pdd-l1-verifier", prompt)
+            for f in data.get("findings", []) or []:
+                emit_finding(**f)
+
+        elif ctx.layer == "l2":
+            prompt = (
+                "## TASK\n"
+                "Verify L2 architecture post-integration:\n"
+                "- Pin consumption coverage (no unaccounted promoted pins)\n"
+                "- Topology connectivity (no orphan components)\n"
+                "- No inlined business logic in architecture\n"
+                "- Conformance to component manifest / intended topology\n"
+                'Return JSON: {"findings": [...]}.\n'
+            )
+            data = run_agent_json("pdd-l2-verifier", prompt)
+            for f in data.get("findings", []) or []:
+                emit_finding(**f)
+
+        elif ctx.layer == "l3":
+            prompt = (
+                "## TASK\n"
+                "Verify L3 clean-code post-integration:\n"
+                "- All quality findings resolved (closure)\n"
+                "- Changes are behavior-preserving (no logic change)\n"
+                "- No architectural boundary violations introduced\n"
+                "- No unplanned functionality (drift)\n"
+                'Return JSON: {"findings": [...]}.\n'
+            )
+            data = run_agent_json("pdd-l3-verifier", prompt)
+            for f in data.get("findings", []) or []:
+                emit_finding(**f)
+
+        # 2) Convert to demotion tickets
+        tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
+
+        # Persist verify notes
+        notes["findings"] = findings
+        iteration_dir = bundle.iter_dir(workspace)
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        notes_path = iteration_dir / "verify.notes.json"
+        notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
+
+        # Decide pass/fail
+        has_blocker = any(f.get("severity") == "BLOCKER" for f in findings)
+        has_major = any(f.get("severity") == "MAJOR" for f in findings)
+
+        if has_blocker or (tickets and has_major):
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=tickets,
+                notes_path=str(notes_path),
+                error=f"VERIFY: {len(findings)} findings ({len(tickets)} demotions)",
+            )
+
+        return StepResult(status="OK", notes_path=str(notes_path))
 
 
 class AlignStep:
