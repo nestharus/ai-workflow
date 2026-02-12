@@ -1,4 +1,4 @@
-# Current State Assessment (Feb 11 2026)
+# Current State Assessment (Feb 11 2026, updated)
 
 ## What Has Been Evaluated with Real LLM Calls
 
@@ -121,12 +121,37 @@ All 11 groups from the end-to-end pipeline research response implemented:
 | Promote | 5 L1 gates | 8 L2 gates (LLM) | Quality gaps + diff-impact |
 | Verify | Governance+lineage | Governance+topology | Governance+closure |
 
+### Scoring & Multi-Model Comparison: IMPLEMENTED (Feb 11 2026)
+
+Research Prompt 3 response implemented in 6 phases (A-F):
+
+| Component | Status |
+|-----------|--------|
+| Pydantic judge schemas (4 types) | Done — arch, code, spec-fidelity, pairwise |
+| Judge infrastructure (client + cache) | Done — JudgeClient, JudgeCache |
+| Run-scoped reports | Done — dual-write to global + `reports/pdd/{run_id}/` |
+| Digest builders (arch + code) | Done — mechanical, no LLM |
+| Snapshot module | Done — `.pdd_runs/{run_id}/snapshot/` with SHA-256 |
+| 4 LLM judge modules | Done — arch, code, spec-fidelity, pairwise |
+| 4 agent definitions | Done — `judge-*.md` |
+| QualityReporter + QualityScorecard | Done — mechanical+judge blend |
+| ModelProfile (role-based routing) | Done — `get_model_for_role()` fallback |
+| CostLedger + agent call hooks | Done — append-only JSONL |
+| MultiModelRunner | Done — sequential per-profile |
+| ComparisonRunner | Done — pairwise + win-count rankings |
+| CLI wiring | Done — compare, quality, eval quality, eval compare |
+
+Key scoring formulas:
+* Architecture: `0.35 * mechanical + 0.65 * judge`
+* Code: `0.40 * mechanical + 0.60 * judge`
+* Thresholds: PASS >= 0.80, WARN >= 0.65, FAIL < 0.65 (or CRITICAL risks)
+
 ### Additional Implementations
 
 * **Pattern Library:** 27 patterns, 10 dimensions, StrategyPacks
 * **Test Tiers:** Tier 0-3 with layer dispatch
 * **L2 ReviewPack:** 5 architecture reviewer agents
-* **L3 ReviewPack:** 5ries 5 quality reviewer agents + diff-impact classifier
+* **L3 ReviewPack:** 5 quality reviewer agents + diff-impact classifier
 * **4 Budget System:** Per-ticket (3), Per-transition (3), Per-layer (50),
   Pipeline pass (2)
 
@@ -137,6 +162,10 @@ All 11 groups from the end-to-end pipeline research response implemented:
    untested
 3. **Worktree management in multi-layer mode** — `setup_layers()` never
    tested with real git
+4. **Quality scoring with LLM judges** — QualityReporter, 4 judge modules,
+   mechanical+judge blend never run with real LLM
+5. **Multi-model comparison** — MultiModelRunner + ComparisonRunner +
+   pairwise judges never run end-to-end
 
 ### Expected limitations with current fixtures
 
@@ -149,7 +178,7 @@ All 11 groups from the end-to-end pipeline research response implemented:
 
 ## Test Count
 
-2755 passed (as of Feb 11 2026)
+3185 passed (as of Feb 11 2026)
 
 ## Next Steps
 
@@ -157,6 +186,9 @@ All 11 groups from the end-to-end pipeline research response implemented:
 2. ~~Run L2 PromotionLoop eval~~ DONE (10/10 steps, 2 bugs)
 3. ~~Run L3 PromotionLoop eval~~ DONE (10/10 steps, 3 bugs)
 4. ~~Verify scoring and final report~~ DONE (synthetic data)
-5. Run full `pdd_lifecycle.run()` end-to-end
-6. Create better fixtures (non-skeleton code) to test L3 convergence
-7. Create fixtures with provenance to test L1 INTEGRATE/VERIFY/ALIGN
+5. ~~Implement Scoring & Multi-Model Comparison~~ DONE (122 new tests)
+6. Run full `pdd_lifecycle.run()` end-to-end
+7. Create better fixtures (non-skeleton code) to test L3 convergence
+8. Create fixtures with provenance to test L1 INTEGRATE/VERIFY/ALIGN
+9. Run quality scoring eval with real LLM judges
+10. Run multi-model comparison eval with 2+ model profiles

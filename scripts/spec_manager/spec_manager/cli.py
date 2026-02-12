@@ -142,6 +142,105 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compare(args: argparse.Namespace) -> int:
+    """Run multi-model comparison."""
+    from spec_manager.orchestration.model_profile import ModelProfile
+    from spec_manager.orchestration.multi_model_runner import MultiModelRunner
+
+    profiles = []
+    for profile_str in args.profiles:
+        parts = profile_str.split(":", 1)
+        name = parts[0]
+        model_id = parts[1] if len(parts) > 1 else name
+        profiles.append(ModelProfile(name=name, producer_model_id=model_id))
+
+    input_folder = Path(args.input)
+    comparison_id = args.comparison_id or ""
+
+    print(f"Multi-model comparison: {len(profiles)} profiles")
+    for p in profiles:
+        print(f"  {p.name}: {p.producer_model_id}")
+
+    runner = MultiModelRunner(
+        workspace_root=input_folder,
+        input_folder=input_folder,
+    )
+    manifest = runner.run(
+        profiles=profiles,
+        comparison_id=comparison_id,
+        judge_model=args.judge_model,
+        compute_quality=not args.no_quality,
+    )
+
+    print(f"\nComparison complete: {manifest['comparison_id']}")
+    print(f"  Entries: {len(manifest['entries'])}")
+    return 0
+
+
+def cmd_quality(args: argparse.Namespace) -> int:
+    """Compute quality scorecard for a run."""
+    from spec_manager.orchestration.digests import (
+        build_architecture_digest,
+        build_code_digest,
+    )
+    from spec_manager.orchestration.quality_scoring import QualityReporter
+
+    workspace = Path.cwd()
+    run_id = args.run_id
+
+    print(f"Computing quality scorecard for run: {run_id}")
+
+    arch_digest = build_architecture_digest(workspace, run_id)
+    code_digest = build_code_digest(workspace, run_id)
+
+    arch_judge = None
+    code_judge = None
+    spec_judge = None
+
+    if args.judges:
+        print("  Running LLM judges...")
+        from spec_manager.refinement.evals.judges.arch_quality import ArchitectureQualityJudge
+        from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
+        from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
+
+        arch_j = ArchitectureQualityJudge(workspace=workspace, model_id=args.judge_model)
+        arch_result = arch_j.evaluate(arch_digest)
+        arch_judge = arch_result.model_dump()
+
+        code_j = CodeQualityJudge(workspace=workspace, model_id=args.judge_model)
+        code_result = code_j.evaluate(code_digest)
+        code_judge = code_result.model_dump()
+
+        # Spec fidelity requires spec summary
+        spec_summary_path = workspace / ".pdd_runs" / run_id / "spec_summary.json"
+        if spec_summary_path.exists():
+            import json as _json
+
+            spec_summary = _json.loads(spec_summary_path.read_text())
+            spec_j = SpecFidelityJudge(workspace=workspace, model_id=args.judge_model)
+            spec_result = spec_j.evaluate(spec_summary, code_digest)
+            spec_judge = spec_result.model_dump()
+
+    reporter = QualityReporter(workspace, run_id)
+    scorecard = reporter.compute(
+        arch_digest,
+        code_digest,
+        arch_judge_output=arch_judge,
+        code_judge_output=code_judge,
+        spec_judge_output=spec_judge,
+    )
+    json_path, md_path = reporter.write(scorecard)
+
+    print("\nQuality scorecard written:")
+    print(f"  JSON: {json_path}")
+    print(f"  Markdown: {md_path}")
+    print(f"  Status: {scorecard.overall_status}")
+    print(f"  Arch: {scorecard.arch_quality_score:.3f}")
+    print(f"  Code: {scorecard.code_quality_score:.3f}")
+    print(f"  Spec: {scorecard.spec_fidelity_score:.3f}")
+    return 0
+
+
 def cmd_phase(args: argparse.Namespace) -> int:
     """Run a specific PDD design phase (0-10)."""
     from spec_manager.orchestration.pdd_orchestrator import PDD_PHASE_ORDER, PddOrchestrator
@@ -886,6 +985,61 @@ def main() -> int:
         action="store_true",
         help="Enable per-library git worktrees for parallel implementation",
     )
+    p_lifecycle.add_argument(
+        "--model-profile",
+        help="Model profile name for multi-model comparison",
+    )
+
+    # compare - run multi-model comparison
+    p_compare = subparsers.add_parser(
+        "compare",
+        help="Run multi-model comparison",
+    )
+    p_compare.add_argument(
+        "--profiles",
+        nargs="+",
+        required=True,
+        help="Model profile names to compare (format: name:model_id)",
+    )
+    p_compare.add_argument(
+        "--input",
+        required=True,
+        help="Path to input spec folder",
+    )
+    p_compare.add_argument(
+        "--comparison-id",
+        help="Comparison identifier (auto-generated if omitted)",
+    )
+    p_compare.add_argument(
+        "--judge-model",
+        default="",
+        help="Model ID for quality judges",
+    )
+    p_compare.add_argument(
+        "--no-quality",
+        action="store_true",
+        help="Skip quality scoring",
+    )
+
+    # quality - compute quality scorecard for a run
+    p_quality = subparsers.add_parser(
+        "quality",
+        help="Compute quality scorecard for a PDD run",
+    )
+    p_quality.add_argument(
+        "run_id",
+        help="Run identifier",
+    )
+    p_quality.add_argument(
+        "--judges",
+        action="store_true",
+        help="Run LLM judges (arch, code, spec fidelity)",
+    )
+    p_quality.add_argument(
+        "--judge-model",
+        default="",
+        help="Model ID for quality judges",
+    )
 
     # phase - run a specific PDD phase
     p_phase = subparsers.add_parser(
@@ -1111,7 +1265,10 @@ def main() -> int:
     args = parser.parse_args()
 
     # Auto-generate run_id for PDD commands when not provided
-    if args.command in ("run", "phase", "extract") and getattr(args, "run_id", None) is None:
+    if (
+        args.command in ("run", "phase", "extract", "lifecycle")
+        and getattr(args, "run_id", None) is None
+    ):
         from datetime import datetime
 
         args.run_id = datetime.now().strftime("pdd-%Y%m%d-%H%M%S")
@@ -1119,6 +1276,8 @@ def main() -> int:
     commands = {
         "run": cmd_run,
         "lifecycle": cmd_lifecycle,
+        "compare": cmd_compare,
+        "quality": cmd_quality,
         "phase": cmd_phase,
         "extract": cmd_extract,
         "phase-02": cmd_phase_02,

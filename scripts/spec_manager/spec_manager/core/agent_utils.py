@@ -8,10 +8,24 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
+
+_call_hooks: list[Callable[[dict[str, Any]], None]] = []
+
+
+def register_call_hook(hook: Callable[[dict[str, Any]], None]) -> None:
+    """Register a hook called after each successful run_agent invocation."""
+    _call_hooks.append(hook)
+
+
+def clear_call_hooks() -> None:
+    """Remove all registered call hooks (for test cleanup)."""
+    _call_hooks.clear()
+
 
 _FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
 
@@ -118,6 +132,8 @@ def run_agent(
     if extra_env:
         env = {**os.environ, **extra_env}
 
+    start_time = time.time()
+
     for attempt in range(max_retries):
         result = subprocess.run(
             cmd,
@@ -138,7 +154,18 @@ def run_agent(
         output = (result.stdout or "").strip()
         if output:
             file_output = _maybe_read_file_output(output)
-            return file_output if file_output is not None else output
+            result_text = file_output if file_output is not None else output
+            # Call hooks on success
+            elapsed_ms = (time.time() - start_time) * 1000
+            hook_data = {
+                "agent_name": agent_name,
+                "duration_ms": elapsed_ms,
+                "timestamp": time.time(),
+            }
+            for hook in _call_hooks:
+                with contextlib.suppress(Exception):
+                    hook(hook_data)
+            return result_text
 
         last_error = RuntimeError(f"Agent returned empty output (agent={agent_name}).")
         time.sleep(2**attempt)

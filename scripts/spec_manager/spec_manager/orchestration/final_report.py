@@ -124,8 +124,10 @@ class FinalReportGenerator:
             "",
         ]
 
-        # Check for component manifest
-        manifest_path = self.workspace_root / "reports" / "component_manifest.json"
+        # Try run-scoped first, fall back to global
+        manifest_path = self._reports_dir / "component_manifest.json"
+        if not manifest_path.exists():
+            manifest_path = self.workspace_root / "reports" / "component_manifest.json"
         if manifest_path.exists():
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -140,7 +142,9 @@ class FinalReportGenerator:
             lines.append("No component manifest found.")
 
         # Check for architecture proposals
-        proposals_path = self.workspace_root / "reports" / "architecture_proposals.json"
+        proposals_path = self._reports_dir / "architecture_proposals.json"
+        if not proposals_path.exists():
+            proposals_path = self.workspace_root / "reports" / "architecture_proposals.json"
         if proposals_path.exists():
             lines.append(f"\nArchitecture proposals: `{proposals_path}`")
 

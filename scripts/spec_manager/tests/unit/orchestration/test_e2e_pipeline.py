@@ -2130,3 +2130,76 @@ class TestCIBatchReceipt:
         assert len(receipts) == 0
         # tick_pipeline should not have been called
         wm.tick_pipeline.assert_not_called()
+
+
+# ===================================================================
+# 15. Run-scoped report writing tests
+# ===================================================================
+
+
+def test_write_run_report_writes_both_paths(tmp_path):
+    """Test _write_run_report writes to both global and run-scoped dirs."""
+    from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager(run_id="test-run", input_folder=tmp_path)
+    manager.initialize()
+    lifecycle = PddLifecycle(manager, mode="auto")
+
+    lifecycle._write_run_report("test_report.json", {"key": "value"})
+
+    global_path = manager.structure.root / "reports" / "test_report.json"
+    run_path = manager.structure.root / "reports" / "pdd" / "test-run" / "test_report.json"
+
+    assert global_path.exists()
+    assert run_path.exists()
+    assert json.loads(global_path.read_text()) == {"key": "value"}
+    assert json.loads(run_path.read_text()) == {"key": "value"}
+
+
+def test_write_run_report_handles_string(tmp_path):
+    """Test _write_run_report handles string data."""
+    from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager(run_id="test-run", input_folder=tmp_path)
+    manager.initialize()
+    lifecycle = PddLifecycle(manager, mode="auto")
+
+    lifecycle._write_run_report("overview.md", "# Overview\n\nContent")
+
+    global_path = manager.structure.root / "reports" / "overview.md"
+    assert global_path.exists()
+    assert "# Overview" in global_path.read_text()
+
+
+def test_final_report_reads_run_scoped_first(tmp_path):
+    """Test FinalReportGenerator reads run-scoped manifests first."""
+    workspace = tmp_path
+    run_id = "test-run"
+
+    # Create run-scoped manifest
+    run_reports = workspace / "reports" / "pdd" / run_id
+    run_reports.mkdir(parents=True)
+    (run_reports / "component_manifest.json").write_text(
+        json.dumps({"components": [{"component_id": "run-scoped"}]}),
+        encoding="utf-8",
+    )
+
+    gen = FinalReportGenerator(workspace_root=workspace, run_id=run_id)
+    result = gen._architecture_topology({})
+    assert "run-scoped" in result
+
+
+def test_quality_scoring_flag(tmp_path):
+    """Test _compute_quality flag on PddLifecycle."""
+    from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+    from spec_manager.refinement.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager(run_id="quality-test", input_folder=tmp_path)
+    manager.initialize()
+    lifecycle = PddLifecycle(manager, mode="auto")
+    assert lifecycle._compute_quality is False
+
+    lifecycle._compute_quality = True
+    assert lifecycle._compute_quality is True

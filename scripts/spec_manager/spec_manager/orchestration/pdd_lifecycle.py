@@ -126,6 +126,7 @@ class PddLifecycle:
         self.max_approval_iterations = max_approval_iterations
         self.max_demotions_per_layer = max_demotions_per_layer
         self.max_pipeline_passes = max_pipeline_passes
+        self._compute_quality = False
 
     # ------------------------------------------------------------------
     # Planner construction
@@ -294,6 +295,34 @@ class PddLifecycle:
         scorecard = reporter.compute(results)
         reporter.write(scorecard)
         results["scorecard"] = scorecard.to_dict()
+
+        # Quality scoring (optional)
+        if self._compute_quality:
+            try:
+                from spec_manager.orchestration.digests import (
+                    build_architecture_digest,
+                    build_code_digest,
+                )
+                from spec_manager.orchestration.quality_scoring import QualityReporter
+
+                arch_digest = build_architecture_digest(
+                    self.manager.structure.root, self.manager.run_id
+                )
+                code_digest = build_code_digest(self.manager.structure.root, self.manager.run_id)
+                quality_reporter = QualityReporter(self.manager.structure.root, self.manager.run_id)
+                quality_scorecard = quality_reporter.compute(arch_digest, code_digest)
+                quality_reporter.write(quality_scorecard)
+                results["quality_scorecard"] = quality_scorecard.to_dict()
+            except Exception as exc:
+                logger.warning("Quality scoring failed: %s", exc)
+
+        # Snapshot
+        try:
+            from spec_manager.orchestration.snapshot import snapshot_run
+
+            snapshot_run(self.manager.structure.root, self.manager.run_id)
+        except Exception as exc:
+            logger.warning("Snapshot failed: %s", exc)
 
         # Final report
         from spec_manager.orchestration.final_report import FinalReportGenerator
@@ -1070,11 +1099,7 @@ class PddLifecycle:
             issues = data.get("issues", [])
 
             # Write proposals to disk
-            reports_dir = self.manager.structure.root / "reports"
-            reports_dir.mkdir(parents=True, exist_ok=True)
-            (reports_dir / "architecture_proposals.json").write_text(
-                json.dumps(data, indent=2), encoding="utf-8"
-            )
+            self._write_run_report("architecture_proposals.json", data)
 
             # Emit DemotionTickets for architectural issues
             tickets: list[dict[str, Any]] = []
@@ -1091,8 +1116,7 @@ class PddLifecycle:
                 tickets.append(ticket.to_dict())
 
             if tickets:
-                tickets_path = reports_dir / "architecture_demotion_tickets.json"
-                tickets_path.write_text(json.dumps(tickets, indent=2), encoding="utf-8")
+                self._write_run_report("architecture_demotion_tickets.json", tickets)
 
             return {
                 "candidates_proposed": len(candidates),
@@ -1165,11 +1189,7 @@ class PddLifecycle:
                     logger.warning("Reviewer %s failed for %s: %s", reviewer, file_path, exc)
 
         # Write quality report
-        reports_dir = self.manager.structure.root / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        (reports_dir / "code_quality_report.json").write_text(
-            json.dumps({"findings": all_findings}, indent=2), encoding="utf-8"
-        )
+        self._write_run_report("code_quality_report.json", {"findings": all_findings})
 
         # Emit DemotionTickets for findings that touch logic or architecture
         tickets: list[dict[str, Any]] = []
@@ -1189,8 +1209,7 @@ class PddLifecycle:
                 tickets.append(ticket.to_dict())
 
         if tickets:
-            tickets_path = reports_dir / "code_quality_demotion_tickets.json"
-            tickets_path.write_text(json.dumps(tickets, indent=2), encoding="utf-8")
+            self._write_run_report("code_quality_demotion_tickets.json", tickets)
 
         return {
             "files_reviewed": len(all_specs),
@@ -1325,6 +1344,29 @@ class PddLifecycle:
             json.dumps(ref_data, indent=2), encoding="utf-8"
         )
 
+    def _write_run_report(self, filename: str, data: dict | list | str) -> None:
+        """Write a report file to both global and run-scoped directories.
+
+        Args:
+            filename: Report filename (e.g., "architecture_proposals.json").
+            data: Data to write (dict/list serialized as JSON, str written as-is).
+        """
+        content = (
+            json.dumps(data, indent=2, ensure_ascii=False)
+            if isinstance(data, (dict, list))
+            else data
+        )
+
+        # Global path (backward compat)
+        global_dir = self.manager.structure.root / "reports"
+        global_dir.mkdir(parents=True, exist_ok=True)
+        (global_dir / filename).write_text(content, encoding="utf-8")
+
+        # Run-scoped path
+        run_reports_dir = self.manager.structure.root / "reports" / "pdd" / self.manager.run_id
+        run_reports_dir.mkdir(parents=True, exist_ok=True)
+        (run_reports_dir / filename).write_text(content, encoding="utf-8")
+
     def _gather_library_content(self, lib_dir: Path) -> str:
         """Gather content for a library from its detail files.
 
@@ -1450,17 +1492,13 @@ class PddLifecycle:
                 errors.append({"lib_id": lib_id, "error": str(exc)})
 
         # Write alignment report
-        reports_dir = self.manager.structure.root / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
         report = {
             "libraries_checked": libraries_checked,
             "drift_findings": total_drift,
             "reward_hacking_findings": total_reward_hacking,
             "errors": errors,
         }
-        (reports_dir / "alignment_report.json").write_text(
-            json.dumps(report, indent=2), encoding="utf-8"
-        )
+        self._write_run_report("alignment_report.json", report)
 
         return report
 
@@ -1517,11 +1555,9 @@ class PddLifecycle:
                 errors.append({"lib_id": lib_id, "error": str(exc)})
 
         # Write consolidated overview
-        reports_dir = self.manager.structure.root / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
         overview_content = "# Project Overview\n\n" + "\n---\n\n".join(overview_parts)
-        overview_path = reports_dir / "overview.md"
-        overview_path.write_text(overview_content, encoding="utf-8")
+        self._write_run_report("overview.md", overview_content)
+        overview_path = self.manager.structure.root / "reports" / "overview.md"
 
         return {
             "libraries_processed": libraries_processed,

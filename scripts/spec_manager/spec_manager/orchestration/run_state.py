@@ -39,6 +39,7 @@ class RunConfig:
     retry_budget: int = 3
     test_commands: dict[str, str] = field(default_factory=dict)
     model_ids: dict[str, str] = field(default_factory=dict)
+    model_profile_name: str = ""
     created_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
