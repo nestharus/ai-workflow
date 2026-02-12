@@ -535,8 +535,8 @@ class TestGapExplorationStepLayerDispatch:
 class TestPlanStepLayerDispatch:
     """Tests for PlanStep dispatching by ctx.layer."""
 
-    def test_l1_gaps_produce_function_implementation_intentions(self) -> None:
-        """L1 gaps produce function implementation intentions."""
+    def test_l1_gaps_return_noop(self) -> None:
+        """L1 PlanStep returns no-op (empty intentions) — agents use gaps directly."""
         ctx = _make_ctx(layer="l1")
         bundle = _make_bundle()
         bundle.gaps = GapReportRef(
@@ -550,10 +550,7 @@ class TestPlanStepLayerDispatch:
         result = step.run(ctx, bundle)
 
         assert result.status == "OK"
-        assert len(bundle.plan.intentions) == 2
-        assert bundle.plan.intentions[0]["target_file"] == "auth.py"
-        assert "Implement:" in bundle.plan.intentions[0]["approach"]
-        assert "stub function login()" in bundle.plan.intentions[0]["approach"]
+        assert bundle.plan.intentions == []
 
     def test_l2_gaps_produce_wiring_intentions(self) -> None:
         """L2 gaps produce wiring intentions with layer_constraint=wiring_only."""

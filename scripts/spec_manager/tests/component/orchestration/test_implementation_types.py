@@ -299,9 +299,13 @@ class TestImplementorOutput:
         assert out.tests == []
         assert out.under_spec_events == []
         assert out.notes_md == ""
-        assert out.body == ""
-        assert out.imports_needed == []
-        assert out.gaps == []
+
+    def test_no_legacy_fields(self) -> None:
+        out = ImplementorOutput()
+        assert not hasattr(out, "body")
+        assert not hasattr(out, "imports_needed")
+        assert not hasattr(out, "gaps")
+        assert not hasattr(out, "is_legacy_format")
 
     def test_from_dict_new_schema(self) -> None:
         new_data = {
@@ -314,7 +318,6 @@ class TestImplementorOutput:
             "notes_md": "Implementation notes",
         }
         out = ImplementorOutput.from_dict(new_data)
-        assert not out.is_legacy_format
         assert out.function_target.file == "foo.py"
         assert out.function_target.fqn == "foo:bar"
         assert len(out.edits) == 1
@@ -331,41 +334,10 @@ class TestImplementorOutput:
         assert out.under_spec_events[0].kind == "MISSING_CONSTRAINT"
         assert out.notes_md == "Implementation notes"
 
-    def test_from_dict_legacy_schema(self) -> None:
-        legacy_data = {
-            "body": "def foo(): return 42",
-            "imports_needed": ["import os"],
-            "gaps": [],
-            "notes": "done",
-        }
-        out = ImplementorOutput.from_dict(legacy_data)
-        assert out.is_legacy_format
-        assert out.body == "def foo(): return 42"
-        assert out.imports_needed == ["import os"]
-        assert out.gaps == []
-        assert out.notes_md == "done"
-
-    def test_is_legacy_format_true_when_body_and_no_edits(self) -> None:
-        out = ImplementorOutput(body="some code")
-        assert out.is_legacy_format is True
-
-    def test_is_legacy_format_false_when_edits_present(self) -> None:
-        out = ImplementorOutput(
-            body="some code",
-            edits=[EditEntry(path="x.py", unified_diff="d")],
-        )
-        assert out.is_legacy_format is False
-
-    def test_is_legacy_format_false_when_no_body(self) -> None:
-        out = ImplementorOutput()
-        assert out.is_legacy_format is False
-
     def test_from_dict_empty(self) -> None:
         out = ImplementorOutput.from_dict({})
         assert isinstance(out.function_target, FunctionTarget)
         assert out.edits == []
-        assert out.body == ""
-        assert not out.is_legacy_format
 
     def test_from_dict_notes_fallback_to_notes_key(self) -> None:
         d = {"notes": "fallback value"}
@@ -385,15 +357,11 @@ class TestImplementorOutput:
         o1.edge_proposals.append(EdgeProposal(src="a", dst="b"))
         o1.tests.append(TestArtifact(path="t.py", purpose="p"))
         o1.under_spec_events.append(UnderSpecEvent())
-        o1.imports_needed.append("import x")
-        o1.gaps.append("gap")
         assert o2.edits == []
         assert o2.pin_proposals == []
         assert o2.edge_proposals == []
         assert o2.tests == []
         assert o2.under_spec_events == []
-        assert o2.imports_needed == []
-        assert o2.gaps == []
 
     def test_from_dict_multiple_edits(self) -> None:
         d = {

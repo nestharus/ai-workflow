@@ -1,30 +1,95 @@
-# Spec Refinement / Management Hybrid Design Papers
+# Spec Manager Design
 
-Directory layout:
+Architecture documentation and design principles for the spec_manager system.
 
-- clean/        Clean design papers (algorithms + data shapes; no narrative)
-- constraints/  Design constraints (global + per-library references)
-- overview/     System overviews (how pieces fit)
-- analysis/     Design analyses and rationale
-- templates/    Output templates / JSON schemas (parsing is allowed only for these)
+**Last updated**: Feb 12, 2026
 
-Primary reading order (suggested):
+---
 
-1) overview/00_SYSTEM_OVERVIEW.md
-2) constraints/00_GLOBAL_CONSTRAINTS.md
-3) clean/00_ID_REGISTRY.md
-4) clean/01_EVIDENCE_LAYER.md
-5) clean/02_PROVENANCE_AND_MEMBERSHIP.md
-6) clean/05_COMPLIANCE_AND_VALIDATION.md
-7) clean/07_LIBRARY_DISCOVERY.md
-8) clean/08_LIBRARY_SPEC_BUILDING.md
-9) clean/10_TASK_PLANNING_AND_IMPLEMENTATION_LOOP.md
-10) analysis/03_HYBRID_ARCHITECTURE_RATIONALE.md
+## Directory Layout
 
+```text
+design/
+├── README.md                              # This file
+├── TRADEOFFS.md                           # Priority ordering and decision framework
+├── constraints/                           # Fundamental principles (primary reference)
+│   ├── 00_PROPORTIONAL_COMMITMENT.md      # Commit proportionally to knowledge
+│   ├── 01_INFORMATION_PERMANENCE.md       # Information is permanent, computation is temporary
+│   ├── 02_SOURCE_AUTHORITY.md             # Authority decreases with derivation distance
+│   ├── 03_ERROR_AMPLIFICATION.md          # Error cost grows with propagation distance
+│   ├── 04_COUPLING.md                     # Coupling through internals amplifies fragility
+│   └── 05_FRACTAL_SCOPING.md             # Work at smallest scope, compose results
+├── patterns/                              # Core algorithms (recurring problem solvers)
+│   └── CORE_PATTERNS.md                   # 7 reusable algorithms for design decisions
+└── overview/                              # Architecture overviews (how the system works)
+    ├── 00_SYSTEM_OVERVIEW.md              # Package inventory + data flow
+    ├── 01_PIPELINE_ARCHITECTURE.md        # Promotion loop, layer pipeline, coordination
+    └── 02_EXTERNAL_BOUNDARIES.md          # Inputs, outputs, LLM call sites, file I/O
+```
 
-Pseudocode:
+## What Goes Where
 
-- clean/98_ALGORITHM_INDEX.md (where each algorithm is defined)
-- clean/99_ALGORITHM_COMPENDIUM.md (all algorithms + pseudocode in one file)
+* **TRADEOFFS.md**: What the system prioritizes and what it sacrifices.
+  Lexicographic priority ordering (fidelity > robustness > diagnosability
+  > efficiency > speed) and a decision framework for resolving conflicts.
 
-Note: Clean papers are structured lists. No narrative prose is included inside clean/*.md.
+* **constraints/**: WHY the system works this way. Six fundamental
+  principles from which all design decisions derive. Each file states the
+  principle, explains why it's true, and shows the corollaries that follow
+  from it. No class names, no module paths, no implementation details.
+
+* **patterns/**: HOW the system solves recurring problems. Reusable
+  algorithms that classify problem types and prescribe solutions. When you
+  encounter a design problem, match it to a pattern. No class names, no
+  module paths — just the abstract algorithm and the reasoning behind it.
+
+* **overview/**: WHAT the system is and HOW it works. Package inventory,
+aires,
+  data flow diagrams, class names, module paths. These describe the current
+  implementation.
+
+## Reading Order
+
+1. `TRADEOFFS.md` — Start here. What the system optimizes for, the
+   priority ordering, and the decision framework.
+2. `constraints/00_PROPORTIONAL_COMMITMENT.md` — The foundational
+   principle: explore the problem space before committing to a solution,
+   and commit only as specifically as your knowledge justifies.
+3. `constraints/01_INFORMATION_PERMANENCE.md` — The asymmetry between
+   information (permanent when lost) and computation (re-runnable).
+4. `constraints/02_SOURCE_AUTHORITY.md` — Why authority decreases with
+   derivation distance.
+5. `constraints/03_ERROR_AMPLIFICATION.md` — Why errors must be caught
+   early.
+6. `constraints/04_COUPLING.md` — Why components interact through
+   contracts, not internals.
+7. `constraints/05_FRACTAL_SCOPING.md` — Why problems are solved at the
+   smallest self-contained scope and composed.
+8. `patterns/CORE_PATTERNS.md` — 7 algorithms for recurring design
+   problems.
+9. `overview/00_SYSTEM_OVERVIEW.md` — What the system actually is.
+10. Remaining overview files as needed for specific topics.
+
+## Authoritative Sources
+
+These source documents in the parent directory are the origin of all
+design principles:
+
+| Source | What It Defines |
+|--------|----------------|
+| `LONG_TERM_GOALS.md` | Core design principles, QA methodology, eval strategy |
+| `WORKFLOW_ANALYSIS.md` | Promotion model, pipeline architecture, demotion |
+| `simpler.md` | PDD lifecycle, iteration philosophy, worktree hygiene |
+| `ALGORITHM.md` | Evidence preservation, semantic framework |
+
+## Historical Note
+
+The `clean/`, `analysis/`, and `templates/` directories were removed in
+a prior update. They contained Design #1 (evidence preservation model)
+artifacts superseded by the current PDD implementation. See git history
+for removed content.
+
+The previous 8-file constraint structure (00-07, organized by domain)
+was replaced by the current 6-file structure (organized by fundamental
+principle). The domain-specific constraints were corollaries of the 6
+fundamental principles and are now presented as such within each file.

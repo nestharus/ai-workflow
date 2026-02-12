@@ -48,6 +48,10 @@ class LayerPlanner(Protocol):
         """Resolve an ambiguity signal.  May return None for no-op."""
         ...
 
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        """Triage a coordination signal — search work items, classify, route."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Stub layer planners (NOOP — filled in by layer modules later)
@@ -75,6 +79,9 @@ class _StubPlanner:
 
     def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
         return None
+
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        return {"action": "NOOP", "monitors": []}
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +170,13 @@ class CapabilityRouter:
         if capability == "INTEGRATION_ANALYSIS":
             discovery = planner.discover(ctx)
             return PlanningResult(status="OK", outputs={"discovery": discovery})
+
+        if capability == "TRIAGE_SIGNAL":
+            signal = inputs.get("signal", {})
+            triage_result = planner.triage_signal(ctx, signal)
+            action = triage_result.get("action", "NOOP")
+            status = "WAITING" if action != "NOOP" else "NOOP"
+            return PlanningResult(status=status, outputs=triage_result)
 
         return PlanningResult(
             status="ERROR",

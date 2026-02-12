@@ -368,3 +368,183 @@ class TestL3Planner:
         result = planner.resolve_under_spec(ctx, events, discovery)
         assert result["blocked"] is True
         assert len(result["questions"]) == 1
+
+    def test_l3_triage_signal_returns_noop(self) -> None:
+        """L3 triage_signal always returns NOOP."""
+        planner = L3Planner()
+        ctx = _make_ctx(metadata={})
+        result = planner.triage_signal(ctx, {"need": {"artifact_key": "foo"}})
+        assert result["action"] == "NOOP"
+        assert result["monitors"] == []
+
+
+# ---------------------------------------------------------------------------
+# L2 triage_signal
+# ---------------------------------------------------------------------------
+
+
+class TestL2TriageSignal:
+    def test_l2_triage_signal_returns_noop(self) -> None:
+        """L2 triage_signal always returns NOOP."""
+        planner = L2Planner()
+        ctx = _make_ctx(workspace_root="", metadata={})
+        result = planner.triage_signal(ctx, {"need": {"artifact_key": "bar"}})
+        assert result["action"] == "NOOP"
+        assert result["monitors"] == []
+
+
+# ---------------------------------------------------------------------------
+# L1 triage_signal
+# ---------------------------------------------------------------------------
+
+
+class TestL1TriageSignal:
+    def test_triage_signal_no_workspace_returns_noop(self) -> None:
+        """When workspace_root is empty, triage_signal returns NOOP."""
+        planner = L1Planner()
+        ctx = _make_ctx(workspace_root="", run_id="run-1", slice_id="s1")
+        signal = {
+            "need": {"artifact_key": "Calculator"},
+            "spec_refs": [{"spec_text": "compute net position"}],
+        }
+        result = planner.triage_signal(ctx, signal)
+        assert result["action"] == "NOOP"
+        assert result["monitors"] == []
+
+    def test_triage_signal_matching_in_progress_work_item(self, tmp_path: Path) -> None:
+        """When a matching IN_PROGRESS work item exists, return WAIT_ON_WORK_ITEM."""
+        from spec_manager.orchestration.coordination.work_items import (
+            WorkItem,
+            WorkItemLocation,
+            WorkItemStore,
+        )
+
+        # Set up coordination directory and store a work item
+        coord_dir = tmp_path / ".pdd_runs" / "run-1" / "coordination"
+        coord_dir.mkdir(parents=True)
+        store = WorkItemStore(coord_dir)
+        store.add(
+            WorkItem(
+                work_item_id="wi-1",
+                spec_text="compute net position for treasury",
+                owner_slice_id="s-other",
+                status="IN_PROGRESS",
+                location=WorkItemLocation(file="treasury.py", symbol="compute_net"),
+            )
+        )
+
+        planner = L1Planner()
+        ctx = _make_ctx(
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+            slice_id="s1",
+        )
+        signal = {
+            "signal_id": "sig-1",
+            "need": {"artifact_key": "compute_net"},
+            "spec_refs": [{"spec_text": "compute net position for treasury"}],
+            "search_hints": {"keywords": ["treasury"]},
+        }
+        result = planner.triage_signal(ctx, signal)
+        assert result["action"] == "WAIT_ON_WORK_ITEM"
+        assert len(result["monitors"]) == 1
+        assert result["monitors"][0]["kind"] == "work_item_status"
+        assert "matched_work_item" in result
+
+    def test_triage_signal_done_work_item_wakes_immediately(self, tmp_path: Path) -> None:
+        """When a matching DONE work item exists, return WAKE_IMMEDIATELY."""
+        from spec_manager.orchestration.coordination.work_items import (
+            WorkItem,
+            WorkItemLocation,
+            WorkItemStore,
+        )
+
+        coord_dir = tmp_path / ".pdd_runs" / "run-1" / "coordination"
+        coord_dir.mkdir(parents=True)
+        store = WorkItemStore(coord_dir)
+        store.add(
+            WorkItem(
+                work_item_id="wi-2",
+                spec_text="validate settlement amounts",
+                owner_slice_id="s-other",
+                status="DONE",
+                location=WorkItemLocation(file="settlement.py", symbol="validate"),
+            )
+        )
+
+        planner = L1Planner()
+        ctx = _make_ctx(
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+            slice_id="s1",
+        )
+        signal = {
+            "signal_id": "sig-2",
+            "need": {"artifact_key": "validate"},
+            "spec_refs": [{"spec_text": "validate settlement amounts"}],
+            "search_hints": {},
+        }
+        result = planner.triage_signal(ctx, signal)
+        assert result["action"] == "WAKE_IMMEDIATELY"
+        assert result["monitors"] == []
+        assert "matched_work_item" in result
+
+    def test_triage_signal_no_match_falls_to_expand_spec(self, tmp_path: Path) -> None:
+        """When no work item or spec catalog match is found, return EXPAND_SPEC."""
+        # Empty coordination dir, no matching files
+        coord_dir = tmp_path / ".pdd_runs" / "run-1" / "coordination"
+        coord_dir.mkdir(parents=True)
+
+        planner = L1Planner()
+        ctx = _make_ctx(
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+            slice_id="s1",
+        )
+        signal = {
+            "signal_id": "sig-3",
+            "need": {"artifact_key": "NonExistentThing", "reason": "not found"},
+            "spec_refs": [],
+            "search_hints": {},
+        }
+        result = planner.triage_signal(ctx, signal)
+        assert result["action"] == "EXPAND_SPEC"
+        assert len(result["monitors"]) == 1
+        assert result["monitors"][0]["kind"] == "spec_expanded"
+        assert "expansion" in result
+        assert result["expansion"]["artifact_key"] == "NonExistentThing"
+
+    def test_triage_signal_spec_catalog_match_routes_and_waits(self, tmp_path: Path) -> None:
+        """When no work item exists but spec catalog has a match, return ROUTE_AND_WAIT."""
+        # Empty coordination store
+        coord_dir = tmp_path / ".pdd_runs" / "run-1" / "coordination"
+        coord_dir.mkdir(parents=True)
+
+        # Create a spec file that mentions the artifact
+        spec_file = tmp_path / "slices" / "treasury.py"
+        spec_file.parent.mkdir(parents=True)
+        spec_file.write_text(
+            "# Spec: Implement FxConverter for currency conversion\n"
+            "def convert_currency():\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+
+        planner = L1Planner()
+        ctx = _make_ctx(
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+            slice_id="s1",
+        )
+        signal = {
+            "signal_id": "sig-4",
+            "need": {"artifact_key": "FxConverter"},
+            "spec_refs": [],
+            "search_hints": {},
+        }
+        result = planner.triage_signal(ctx, signal)
+        assert result["action"] == "ROUTE_AND_WAIT"
+        assert len(result["monitors"]) == 1
+        assert result["monitors"][0]["kind"] == "symbol_available"
+        assert "routing" in result
+        assert len(result["routing"]) == 1

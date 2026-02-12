@@ -53,6 +53,10 @@ class _MockLayerPlanner:
             return None
         return {"resolved": True, "target": str(signal)}
 
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        self.last_ctx = ctx
+        return {"action": "NOOP", "monitors": []}
+
 
 # ---------------------------------------------------------------------------
 # PlanningContext
@@ -100,7 +104,7 @@ class TestPlanningRequest:
 
 class TestPlanningResult:
     def test_planning_result_statuses(self) -> None:
-        for status in ("OK", "BLOCKED", "NEEDS_INPUT", "NOOP", "ERROR"):
+        for status in ("OK", "BLOCKED", "NEEDS_INPUT", "NOOP", "ERROR", "WAITING"):
             result = PlanningResult(status=status)
             assert result.status == status
             assert result.outputs == {}
@@ -436,3 +440,60 @@ class TestRequestSnapshot:
         req = PlanningRequest(capability="GAP", context=ctx)
         snap = _request_snapshot(req)
         assert snap["has_constraints_hint"] is False
+
+
+# ---------------------------------------------------------------------------
+# TRIAGE_SIGNAL capability
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerTriageSignal:
+    def _make_planner(self, tmp_path: Any) -> tuple[Planner, dict[str, _MockLayerPlanner]]:
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        mocks: dict[str, _MockLayerPlanner] = {}
+        for layer in ("l1", "l2", "l3"):
+            mock = _MockLayerPlanner(layer)
+            planner.register_layer_planner(layer, mock)
+            mocks[layer] = mock
+        return planner, mocks
+
+    def test_triage_signal_routes_to_correct_layer(self, tmp_path: Any) -> None:
+        """triage_signal convenience method routes through plan() to the layer planner."""
+        planner, mocks = self._make_planner(tmp_path)
+        ctx = PlanningContext(layer="l1", slice_id="slice-triage")
+        signal = {"need": {"artifact_key": "foo"}, "spec_refs": []}
+        result = planner.triage_signal(ctx, signal)
+        # _MockLayerPlanner.triage_signal returns NOOP
+        assert result.status == "NOOP"
+        assert result.outputs["action"] == "NOOP"
+        assert mocks["l1"].last_ctx is ctx
+
+    def test_triage_signal_returns_waiting_on_non_noop(self, tmp_path: Any) -> None:
+        """When the layer planner returns a non-NOOP action, status is WAITING."""
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+
+        class _WaitingPlanner(_MockLayerPlanner):
+            def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+                return {"action": "WAIT_ON_WORK_ITEM", "monitors": [{"kind": "test"}]}
+
+        planner.register_layer_planner("l1", _WaitingPlanner("l1"))
+        ctx = PlanningContext(layer="l1", slice_id="slice-wait")
+        result = planner.triage_signal(ctx, {"need": {}})
+        assert result.status == "WAITING"
+        assert result.outputs["action"] == "WAIT_ON_WORK_ITEM"
+
+    def test_triage_signal_has_trace_id(self, tmp_path: Any) -> None:
+        """triage_signal results always have a trace_id."""
+        planner, _ = self._make_planner(tmp_path)
+        ctx = PlanningContext(layer="l1")
+        result = planner.triage_signal(ctx, {"need": {}})
+        assert result.trace_id != ""
+        assert len(result.trace_id) == 12
+
+    def test_triage_signal_routes_l2(self, tmp_path: Any) -> None:
+        """triage_signal with layer=l2 routes to L2 planner."""
+        planner, mocks = self._make_planner(tmp_path)
+        ctx = PlanningContext(layer="l2", slice_id="slice-l2")
+        result = planner.triage_signal(ctx, {"need": {}})
+        assert result.status == "NOOP"
+        assert mocks["l2"].last_ctx is ctx

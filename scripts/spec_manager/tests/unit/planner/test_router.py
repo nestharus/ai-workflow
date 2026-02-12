@@ -44,6 +44,10 @@ class _FakePlanner:
             return None
         return {"resolved": True}
 
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        action = signal.get("action_hint", "NOOP")
+        return {"action": action, "monitors": []}
+
 
 # ---------------------------------------------------------------------------
 # LayerRouter
@@ -163,6 +167,25 @@ class TestCapabilityRouter:
         result = router.route(planner, req)
         assert result.status == "OK"
         assert "discovery" in result.outputs
+
+    def test_capability_router_triage_signal_noop(self) -> None:
+        """TRIAGE_SIGNAL with NOOP action returns NOOP status."""
+        router = CapabilityRouter()
+        planner = _FakePlanner("l1")
+        req = self._make_request("TRIAGE_SIGNAL", {"signal": {}})
+        result = router.route(planner, req)
+        assert isinstance(result, PlanningResult)
+        assert result.status == "NOOP"
+        assert result.outputs["action"] == "NOOP"
+
+    def test_capability_router_triage_signal_waiting(self) -> None:
+        """TRIAGE_SIGNAL with non-NOOP action returns WAITING status."""
+        router = CapabilityRouter()
+        planner = _FakePlanner("l1")
+        req = self._make_request("TRIAGE_SIGNAL", {"signal": {"action_hint": "WAIT_ON_WORK_ITEM"}})
+        result = router.route(planner, req)
+        assert result.status == "WAITING"
+        assert result.outputs["action"] == "WAIT_ON_WORK_ITEM"
 
     def test_capability_router_unknown_capability(self) -> None:
         router = CapabilityRouter()

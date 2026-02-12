@@ -585,6 +585,10 @@ class PddLifecycle:
     def _run_slices_at_layer(self, layer: Layer) -> dict[str, Any]:
         """Discover slices and run PromotionLoop at a given layer.
 
+        Creates coordination infrastructure (WorkItemStore, WakeQueue,
+        MonitorRegistry, MonitorExecutor, WaitGraph) per layer and passes
+        them to the ReactivePromotionScheduler.
+
         Args:
             layer: Which layer to run slices at.
 
@@ -596,7 +600,7 @@ class PddLifecycle:
             RunContext,
         )
         from spec_manager.orchestration.promotion_scheduler import (
-            PromotionScheduler,
+            ReactivePromotionScheduler,
             SchedulerConfig,
         )
 
@@ -633,9 +637,14 @@ class PddLifecycle:
             planner=planner,
         )
 
-        scheduler = PromotionScheduler(
+        # Build coordination infrastructure
+        monitor_executor, wake_queue = self._build_coordination(layer, run_context)
+
+        scheduler = ReactivePromotionScheduler(
             loop=loop,
             config=SchedulerConfig(max_parallel=4),
+            monitor_executor=monitor_executor,
+            wake_queue=wake_queue,
         )
         sched_result = scheduler.run(slice_refs, run_context)
         slice_results = sched_result.slice_results
@@ -695,14 +704,59 @@ class PddLifecycle:
                     "iterations": r.iterations,
                     "remaining_gaps": r.remaining_gaps,
                     "demotion_count": len(r.demotion_tickets),
+                    "wake_count": r.wake_count,
                 }
                 for r in slice_results
             ],
             "ci_ticks": ci_ticks,
-            "all_complete": all(r.status == "COMPLETE" for r in slice_results),
+            "all_complete": sched_result.all_complete,
+            "waiting_slices": sched_result.waiting_slices,
             "total_layer_demotions": total_layer_demotions,
             "budget_exceeded": budget_exceeded,
         }
+
+    def _build_coordination(self, layer: Layer, run_context: Any) -> tuple[Any, Any]:
+        """Build coordination infrastructure for a layer run.
+
+        Creates WorkItemStore, WakeQueue, MonitorRegistry, ConditionChecker,
+        and MonitorExecutor.  Returns (monitor_executor, wake_queue).
+
+        Args:
+            layer: Layer being run.
+            run_context: Run-scoped context.
+
+        Returns:
+            Tuple of (MonitorExecutor, WakeQueue).
+        """
+        from spec_manager.orchestration.coordination.monitor_executor import (
+            ConditionChecker,
+            MonitorExecutor,
+        )
+        from spec_manager.orchestration.coordination.monitors import MonitorRegistry
+        from spec_manager.orchestration.coordination.wake_queue import WakeQueue
+        from spec_manager.orchestration.coordination.work_items import WorkItemStore
+
+        workspace = self.manager.workspace_path
+        run_id = run_context.run_id if hasattr(run_context, "run_id") else self.manager.run_id
+        coordination_dir = workspace / ".pdd_runs" / run_id / "coordination"
+        coordination_dir.mkdir(parents=True, exist_ok=True)
+
+        work_item_store = WorkItemStore(coordination_dir)
+        wake_queue = WakeQueue(coordination_dir)
+        monitor_registry = MonitorRegistry(coordination_dir)
+
+        checker = ConditionChecker(
+            workspace_root=workspace,
+            work_item_store=work_item_store,
+        )
+
+        monitor_executor = MonitorExecutor(
+            registry=monitor_registry,
+            checker=checker,
+            wake_queue=wake_queue,
+        )
+
+        return monitor_executor, wake_queue
 
     def _discover_slices(self, layer: Layer) -> list[Any]:
         """Discover work slices for a given layer.
@@ -724,15 +778,29 @@ class PddLifecycle:
 
         if layer == "l1":
             libraries_dir = self.manager.structure.libraries_dir
+            snapshot_dir = self.manager.structure.spec_snapshot_dir
             if libraries_dir.exists():
                 for lib_dir in sorted(libraries_dir.iterdir()):
                     if lib_dir.is_dir():
+                        # Use spec_snapshot if the library dir has no code
+                        # files (e.g., only markdown analysis).  With a
+                        # WorktreeManager the path is overridden later anyway.
+                        wt = str(lib_dir)
+                        if (
+                            not any(lib_dir.rglob("*.*"))
+                            or not any(
+                                p.suffix not in {".md", ".json", ".yaml", ".yml"}
+                                for p in lib_dir.rglob("*")
+                                if p.is_file()
+                            )
+                        ) and snapshot_dir.exists():
+                            wt = str(snapshot_dir)
                         slice_refs.append(
                             SliceRef(
                                 slice_id=lib_dir.name,
                                 layer=layer,
                                 library_id=lib_dir.name,
-                                worktree_path=str(lib_dir),
+                                worktree_path=wt,
                             )
                         )
 

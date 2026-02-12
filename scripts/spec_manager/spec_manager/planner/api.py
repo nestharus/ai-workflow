@@ -29,6 +29,7 @@ Capability = Literal[
     "PLAN",  # plan synthesis (intentions / wiring / refactor)
     "UNDER_SPEC",  # resolve or block; produce constraints or questions
     "INTEGRATION_ANALYSIS",
+    "TRIAGE_SIGNAL",  # reactive triage of coordination signals
 ]
 
 
@@ -67,7 +68,7 @@ class PlanningRequest:
 class PlanningResult:
     """Outcome of a planner invocation."""
 
-    status: Literal["OK", "BLOCKED", "NEEDS_INPUT", "NOOP", "ERROR"]
+    status: Literal["OK", "BLOCKED", "NEEDS_INPUT", "NOOP", "ERROR", "WAITING"]
     outputs: dict[str, Any] = field(default_factory=dict)
     trace_id: str = ""
     error: str = ""
@@ -312,6 +313,23 @@ class Planner:
         )
         result = self.plan(req)
         return result.outputs
+
+    def triage_signal(
+        self,
+        context: PlanningContext,
+        signal: dict[str, Any],
+    ) -> PlanningResult:
+        """Triage a coordination signal from a halted agent.
+
+        The planner searches work items, classifies the need, and returns
+        routing decisions + monitor specs.
+        """
+        req = PlanningRequest(
+            capability="TRIAGE_SIGNAL",
+            context=context,
+            inputs={"signal": signal},
+        )
+        return self.plan(req)
 
 
 # ---------------------------------------------------------------------------

@@ -197,11 +197,6 @@ class ImplementorOutput:
     under_spec_events: list[UnderSpecEvent] = field(default_factory=list)
     notes_md: str = ""
 
-    # Legacy fields (for backward compatibility during migration)
-    body: str = ""
-    imports_needed: list[str] = field(default_factory=list)
-    gaps: list[str] = field(default_factory=list)
-
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ImplementorOutput:
         ft = d.get("function_target")
@@ -213,12 +208,4 @@ class ImplementorOutput:
             tests=[TestArtifact.from_dict(t) for t in d.get("tests", [])],
             under_spec_events=[UnderSpecEvent.from_dict(e) for e in d.get("under_spec_events", [])],
             notes_md=d.get("notes_md", d.get("notes", "")),
-            body=d.get("body", ""),
-            imports_needed=d.get("imports_needed", []),
-            gaps=d.get("gaps", []),
         )
-
-    @property
-    def is_legacy_format(self) -> bool:
-        """True if output uses legacy {body, imports_needed} format."""
-        return bool(self.body) and not self.edits

@@ -21,6 +21,7 @@ from spec_manager.orchestration.evidence import (
 from spec_manager.orchestration.promotion_loop import (
     AnalyzeStep,
     CollectBaselineStep,
+    CoordinateStep,
     GapExplorationStep,
     ImplementStep,
     IntegrateStep,
@@ -32,7 +33,6 @@ from spec_manager.orchestration.promotion_loop import (
     SliceRef,
     SliceResult,
     StepResult,
-    UnderSpecCheckStep,
     VerifyStep,
 )
 
@@ -232,9 +232,9 @@ class TestPlanStep:
         assert result.status == "OK"
         assert bundle.plan.intentions == []
 
-    def test_gaps_produce_intentions(self) -> None:
-        """PlanStep creates intentions from open gaps."""
-        ctx = SliceContext()
+    def test_l1_gaps_return_noop(self) -> None:
+        """PlanStep with L1 layer returns no-op (empty intentions)."""
+        ctx = SliceContext(layer="l1")
         bundle = EvidenceBundle()
         bundle.gaps = GapReportRef(
             open_gaps=[
@@ -247,9 +247,26 @@ class TestPlanStep:
         result = step.run(ctx, bundle)
 
         assert result.status == "OK"
+        assert bundle.plan.intentions == []
+
+    def test_l2_gaps_produce_intentions(self) -> None:
+        """PlanStep creates wiring intentions from L2 gaps."""
+        ctx = SliceContext(layer="l2")
+        bundle = EvidenceBundle()
+        bundle.gaps = GapReportRef(
+            open_gaps=[
+                {"file": "a.py", "description": "missing wiring", "component_id": "comp-1"},
+                {"file": "b.py", "description": "unconsumed pin", "component_id": "comp-2"},
+            ]
+        )
+
+        step = PlanStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "OK"
         assert len(bundle.plan.intentions) == 2
         assert bundle.plan.intentions[0]["target_file"] == "a.py"
-        assert "stub function" in bundle.plan.intentions[0]["approach"]
+        assert "Wire:" in bundle.plan.intentions[0]["approach"]
 
 
 # ======================================================================
@@ -286,26 +303,26 @@ class TestImplementStep:
 
 
 # ======================================================================
-# UnderSpecCheckStep
+# CoordinateStep (L2/L3 under-spec resolution path)
 # ======================================================================
 
 
-class TestUnderSpecCheckStep:
-    """Tests for UnderSpecCheckStep.run()."""
+class TestCoordinateStepUnderSpec:
+    """Tests for CoordinateStep L2/L3 under-spec resolution."""
 
     def test_no_events_returns_ok(self) -> None:
-        """UnderSpecCheckStep with no under-spec events returns OK."""
-        ctx = SliceContext()
+        """CoordinateStep with no under-spec events returns OK."""
+        ctx = SliceContext(layer="l2")
         bundle = EvidenceBundle()
         bundle.implementation = ImplementationRef(under_spec_events=[])
 
-        step = UnderSpecCheckStep()
+        step = CoordinateStep()
         result = step.run(ctx, bundle)
 
         assert result.status == "OK"
 
     def test_covered_events_return_ok(self, tmp_path: Path) -> None:
-        """UnderSpecCheckStep with constraint-covered events returns OK."""
+        """CoordinateStep (L2) with constraint-covered events returns OK."""
         import json
 
         # Pre-create constraints that cover the event
@@ -327,7 +344,7 @@ class TestUnderSpecCheckStep:
             encoding="utf-8",
         )
 
-        ctx = SliceContext(slice_id="test-slice", workspace_root=str(tmp_path))
+        ctx = SliceContext(slice_id="test-slice", workspace_root=str(tmp_path), layer="l2")
         bundle = EvidenceBundle()
         bundle.implementation = ImplementationRef(
             under_spec_events=[
@@ -335,7 +352,7 @@ class TestUnderSpecCheckStep:
             ]
         )
 
-        step = UnderSpecCheckStep()
+        step = CoordinateStep()
         result = step.run(ctx, bundle)
 
         assert result.status == "OK"
@@ -345,12 +362,13 @@ class TestUnderSpecCheckStep:
         side_effect=RuntimeError("No LLM in test"),
     )
     def test_uncovered_events_return_blocked(self, _mock_agent, tmp_path: Path) -> None:
-        """UnderSpecCheckStep with no matching constraints returns BLOCKED."""
+        """CoordinateStep (L2) with no matching constraints returns BLOCKED."""
 
         ctx = SliceContext(
             slice_id="test-slice",
             workspace_root=str(tmp_path),
             mode="auto",
+            layer="l2",
         )
         bundle = EvidenceBundle()
         bundle.implementation = ImplementationRef(
@@ -359,7 +377,7 @@ class TestUnderSpecCheckStep:
             ]
         )
 
-        step = UnderSpecCheckStep()
+        step = CoordinateStep()
         result = step.run(ctx, bundle)
 
         assert result.status == "BLOCKED"
@@ -671,3 +689,316 @@ class TestPromotionLoopRunSlices:
         assert len(results) == 2
         assert results[0].status == "FAILED"
         assert results[1].status == "FAILED"
+
+
+# ======================================================================
+# CoordinateStep
+# ======================================================================
+
+
+class TestCoordinateStep:
+    """Tests for CoordinateStep."""
+
+    def test_no_under_spec_events_returns_ok(self) -> None:
+        """CoordinateStep with no under-spec events returns OK for L1."""
+        ctx = SliceContext(layer="l1")
+        bundle = EvidenceBundle()
+        bundle.implementation = ImplementationRef(under_spec_events=[])
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "OK"
+
+    def test_l1_with_signals_returns_waiting(self, tmp_path: Path) -> None:
+        """CoordinateStep with under-spec events on L1 returns WAITING."""
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-1",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[
+                {"kind": "MISSING_CONSTRAINT", "question": "What format for output?"}
+            ]
+        )
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "WAITING"
+
+    def test_l1_with_planner_calls_triage(self, tmp_path: Path) -> None:
+        """CoordinateStep invokes planner.triage_signal for L1 signals."""
+        planner = MagicMock()
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-1",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[{"kind": "AMBIGUITY", "question": "Which API version?"}]
+        )
+
+        step = CoordinateStep(planner=planner)
+        result = step.run(ctx, bundle)
+
+        assert result.status == "WAITING"
+        assert planner.triage_signal.call_count == 1
+
+    def test_l1_writes_signals_to_iteration_dir(self, tmp_path: Path) -> None:
+        """CoordinateStep writes signals.json to iteration directory."""
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-1",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[{"kind": "MISSING_CONSTRAINT", "question": "What format?"}]
+        )
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "WAITING"
+        # Verify signals.json was written
+        iteration_dir = bundle.iter_dir(tmp_path)
+        signals_path = iteration_dir / "signals.json"
+        assert signals_path.exists()
+
+    @patch(
+        "spec_manager.refinement.interactive.research.coordinator.run_agent",
+        side_effect=RuntimeError("No LLM in test"),
+    )
+    def test_l2_delegates_to_under_spec(self, _mock_agent, tmp_path: Path) -> None:
+        """CoordinateStep for L2 uses existing under-spec logic."""
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l2",
+            workspace_root=str(tmp_path),
+            mode="auto",
+        )
+        bundle = EvidenceBundle()
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[
+                {"event_id": "evt-1", "kind": "MISSING_CONSTRAINT", "question": "What should X do?"}
+            ]
+        )
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        # L2/L3 uses UnderSpecManager which blocks on unresolvable events
+        assert result.status == "BLOCKED"
+        assert "unresolvable" in result.error
+        assert bundle.status == "BLOCKED"
+
+    def test_l3_no_events_returns_ok(self) -> None:
+        """CoordinateStep with no events for L3 returns OK."""
+        ctx = SliceContext(layer="l3")
+        bundle = EvidenceBundle()
+        bundle.implementation = ImplementationRef(under_spec_events=[])
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "OK"
+
+
+# ======================================================================
+# ImplementStep L1 without intentions
+# ======================================================================
+
+
+class TestImplementStepL1NoIntentions:
+    """Tests for ImplementStep L1 running without plan intentions."""
+
+    def test_l1_runs_without_intentions(self, tmp_path: Path) -> None:
+        """ImplementStep for L1 proceeds even with empty intentions."""
+        slice_root = tmp_path / "slice"
+        slice_root.mkdir()
+        (slice_root / "main.py").write_text("# SPEC: implement greeting\ndef greet(): pass")
+
+        ctx = SliceContext(
+            layer="l1",
+            slice_root=str(slice_root),
+            workspace_root=str(tmp_path),
+            run_id="run-1",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-1",
+            slice_id="test",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.plan = PlanRef(intentions=[])  # no intentions
+
+        step = ImplementStep()
+        result = step.run(ctx, bundle)
+
+        # L1 should still attempt implementation even with no intentions
+        assert result.status == "OK"
+        assert isinstance(bundle.implementation, ImplementationRef)
+
+    def test_l2_skips_without_intentions(self) -> None:
+        """ImplementStep for L2 returns early with no intentions."""
+        ctx = SliceContext(layer="l2")
+        bundle = EvidenceBundle()
+        bundle.plan = PlanRef(intentions=[])
+
+        step = ImplementStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "OK"
+        assert bundle.implementation.applied_edits == []
+
+
+# ======================================================================
+# StepResult and SliceResult with WAITING
+# ======================================================================
+
+
+class TestWaitingStatus:
+    """Tests for WAITING status in StepResult and SliceResult."""
+
+    def test_step_result_waiting(self) -> None:
+        """StepResult supports WAITING status."""
+        sr = StepResult(status="WAITING")
+        assert sr.status == "WAITING"
+
+    def test_slice_result_waiting(self) -> None:
+        """SliceResult supports WAITING status with pending_signals and wake_count."""
+        sr = SliceResult(
+            slice_id="test",
+            status="WAITING",
+            pending_signals=[{"question": "What?", "kind": "AMBIGUITY"}],
+            wake_count=2,
+        )
+        assert sr.status == "WAITING"
+        assert len(sr.pending_signals) == 1
+        assert sr.wake_count == 2
+
+    def test_slice_result_defaults(self) -> None:
+        """SliceResult defaults have empty pending_signals and zero wake_count."""
+        sr = SliceResult()
+        assert sr.pending_signals == []
+        assert sr.wake_count == 0
+
+
+# ======================================================================
+# PromotionLoop handles WAITING
+# ======================================================================
+
+
+class WaitingStep:
+    """A step that returns WAITING status."""
+
+    name = "WAITING_STEP"
+
+    def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[{"kind": "MISSING_CONSTRAINT", "question": "What should X do?"}]
+        )
+        return StepResult(status="WAITING")
+
+
+class TestPromotionLoopWaiting:
+    """Tests for PromotionLoop.run_slice() with WAITING steps."""
+
+    def test_returns_waiting(self, tmp_path: Path) -> None:
+        """run_slice() with WAITING step returns WAITING status."""
+        slice_root = tmp_path / "slice"
+        slice_root.mkdir()
+
+        loop = PromotionLoop(
+            workspace_root=tmp_path,
+            steps=[WaitingStep()],
+        )
+
+        slice_ref = SliceRef(
+            slice_id="auth",
+            layer="l1",
+            worktree_path=str(slice_root),
+        )
+        run_ctx = RunContext(
+            run_id="run-1",
+            workspace_root=str(tmp_path),
+            max_iterations=10,
+        )
+
+        result = loop.run_slice(slice_ref, run_ctx)
+
+        assert result.status == "WAITING"
+        assert result.iterations == 1
+        assert result.wake_count == 1
+        assert len(result.pending_signals) == 1
+        assert result.pending_signals[0]["question"] == "What should X do?"
+
+    def test_waiting_does_not_count_for_stagnation(self, tmp_path: Path) -> None:
+        """WAITING iterations should not be appended to gap_history for stagnation."""
+        slice_root = tmp_path / "slice"
+        slice_root.mkdir()
+
+        # A WAITING step returns early from the loop, so gap_history doesn't grow.
+        # This means a slice that goes WAITING repeatedly won't trigger stagnation.
+        loop = PromotionLoop(
+            workspace_root=tmp_path,
+            steps=[WaitingStep()],
+        )
+
+        slice_ref = SliceRef(
+            slice_id="auth",
+            layer="l1",
+            worktree_path=str(slice_root),
+        )
+        run_ctx = RunContext(
+            run_id="run-1",
+            workspace_root=str(tmp_path),
+            max_iterations=10,
+        )
+
+        result = loop.run_slice(slice_ref, run_ctx)
+
+        # WAITING returns immediately — no stagnation possible
+        assert result.status == "WAITING"
+        assert result.iterations == 1
+
+
+# ======================================================================
+# RunContext.max_wait_cycles
+# ======================================================================
+
+
+class TestRunContextMaxWaitCycles:
+    """Tests for max_wait_cycles on RunContext."""
+
+    def test_default_max_wait_cycles(self) -> None:
+        """RunContext has max_wait_cycles=10 by default."""
+        ctx = RunContext()
+        assert ctx.max_wait_cycles == 10
+
+    def test_custom_max_wait_cycles(self) -> None:
+        """RunContext allows custom max_wait_cycles."""
+        ctx = RunContext(max_wait_cycles=5)
+        assert ctx.max_wait_cycles == 5

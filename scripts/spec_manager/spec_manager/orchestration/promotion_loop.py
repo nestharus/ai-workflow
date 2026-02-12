@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 class StepResult:
     """Result of running a single loop step."""
 
-    status: Literal["OK", "RETRY", "BLOCKED", "FAIL"] = "OK"
+    status: Literal["OK", "RETRY", "BLOCKED", "FAIL", "WAITING"] = "OK"
     bundle_path: str = ""
     emitted_tickets: list[DemotionTicket] = field(default_factory=list)
     notes_path: str | None = None
@@ -103,6 +103,7 @@ class RunContext:
     max_iterations_by_layer: dict[str, int] = field(
         default_factory=lambda: {"l1": 20, "l2": 30, "l3": 15}
     )
+    max_wait_cycles: int = 10
     config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -126,11 +127,15 @@ class SliceResult:
     """Final result of running the promotion loop on one slice."""
 
     slice_id: str = ""
-    status: Literal["COMPLETE", "BLOCKED", "FAILED", "MAX_ITERATIONS", "STAGNATED"] = "COMPLETE"
+    status: Literal["COMPLETE", "BLOCKED", "FAILED", "MAX_ITERATIONS", "STAGNATED", "WAITING"] = (
+        "COMPLETE"
+    )
     iterations: int = 0
     remaining_gaps: int = 0
     demotion_tickets: list[DemotionTicket] = field(default_factory=list)
     blocked_questions: list[str] = field(default_factory=list)
+    pending_signals: list[dict] = field(default_factory=list)
+    wake_count: int = 0
     error: str = ""
 
 
@@ -218,11 +223,9 @@ class GapExplorationStep:
             for ev in report.all_evidence:
                 gaps.append(
                     {
-                        "file": str(ev.file_path) if hasattr(ev, "file_path") else "",
-                        "description": str(ev.description)
-                        if hasattr(ev, "description")
-                        else str(ev),
-                        "kind": ev.kind.value if hasattr(ev, "kind") else "unknown",
+                        "file": ev.location or "",
+                        "description": ev.description,
+                        "kind": ev.invariant_family,
                     }
                 )
 
@@ -476,7 +479,7 @@ class PlanStep:
     that block the slice before implementation begins.
 
     When a *planner* is provided, routes plan generation through the
-    planner module instead of the static _plan_l1/_plan_l2/_plan_l3
+    planner module instead of the static _plan_l2/_plan_l3
     methods.  The planner provides richer context-aware planning
     including integration analysis and constraint checking.
     """
@@ -494,11 +497,15 @@ class PlanStep:
             bundle.plan = PlanRef(intentions=[])
             return StepResult(status="OK")
 
-        # Route through planner if available
+        # L1: no-op — agents implement directly from spec comments/gaps,
+        # no planner-generated intentions needed.
+        if ctx.layer == "l1":
+            bundle.plan = PlanRef(intentions=[])
+            return StepResult(status="OK")
+
+        # Route through planner if available (L2/L3 only)
         if self._planner is not None:
             intentions = self._plan_via_planner(ctx, bundle)
-        elif ctx.layer == "l1":
-            intentions = self._plan_l1(bundle.gaps.open_gaps)
         elif ctx.layer == "l2":
             intentions = self._plan_l2(bundle.gaps.open_gaps)
         elif ctx.layer == "l3":
@@ -550,21 +557,6 @@ class PlanStep:
             bundle_ref=bundle,
         )
         return self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
-
-    @staticmethod
-    def _plan_l1(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """L1: each gap becomes a function implementation intention."""
-        intentions = []
-        for gap in gaps:
-            intentions.append(
-                {
-                    "gap_id": gap.get("file", "unknown"),
-                    "target_file": gap.get("file", ""),
-                    "approach": f"Implement: {gap.get('description', '')}",
-                    "acceptance_criteria": "Gap resolved, tests pass",
-                }
-            )
-        return intentions
 
     @staticmethod
     def _plan_l2(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -630,7 +622,9 @@ class ImplementStep:
         """Dispatch to layer-specific implementation."""
         from spec_manager.orchestration.evidence import ImplementationRef
 
-        if not bundle.plan.intentions:
+        # L1 runs even without intentions (uses gaps directly).
+        # L2/L3 need explicit intentions from the planner.
+        if ctx.layer != "l1" and not bundle.plan.intentions:
             bundle.implementation = ImplementationRef()
             return StepResult(status="OK")
 
@@ -847,26 +841,94 @@ class ImplementStep:
         return StepResult(status="OK")
 
 
-class UnderSpecCheckStep:
-    """Check for under-specification and block if unresolvable.
+class CoordinateStep:
+    """Coordinate agent dependencies via reactive planner triage.
 
-    Delegates to :class:`UnderSpecManager` which:
-    1. Checks existing constraints for coverage.
-    2. Attempts resolution (interactive or auto).
-    3. Validates any new constraints.
-    4. Returns resolved/blocked partition.
+    For L1: treats under_spec_events as coordination signals,
+    calls planner triage, registers monitors, returns WAITING.
 
-    When a *planner* is provided, the planner is injected into the
-    UnderSpecManager as the resolution strategy.
+    For L2/L3: delegates to existing UnderSpecManager behavior.
     """
 
-    name = "UNDER_SPEC_CHECK"
+    name = "COORDINATE"
 
     def __init__(self, planner: Any = None) -> None:
         self._planner = planner
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Check for under-specification events from implementation."""
+        """Dispatch to L1 coordination or L2/L3 under-spec resolution."""
+        if ctx.layer == "l1":
+            return self._coordinate_l1(ctx, bundle)
+        # L2/L3: existing under-spec behavior
+        return self._resolve_under_spec(ctx, bundle)
+
+    def _coordinate_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L1: convert under_spec_events to CoordinationSignals and triage.
+
+        If no signals/under_spec_events: return OK.
+        Otherwise: write signals to iteration dir and return WAITING.
+        """
+        from spec_manager.orchestration.coordination.signals import CoordinationSignal
+
+        raw_events = bundle.implementation.under_spec_events
+        if not raw_events:
+            return StepResult(status="OK")
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        # Convert under_spec_events to CoordinationSignals
+        signals: list[CoordinationSignal] = []
+        for event in raw_events:
+            # Map under-spec event kinds to signal classifications
+            kind = event.get("kind", "AMBIGUOUS_SPEC")
+            classification_map = {
+                "MISSING_CONSTRAINT": "MISSING_INTERFACE",
+                "AMBIGUITY": "AMBIGUOUS_SPEC",
+                "CONFLICTING": "CONFLICTING_REQUIREMENTS",
+                "INTERFACE_MISMATCH": "INTERFACE_MISMATCH",
+            }
+            classification = classification_map.get(kind, "AMBIGUOUS_SPEC")
+
+            from spec_manager.orchestration.coordination.signals import (
+                SignalNeed,
+                SpecRef,
+            )
+
+            signal = CoordinationSignal(
+                run_id=ctx.run_id,
+                layer=ctx.layer,
+                slice_id=ctx.slice_id,
+                classification=classification,
+                need=SignalNeed(
+                    summary=event.get("question", ""),
+                    artifact_type=event.get("kind", ""),
+                ),
+                spec_refs=[SpecRef(spec_text=event.get("context", ""))]
+                if event.get("context")
+                else [],
+            )
+            signals.append(signal)
+
+        # If planner available: triage each signal
+        if self._planner is not None:
+            for signal in signals:
+                try:
+                    self._planner.triage_signal(signal)
+                except Exception as exc:
+                    logger.debug("Planner triage failed for signal %s: %s", signal.signal_id, exc)
+
+        # Write signals to iteration dir
+        iteration_dir = bundle.iter_dir(workspace)
+        for signal in signals:
+            signal.write_to(iteration_dir)
+
+        return StepResult(status="WAITING")
+
+    def _resolve_under_spec(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L2/L3: resolve under-spec events via UnderSpecManager.
+
+        Delegates to UnderSpecManager for constraint resolution.
+        """
         raw_events = bundle.implementation.under_spec_events
 
         if not raw_events:
@@ -2008,7 +2070,7 @@ DEFAULT_STEPS: list[type] = [
     GapExplorationStep,
     PlanStep,
     ImplementStep,
-    UnderSpecCheckStep,
+    CoordinateStep,
     AnalyzeStep,
     PromoteStep,
     IntegrateStep,
@@ -2056,7 +2118,7 @@ class PromotionLoop:
             for step_cls in DEFAULT_STEPS:
                 if step_cls is IntegrateStep:
                     self._steps.append(step_cls(worktree_manager=self._wm))
-                elif step_cls is PlanStep or step_cls is UnderSpecCheckStep:
+                elif step_cls in (PlanStep, CoordinateStep):
                     self._steps.append(step_cls(planner=self._planner))
                 else:
                     self._steps.append(step_cls())
@@ -2101,10 +2163,12 @@ class PromotionLoop:
 
         all_tickets: list[DemotionTicket] = []
         iteration = 0
+        waiting_iterations = 0
 
         # Stagnation detection: track gap counts over iterations.
         # Uses a sliding window — if min gap count over the last N iterations
         # hasn't improved compared to the N iterations before that, it's stagnated.
+        # WAITING iterations are excluded from stagnation detection.
         gap_history: list[int] = []
         stagnation_window = 3
 
@@ -2128,6 +2192,7 @@ class PromotionLoop:
             )
 
             retry = False
+            waiting = False
 
             for step in self._steps:
                 logger.debug("Running step: %s", step.name)
@@ -2166,6 +2231,11 @@ class PromotionLoop:
                                 error=f"Per-ticket retry budget exceeded for gate={tracker_key[1]}",
                             )
 
+                if result.status == "WAITING":
+                    # Slice needs coordination — save bundle and return WAITING
+                    waiting = True
+                    break
+
                 if result.status == "BLOCKED":
                     # Slice is blocked — return with blocked status
                     questions = []
@@ -2194,7 +2264,26 @@ class PromotionLoop:
                         error=result.error,
                     )
 
-            # Stagnation detection runs on EVERY iteration (including retries).
+            # Handle WAITING: save bundle and return to scheduler
+            if waiting:
+                waiting_iterations += 1
+                bundle.save(Path(run_context.workspace_root))
+                # Collect pending signal info from bundle
+                pending = [
+                    {"question": e.get("question", ""), "kind": e.get("kind", "")}
+                    for e in (bundle.implementation.under_spec_events or [])
+                ]
+                return SliceResult(
+                    slice_id=ctx.slice_id,
+                    status="WAITING",
+                    iterations=iteration,
+                    remaining_gaps=len(bundle.gaps.open_gaps),
+                    demotion_tickets=all_tickets,
+                    pending_signals=pending,
+                    wake_count=waiting_iterations,
+                )
+
+            # Stagnation detection runs on EVERY non-WAITING iteration (including retries).
             # Uses sliding window: compare min(recent window) vs min(previous window).
             # If the recent window minimum hasn't improved, the slice is stagnated.
             remaining = len(bundle.gaps.open_gaps)
@@ -2264,7 +2353,7 @@ class PromotionLoop:
     ) -> list[SliceResult]:
         """Run the promotion loop on multiple slices sequentially.
 
-        TODO: Add parallelism via PromotionScheduler (Step 7).
+        For parallel execution, use ReactivePromotionScheduler instead.
 
         Args:
             slice_refs: Slices to process.

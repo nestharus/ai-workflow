@@ -281,6 +281,11 @@ class WorkspaceManager:
         for path in snapshot_dir.rglob("*"):
             if path.is_symlink() or not path.is_file():
                 continue
+            # Skip binary files — spec manager operates on text source files
+            try:
+                path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
             rel_paths.append(path.relative_to(snapshot_dir).as_posix())
 
         for relpath in sorted(rel_paths):

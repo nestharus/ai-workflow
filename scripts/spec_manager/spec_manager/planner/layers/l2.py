@@ -299,6 +299,10 @@ class L2Planner:
         # Cannot resolve at this layer.
         return None
 
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        """Triage a coordination signal.  L2 defers — returns NOOP."""
+        return {"action": "NOOP", "monitors": []}
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers

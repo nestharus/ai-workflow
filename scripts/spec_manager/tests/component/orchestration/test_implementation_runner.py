@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from spec_manager.orchestration.coordination.signals import CoordinationSignal
 from spec_manager.orchestration.implementation.runner import (
     ImplementationRunner,
     ImplementationRunResult,
+    _classify_under_spec,
 )
 from spec_manager.orchestration.implementation.types import (
     EdgeProposal,
@@ -13,19 +15,6 @@ from spec_manager.orchestration.implementation.types import (
     TestArtifact,
     UnderSpecEvent,
 )
-
-
-class MockFunc:
-    def __init__(
-        self,
-        body_start_line: int,
-        line_end: int,
-        qualified_name: str = "test_func",
-    ) -> None:
-        self.body_start_line = body_start_line
-        self.line_end = line_end
-        self.qualified_name = qualified_name
-
 
 # ======================================================================
 # ImplementationRunResult
@@ -40,11 +29,17 @@ class TestImplementationRunResult:
         assert r.pin_proposals == []
         assert r.edge_proposals == []
         assert r.under_spec_events == []
+        assert r.signals == []
         assert r.tests_added == []
         assert r.notes_path == ""
         assert r.functions_implemented == 0
         assert r.functions_skipped == 0
         assert r.errors == []
+
+    def test_signals_field_exists(self) -> None:
+        r = ImplementationRunResult()
+        assert isinstance(r.signals, list)
+        assert r.signals == []
 
     def test_list_fields_not_shared(self) -> None:
         r1 = ImplementationRunResult()
@@ -53,12 +48,14 @@ class TestImplementationRunResult:
         r1.pin_proposals.append({"pin": "p"})
         r1.edge_proposals.append({"edge": "e"})
         r1.under_spec_events.append({"kind": "k"})
+        r1.signals.append({"signal_id": "s"})
         r1.tests_added.append("t.py")
         r1.errors.append({"error": "e"})
         assert r2.applied_edits == []
         assert r2.pin_proposals == []
         assert r2.edge_proposals == []
         assert r2.under_spec_events == []
+        assert r2.signals == []
         assert r2.tests_added == []
         assert r2.errors == []
 
@@ -75,152 +72,35 @@ class TestImplementationRunResult:
 
 
 # ======================================================================
-# _apply_function_body
+# _classify_under_spec
 # ======================================================================
 
 
-class TestApplyFunctionBody:
-    def test_body_replacement_preserves_surrounding_code(self) -> None:
-        lines = [
-            "import os\n",
-            "\n",
-            "def test_func():\n",
-            "    pass\n",
-            "\n",
-            "x = 1\n",
-        ]
-        func = MockFunc(body_start_line=4, line_end=4)
-        new_body = "    return 42\n"
+class TestClassifyUnderSpec:
+    def test_missing_constraint_maps_to_ambiguous_spec(self) -> None:
+        event = UnderSpecEvent(kind="MISSING_CONSTRAINT", question="Q")
+        assert _classify_under_spec(event) == "AMBIGUOUS_SPEC"
 
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
+    def test_conflicting_constraints_maps_to_conflicting_requirements(self) -> None:
+        event = UnderSpecEvent(kind="CONFLICTING_CONSTRAINTS", question="Q")
+        assert _classify_under_spec(event) == "CONFLICTING_REQUIREMENTS"
 
-        assert result[0] == "import os\n"
-        assert result[1] == "\n"
-        assert result[2] == "def test_func():\n"
-        assert result[3] == "    return 42\n"
-        assert result[4] == "\n"
-        assert result[5] == "x = 1\n"
+    def test_external_dep_unknown_maps_to_missing_interface(self) -> None:
+        event = UnderSpecEvent(kind="EXTERNAL_DEP_UNKNOWN", question="Q")
+        assert _classify_under_spec(event) == "MISSING_INTERFACE"
 
-    def test_multi_line_body_replacement(self) -> None:
-        lines = [
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=2, line_end=2)
-        new_body = "    x = 1\n    y = 2\n    return x + y\n"
+    def test_needs_product_decision_maps_to_ambiguous_spec(self) -> None:
+        event = UnderSpecEvent(kind="NEEDS_PRODUCT_DECISION", question="Q")
+        assert _classify_under_spec(event) == "AMBIGUOUS_SPEC"
 
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
+    def test_needs_api_decision_maps_to_missing_interface(self) -> None:
+        event = UnderSpecEvent(kind="NEEDS_API_DECISION", question="Q")
+        assert _classify_under_spec(event) == "MISSING_INTERFACE"
 
-        assert result[0] == "def func():\n"
-        assert result[1] == "    x = 1\n"
-        assert result[2] == "    y = 2\n"
-        assert result[3] == "    return x + y\n"
-
-    def test_body_without_trailing_newline(self) -> None:
-        lines = [
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=2, line_end=2)
-        new_body = "    return 0"
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
-
-        assert "    return 0\n" in result
-
-    def test_import_injection_adds_missing_imports(self) -> None:
-        lines = [
-            "import os\n",
-            "\n",
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=4, line_end=4)
-        new_body = "    return json.dumps({})\n"
-        imports = ["import json"]
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, imports)
-
-        text = "".join(result)
-        assert "import json" in text
-
-    def test_import_injection_does_not_duplicate(self) -> None:
-        lines = [
-            "import os\n",
-            "\n",
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=4, line_end=4)
-        new_body = "    return os.getcwd()\n"
-        imports = ["import os"]
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, imports)
-
-        text = "".join(result)
-        assert text.count("import os") == 1
-
-    def test_invalid_body_start_line_returns_copy(self) -> None:
-        lines = [
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=0, line_end=2)
-        new_body = "    return 1\n"
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
-
-        assert result == lines
-        assert result is not lines
-
-    def test_multiple_imports_injected(self) -> None:
-        lines = [
-            "import os\n",
-            "\n",
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=4, line_end=4)
-        new_body = "    return 1\n"
-        imports = ["import json", "import sys"]
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, imports)
-
-        text = "".join(result)
-        assert "import json" in text
-        assert "import sys" in text
-
-    def test_empty_imports_list(self) -> None:
-        lines = [
-            "def func():\n",
-            "    pass\n",
-        ]
-        func = MockFunc(body_start_line=2, line_end=2)
-        new_body = "    return 1\n"
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
-
-        assert result[0] == "def func():\n"
-        assert result[1] == "    return 1\n"
-
-    def test_replaces_multi_line_original_body(self) -> None:
-        lines = [
-            "def func():\n",
-            "    x = 1\n",
-            "    y = 2\n",
-            "    return x + y\n",
-            "\n",
-            "other = True\n",
-        ]
-        func = MockFunc(body_start_line=2, line_end=4)
-        new_body = "    return 99\n"
-
-        result = ImplementationRunner._apply_function_body(lines, func, new_body, [])
-
-        assert result[0] == "def func():\n"
-        assert result[1] == "    return 99\n"
-        assert result[2] == "\n"
-        assert result[3] == "other = True\n"
+    def test_unknown_kind_defaults_to_ambiguous_spec(self) -> None:
+        event = UnderSpecEvent(kind="MISSING_CONSTRAINT", question="Q")
+        event.kind = "TOTALLY_UNKNOWN"  # type: ignore[assignment]
+        assert _classify_under_spec(event) == "AMBIGUOUS_SPEC"
 
 
 # ======================================================================
@@ -267,6 +147,34 @@ class TestWriteArtifacts:
         assert data[0]["kind"] == "MISSING_CONSTRAINT"
         assert data[0]["question"] == "Why?"
 
+    def test_writes_signals_json(self, tmp_path: Path) -> None:
+        result = ImplementationRunResult()
+        signal = CoordinationSignal(
+            run_id="run-1",
+            layer="l1",
+            classification="AMBIGUOUS_SPEC",
+        )
+
+        ImplementationRunner._write_artifacts(
+            tmp_path, result, [], [], [], [], [], signals=[signal]
+        )
+
+        path = tmp_path / "signals.json"
+        assert path.exists()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert len(data) == 1
+        assert data[0]["run_id"] == "run-1"
+        assert data[0]["layer"] == "l1"
+        assert data[0]["classification"] == "AMBIGUOUS_SPEC"
+        assert data[0]["signal_id"]  # auto-generated
+
+    def test_skips_signals_when_empty(self, tmp_path: Path) -> None:
+        result = ImplementationRunResult()
+
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], [], [], [])
+
+        assert not (tmp_path / "signals.json").exists()
+
     def test_writes_tests_added(self, tmp_path: Path) -> None:
         result = ImplementationRunResult()
         tests = [TestArtifact(path="test_foo.py", purpose="unit test")]
@@ -301,6 +209,7 @@ class TestWriteArtifacts:
         assert not (tmp_path / "pin_proposals.json").exists()
         assert not (tmp_path / "edge_proposals.json").exists()
         assert not (tmp_path / "under_spec_events.json").exists()
+        assert not (tmp_path / "signals.json").exists()
         assert not (tmp_path / "tests_added.json").exists()
         assert not (tmp_path / "notes.md").exists()
 
@@ -319,12 +228,16 @@ class TestWriteArtifacts:
         events = [UnderSpecEvent(question="Q")]
         tests = [TestArtifact(path="t.py", purpose="p")]
         notes = ["note"]
+        signal = CoordinationSignal(run_id="run-1", layer="l1")
 
-        ImplementationRunner._write_artifacts(tmp_path, result, pins, edges, events, tests, notes)
+        ImplementationRunner._write_artifacts(
+            tmp_path, result, pins, edges, events, tests, notes, signals=[signal]
+        )
 
         assert (tmp_path / "pin_proposals.json").exists()
         assert (tmp_path / "edge_proposals.json").exists()
         assert (tmp_path / "under_spec_events.json").exists()
+        assert (tmp_path / "signals.json").exists()
         assert (tmp_path / "tests_added.json").exists()
         assert (tmp_path / "notes.md").exists()
 
@@ -335,5 +248,17 @@ class TestWriteArtifacts:
         ImplementationRunner._write_artifacts(tmp_path, result, pins, [], [], [], [])
 
         content = (tmp_path / "pin_proposals.json").read_text(encoding="utf-8")
+        assert "\n" in content
+        assert "  " in content
+
+    def test_signals_json_is_formatted(self, tmp_path: Path) -> None:
+        result = ImplementationRunResult()
+        signal = CoordinationSignal(run_id="run-1", layer="l1")
+
+        ImplementationRunner._write_artifacts(
+            tmp_path, result, [], [], [], [], [], signals=[signal]
+        )
+
+        content = (tmp_path / "signals.json").read_text(encoding="utf-8")
         assert "\n" in content
         assert "  " in content

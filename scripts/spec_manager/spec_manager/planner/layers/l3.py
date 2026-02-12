@@ -254,3 +254,7 @@ class L3Planner:
         to indicate no automatic resolution.
         """
         return None
+
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        """Triage a coordination signal.  L3 defers — returns NOOP."""
+        return {"action": "NOOP", "monitors": []}

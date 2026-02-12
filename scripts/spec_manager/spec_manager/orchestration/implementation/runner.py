@@ -21,6 +21,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from spec_manager.orchestration.coordination.signals import (
+    CoordinationSignal,
+    SignalNeed,
+    SignalProgress,
+    SpecRef,
+)
 from spec_manager.orchestration.implementation.types import (
     EdgeProposal,
     ImplementorOutput,
@@ -41,6 +47,7 @@ class ImplementationRunResult:
     pin_proposals: list[dict[str, Any]] = field(default_factory=list)
     edge_proposals: list[dict[str, Any]] = field(default_factory=list)
     under_spec_events: list[dict[str, Any]] = field(default_factory=list)
+    signals: list[dict[str, Any]] = field(default_factory=list)
     tests_added: list[str] = field(default_factory=list)
     notes_path: str = ""
     functions_implemented: int = 0
@@ -134,8 +141,6 @@ class ImplementationRunner:
                 result.errors.append({"file": file_path, "error": str(exc)})
                 continue
 
-            lines = file_content.splitlines(keepends=True)
-
             # Process bottom-up to preserve line numbers
             for func in sorted(unresolved, key=lambda f: f.line_start, reverse=True):
                 if count >= max_functions:
@@ -170,38 +175,18 @@ class ImplementationRunner:
                     # Don't apply edits for functions with under-spec
                     continue
 
-                # Apply edits
-                if output.is_legacy_format:
-                    # Legacy format: body replacement
-                    if output.body.strip():
-                        lines = self._apply_function_body(
-                            lines,
-                            func,
-                            output.body,
-                            output.imports_needed,
-                        )
-                        all_edits.append(
-                            {
-                                "function": func.qualified_name,
-                                "file": source_path.name,
-                                "method": "body_replace",
-                            }
-                        )
-                        count += 1
-                        result.functions_implemented += 1
-                else:
-                    # New format: unified diffs
-                    for edit in output.edits:
-                        all_edits.append(
-                            {
-                                "function": func.qualified_name,
-                                "file": edit.path,
-                                "method": "unified_diff",
-                                "diff": edit.unified_diff,
-                            }
-                        )
-                    count += 1
-                    result.functions_implemented += 1
+                # Apply edits (unified diffs only)
+                for edit in output.edits:
+                    all_edits.append(
+                        {
+                            "function": func.qualified_name,
+                            "file": edit.path,
+                            "method": "unified_diff",
+                            "diff": edit.unified_diff,
+                        }
+                    )
+                count += 1
+                result.functions_implemented += 1
 
                 # Collect proposals and tests
                 all_pin_proposals.extend(output.pin_proposals)
@@ -210,9 +195,27 @@ class ImplementationRunner:
                 if output.notes_md:
                     all_notes.append(output.notes_md)
 
-            # Write modified file back (for legacy body-replace mode)
-            if all_edits:
-                source_path.write_text("".join(lines), encoding="utf-8")
+        # Convert under-spec events to coordination signals
+        all_signals: list[CoordinationSignal] = []
+        for event in all_under_spec:
+            classification = _classify_under_spec(event)
+            signal = CoordinationSignal(
+                run_id=self._run_id,
+                layer="l1",
+                slice_id="",  # filled by caller
+                iteration=0,  # filled by caller
+                classification=classification,
+                need=SignalNeed(
+                    summary=event.question,
+                    artifact_key=event.needed_for or "",
+                ),
+                spec_refs=[SpecRef(spec_text=event.question)],
+                progress=SignalProgress(
+                    functions_implemented=count,
+                    functions_skipped=result.functions_skipped,
+                ),
+            )
+            all_signals.append(signal)
 
         # Write artifacts to iteration directory
         result.applied_edits = all_edits
@@ -220,6 +223,9 @@ class ImplementationRunner:
         result.edge_proposals = [e.to_dict() for e in all_edge_proposals]
         result.under_spec_events = [e.to_dict() for e in all_under_spec]
         result.tests_added = [t.path for t in all_tests]
+
+        if all_signals:
+            result.signals = [s.to_dict() for s in all_signals]
 
         # Persist artifacts as files
         self._write_artifacts(
@@ -230,6 +236,7 @@ class ImplementationRunner:
             all_under_spec,
             all_tests,
             all_notes,
+            all_signals,
         )
 
         return result
@@ -314,46 +321,6 @@ class ImplementationRunner:
         return "\n".join(parts)
 
     @staticmethod
-    def _apply_function_body(
-        lines: list[str],
-        func: Any,
-        new_body: str,
-        imports_needed: list[str],
-    ) -> list[str]:
-        """Replace a function's body with new implementation code."""
-        body_start_idx = getattr(func, "body_start_line", 0) - 1
-        if body_start_idx < 0:
-            return list(lines)
-
-        func_end_idx = func.line_end
-
-        if not new_body.endswith("\n"):
-            new_body += "\n"
-
-        new_lines = list(lines)
-        del new_lines[body_start_idx:func_end_idx]
-        body_lines = new_body.splitlines(keepends=True)
-        for k, bl in enumerate(body_lines):
-            new_lines.insert(body_start_idx + k, bl)
-
-        if imports_needed:
-            import_block = ""
-            file_text = "".join(new_lines)
-            for imp in imports_needed:
-                imp = imp.strip()
-                if imp and imp not in file_text:
-                    import_block += imp + "\n"
-            if import_block:
-                insert_idx = 0
-                for idx, line in enumerate(new_lines):
-                    if line.strip():
-                        insert_idx = idx + 1
-                        break
-                new_lines.insert(insert_idx, import_block)
-
-        return new_lines
-
-    @staticmethod
     def _write_artifacts(
         iteration_dir: Path,
         result: ImplementationRunResult,
@@ -362,6 +329,7 @@ class ImplementationRunner:
         under_spec_events: list[UnderSpecEvent],
         tests: list[TestArtifact],
         notes: list[str],
+        signals: list[CoordinationSignal] | None = None,
     ) -> None:
         """Write all implementation artifacts to the iteration directory."""
         if pin_proposals:
@@ -386,6 +354,13 @@ class ImplementationRunner:
                 encoding="utf-8",
             )
 
+        if signals:
+            path = iteration_dir / "signals.json"
+            path.write_text(
+                json.dumps([s.to_dict() for s in signals], indent=2),
+                encoding="utf-8",
+            )
+
         if tests:
             path = iteration_dir / "tests_added.json"
             path.write_text(
@@ -397,3 +372,15 @@ class ImplementationRunner:
             path = iteration_dir / "notes.md"
             path.write_text("\n\n---\n\n".join(notes), encoding="utf-8")
             result.notes_path = str(path)
+
+
+def _classify_under_spec(event: UnderSpecEvent) -> str:
+    """Map UnderSpecEvent.kind to CoordinationSignal.classification."""
+    mapping = {
+        "MISSING_CONSTRAINT": "AMBIGUOUS_SPEC",
+        "CONFLICTING_CONSTRAINTS": "CONFLICTING_REQUIREMENTS",
+        "EXTERNAL_DEP_UNKNOWN": "MISSING_INTERFACE",
+        "NEEDS_PRODUCT_DECISION": "AMBIGUOUS_SPEC",
+        "NEEDS_API_DECISION": "MISSING_INTERFACE",
+    }
+    return mapping.get(event.kind, "AMBIGUOUS_SPEC")

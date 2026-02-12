@@ -231,6 +231,85 @@ class L1Planner:
 
         return None
 
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        """Triage a coordination signal from a halted L1 agent.
+
+        Algorithm:
+        1. Search work items by spec text + artifact channel
+        2. Classify: in-progress / unrouted / underspecified
+        3. Return action + monitor specs
+
+        Returns dict with:
+        - action: "WAIT_ON_WORK_ITEM" | "ROUTE_AND_WAIT" | "EXPAND_SPEC" | "NOOP"
+        - monitors: list[dict]  (MonitorSpec-compatible dicts)
+        - routing: list[dict]  (new work items to route, if any)
+        - expansion: dict | None  (spec expansion details, if needed)
+        """
+        from spec_manager.orchestration.coordination.work_items import (
+            SearchQuery,
+            WorkItemStore,
+        )
+
+        need = signal.get("need", {})
+        spec_refs = signal.get("spec_refs", [])
+        search_hints = signal.get("search_hints", {})
+
+        query = SearchQuery(
+            spec_text=spec_refs[0]["spec_text"] if spec_refs else "",
+            artifact_key=need.get("artifact_key", ""),
+            keywords=search_hints.get("keywords", []),
+        )
+
+        workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else None
+        if not workspace_root:
+            return {"action": "NOOP", "monitors": []}
+
+        coordination_dir = workspace_root / ".pdd_runs" / ctx.run_id / "coordination"
+        store = WorkItemStore(coordination_dir)
+        results = store.search(query)
+
+        if results:
+            best = results[0]
+            if best.work_item.status in ("ASSIGNED", "IN_PROGRESS"):
+                monitor = _build_work_item_monitor(
+                    signal=signal,
+                    work_item_dict=best.work_item.to_dict(),
+                    ctx=ctx,
+                )
+                return {
+                    "action": "WAIT_ON_WORK_ITEM",
+                    "monitors": [monitor],
+                    "matched_work_item": best.work_item.to_dict(),
+                }
+            elif best.work_item.status in ("MERGED", "DONE"):
+                return {
+                    "action": "WAKE_IMMEDIATELY",
+                    "monitors": [],
+                    "matched_work_item": best.work_item.to_dict(),
+                }
+
+        spec_match = _search_spec_catalog(workspace_root, need, spec_refs)
+        if spec_match:
+            new_work_item = _create_work_item_from_spec(spec_match, ctx)
+            monitor = _build_git_symbol_monitor(
+                signal=signal,
+                need=need,
+                ctx=ctx,
+            )
+            return {
+                "action": "ROUTE_AND_WAIT",
+                "monitors": [monitor],
+                "routing": [new_work_item],
+            }
+
+        expansion = _build_expansion(signal, need, ctx)
+        monitor = _build_expansion_monitor(signal, expansion, ctx)
+        return {
+            "action": "EXPAND_SPEC",
+            "monitors": [monitor],
+            "expansion": expansion,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -385,3 +464,120 @@ def _match_gap_to_node(
             return fn
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Triage helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_work_item_monitor(
+    signal: dict[str, Any],
+    work_item_dict: dict[str, Any],
+    ctx: Any,
+) -> dict[str, Any]:
+    """Build a MonitorSpec-compatible dict that watches a work item for completion."""
+    return {
+        "kind": "work_item_status",
+        "work_item_id": work_item_dict.get("work_item_id", ""),
+        "target_statuses": ["MERGED", "DONE"],
+        "signal_id": signal.get("signal_id", ""),
+        "run_id": getattr(ctx, "run_id", ""),
+        "timeout_seconds": 3600,
+    }
+
+
+def _build_git_symbol_monitor(
+    signal: dict[str, Any],
+    need: dict[str, Any],
+    ctx: Any,
+) -> dict[str, Any]:
+    """Build a MonitorSpec-compatible dict that watches for a symbol to appear."""
+    return {
+        "kind": "symbol_available",
+        "artifact_key": need.get("artifact_key", ""),
+        "signal_id": signal.get("signal_id", ""),
+        "run_id": getattr(ctx, "run_id", ""),
+        "timeout_seconds": 3600,
+    }
+
+
+def _build_expansion_monitor(
+    signal: dict[str, Any],
+    expansion: dict[str, Any],
+    ctx: Any,
+) -> dict[str, Any]:
+    """Build a MonitorSpec-compatible dict that watches for spec expansion."""
+    return {
+        "kind": "spec_expanded",
+        "expansion_id": expansion.get("expansion_id", ""),
+        "signal_id": signal.get("signal_id", ""),
+        "run_id": getattr(ctx, "run_id", ""),
+        "timeout_seconds": 7200,
+    }
+
+
+def _search_spec_catalog(
+    workspace_root: Path,
+    need: dict[str, Any],
+    spec_refs: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Search for matching spec text in workspace slice files.
+
+    Scans .py and .md files under the workspace for spec comment blocks
+    that mention the needed artifact.  Returns a match dict on success,
+    None if nothing found.
+    """
+    artifact_key = need.get("artifact_key", "")
+    if not artifact_key:
+        return None
+
+    search_term = artifact_key.lower()
+    for path in sorted(workspace_root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix not in _TEXT_SUFFIXES:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if search_term in content.lower():
+            rel = str(path.relative_to(workspace_root))
+            return {
+                "file": rel,
+                "artifact_key": artifact_key,
+                "matched_in": "spec_catalog_scan",
+            }
+
+    return None
+
+
+def _create_work_item_from_spec(
+    spec_match: dict[str, Any],
+    ctx: Any,
+) -> dict[str, Any]:
+    """Create a work-item dict from a spec catalog match."""
+    return {
+        "spec_text": f"Implement {spec_match.get('artifact_key', '')}",
+        "file": spec_match.get("file", ""),
+        "owner_slice_id": getattr(ctx, "slice_id", ""),
+        "status": "NEW",
+    }
+
+
+def _build_expansion(
+    signal: dict[str, Any],
+    need: dict[str, Any],
+    ctx: Any,
+) -> dict[str, Any]:
+    """Build a spec expansion request for underspecified needs."""
+    import uuid as _uuid
+
+    return {
+        "expansion_id": _uuid.uuid4().hex[:12],
+        "artifact_key": need.get("artifact_key", ""),
+        "reason": need.get("reason", "underspecified"),
+        "signal_id": signal.get("signal_id", ""),
+        "slice_id": getattr(ctx, "slice_id", ""),
+    }

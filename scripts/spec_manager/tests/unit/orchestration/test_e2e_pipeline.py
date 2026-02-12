@@ -1499,11 +1499,13 @@ class TestDemotionBudget:
 
         mock_sched_result = MagicMock()
         mock_sched_result.slice_results = [mock_slice_result]
+        mock_sched_result.all_complete = True
+        mock_sched_result.waiting_slices = []
 
         with (
             patch("spec_manager.orchestration.promotion_loop.PromotionLoop"),
             patch(
-                "spec_manager.orchestration.promotion_scheduler.PromotionScheduler"
+                "spec_manager.orchestration.promotion_scheduler.ReactivePromotionScheduler"
             ) as mock_sched_cls,
         ):
             mock_sched_cls.return_value.run.return_value = mock_sched_result
@@ -1543,11 +1545,13 @@ class TestDemotionBudget:
 
         mock_sched_result = MagicMock()
         mock_sched_result.slice_results = mock_results
+        mock_sched_result.all_complete = True
+        mock_sched_result.waiting_slices = []
 
         with (
             patch("spec_manager.orchestration.promotion_loop.PromotionLoop"),
             patch(
-                "spec_manager.orchestration.promotion_scheduler.PromotionScheduler"
+                "spec_manager.orchestration.promotion_scheduler.ReactivePromotionScheduler"
             ) as mock_sched_cls,
         ):
             mock_sched_cls.return_value.run.return_value = mock_sched_result
@@ -1602,11 +1606,13 @@ class TestDemotionBudget:
 
         mock_sched_result = MagicMock()
         mock_sched_result.slice_results = [mock_sr]
+        mock_sched_result.all_complete = True
+        mock_sched_result.waiting_slices = []
 
         with (
             patch("spec_manager.orchestration.promotion_loop.PromotionLoop"),
             patch(
-                "spec_manager.orchestration.promotion_scheduler.PromotionScheduler"
+                "spec_manager.orchestration.promotion_scheduler.ReactivePromotionScheduler"
             ) as mock_sched_cls,
         ):
             mock_sched_cls.return_value.run.return_value = mock_sched_result
@@ -2017,11 +2023,13 @@ class TestCIBatchReceipt:
 
         mock_sched_result = MagicMock()
         mock_sched_result.slice_results = [mock_sr]
+        mock_sched_result.all_complete = True
+        mock_sched_result.waiting_slices = []
 
         with (
             patch("spec_manager.orchestration.promotion_loop.PromotionLoop"),
             patch(
-                "spec_manager.orchestration.promotion_scheduler.PromotionScheduler"
+                "spec_manager.orchestration.promotion_scheduler.ReactivePromotionScheduler"
             ) as mock_sched_cls,
         ):
             mock_sched_cls.return_value.run.return_value = mock_sched_result
@@ -2067,11 +2075,13 @@ class TestCIBatchReceipt:
 
         mock_sched_result = MagicMock()
         mock_sched_result.slice_results = [mock_sr]
+        mock_sched_result.all_complete = True
+        mock_sched_result.waiting_slices = []
 
         with (
             patch("spec_manager.orchestration.promotion_loop.PromotionLoop"),
             patch(
-                "spec_manager.orchestration.promotion_scheduler.PromotionScheduler"
+                "spec_manager.orchestration.promotion_scheduler.ReactivePromotionScheduler"
             ) as mock_sched_cls,
         ):
             mock_sched_cls.return_value.run.return_value = mock_sched_result
@@ -2115,11 +2125,13 @@ class TestCIBatchReceipt:
 
         mock_sched_result = MagicMock()
         mock_sched_result.slice_results = [mock_sr]
+        mock_sched_result.all_complete = False
+        mock_sched_result.waiting_slices = []
 
         with (
             patch("spec_manager.orchestration.promotion_loop.PromotionLoop"),
             patch(
-                "spec_manager.orchestration.promotion_scheduler.PromotionScheduler"
+                "spec_manager.orchestration.promotion_scheduler.ReactivePromotionScheduler"
             ) as mock_sched_cls,
         ):
             mock_sched_cls.return_value.run.return_value = mock_sched_result
