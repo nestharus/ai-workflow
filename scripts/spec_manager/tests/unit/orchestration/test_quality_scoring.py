@@ -15,7 +15,6 @@ from spec_manager.orchestration.quality_scoring import (
     _threshold_status,
 )
 
-
 SAMPLE_ARCH_DIGEST = {
     "topology": {
         "components": [
@@ -109,7 +108,9 @@ class TestArchitectureQualityScorer:
 
     def test_empty_digest(self):
         scorer = ArchitectureQualityScorer()
-        metrics = scorer.compute({"topology": {"components": [], "edges": []}, "coverage": {}, "l2_review": {}})
+        metrics = scorer.compute(
+            {"topology": {"components": [], "edges": []}, "coverage": {}, "l2_review": {}}
+        )
         score = scorer.mechanical_score(metrics)
         assert 0.0 <= score <= 1.0
 
@@ -179,22 +180,26 @@ class TestCodeQualityScorer:
 class TestSpecFidelityScorer:
     def test_with_output(self):
         scorer = SpecFidelityScorer()
-        metrics = scorer.compute({
-            "coverage_estimate": 0.85,
-            "missing": ["Feature X"],
-            "hallucinated": [],
-        })
+        metrics = scorer.compute(
+            {
+                "coverage_estimate": 0.85,
+                "missing": ["Feature X"],
+                "hallucinated": [],
+            }
+        )
         assert len(metrics) == 1
         assert metrics[0].score == 0.85
         assert metrics[0].status == "PASS"
 
     def test_with_hallucinations(self):
         scorer = SpecFidelityScorer()
-        metrics = scorer.compute({
-            "coverage_estimate": 0.9,
-            "missing": [],
-            "hallucinated": ["Invented feature"],
-        })
+        metrics = scorer.compute(
+            {
+                "coverage_estimate": 0.9,
+                "missing": [],
+                "hallucinated": ["Invented feature"],
+            }
+        )
         assert metrics[0].status == "WARN"
 
     def test_no_output(self):
@@ -259,3 +264,89 @@ class TestQualityReporter:
             spec_judge_output={"coverage_estimate": 0.95, "missing": [], "hallucinated": []},
         )
         assert scorecard.overall_status == "PASS"
+
+
+class TestCompositeScore:
+    """Tests for composite score computation (Section 7.3)."""
+
+    def test_composite_score_present(self):
+        """Scorecard has composite_score and composite_status fields."""
+        reporter = QualityReporter(workspace_root=Path("/tmp"), run_id="test")
+        scorecard = reporter.compute(SAMPLE_ARCH_DIGEST, SAMPLE_CODE_DIGEST)
+        assert hasattr(scorecard, "composite_score")
+        assert hasattr(scorecard, "composite_status")
+        assert 0.0 <= scorecard.composite_score <= 1.0
+        assert scorecard.composite_status in ("PASS", "WARN", "FAIL")
+
+    def test_composite_formula_with_full_judges(self):
+        """Composite follows 0.45*quality + 0.20*spec + 0.20*pipeline + 0.15*planner."""
+        reporter = QualityReporter(workspace_root=Path("/tmp"), run_id="test")
+        scorecard = reporter.compute(
+            SAMPLE_ARCH_DIGEST,
+            SAMPLE_CODE_DIGEST,
+            arch_judge_output={"overall": 5, "risks": [], "scores": {}, "strengths": []},
+            code_judge_output={"overall": 5, "systemic_risks": [], "files": []},
+            spec_judge_output={"coverage_estimate": 0.90, "missing": [], "hallucinated": []},
+        )
+        # quality_overall = (arch + code) / 2
+        quality_overall = (scorecard.arch_quality_score + scorecard.code_quality_score) / 2
+        # pipeline_efficiency and planner_quality are 1.0 placeholders
+        expected = (
+            0.45 * quality_overall + 0.20 * scorecard.spec_fidelity_score + 0.20 * 1.0 + 0.15 * 1.0
+        )
+        assert abs(scorecard.composite_score - expected) < 1e-9
+
+    def test_composite_pass_threshold(self):
+        """High scores produce PASS composite."""
+        reporter = QualityReporter(workspace_root=Path("/tmp"), run_id="test")
+        scorecard = reporter.compute(
+            SAMPLE_ARCH_DIGEST,
+            SAMPLE_CODE_DIGEST,
+            arch_judge_output={"overall": 5, "risks": [], "scores": {}, "strengths": []},
+            code_judge_output={"overall": 5, "systemic_risks": [], "files": []},
+            spec_judge_output={"coverage_estimate": 0.95, "missing": [], "hallucinated": []},
+        )
+        assert scorecard.composite_status == "PASS"
+
+    def test_composite_in_to_dict(self):
+        """to_dict() includes composite fields."""
+        sc = QualityScorecard(
+            run_id="r1",
+            composite_score=0.85,
+            composite_status="PASS",
+        )
+        d = sc.to_dict()
+        assert d["composite_score"] == 0.85
+        assert d["composite_status"] == "PASS"
+
+    def test_composite_in_written_json(self, tmp_path):
+        """composite_score appears in quality_scorecard.json."""
+        reporter = QualityReporter(workspace_root=tmp_path, run_id="comp-json")
+        scorecard = reporter.compute(SAMPLE_ARCH_DIGEST, SAMPLE_CODE_DIGEST)
+        json_path, _ = reporter.write(scorecard)
+        data = json.loads(json_path.read_text())
+        assert "composite_score" in data
+        assert "composite_status" in data
+
+    def test_composite_in_written_markdown(self, tmp_path):
+        """composite_score appears in quality_scorecard.md."""
+        reporter = QualityReporter(workspace_root=tmp_path, run_id="comp-md")
+        scorecard = reporter.compute(SAMPLE_ARCH_DIGEST, SAMPLE_CODE_DIGEST)
+        _, md_path = reporter.write(scorecard)
+        md = md_path.read_text()
+        assert "Composite Score" in md
+
+    def test_composite_in_summary_string(self):
+        """Summary string includes composite info."""
+        reporter = QualityReporter(workspace_root=Path("/tmp"), run_id="test")
+        scorecard = reporter.compute(SAMPLE_ARCH_DIGEST, SAMPLE_CODE_DIGEST)
+        assert "composite=" in scorecard.summary
+
+    def test_composite_no_spec_judge(self):
+        """Composite works with spec_fidelity_score=0.0 (no judge)."""
+        reporter = QualityReporter(workspace_root=Path("/tmp"), run_id="test")
+        scorecard = reporter.compute(SAMPLE_ARCH_DIGEST, SAMPLE_CODE_DIGEST)
+        # spec_fidelity_score should be 0.0 (no judge), but composite still computes
+        quality_overall = (scorecard.arch_quality_score + scorecard.code_quality_score) / 2
+        expected = 0.45 * quality_overall + 0.20 * 0.0 + 0.20 * 1.0 + 0.15 * 1.0
+        assert abs(scorecard.composite_score - expected) < 1e-9

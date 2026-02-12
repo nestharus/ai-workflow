@@ -2203,3 +2203,58 @@ def test_quality_scoring_flag(tmp_path):
 
     lifecycle._compute_quality = True
     assert lifecycle._compute_quality is True
+
+
+# ===================================================================
+# 16. RunConfig flag tests
+# ===================================================================
+
+
+class TestRunConfigFlags:
+    """Test enable_snapshots and enable_quality_scoring config flags."""
+
+    def test_run_config_defaults(self) -> None:
+        config = RunConfig()
+        assert config.enable_snapshots is True
+        assert config.enable_quality_scoring is False
+
+    def test_run_config_custom_flags(self) -> None:
+        config = RunConfig(enable_snapshots=False, enable_quality_scoring=True)
+        assert config.enable_snapshots is False
+        assert config.enable_quality_scoring is True
+
+    def test_run_config_flags_roundtrip(self, tmp_path: Path) -> None:
+        mgr = RunStateManager(workspace_root=tmp_path, run_id="flags-run")
+        config = RunConfig(
+            run_id="flags-run",
+            enable_snapshots=False,
+            enable_quality_scoring=True,
+        )
+        mgr.write_config(config)
+        loaded = mgr.read_config()
+        assert loaded is not None
+        assert loaded.enable_snapshots is False
+        assert loaded.enable_quality_scoring is True
+
+    def test_model_profile_stored_on_lifecycle(self, tmp_path: Path) -> None:
+        """Verify model_profile is stored on PddLifecycle."""
+        from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+
+        manager = MagicMock()
+        manager.workspace_path = tmp_path
+        manager.run_id = "mp-run"
+
+        mock_profile = MagicMock()
+        lifecycle = PddLifecycle(manager, mode="auto", model_profile=mock_profile)
+        assert lifecycle._model_profile is mock_profile
+
+    def test_model_profile_defaults_none(self, tmp_path: Path) -> None:
+        """Verify model_profile defaults to None."""
+        from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+
+        manager = MagicMock()
+        manager.workspace_path = tmp_path
+        manager.run_id = "no-mp-run"
+
+        lifecycle = PddLifecycle(manager, mode="auto")
+        assert lifecycle._model_profile is None

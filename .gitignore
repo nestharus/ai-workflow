@@ -55,6 +55,7 @@ out/
 runs/
 *.zip
 .pdd_runs/
+*.bak
 
 # Local config / secrets
 .env

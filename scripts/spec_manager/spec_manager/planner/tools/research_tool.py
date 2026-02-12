@@ -118,11 +118,27 @@ class ResearchTool:
         # 3. Web research (only if dimension requires it)
         if self._coordinator is not None and query.dimension in ("web", "external"):
             try:
-                # ResearchCoordinator.research() takes Ambiguity + workspace
-                # We'll need to adapt when fully wired — for now, log and skip
-                logger.debug("Web research requested but coordinator wiring pending")
-            except Exception:
-                logger.debug("Research coordinator failed for query: %s", query.question)
+                from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
+
+                ambiguity = Ambiguity(
+                    ambiguity_id=f"research-{query.question[:32]}",
+                    source_text=query.question,
+                    source_location=query.context or "",
+                    ambiguity_type="vague_integration",
+                    confidence=0.5,
+                    suggested_question=query.question,
+                )
+                response = self._coordinator.research(ambiguity, self._workspace)
+                if response is not None:
+                    findings.append(
+                        ResearchFinding(
+                            source="web_research",
+                            text=response.response_text,
+                            confidence=0.7,
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("Web research failed: %s", exc)
 
         # Synthesize
         if findings:

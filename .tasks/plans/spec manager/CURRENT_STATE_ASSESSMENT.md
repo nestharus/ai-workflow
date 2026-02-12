@@ -1,4 +1,4 @@
-# Current State Assessment (Feb 11 2026, updated)
+# Current State Assessment (Feb 11 2026, all 3 research prompts complete)
 
 ## What Has Been Evaluated with Real LLM Calls
 
@@ -138,8 +138,18 @@ Research Prompt 3 response implemented in 6 phases (A-F):
 | ModelProfile (role-based routing) | Done — `get_model_for_role()` fallback |
 | CostLedger + agent call hooks | Done — append-only JSONL |
 | MultiModelRunner | Done — sequential per-profile |
-| ComparisonRunner | Done — pairwise + win-count rankings |
+| ComparisonRunner | Done — canonical alignment + pairwise + rankings |
 | CLI wiring | Done — compare, quality, eval quality, eval compare |
+| model_id in run_agent() | Done — env var AGENT_MODEL_ID |
+| Judge != producer enforcement | Done — JudgeClient raises on self-judge |
+| Composite quality score | Done — 0.45*quality + 0.20*fidelity + 0.20*eff + 0.15*planner |
+| Per-run judge cache copy | Done — copy_to_run() provenance |
+| Meta-eval scaffolding | Done — meta_eval.py + fixtures/.gitkeep |
+| RunConfig flags | Done — enable_snapshots, enable_quality_scoring |
+| Legacy cleanup | Done — AutoResponder/AutoSignalResolver deleted |
+| Tool wiring | Done — ResearchCoordinator + SourceAnalysisCache injected |
+| GAP scorer | Done — 5th capability scorer in planner eval |
+| planner_review.md | Done — FAIL/WARN/NeedsReview sections |
 
 Key scoring formulas:
 * Architecture: `0.35 * mechanical + 0.65 * judge`
@@ -178,7 +188,7 @@ Key scoring formulas:
 
 ## Test Count
 
-3185 passed (as of Feb 11 2026)
+3233 passed (as of Feb 11 2026)
 
 ## Next Steps
 

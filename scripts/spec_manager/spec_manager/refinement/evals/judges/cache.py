@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,9 +44,7 @@ class JudgeCache:
         """Atomically write *data* to the cache and return the written path."""
         path = self._key_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(
-            dir=str(path.parent), suffix=".tmp", prefix=path.stem
-        )
+        _fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=path.stem)
         tmp_path = Path(tmp)
         try:
             tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -55,6 +54,19 @@ class JudgeCache:
             raise
         else:
             return path
+
+    def copy_to_run(self, key: JudgeCacheKey, run_dir: Path) -> None:
+        """Copy cached result to run-scoped directory for provenance.
+
+        Writes to ``run_dir/judges/{judge_type}/{input_hash}.json``.
+        Silently skips if the cached entry does not exist.
+        """
+        src = self._key_path(key)
+        if not src.exists():
+            return
+        dest = run_dir / "judges" / key.judge_type / f"{key.input_hash}.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dest))
 
     def _key_path(self, key: JudgeCacheKey) -> Path:
         """Deterministic path: ``{cache_dir}/{judge_type}/{input_hash}.json``."""

@@ -40,6 +40,8 @@ class RunConfig:
     test_commands: dict[str, str] = field(default_factory=dict)
     model_ids: dict[str, str] = field(default_factory=dict)
     model_profile_name: str = ""
+    enable_snapshots: bool = True
+    enable_quality_scoring: bool = False
     created_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:

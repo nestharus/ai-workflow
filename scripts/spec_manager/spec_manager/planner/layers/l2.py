@@ -105,11 +105,13 @@ class L2Planner:
         research_tool: _ToolFn = None,
         integration_tool: _ToolFn = None,
         evidence_tool: _ToolFn = None,
+        constraints_tool: _ToolFn = None,
     ) -> None:
         self.layer: Literal["l2"] = "l2"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
         self._evidence_tool = evidence_tool
+        self._constraints_tool = constraints_tool
 
     # ------------------------------------------------------------------
     # LayerPlanner interface

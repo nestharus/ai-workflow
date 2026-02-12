@@ -3,6 +3,9 @@
 Loads per-run digests and scorecards, runs pairwise judges, and
 aggregates rankings into a comparison report.
 
+Includes canonical responsibility alignment (Section 4.2) so that
+cross-model comparisons map to a shared responsibility vocabulary.
+
 Usage::
 
     runner = ComparisonRunner(
@@ -33,9 +36,7 @@ class ComparisonRunner:
     ) -> None:
         self.workspace_root = workspace_root
         self.comparison_id = comparison_id
-        self._output_dir = (
-            workspace_root / "reports" / "pdd" / "comparisons" / comparison_id
-        )
+        self._output_dir = workspace_root / "reports" / "pdd" / "comparisons" / comparison_id
 
     def compare(
         self,
@@ -64,14 +65,18 @@ class ComparisonRunner:
                 "profile_name": entry.get("profile_name", ""),
                 "arch_digest": self._load_json(entry.get("arch_digest_path", "")),
                 "code_digest": self._load_json(entry.get("code_digest_path", "")),
-                "quality_scorecard": self._load_json(
-                    entry.get("quality_scorecard_path", "")
-                ),
+                "quality_scorecard": self._load_json(entry.get("quality_scorecard_path", "")),
                 "duration_ms": entry.get("duration_ms", 0.0),
             }
 
         # Summary table
         summary = self._build_summary(run_data)
+
+        # Canonical responsibility alignment
+        spec_summary = manifest.get("spec_summary", "")
+        responsibility_alignment = self._align_responsibilities(
+            list(run_data.values()), spec_summary
+        )
 
         # Pairwise comparisons
         pairwise_results: list[dict[str, Any]] = []
@@ -120,6 +125,7 @@ class ComparisonRunner:
             "comparison_id": self.comparison_id,
             "runs": list(run_data.keys()),
             "summary": summary,
+            "responsibility_alignment": responsibility_alignment,
             "pairwise": pairwise_results,
             "rankings": rankings,
         }
@@ -131,16 +137,90 @@ class ComparisonRunner:
         json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
         md_path = self._output_dir / "comparison_report.md"
-        md_path.write_text(
-            self._render_report(result, run_data), encoding="utf-8"
-        )
+        md_path.write_text(self._render_report(result, run_data), encoding="utf-8")
 
         logger.info("Comparison report written to %s", self._output_dir)
         return result
 
-    def _build_summary(
-        self, run_data: dict[str, dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    # ------------------------------------------------------------------
+    # Canonical responsibility alignment (Section 4.2)
+    # ------------------------------------------------------------------
+
+    def _align_responsibilities(
+        self,
+        runs: list[dict[str, Any]],
+        spec_summary: str,
+    ) -> dict[str, Any]:
+        """Build canonical responsibility set and map each run to it.
+
+        Mechanical v1: unions all ``topology.components[].responsibilities``
+        across runs, then checks which runs cover each responsibility.
+
+        Args:
+            runs: List of per-run data dicts (from ``run_data.values()``).
+            spec_summary: Spec summary text (unused in v1, reserved for
+                future LLM-based canonicalization).
+
+        Returns:
+            Dict with ``canonical_responsibilities``, per-run
+            ``responsibility_mapping``, ``responsibility_coverage_rate``,
+            ``duplication_rate``, and ``missing_responsibilities``.
+        """
+        # Collect per-run responsibility → component_id mappings
+        per_run: list[dict[str, list[str]]] = []
+        for run in runs:
+            resp_map: dict[str, list[str]] = {}
+            digest = run.get("arch_digest") or {}
+            components = digest.get("topology", {}).get("components", [])
+            for comp in components:
+                comp_id = comp.get("id", "")
+                for resp in comp.get("responsibilities", []):
+                    normed = resp.strip().lower()
+                    if normed:
+                        resp_map.setdefault(normed, []).append(comp_id)
+            per_run.append(resp_map)
+
+        # Build union set (canonical vocabulary)
+        canonical: list[str] = sorted({r for run_map in per_run for r in run_map})
+        total = len(canonical) if canonical else 1  # avoid division-by-zero
+
+        # Per-run mapping and metrics
+        run_mappings: list[dict[str, list[str]]] = []
+        coverage_rates: list[float] = []
+        duplication_counts: list[int] = []
+
+        for run_map in per_run:
+            mapped = {r: run_map.get(r, []) for r in canonical}
+            run_mappings.append(mapped)
+
+            covered = sum(1 for ids in mapped.values() if ids)
+            coverage_rates.append(covered / total)
+
+            # Duplication: responsibility mapped to >1 component
+            duplication_counts.append(sum(1 for ids in mapped.values() if len(ids) > 1))
+
+        avg_coverage = sum(coverage_rates) / len(coverage_rates) if coverage_rates else 0.0
+        avg_duplication = (
+            sum(duplication_counts) / (len(duplication_counts) * total)
+            if duplication_counts
+            else 0.0
+        )
+
+        # Missing: responsibilities not covered by any run
+        all_covered: set[str] = set()
+        for run_map in per_run:
+            all_covered.update(r for r, ids in run_map.items() if ids)
+        missing = sorted(set(canonical) - all_covered)
+
+        return {
+            "canonical_responsibilities": canonical,
+            "responsibility_mapping": run_mappings,
+            "responsibility_coverage_rate": round(avg_coverage, 4),
+            "duplication_rate": round(avg_duplication, 4),
+            "missing_responsibilities": missing,
+        }
+
+    def _build_summary(self, run_data: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         """Build summary table entries for each run."""
         rows: list[dict[str, Any]] = []
         for run_id, data in run_data.items():
@@ -188,9 +268,7 @@ class ComparisonRunner:
             "code_wins": code_wins,
         }
 
-    def _render_report(
-        self, result: dict[str, Any], run_data: dict[str, dict[str, Any]]
-    ) -> str:
+    def _render_report(self, result: dict[str, Any], run_data: dict[str, dict[str, Any]]) -> str:
         """Render comparison as markdown."""
         lines = [
             f"# Model Comparison Report -- `{self.comparison_id}`",
@@ -210,6 +288,28 @@ class ComparisonRunner:
                 f"| {row['overall_status']} "
                 f"| {row['duration_ms']:.0f}ms |"
             )
+
+        # Responsibility alignment section
+        alignment = result.get("responsibility_alignment", {})
+        canonical = alignment.get("canonical_responsibilities", [])
+        if canonical:
+            lines.extend(
+                [
+                    "",
+                    "## Responsibility Alignment",
+                    "",
+                    f"**Canonical Responsibilities**: {len(canonical)}",
+                    f"**Coverage Rate**: {alignment.get('responsibility_coverage_rate', 0.0):.2%}",
+                    f"**Duplication Rate**: {alignment.get('duplication_rate', 0.0):.2%}",
+                    "",
+                ]
+            )
+            missing = alignment.get("missing_responsibilities", [])
+            if missing:
+                lines.append("**Missing Responsibilities**:")
+                for m in missing:
+                    lines.append(f"- {m}")
+                lines.append("")
 
         # Pairwise section
         pairwise = result.get("pairwise", [])
@@ -243,17 +343,11 @@ class ComparisonRunner:
             for category in ("arch_wins", "code_wins"):
                 wins = rankings.get(category, {})
                 if wins:
-                    lines.append(
-                        f"### {category.replace('_', ' ').title()}"
-                    )
+                    lines.append(f"### {category.replace('_', ' ').title()}")
                     lines.append("")
-                    sorted_runs = sorted(
-                        wins.items(), key=lambda x: x[1], reverse=True
-                    )
+                    sorted_runs = sorted(wins.items(), key=lambda x: x[1], reverse=True)
                     for run_id, count in sorted_runs:
-                        profile = run_data.get(run_id, {}).get(
-                            "profile_name", "?"
-                        )
+                        profile = run_data.get(run_id, {}).get("profile_name", "?")
                         lines.append(f"- {run_id} ({profile}): {count} wins")
                     lines.append("")
 

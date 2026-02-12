@@ -39,11 +39,13 @@ class L3Planner:
         research_tool: Any = None,
         integration_tool: Any = None,
         evidence_tool: Any = None,
+        constraints_tool: Any = None,
     ) -> None:
         self.layer: Literal["l3"] = "l3"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
         self._evidence_tool = evidence_tool
+        self._constraints_tool = constraints_tool
 
     # ------------------------------------------------------------------
     # LayerPlanner protocol

@@ -100,12 +100,14 @@ class Planner:
         research_tool: Any = None,
         integration_tool: Any = None,
         evidence_tool: Any = None,
+        constraints_tool: Any = None,
         override_provider: Callable[[PlanningRequest], PlanningResult | None] | None = None,
         model_id: str = "",
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._mode = mode
         self._model_id = model_id
+        self._constraints_tool = constraints_tool
         self._layer_router = LayerRouter()
         self._capability_router = CapabilityRouter()
         self._override_provider = override_provider
@@ -115,6 +117,7 @@ class Planner:
                 research_tool=research_tool,
                 integration_tool=integration_tool,
                 evidence_tool=evidence_tool,
+                constraints_tool=constraints_tool,
             )
 
     def _register_default_planners(
@@ -122,6 +125,7 @@ class Planner:
         research_tool: Any = None,
         integration_tool: Any = None,
         evidence_tool: Any = None,
+        constraints_tool: Any = None,
     ) -> None:
         """Register real L1/L2/L3 planners with injected tools."""
         from spec_manager.planner.layers.l1 import L1Planner
@@ -134,6 +138,7 @@ class Planner:
                 research_tool=research_tool,
                 integration_tool=integration_tool,
                 evidence_tool=evidence_tool,
+                constraints_tool=constraints_tool,
             ),
         )
         self._layer_router.register(
@@ -142,6 +147,7 @@ class Planner:
                 research_tool=research_tool,
                 integration_tool=integration_tool,
                 evidence_tool=evidence_tool,
+                constraints_tool=constraints_tool,
             ),
         )
         self._layer_router.register(
@@ -150,6 +156,7 @@ class Planner:
                 research_tool=research_tool,
                 integration_tool=integration_tool,
                 evidence_tool=evidence_tool,
+                constraints_tool=constraints_tool,
             ),
         )
 

@@ -35,32 +35,6 @@ class SignalResolver(Protocol):
         ...
 
 
-class AutoSignalResolver:
-    """Resolves signals via ``AutoResponder`` (steering script / research).
-
-    Use case: CLI ``--auto`` mode (legacy path — prefer ``PlannerSignalResolver``).
-    """
-
-    def __init__(
-        self,
-        steering_script: object | None = None,
-        use_research: bool = False,
-        workspace: Path | None = None,
-        evidence_index: object | None = None,
-    ) -> None:
-        from spec_manager.refinement.interactive.steering.auto_responder import AutoResponder
-
-        self._auto_responder = AutoResponder(
-            steering_script=steering_script,
-            use_research=use_research,
-            workspace=workspace,
-            evidence_index=evidence_index,
-        )
-
-    def resolve(self, signal: InputSignal) -> SteeringResponse | None:
-        return self._auto_responder.respond(signal)
-
-
 class PlannerSignalResolver:
     """Resolves signals via the planner module.
 

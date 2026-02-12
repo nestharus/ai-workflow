@@ -97,6 +97,7 @@ def run_agent(
     workspace: Path,
     max_retries: int = 2,
     extra_env: dict[str, str] | None = None,
+    model_id: str = "",
 ) -> str:
     """Run an agent via `uv run agents`.
 
@@ -129,8 +130,10 @@ def run_agent(
 
     last_error: RuntimeError | None = None
     env = None
-    if extra_env:
-        env = {**os.environ, **extra_env}
+    if extra_env or model_id:
+        env = {**os.environ, **(extra_env or {})}
+        if model_id:
+            env["AGENT_MODEL_ID"] = model_id
 
     start_time = time.time()
 
@@ -157,11 +160,13 @@ def run_agent(
             result_text = file_output if file_output is not None else output
             # Call hooks on success
             elapsed_ms = (time.time() - start_time) * 1000
-            hook_data = {
+            hook_data: dict[str, Any] = {
                 "agent_name": agent_name,
                 "duration_ms": elapsed_ms,
                 "timestamp": time.time(),
             }
+            if model_id:
+                hook_data["model_id"] = model_id
             for hook in _call_hooks:
                 with contextlib.suppress(Exception):
                     hook(hook_data)

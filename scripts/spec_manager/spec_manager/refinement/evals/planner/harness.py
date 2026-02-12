@@ -139,9 +139,7 @@ class PlannerEvalHarness:
         overrides: dict[str, Any] = {}
         if config.override_path and config.override_path.exists():
             try:
-                overrides = json.loads(
-                    config.override_path.read_text(encoding="utf-8")
-                )
+                overrides = json.loads(config.override_path.read_text(encoding="utf-8"))
             except Exception as exc:
                 result.errors.append(f"Failed to load overrides: {exc}")
 
@@ -230,9 +228,7 @@ class PlannerEvalHarness:
 
         return result
 
-    def _evaluate_against_gt(
-        self, traces: list[Any], gt: Any
-    ) -> list[Any]:
+    def _evaluate_against_gt(self, traces: list[Any], gt: Any) -> list[Any]:
         """Score each trace against matching GT case."""
         from spec_manager.refinement.evals.planner.ground_truth import find_case
         from spec_manager.refinement.evals.planner.scorers.base import Verdict
@@ -246,7 +242,9 @@ class PlannerEvalHarness:
                 # No GT for this decision — skip
                 continue
 
-            scorer = scorer_map.get(trace.decision_key.split(":")[1] if ":" in trace.decision_key else "")
+            scorer = scorer_map.get(
+                trace.decision_key.split(":")[1] if ":" in trace.decision_key else ""
+            )
             if scorer is None:
                 # Try capability from the trace
                 cap = getattr(trace, "capability", "")
@@ -255,13 +253,15 @@ class PlannerEvalHarness:
                 scorer = scorer_map.get(cap)
 
             if scorer is None:
-                verdicts.append(Verdict(
-                    decision_key=trace.decision_key,
-                    trace_id=trace.trace_id,
-                    capability=gt_case.capability,
-                    passed=True,
-                    detail="No scorer for capability",
-                ))
+                verdicts.append(
+                    Verdict(
+                        decision_key=trace.decision_key,
+                        trace_id=trace.trace_id,
+                        capability=gt_case.capability,
+                        passed=True,
+                        detail="No scorer for capability",
+                    )
+                )
                 continue
 
             verdict = scorer.score(trace, gt_case)
@@ -271,6 +271,7 @@ class PlannerEvalHarness:
 
     def _build_scorer_map(self) -> dict[str, Any]:
         """Build capability → scorer mapping."""
+        from spec_manager.refinement.evals.planner.scorers.gap import GapScorer
         from spec_manager.refinement.evals.planner.scorers.integration_analysis import (
             IntegrationAnalysisScorer,
         )
@@ -284,6 +285,7 @@ class PlannerEvalHarness:
 
         return {
             "RESOLVE_SIGNAL": ResolveSignalScorer(),
+            "GAP": GapScorer(),
             "PLAN": PlanScorer(),
             "UNDER_SPEC": UnderSpecScorer(),
             "INTEGRATION_ANALYSIS": IntegrationAnalysisScorer(),
@@ -293,9 +295,7 @@ class PlannerEvalHarness:
     # Replay helpers
     # ------------------------------------------------------------------
 
-    def _replay_decision(
-        self, original: Any, overrides: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _replay_decision(self, original: Any, overrides: dict[str, Any]) -> dict[str, Any]:
         """Re-run a planner decision using the original request + overrides."""
         from spec_manager.planner.api import (
             Planner,
@@ -335,9 +335,7 @@ class PlannerEvalHarness:
             "outputs": result.outputs,
         }
 
-    def _diff_decisions(
-        self, original: Any, replay: dict[str, Any]
-    ) -> Any:
+    def _diff_decisions(self, original: Any, replay: dict[str, Any]) -> Any:
         """Compare original trace decision to replay result."""
         from spec_manager.refinement.evals.planner.scorers.base import Verdict
 

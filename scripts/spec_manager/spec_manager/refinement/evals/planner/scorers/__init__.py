@@ -9,6 +9,7 @@ from spec_manager.refinement.evals.planner.scorers.base import (
     Verdict,
     _matches_atom,
 )
+from spec_manager.refinement.evals.planner.scorers.gap import GapScorer
 from spec_manager.refinement.evals.planner.scorers.integration_analysis import (
     IntegrationAnalysisScorer,
 )
@@ -20,6 +21,7 @@ from spec_manager.refinement.evals.planner.scorers.under_spec import UnderSpecSc
 
 __all__ = [
     "CapabilityScorer",
+    "GapScorer",
     "IntegrationAnalysisScorer",
     "PlanScorer",
     "ResolveSignalScorer",

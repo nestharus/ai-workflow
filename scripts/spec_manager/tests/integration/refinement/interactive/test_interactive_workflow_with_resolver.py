@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 from spec_manager.refinement.interactive.input_signal import InputSignal, WorkContext
 from spec_manager.refinement.interactive.signal_resolver import (
-    AutoSignalResolver,
     InteractiveSignalResolver,
+    PlannerSignalResolver,
     SignalResolver,
 )
 from spec_manager.refinement.interactive.spec_patcher import SteeringResponse
@@ -73,12 +73,12 @@ def test_injected_resolver_is_used(tmp_path: Path) -> None:
 
 
 def test_backward_compat_auto_mode(tmp_path: Path) -> None:
-    """When interactive=False and no resolver, workflow uses AutoSignalResolver."""
+    """When interactive=False and no resolver, workflow uses PlannerSignalResolver."""
     workflow = InteractiveWorkflow(
         workspace=tmp_path,
         interactive=False,
     )
-    assert isinstance(workflow._resolver, AutoSignalResolver)
+    assert isinstance(workflow._resolver, PlannerSignalResolver)
 
 
 def test_backward_compat_interactive_mode(tmp_path: Path) -> None:

@@ -9,7 +9,6 @@ import pytest
 from spec_manager.core.project_root import resolve_from_root
 from spec_manager.refinement.interactive.input_signal import InputSignal, WorkContext
 from spec_manager.refinement.interactive.signal_resolver import (
-    AutoSignalResolver,
     FileSignalResolver,
     InteractiveSignalResolver,
     PlannerSignalResolver,
@@ -52,26 +51,6 @@ def _make_signal(
         goal="test",
         question=question,
     )
-
-
-def test_auto_resolver_delegates_to_auto_responder() -> None:
-    """AutoSignalResolver delegates resolve() to AutoResponder.respond()."""
-    signal = _make_signal()
-    expected = SteeringResponse(
-        ambiguity_id="SIG-001",
-        response_text="auto answer",
-        source="steering_script",
-    )
-
-    with patch(
-        "spec_manager.refinement.interactive.steering.auto_responder.AutoResponder.respond",
-        return_value=expected,
-    ) as mock_respond:
-        resolver = AutoSignalResolver()
-        result = resolver.resolve(signal)
-
-    mock_respond.assert_called_once_with(signal)
-    assert result is expected
 
 
 def test_interactive_resolver_auto_first() -> None:
@@ -223,13 +202,11 @@ def test_signal_resolver_protocol_check() -> None:
     """All resolver implementations satisfy the SignalResolver protocol."""
     script = SteeringScript.from_file(STEERING_FIXTURE)
 
-    auto = AutoSignalResolver()
     planner = PlannerSignalResolver()
     interactive = InteractiveSignalResolver()
     steering = SteeringOnlyResolver(script)
     file_resolver = FileSignalResolver(signals_dir=Path("/tmp/test-signals"))
 
-    assert isinstance(auto, SignalResolver)
     assert isinstance(planner, SignalResolver)
     assert isinstance(interactive, SignalResolver)
     assert isinstance(steering, SignalResolver)

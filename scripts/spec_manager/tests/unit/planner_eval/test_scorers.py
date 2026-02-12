@@ -1,7 +1,7 @@
-"""Tests for planner eval scorers: base, resolve_signal, plan, under_spec, integration_analysis.
+"""Tests for planner eval scorers: base, resolve_signal, gap, plan, under_spec, integration_analysis.
 
-Covers the Verdict dataclass, _matches_atom helper, and all four concrete
-scorer classes with ~30 test functions exercising happy paths, edge cases,
+Covers the Verdict dataclass, _matches_atom helper, and all five concrete
+scorer classes with test functions exercising happy paths, edge cases,
 hard-gate failures, and empty ground-truth handling.
 """
 
@@ -11,11 +11,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from spec_manager.refinement.evals.planner.scorers.base import (
     Verdict,
     _matches_atom,
 )
+from spec_manager.refinement.evals.planner.scorers.gap import GapScorer
 from spec_manager.refinement.evals.planner.scorers.integration_analysis import (
     IntegrationAnalysisScorer,
 )
@@ -26,7 +26,6 @@ from spec_manager.refinement.evals.planner.scorers.resolve_signal import (
 from spec_manager.refinement.evals.planner.scorers.under_spec import (
     UnderSpecScorer,
 )
-
 
 # ------------------------------------------------------------------
 # Helpers: lightweight stand-ins for trace / gt_case objects
@@ -187,9 +186,7 @@ class TestResolveSignalScorer:
     def scorer(self) -> ResolveSignalScorer:
         return ResolveSignalScorer()
 
-    def test_should_resolve_true_correct_answer(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_should_resolve_true_correct_answer(self, scorer: ResolveSignalScorer) -> None:
         """When should_resolve=true and the answer matches, verdict passes."""
         trace = _make_trace(outputs={"response": "Use the new auth flow"})
         gt = _make_gt(
@@ -204,9 +201,7 @@ class TestResolveSignalScorer:
         assert verdict.hard_gate_failures == []
         assert "matches expected" in verdict.detail.lower()
 
-    def test_should_resolve_true_wrong_answer(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_should_resolve_true_wrong_answer(self, scorer: ResolveSignalScorer) -> None:
         """When should_resolve=true but the answer does not match, hard gate fails."""
         trace = _make_trace(outputs={"response": "Something unrelated"})
         gt = _make_gt(
@@ -220,9 +215,7 @@ class TestResolveSignalScorer:
         assert verdict.score == 0.0
         assert "wrong_answer" in verdict.hard_gate_failures
 
-    def test_should_resolve_true_empty_answer(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_should_resolve_true_empty_answer(self, scorer: ResolveSignalScorer) -> None:
         """When should_resolve=true but the answer is empty, missing_answer hard gate."""
         trace = _make_trace(outputs={"response": ""})
         gt = _make_gt(
@@ -235,9 +228,7 @@ class TestResolveSignalScorer:
         assert verdict.passed is False
         assert "missing_answer" in verdict.hard_gate_failures
 
-    def test_should_resolve_false_correctly_noop(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_should_resolve_false_correctly_noop(self, scorer: ResolveSignalScorer) -> None:
         """When should_resolve=false and answer is empty/NOOP, verdict passes."""
         trace = _make_trace(outputs={"response": "NOOP"})
         gt = _make_gt(expected={"should_resolve": False})
@@ -245,9 +236,7 @@ class TestResolveSignalScorer:
         assert verdict.passed is True
         assert verdict.score == 1.0
 
-    def test_should_resolve_false_but_answered(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_should_resolve_false_but_answered(self, scorer: ResolveSignalScorer) -> None:
         """When should_resolve=false but answer is non-empty, false_resolve hard gate."""
         trace = _make_trace(outputs={"response": "I resolved it anyway"})
         gt = _make_gt(expected={"should_resolve": False})
@@ -292,9 +281,7 @@ class TestResolveSignalScorer:
         assert verdict.passed is True
         assert any("REF-MISSING" in w for w in verdict.soft_signal_warnings)
 
-    def test_no_should_resolve_in_gt(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_no_should_resolve_in_gt(self, scorer: ResolveSignalScorer) -> None:
         """When ground truth has no should_resolve key, neutral verdict."""
         trace = _make_trace(outputs={"response": "anything"})
         gt = _make_gt(expected={})
@@ -303,9 +290,7 @@ class TestResolveSignalScorer:
         assert verdict.score == 1.0
         assert "neutral" in verdict.detail.lower()
 
-    def test_decision_text_fallback(
-        self, scorer: ResolveSignalScorer
-    ) -> None:
+    def test_decision_text_fallback(self, scorer: ResolveSignalScorer) -> None:
         """When outputs.response is empty, falls back to decision.decision_text."""
         trace = _make_trace(
             outputs={"response": ""},
@@ -398,9 +383,7 @@ class TestPlanScorer:
         assert verdict.passed is True
         assert verdict.score == 1.0
 
-    def test_must_not_include_violation_lowers_precision(
-        self, scorer: PlanScorer
-    ) -> None:
+    def test_must_not_include_violation_lowers_precision(self, scorer: PlanScorer) -> None:
         """A must_not_include violation reduces precision."""
         trace = _make_trace(
             outputs={
@@ -446,9 +429,7 @@ class TestPlanScorer:
         assert verdict.passed is True
         assert not any("dedupe" in f for f in verdict.hard_gate_failures)
 
-    def test_dedupe_invariant_with_duplicates(
-        self, scorer: PlanScorer
-    ) -> None:
+    def test_dedupe_invariant_with_duplicates(self, scorer: PlanScorer) -> None:
         """Dedupe invariant fails when duplicate intentions exist."""
         trace = _make_trace(
             outputs={
@@ -524,9 +505,7 @@ class TestPlanScorer:
         )
         verdict = scorer.score(trace, gt)
         assert verdict.passed is False
-        assert any(
-            "recall_below_threshold" in f for f in verdict.hard_gate_failures
-        )
+        assert any("recall_below_threshold" in f for f in verdict.hard_gate_failures)
 
     def test_threshold_precision_breach(self, scorer: PlanScorer) -> None:
         """When precision falls below threshold, hard gate failure is raised."""
@@ -547,24 +526,17 @@ class TestPlanScorer:
         )
         verdict = scorer.score(trace, gt)
         assert verdict.passed is False
-        assert any(
-            "precision_below_threshold" in f
-            for f in verdict.hard_gate_failures
-        )
+        assert any("precision_below_threshold" in f for f in verdict.hard_gate_failures)
 
     def test_empty_gt_gives_perfect_score(self, scorer: PlanScorer) -> None:
         """An empty expected dict results in a passing score of 1.0."""
-        trace = _make_trace(
-            outputs={"intentions": [{"function_name": "a", "file": "b.py"}]}
-        )
+        trace = _make_trace(outputs={"intentions": [{"function_name": "a", "file": "b.py"}]})
         gt = _make_gt(expected={})
         verdict = scorer.score(trace, gt)
         assert verdict.passed is True
         assert verdict.score == 1.0
 
-    def test_score_is_min_of_recall_and_precision(
-        self, scorer: PlanScorer
-    ) -> None:
+    def test_score_is_min_of_recall_and_precision(self, scorer: PlanScorer) -> None:
         """Score is min(recall, precision): lower of the two wins."""
         trace = _make_trace(
             outputs={
@@ -604,22 +576,14 @@ class TestUnderSpecScorer:
 
     def test_correct_block(self, scorer: UnderSpecScorer) -> None:
         """Planner correctly blocks an event that should be blocked."""
-        trace = _make_trace(
-            outputs={"blocked": True, "constraints": {}, "questions": []}
-        )
-        gt = _make_gt(
-            expected={
-                "events": [{"event_id": "evt_001", "should_block": True}]
-            }
-        )
+        trace = _make_trace(outputs={"blocked": True, "constraints": {}, "questions": []})
+        gt = _make_gt(expected={"events": [{"event_id": "evt_001", "should_block": True}]})
         verdict = scorer.score(trace, gt)
         assert verdict.passed is True
         assert verdict.score > 0.0
         assert not verdict.hard_gate_failures
 
-    def test_false_unblock_is_hard_gate_failure(
-        self, scorer: UnderSpecScorer
-    ) -> None:
+    def test_false_unblock_is_hard_gate_failure(self, scorer: UnderSpecScorer) -> None:
         """Planner resolves (provides constraint) for an event that should be blocked = hard gate."""
         trace = _make_trace(
             outputs={
@@ -628,17 +592,11 @@ class TestUnderSpecScorer:
                 "questions": [],
             }
         )
-        gt = _make_gt(
-            expected={
-                "events": [{"event_id": "evt_001", "should_block": True}]
-            }
-        )
+        gt = _make_gt(expected={"events": [{"event_id": "evt_001", "should_block": True}]})
         verdict = scorer.score(trace, gt)
         assert verdict.passed is False
         assert verdict.score == 0.0
-        assert any(
-            "false_unblock" in f for f in verdict.hard_gate_failures
-        )
+        assert any("false_unblock" in f for f in verdict.hard_gate_failures)
 
     def test_correct_resolve(self, scorer: UnderSpecScorer) -> None:
         """Planner correctly resolves (does not block) an event that should not be blocked."""
@@ -649,18 +607,12 @@ class TestUnderSpecScorer:
                 "questions": [],
             }
         )
-        gt = _make_gt(
-            expected={
-                "events": [{"event_id": "evt_002", "should_block": False}]
-            }
-        )
+        gt = _make_gt(expected={"events": [{"event_id": "evt_002", "should_block": False}]})
         verdict = scorer.score(trace, gt)
         assert verdict.passed is True
         assert verdict.score == 1.0
 
-    def test_mixed_events_with_false_unblock(
-        self, scorer: UnderSpecScorer
-    ) -> None:
+    def test_mixed_events_with_false_unblock(self, scorer: UnderSpecScorer) -> None:
         """Mixed events: one correct resolve + one false unblock = hard gate fail."""
         trace = _make_trace(
             outputs={
@@ -684,9 +636,7 @@ class TestUnderSpecScorer:
         assert verdict.passed is False
         assert verdict.score == 0.0
 
-    def test_mixed_events_all_correct(
-        self, scorer: UnderSpecScorer
-    ) -> None:
+    def test_mixed_events_all_correct(self, scorer: UnderSpecScorer) -> None:
         """Mixed events where planner blocked correctly and resolved correctly."""
         trace = _make_trace(
             outputs={
@@ -743,9 +693,7 @@ class TestIntegrationAnalysisScorer:
     def scorer(self) -> IntegrationAnalysisScorer:
         return IntegrationAnalysisScorer()
 
-    def test_must_include_risk_recall(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_must_include_risk_recall(self, scorer: IntegrationAnalysisScorer) -> None:
         """All must_include risks found gives recall=1.0."""
         trace = _make_trace(
             outputs={
@@ -770,9 +718,7 @@ class TestIntegrationAnalysisScorer:
         assert verdict.score == 1.0
         assert "recall=1.00" in verdict.detail
 
-    def test_must_include_risk_partial_recall(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_must_include_risk_partial_recall(self, scorer: IntegrationAnalysisScorer) -> None:
         """Only some must_include risks found gives partial recall."""
         trace = _make_trace(
             outputs={
@@ -794,9 +740,7 @@ class TestIntegrationAnalysisScorer:
         verdict = scorer.score(trace, gt)
         assert verdict.score == pytest.approx(0.5)
 
-    def test_must_not_include_risk_violation(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_must_not_include_risk_violation(self, scorer: IntegrationAnalysisScorer) -> None:
         """A must_not_include risk found reduces precision."""
         trace = _make_trace(
             outputs={
@@ -818,9 +762,7 @@ class TestIntegrationAnalysisScorer:
         # precision = 1 - 1/1 = 0.0
         assert verdict.score == pytest.approx(0.0)
 
-    def test_substring_match_bidirectional(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_substring_match_bidirectional(self, scorer: IntegrationAnalysisScorer) -> None:
         """Substring matching works in both directions (needle in haystack or vice versa)."""
         trace = _make_trace(
             outputs={
@@ -843,24 +785,16 @@ class TestIntegrationAnalysisScorer:
         # "timeout" is a substring of "timeout in external service call" => match
         assert verdict.score == 1.0
 
-    def test_empty_gt_neutral_verdict(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_empty_gt_neutral_verdict(self, scorer: IntegrationAnalysisScorer) -> None:
         """When ground truth has no risk expectations, neutral verdict."""
-        trace = _make_trace(
-            outputs={
-                "discovery": {"risks": [{"description": "some risk"}]}
-            }
-        )
+        trace = _make_trace(outputs={"discovery": {"risks": [{"description": "some risk"}]}})
         gt = _make_gt(expected={})
         verdict = scorer.score(trace, gt)
         assert verdict.passed is True
         assert verdict.score == 1.0
         assert "neutral" in verdict.detail.lower()
 
-    def test_risks_as_strings_in_discovery(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_risks_as_strings_in_discovery(self, scorer: IntegrationAnalysisScorer) -> None:
         """Discovery risks can be plain strings instead of dicts."""
         trace = _make_trace(
             outputs={
@@ -881,9 +815,7 @@ class TestIntegrationAnalysisScorer:
         verdict = scorer.score(trace, gt)
         assert verdict.score == 1.0
 
-    def test_score_is_min_of_recall_and_precision(
-        self, scorer: IntegrationAnalysisScorer
-    ) -> None:
+    def test_score_is_min_of_recall_and_precision(self, scorer: IntegrationAnalysisScorer) -> None:
         """Score is min(recall, precision)."""
         trace = _make_trace(
             outputs={
@@ -907,3 +839,224 @@ class TestIntegrationAnalysisScorer:
         verdict = scorer.score(trace, gt)
         # recall = 0/1 = 0.0, precision = 1 - 1/1 = 0.0
         assert verdict.score == pytest.approx(0.0)
+
+
+# ====================================================================
+# 7. GapScorer
+# ====================================================================
+
+
+class TestGapScorer:
+    """Tests for GapScorer covering recall, precision, F1, and edge cases."""
+
+    @pytest.fixture()
+    def scorer(self) -> GapScorer:
+        return GapScorer()
+
+    def test_must_find_full_recall(self, scorer: GapScorer) -> None:
+        """All must_find atoms matched gives recall=1.0 and passing verdict."""
+        trace = _make_trace(
+            outputs={
+                "gaps": [
+                    {
+                        "description": "missing validation for payment amount",
+                        "target": "validate_payment",
+                    },
+                    {"description": "no error handling on timeout", "target": "handle_timeout"},
+                ]
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "missing validation"}},
+                    {
+                        "id": "gap_002",
+                        "match": {"description_contains": "error handling on timeout"},
+                    },
+                ],
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is True
+        assert verdict.score == pytest.approx(1.0)
+        assert "recall=1.00" in verdict.detail
+
+    def test_must_find_partial_recall(self, scorer: GapScorer) -> None:
+        """Only 1/2 must_find atoms matched gives recall=0.50."""
+        trace = _make_trace(
+            outputs={
+                "gaps": [
+                    {"description": "missing validation for payment amount"},
+                ]
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "missing validation"}},
+                    {
+                        "id": "gap_002",
+                        "match": {"description_contains": "error handling on timeout"},
+                    },
+                ],
+                "thresholds": {"recall": 0.75},
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is False
+        assert "recall=0.50" in verdict.detail
+        assert any("recall_below_threshold" in f for f in verdict.hard_gate_failures)
+
+    def test_must_not_find_violation(self, scorer: GapScorer) -> None:
+        """A must_not_find atom matched triggers a hard gate failure."""
+        trace = _make_trace(
+            outputs={
+                "gaps": [
+                    {"description": "deprecated API usage in module C"},
+                    {"description": "real gap: missing auth check"},
+                ]
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "missing auth check"}},
+                ],
+                "must_not_find": [
+                    {"id": "fp_001", "match": {"description_contains": "deprecated API"}},
+                ],
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is False
+        assert any("must_not_find_matched" in f for f in verdict.hard_gate_failures)
+        assert "must_not_find_violations=1" in verdict.detail
+
+    def test_empty_ground_truth(self, scorer: GapScorer) -> None:
+        """Empty expected dict results in a passing neutral verdict."""
+        trace = _make_trace(outputs={"gaps": [{"description": "some gap"}]})
+        gt = _make_gt(expected={})
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is True
+        assert verdict.score == 1.0
+        assert "neutral" in verdict.detail.lower()
+
+    def test_no_gaps_found(self, scorer: GapScorer) -> None:
+        """When no gaps are found, recall is 0 and verdict fails."""
+        trace = _make_trace(outputs={"gaps": []})
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "missing validation"}},
+                ],
+                "thresholds": {"recall": 0.75},
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is False
+        assert verdict.score == pytest.approx(0.0)
+        assert "recall=0.00" in verdict.detail
+
+    def test_discovery_nested_gaps(self, scorer: GapScorer) -> None:
+        """Gaps nested under discovery.gaps are extracted correctly."""
+        trace = _make_trace(
+            outputs={
+                "discovery": {
+                    "gaps": [
+                        {"description": "missing error handling for timeout"},
+                    ]
+                }
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "error handling"}},
+                ],
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is True
+        assert verdict.score == pytest.approx(1.0)
+
+    def test_f1_score_computation(self, scorer: GapScorer) -> None:
+        """Score is F1 harmonic mean of recall and precision."""
+        trace = _make_trace(
+            outputs={
+                "gaps": [
+                    {"description": "real gap: missing validation"},
+                    {"description": "false positive: deprecated API"},
+                ]
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "missing validation"}},
+                ],
+                "must_not_find": [
+                    {"id": "fp_001", "match": {"description_contains": "deprecated API"}},
+                ],
+                "thresholds": {"recall": 0.5},
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        # recall = 1/1 = 1.0
+        # precision = 1.0 - 1/2 = 0.5
+        # f1 = 2 * 1.0 * 0.5 / (1.0 + 0.5) = 2/3 ~= 0.667
+        assert verdict.score == pytest.approx(2.0 / 3.0, abs=0.01)
+        assert verdict.passed is False  # must_not_find violation is always a hard gate failure
+
+    def test_no_expected_dict(self, scorer: GapScorer) -> None:
+        """When gt_case has no expected dict, neutral verdict."""
+        trace = _make_trace(outputs={"gaps": []})
+        gt = SimpleNamespace()  # no 'expected' attribute
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is True
+        assert verdict.score == 1.0
+
+    def test_target_any_of_matching(self, scorer: GapScorer) -> None:
+        """target_any_of in match spec matches against gap target field."""
+        trace = _make_trace(
+            outputs={
+                "gaps": [
+                    {"target": "validate_payment", "description": "some gap"},
+                ]
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"target_any_of": ["validate_payment"]}},
+                ],
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        assert verdict.passed is True
+        assert verdict.score == pytest.approx(1.0)
+
+    def test_default_recall_threshold(self, scorer: GapScorer) -> None:
+        """Default recall threshold is 0.75 when not specified."""
+        trace = _make_trace(
+            outputs={
+                "gaps": [
+                    {"description": "gap A"},
+                ]
+            }
+        )
+        gt = _make_gt(
+            expected={
+                "must_find": [
+                    {"id": "gap_001", "match": {"description_contains": "gap A"}},
+                    {"id": "gap_002", "match": {"description_contains": "gap B"}},
+                    {"id": "gap_003", "match": {"description_contains": "gap C"}},
+                    {"id": "gap_004", "match": {"description_contains": "gap D"}},
+                ],
+                # No thresholds specified => default 0.75
+            }
+        )
+        verdict = scorer.score(trace, gt)
+        # recall = 1/4 = 0.25 < 0.75 (default)
+        assert verdict.passed is False
+        assert any("recall_below_threshold" in f for f in verdict.hard_gate_failures)

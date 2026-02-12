@@ -114,6 +114,7 @@ class PddLifecycle:
         max_approval_iterations: int = 3,
         max_demotions_per_layer: int = 50,
         max_pipeline_passes: int = 2,
+        model_profile: Any = None,
     ) -> None:
         self.manager = manager
         self.orchestrator = PddOrchestrator(manager)
@@ -126,6 +127,7 @@ class PddLifecycle:
         self.max_approval_iterations = max_approval_iterations
         self.max_demotions_per_layer = max_demotions_per_layer
         self.max_pipeline_passes = max_pipeline_passes
+        self._model_profile = model_profile
         self._compute_quality = False
 
     # ------------------------------------------------------------------
@@ -134,12 +136,16 @@ class PddLifecycle:
 
     def _build_planner(self) -> Any:
         """Build a Planner instance with tools wired from lifecycle config."""
+        from spec_manager.orchestration.source_analysis_cache import SourceAnalysisCache
         from spec_manager.planner.api import Planner
+        from spec_manager.planner.tools.constraints_tool import ConstraintsTool
         from spec_manager.planner.tools.evidence_tool import EvidenceTool
+        from spec_manager.planner.tools.integration_tool import IntegrationTool
         from spec_manager.planner.tools.research_tool import ResearchTool
 
         # Build evidence searcher if evidence store is enabled
         evidence_searcher = None
+        evidence_index = None
         if self.use_evidence_store:
             try:
                 from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
@@ -154,8 +160,8 @@ class PddLifecycle:
                     / "evidence_store_index.json"
                 )
                 if index_path.exists():
-                    index = EvidenceIndex.load(index_path)
-                    evidence_searcher = EvidenceSearcher(index)
+                    evidence_index = EvidenceIndex.load(index_path)
+                    evidence_searcher = EvidenceSearcher(evidence_index)
             except Exception as exc:
                 logger.debug("Could not load evidence searcher: %s", exc)
 
@@ -171,18 +177,53 @@ class PddLifecycle:
             except Exception as exc:
                 logger.debug("Could not load steering script: %s", exc)
 
+        # Build research coordinator for web research
+        research_coordinator = None
+        if self.use_research:
+            try:
+                from spec_manager.refinement.interactive.research.coordinator import (
+                    ResearchCoordinator,
+                )
+
+                research_coordinator = ResearchCoordinator(evidence_index=evidence_index)
+            except Exception as exc:
+                logger.debug("Could not build research coordinator: %s", exc)
+
         research_tool = ResearchTool(
             evidence_searcher=evidence_searcher,
             steering_script=steering_script,
+            research_coordinator=research_coordinator,
             workspace=self.manager.workspace_path,
         )
         evidence_tool = EvidenceTool(evidence_searcher=evidence_searcher)
+
+        # Build source analysis cache and integration/constraints tools
+        source_cache = SourceAnalysisCache(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
+        integration_tool = IntegrationTool(
+            source_cache=source_cache,
+            workspace=self.manager.workspace_path,
+        )
+        constraints_tool = ConstraintsTool(workspace_root=self.manager.workspace_path)
+
+        # Resolve model_id from model profile if available
+        model_id = ""
+        if self._model_profile is not None:
+            try:
+                model_id = self._model_profile.get_model_for_role("planner")
+            except Exception:
+                logger.debug("Could not resolve planner model_id from model profile")
 
         return Planner(
             workspace_root=self.manager.workspace_path,
             mode=self.mode,
             research_tool=research_tool,
             evidence_tool=evidence_tool,
+            integration_tool=integration_tool,
+            constraints_tool=constraints_tool,
+            model_id=model_id,
         )
 
     # ------------------------------------------------------------------
@@ -214,6 +255,8 @@ class PddLifecycle:
                 if hasattr(self.manager.structure, "input_folder")
                 else "",
                 max_approval_iterations=self.max_approval_iterations,
+                enable_snapshots=True,
+                enable_quality_scoring=self._compute_quality,
             )
         )
         state_mgr.update_state(phase="intake", active_layer="")
@@ -296,8 +339,15 @@ class PddLifecycle:
         reporter.write(scorecard)
         results["scorecard"] = scorecard.to_dict()
 
+        # Read config flags for optional steps
+        _run_config = state_mgr.read_config()
+        _enable_quality = (
+            _run_config.enable_quality_scoring if _run_config else self._compute_quality
+        )
+        _enable_snapshots = _run_config.enable_snapshots if _run_config else True
+
         # Quality scoring (optional)
-        if self._compute_quality:
+        if _enable_quality:
             try:
                 from spec_manager.orchestration.digests import (
                     build_architecture_digest,
@@ -317,12 +367,13 @@ class PddLifecycle:
                 logger.warning("Quality scoring failed: %s", exc)
 
         # Snapshot
-        try:
-            from spec_manager.orchestration.snapshot import snapshot_run
+        if _enable_snapshots:
+            try:
+                from spec_manager.orchestration.snapshot import snapshot_run
 
-            snapshot_run(self.manager.structure.root, self.manager.run_id)
-        except Exception as exc:
-            logger.warning("Snapshot failed: %s", exc)
+                snapshot_run(self.manager.structure.root, self.manager.run_id)
+            except Exception as exc:
+                logger.warning("Snapshot failed: %s", exc)
 
         # Final report
         from spec_manager.orchestration.final_report import FinalReportGenerator

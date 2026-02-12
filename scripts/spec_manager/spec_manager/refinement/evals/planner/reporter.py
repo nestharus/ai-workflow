@@ -20,11 +20,12 @@ Soft signals (~12) are computed from verdicts (GT comparison) and traces
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +137,7 @@ class PlannerReporter:
         self._workspace = workspace_root
         self._run_id = run_id
         self._reports_dir = workspace_root / "reports" / "pdd" / run_id
+        self._last_verdicts: list[Any] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -155,6 +157,7 @@ class PlannerReporter:
         Returns:
             Fully populated :class:`PlannerScorecard`.
         """
+        self._last_verdicts = list(verdicts)
         hard_gates = self._compute_hard_gates(verdicts, traces)
         soft_signals = self._compute_soft_signals(verdicts, traces)
         overall_pass = all(g.status != "FAIL" for g in hard_gates)
@@ -222,11 +225,16 @@ class PlannerReporter:
                 lines.append(json.dumps({"metric": m.name, "evidence": ref}))
         jsonl_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
+        # Planner review (FAIL/WARN/NEEDS_REVIEW decisions with trace paths)
+        review_path = self._reports_dir / "planner_review.md"
+        review_path.write_text(self._render_review(self._last_verdicts), encoding="utf-8")
+
         logger.info(
-            "Planner scorecard written: json=%s md=%s jsonl=%s",
+            "Planner scorecard written: json=%s md=%s jsonl=%s review=%s",
             json_path,
             md_path,
             jsonl_path,
+            review_path,
         )
 
     # ------------------------------------------------------------------
@@ -348,7 +356,9 @@ class PlannerReporter:
         for t in traces:
             decision_key = str(getattr(t, "decision_key", ""))
             # Only applies to PLAN capability
-            if ":PLAN:" not in decision_key.upper() and not decision_key.upper().startswith("PLAN:"):
+            if ":PLAN:" not in decision_key.upper() and not decision_key.upper().startswith(
+                "PLAN:"
+            ):
                 continue
 
             artifacts = getattr(t, "artifacts", None) or {}
@@ -482,9 +492,7 @@ class PlannerReporter:
 
     def _signal_plan_redundancy(self, verdicts: list[Any]) -> PlannerMetric:
         """PASS <= 0.05, WARN <= 0.15, FAIL > 0.15."""
-        plan_verdicts = [
-            v for v in verdicts if str(getattr(v, "capability", "")).lower() == "plan"
-        ]
+        plan_verdicts = [v for v in verdicts if str(getattr(v, "capability", "")).lower() == "plan"]
         if not plan_verdicts:
             return PlannerMetric(
                 name="planner.plan.redundancy",
@@ -659,10 +667,8 @@ class PlannerReporter:
             slice_id = parts[2] if len(parts) > 2 else dk
             iteration = 1
             if len(parts) > 3:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     iteration = int(parts[3])
-                except (ValueError, TypeError):
-                    pass
             current = slice_iterations.get(slice_id, 0)
             slice_iterations[slice_id] = max(current, iteration)
 
@@ -700,9 +706,7 @@ class PlannerReporter:
         attribute.
         """
         cap_verdicts = [
-            v
-            for v in verdicts
-            if str(getattr(v, "capability", "")).lower() == capability.lower()
+            v for v in verdicts if str(getattr(v, "capability", "")).lower() == capability.lower()
         ]
         if not cap_verdicts:
             return PlannerMetric(
@@ -749,7 +753,7 @@ class PlannerReporter:
     @staticmethod
     def _render_markdown(scorecard: PlannerScorecard) -> str:
         """Render scorecard as a human-readable markdown document."""
-        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        ts = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         lines = [
             f"# Planner Scorecard -- Run {scorecard.run_id}",
             "",
@@ -767,9 +771,7 @@ class PlannerReporter:
             "|------|--------|-----|--------|",
         ]
         for g in scorecard.hard_gates:
-            lines.append(
-                f"| {g.name} | {g.status} | {g.raw:.2f} | {g.detail} |"
-            )
+            lines.append(f"| {g.name} | {g.status} | {g.raw:.2f} | {g.detail} |")
 
         lines.extend(
             [
@@ -781,11 +783,74 @@ class PlannerReporter:
             ]
         )
         for s in scorecard.soft_signals:
-            lines.append(
-                f"| {s.name} | {s.status} | {s.score:.2f} | {s.raw:.2f} | {s.detail} |"
-            )
+            lines.append(f"| {s.name} | {s.status} | {s.score:.2f} | {s.raw:.2f} | {s.detail} |")
 
         lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_review(verdicts: list[Any]) -> str:
+        """Render planner_review.md listing FAIL/WARN/NEEDS_REVIEW decisions.
+
+        Sections:
+        - **Failed Decisions**: verdicts with ``passed=False``.
+        - **Warnings**: verdicts with non-empty ``soft_signal_warnings``.
+        - **Needs Review**: verdicts with ``score < 0.5``.
+        """
+        lines: list[str] = ["# Planner Review", ""]
+
+        # ---- Failed Decisions ----
+        lines.append("## Failed Decisions")
+        lines.append("")
+        failed = [v for v in verdicts if not getattr(v, "passed", True)]
+        if failed:
+            for v in failed:
+                dk = getattr(v, "decision_key", "")
+                cap = getattr(v, "capability", "")
+                detail = getattr(v, "detail", "")
+                tid = getattr(v, "trace_id", "")
+                lines.append(f"- **{dk}** ({cap}): {detail}")
+                if tid:
+                    lines.append(f"  - trace: `{tid}`")
+        else:
+            lines.append("None.")
+        lines.append("")
+
+        # ---- Warnings ----
+        lines.append("## Warnings")
+        lines.append("")
+        warned = [v for v in verdicts if getattr(v, "soft_signal_warnings", None)]
+        if warned:
+            for v in warned:
+                dk = getattr(v, "decision_key", "")
+                cap = getattr(v, "capability", "")
+                warnings = getattr(v, "soft_signal_warnings", [])
+                tid = getattr(v, "trace_id", "")
+                lines.append(f"- **{dk}** ({cap}): {', '.join(str(w) for w in warnings)}")
+                if tid:
+                    lines.append(f"  - trace: `{tid}`")
+        else:
+            lines.append("None.")
+        lines.append("")
+
+        # ---- Needs Review ----
+        lines.append("## Needs Review")
+        lines.append("")
+        needs_review = [v for v in verdicts if getattr(v, "score", 1.0) < 0.5]
+        if needs_review:
+            for v in needs_review:
+                dk = getattr(v, "decision_key", "")
+                cap = getattr(v, "capability", "")
+                score = getattr(v, "score", 0.0)
+                detail = getattr(v, "detail", "")
+                tid = getattr(v, "trace_id", "")
+                lines.append(f"- **{dk}** ({cap}): score={score:.2f} -- {detail}")
+                if tid:
+                    lines.append(f"  - trace: `{tid}`")
+        else:
+            lines.append("None.")
+        lines.append("")
+
         return "\n".join(lines)
 
 

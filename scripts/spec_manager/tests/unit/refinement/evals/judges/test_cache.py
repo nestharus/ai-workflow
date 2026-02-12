@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 from pathlib import Path
 
 from spec_manager.refinement.evals.judges.cache import JudgeCache, JudgeCacheKey
@@ -90,3 +91,91 @@ class TestJudgeCacheConcurrency:
         assert result is not None
         assert "v" in result
         assert result["v"] in {0, 1}
+
+
+class TestJudgeCacheCopyToRun:
+    """Tests for copy_to_run provenance feature (Section 5.4)."""
+
+    def test_copy_existing_entry(self, tmp_path: Path) -> None:
+        """Existing cache entry is copied to run directory."""
+        cache_dir = tmp_path / "cache"
+        run_dir = tmp_path / "run"
+        cache = JudgeCache(cache_dir)
+        key = _sample_key("copy01")
+        data = {"score": 0.9, "detail": "good"}
+        cache.put(key, data)
+
+        cache.copy_to_run(key, run_dir)
+
+        dest = run_dir / "judges" / key.judge_type / f"{key.input_hash}.json"
+        assert dest.exists()
+        copied = json.loads(dest.read_text(encoding="utf-8"))
+        assert copied == data
+
+    def test_copy_missing_entry_silently_skips(self, tmp_path: Path) -> None:
+        """Missing cache entry does not raise, no file created."""
+        cache_dir = tmp_path / "cache"
+        run_dir = tmp_path / "run"
+        cache = JudgeCache(cache_dir)
+        key = _sample_key("nonexistent")
+
+        # Should not raise
+        cache.copy_to_run(key, run_dir)
+
+        dest = run_dir / "judges" / key.judge_type / f"{key.input_hash}.json"
+        assert not dest.exists()
+
+    def test_copy_creates_nested_directories(self, tmp_path: Path) -> None:
+        """copy_to_run creates judge type subdirectory if it does not exist."""
+        cache_dir = tmp_path / "cache"
+        run_dir = tmp_path / "deep" / "nested" / "run"
+        cache = JudgeCache(cache_dir)
+        key = _sample_key("nested")
+        cache.put(key, {"v": 1})
+
+        cache.copy_to_run(key, run_dir)
+
+        dest = run_dir / "judges" / key.judge_type / f"{key.input_hash}.json"
+        assert dest.exists()
+
+    def test_copy_preserves_content_integrity(self, tmp_path: Path) -> None:
+        """Copied file has identical content to cached file."""
+        cache_dir = tmp_path / "cache"
+        run_dir = tmp_path / "run"
+        cache = JudgeCache(cache_dir)
+        key = _sample_key("integrity")
+        data = {"nested": {"list": [1, 2, 3]}, "string": "hello"}
+        cache.put(key, data)
+
+        cache.copy_to_run(key, run_dir)
+
+        src_path = cache._key_path(key)
+        dest_path = run_dir / "judges" / key.judge_type / f"{key.input_hash}.json"
+        assert src_path.read_text() == dest_path.read_text()
+
+    def test_copy_different_judge_types(self, tmp_path: Path) -> None:
+        """Copies for different judge types go to separate subdirs."""
+        cache_dir = tmp_path / "cache"
+        run_dir = tmp_path / "run"
+        cache = JudgeCache(cache_dir)
+
+        key_arch = JudgeCacheKey(
+            judge_type="arch_quality",
+            model_id="opus",
+            prompt_version="v1",
+            input_hash="aaa",
+        )
+        key_code = JudgeCacheKey(
+            judge_type="code_quality",
+            model_id="opus",
+            prompt_version="v1",
+            input_hash="bbb",
+        )
+        cache.put(key_arch, {"type": "arch"})
+        cache.put(key_code, {"type": "code"})
+
+        cache.copy_to_run(key_arch, run_dir)
+        cache.copy_to_run(key_code, run_dir)
+
+        assert (run_dir / "judges" / "arch_quality" / "aaa.json").exists()
+        assert (run_dir / "judges" / "code_quality" / "bbb.json").exists()

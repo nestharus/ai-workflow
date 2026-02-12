@@ -40,11 +40,13 @@ class L1Planner:
         research_tool: Callable[..., Any] | None = None,
         integration_tool: Callable[..., Any] | None = None,
         evidence_tool: Callable[..., Any] | None = None,
+        constraints_tool: Any = None,
     ) -> None:
         self.layer: Literal["l1"] = "l1"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
         self._evidence_tool = evidence_tool
+        self._constraints_tool = constraints_tool
 
     # ------------------------------------------------------------------
     # Protocol methods

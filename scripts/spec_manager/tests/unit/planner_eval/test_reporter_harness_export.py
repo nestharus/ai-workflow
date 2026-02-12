@@ -14,9 +14,17 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import yaml
 import pytest
-
+import yaml
+from spec_manager.refinement.evals.planner.export_gt import (
+    ExportedCase,
+    GroundTruthExporter,
+)
+from spec_manager.refinement.evals.planner.harness import (
+    EvalConfig,
+    EvalResult,
+    PlannerEvalHarness,
+)
 from spec_manager.refinement.evals.planner.reporter import (
     PlannerMetric,
     PlannerReporter,
@@ -26,16 +34,6 @@ from spec_manager.refinement.evals.planner.reporter import (
     _threshold_gte,
     _threshold_lte,
 )
-from spec_manager.refinement.evals.planner.harness import (
-    EvalConfig,
-    EvalResult,
-    PlannerEvalHarness,
-)
-from spec_manager.refinement.evals.planner.export_gt import (
-    ExportedCase,
-    GroundTruthExporter,
-)
-
 
 # ---------------------------------------------------------------------------
 # Helpers: mock trace / verdict factories
@@ -57,7 +55,9 @@ def _make_trace(
         trace_id=trace_id,
         status=status,
         decision_key=decision_key,
-        artifacts=artifacts if artifacts is not None else {"request": {"capability": "PLAN"}, "model_id": "gpt-4"},
+        artifacts=artifacts
+        if artifacts is not None
+        else {"request": {"capability": "PLAN"}, "model_id": "gpt-4"},
         decision=decision if decision is not None else {"status": status},
         model_calls=model_calls,
         tool_calls=tool_calls,
@@ -211,7 +211,9 @@ class TestExtractFloatFromDetail:
     """Tests for _extract_float_from_detail."""
 
     def test_extracts_known_key(self) -> None:
-        assert _extract_float_from_detail("recall=0.95 precision=0.80", "recall") == pytest.approx(0.95)
+        assert _extract_float_from_detail("recall=0.95 precision=0.80", "recall") == pytest.approx(
+            0.95
+        )
 
     def test_returns_none_for_missing_key(self) -> None:
         assert _extract_float_from_detail("recall=0.95", "precision") is None
@@ -474,7 +476,9 @@ class TestSoftSignalModelCallsP50P95:
         ]
         reporter = PlannerReporter(tmp_path, "run-p50")
         sc = reporter.compute(verdicts=[], traces=traces)
-        signal = next(s for s in sc.soft_signals if s.name == "planner.model_calls_per_decision_p50")
+        signal = next(
+            s for s in sc.soft_signals if s.name == "planner.model_calls_per_decision_p50"
+        )
         assert signal.status == "PASS"
         assert signal.raw == pytest.approx(2.0)
 
@@ -483,7 +487,9 @@ class TestSoftSignalModelCallsP50P95:
         traces = [_make_trace(model_calls=15) for _ in range(20)]
         reporter = PlannerReporter(tmp_path, "run-p95-high")
         sc = reporter.compute(verdicts=[], traces=traces)
-        signal = next(s for s in sc.soft_signals if s.name == "planner.model_calls_per_decision_p95")
+        signal = next(
+            s for s in sc.soft_signals if s.name == "planner.model_calls_per_decision_p95"
+        )
         assert signal.status == "FAIL"
         assert signal.raw >= 10.0
 
@@ -574,10 +580,10 @@ class TestOverallPass:
 
 
 class TestWriteOutputFiles:
-    """PlannerReporter.write creates json, md, and jsonl files."""
+    """PlannerReporter.write creates json, md, jsonl, and review files."""
 
     def test_write_creates_all_files(self, tmp_path: Path) -> None:
-        """write() creates planner_scorecard.json, .md, and planner_decisions.jsonl."""
+        """write() creates planner_scorecard.json, .md, planner_decisions.jsonl, and planner_review.md."""
         reporter = PlannerReporter(tmp_path, "run-write")
         scorecard = PlannerScorecard(
             run_id="run-write",
@@ -634,6 +640,129 @@ class TestWriteOutputFiles:
         assert "metric" in first
         assert "evidence" in first
 
+        # Review
+        review_path = reports_dir / "planner_review.md"
+        assert review_path.exists()
+        review_text = review_path.read_text(encoding="utf-8")
+        assert "# Planner Review" in review_text
+        assert "## Failed Decisions" in review_text
+        assert "## Warnings" in review_text
+        assert "## Needs Review" in review_text
+
+
+class TestReviewMdContent:
+    """PlannerReporter.write produces planner_review.md with FAIL/WARN sections."""
+
+    def test_review_contains_failed_decisions(self, tmp_path: Path) -> None:
+        """planner_review.md lists decisions that failed."""
+        reporter = PlannerReporter(tmp_path, "run-review-fail")
+        verdicts = [
+            _make_verdict(
+                capability="gap",
+                passed=False,
+                score=0.3,
+                detail="recall=0.30 (1/3)",
+                decision_key="l1:GAP:LIB-01:1:abc",
+                trace_id="t-fail-001",
+                hard_gate_failures=["recall_below_threshold"],
+            ),
+            _make_verdict(
+                capability="plan",
+                passed=True,
+                score=1.0,
+                detail="all good",
+                decision_key="l1:PLAN:LIB-01:1:def",
+                trace_id="t-pass-001",
+            ),
+        ]
+        sc = reporter.compute(verdicts=verdicts, traces=[])
+        reporter.write(sc)
+
+        review_path = tmp_path / "reports" / "pdd" / "run-review-fail" / "planner_review.md"
+        assert review_path.exists()
+        review_text = review_path.read_text(encoding="utf-8")
+
+        assert "## Failed Decisions" in review_text
+        assert "l1:GAP:LIB-01:1:abc" in review_text
+        assert "t-fail-001" in review_text
+        # The passing verdict should NOT appear in the failed section
+        assert (
+            "l1:PLAN:LIB-01:1:def"
+            not in review_text.split("## Warnings")[0].split("## Failed Decisions")[1]
+        )
+
+    def test_review_contains_warnings(self, tmp_path: Path) -> None:
+        """planner_review.md lists decisions with warnings."""
+        reporter = PlannerReporter(tmp_path, "run-review-warn")
+        verdicts = [
+            _make_verdict(
+                capability="resolve_signal",
+                passed=True,
+                score=1.0,
+                detail="Answer matches expected.",
+                decision_key="l1:RESOLVE_SIGNAL:LIB-01:1:abc",
+                trace_id="t-warn-001",
+                soft_signal_warnings=["missing_citations: REF-001"],
+            ),
+        ]
+        sc = reporter.compute(verdicts=verdicts, traces=[])
+        reporter.write(sc)
+
+        review_path = tmp_path / "reports" / "pdd" / "run-review-warn" / "planner_review.md"
+        review_text = review_path.read_text(encoding="utf-8")
+
+        assert "## Warnings" in review_text
+        assert "l1:RESOLVE_SIGNAL:LIB-01:1:abc" in review_text
+        assert "missing_citations" in review_text
+
+    def test_review_contains_needs_review(self, tmp_path: Path) -> None:
+        """planner_review.md lists low-confidence decisions (score < 0.5)."""
+        reporter = PlannerReporter(tmp_path, "run-review-lowconf")
+        verdicts = [
+            _make_verdict(
+                capability="plan",
+                passed=True,
+                score=0.3,
+                detail="recall=0.30",
+                decision_key="l1:PLAN:LIB-02:1:xyz",
+                trace_id="t-low-001",
+            ),
+        ]
+        sc = reporter.compute(verdicts=verdicts, traces=[])
+        reporter.write(sc)
+
+        review_path = tmp_path / "reports" / "pdd" / "run-review-lowconf" / "planner_review.md"
+        review_text = review_path.read_text(encoding="utf-8")
+
+        assert "## Needs Review" in review_text
+        assert "l1:PLAN:LIB-02:1:xyz" in review_text
+        assert "score=0.30" in review_text
+
+    def test_review_empty_sections_show_none(self, tmp_path: Path) -> None:
+        """When there are no failures/warnings/needs-review, sections show 'None.'."""
+        reporter = PlannerReporter(tmp_path, "run-review-clean")
+        verdicts = [
+            _make_verdict(
+                capability="plan",
+                passed=True,
+                score=1.0,
+                detail="all good",
+            ),
+        ]
+        sc = reporter.compute(verdicts=verdicts, traces=[])
+        reporter.write(sc)
+
+        review_path = tmp_path / "reports" / "pdd" / "run-review-clean" / "planner_review.md"
+        review_text = review_path.read_text(encoding="utf-8")
+
+        # All three sections should contain "None."
+        sections = review_text.split("## ")
+        for section in sections[1:]:  # skip the title before first ##
+            lines = section.strip().split("\n")
+            # Each section should have "None." as the only content after the header
+            body = "\n".join(lines[1:]).strip()
+            assert body == "None." or body.startswith("None.")
+
 
 class TestComputeExtractsModelId:
     """Compute extracts model_id from trace artifacts."""
@@ -641,7 +770,9 @@ class TestComputeExtractsModelId:
     def test_model_id_extracted(self, tmp_path: Path) -> None:
         """model_id is extracted from the first trace that has it."""
         traces = [
-            _make_trace(artifacts={"request": {"cap": "PLAN"}, "model_id": "claude-opus-4-20250514"}),
+            _make_trace(
+                artifacts={"request": {"cap": "PLAN"}, "model_id": "claude-opus-4-20250514"}
+            ),
         ]
         reporter = PlannerReporter(tmp_path, "run-mid")
         sc = reporter.compute(verdicts=[], traces=traces)
@@ -766,9 +897,7 @@ class TestScoreExistingTracesFindsAndScores:
             "layer": "l1",
             "slice_id": "LIB-01",
         }
-        (traces_dir / "index.jsonl").write_text(
-            json.dumps(entry) + "\n", encoding="utf-8"
-        )
+        (traces_dir / "index.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
 
         # Create trace directory with request.json and decision.json
         trace_dir = traces_dir / "trace-001"
@@ -783,9 +912,7 @@ class TestScoreExistingTracesFindsAndScores:
         # Artifacts dir with request artifact so trace_integrity passes
         art_dir = trace_dir / "artifacts"
         art_dir.mkdir()
-        (art_dir / "request.json").write_text(
-            json.dumps({"capability": "PLAN"}), encoding="utf-8"
-        )
+        (art_dir / "request.json").write_text(json.dumps({"capability": "PLAN"}), encoding="utf-8")
         # Calls dir with at least one tool call so evidence_first passes
         calls_dir = trace_dir / "calls"
         calls_dir.mkdir()
@@ -801,17 +928,18 @@ class TestScoreExistingTracesFindsAndScores:
 
 
 class TestBuildScorerMap:
-    """_build_scorer_map returns all 4 scorers."""
+    """_build_scorer_map returns all 5 scorers."""
 
-    def test_returns_four_scorers(self, tmp_path: Path) -> None:
-        """_build_scorer_map returns scorers for all four capabilities."""
+    def test_returns_five_scorers(self, tmp_path: Path) -> None:
+        """_build_scorer_map returns scorers for all five capabilities."""
         harness = PlannerEvalHarness(tmp_path)
         scorer_map = harness._build_scorer_map()
         assert "RESOLVE_SIGNAL" in scorer_map
+        assert "GAP" in scorer_map
         assert "PLAN" in scorer_map
         assert "UNDER_SPEC" in scorer_map
         assert "INTEGRATION_ANALYSIS" in scorer_map
-        assert len(scorer_map) == 4
+        assert len(scorer_map) == 5
 
 
 class TestDiffDecisions:
@@ -921,9 +1049,7 @@ class TestScoreExistingWithGT:
             "layer": "l1",
             "slice_id": "LIB-01",
         }
-        (traces_dir / "index.jsonl").write_text(
-            json.dumps(entry) + "\n", encoding="utf-8"
-        )
+        (traces_dir / "index.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
 
         trace_dir = traces_dir / "trace-gt-001"
         trace_dir.mkdir()
@@ -944,7 +1070,9 @@ class TestScoreExistingWithGT:
                     "decision_key": "l1:PLAN:LIB-01:1:abc",
                     "capability": "PLAN",
                     "layer": "l1",
-                    "expected": {"outcome": {"intentions": {"must_include": [], "must_not_include": []}}},
+                    "expected": {
+                        "outcome": {"intentions": {"must_include": [], "must_not_include": []}}
+                    },
                 }
             ],
         }
@@ -1032,9 +1160,7 @@ class TestExportReadsAndLoadsTraces:
             "layer": "l1",
             "slice_id": "LIB-01",
         }
-        (traces_dir / "index.jsonl").write_text(
-            json.dumps(entry) + "\n", encoding="utf-8"
-        )
+        (traces_dir / "index.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
 
         trace_dir = traces_dir / "trace-exp-001"
         trace_dir.mkdir()

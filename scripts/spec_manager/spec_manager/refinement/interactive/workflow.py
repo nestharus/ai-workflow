@@ -15,8 +15,8 @@ from spec_manager.refinement.interactive.input_signal import (
 )
 from spec_manager.refinement.interactive.question_generator import QuestionGenerator
 from spec_manager.refinement.interactive.signal_resolver import (
-    AutoSignalResolver,
     InteractiveSignalResolver,
+    PlannerSignalResolver,
     SignalResolver,
 )
 from spec_manager.refinement.interactive.spec_patcher import SpecPatcher, SteeringResponse
@@ -99,7 +99,7 @@ class InteractiveWorkflow:
                     evidence_index=evidence_index,
                 )
             else:
-                self._resolver = AutoSignalResolver(
+                self._resolver = PlannerSignalResolver(
                     steering_script=steering,
                     use_research=use_research,
                     workspace=workspace,
