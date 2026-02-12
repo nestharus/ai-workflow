@@ -104,6 +104,9 @@ class Planner:
         constraints_tool: Any = None,
         override_provider: Callable[[PlanningRequest], PlanningResult | None] | None = None,
         model_id: str = "",
+        work_item_store: Any = None,
+        wait_graph: Any = None,
+        on_constraint_saved: Callable | None = None,
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._mode = mode
@@ -112,6 +115,16 @@ class Planner:
         self._layer_router = LayerRouter()
         self._capability_router = CapabilityRouter()
         self._override_provider = override_provider
+        self._work_item_store = work_item_store
+        self._wait_graph = wait_graph
+
+        # Build a shared ConstraintStoreAdapter for L1/L2 planners
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+
+        self._constraints_adapter = ConstraintStoreAdapter(
+            self._workspace_root,
+            on_constraint_saved=on_constraint_saved,
+        )
 
         if register_defaults:
             self._register_default_planners(
@@ -140,6 +153,7 @@ class Planner:
                 integration_tool=integration_tool,
                 evidence_tool=evidence_tool,
                 constraints_tool=constraints_tool,
+                constraints_store_adapter=self._constraints_adapter,
             ),
         )
         self._layer_router.register(
@@ -149,6 +163,9 @@ class Planner:
                 integration_tool=integration_tool,
                 evidence_tool=evidence_tool,
                 constraints_tool=constraints_tool,
+                constraints_store_adapter=self._constraints_adapter,
+                work_item_store=self._work_item_store,
+                wait_graph=self._wait_graph,
             ),
         )
         self._layer_router.register(

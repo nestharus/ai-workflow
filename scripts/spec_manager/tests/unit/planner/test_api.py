@@ -240,6 +240,13 @@ class TestPlannerRegistration:
             result = planner.plan(req)
             assert result.status == "OK"
 
+    def test_planner_has_constraints_adapter(self, tmp_path: Any) -> None:
+        """Planner creates a ConstraintStoreAdapter in __init__."""
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        assert isinstance(planner._constraints_adapter, ConstraintStoreAdapter)
+
 
 # ---------------------------------------------------------------------------
 # Override provider

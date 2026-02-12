@@ -11,10 +11,9 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-
 
 # ------------------------------------------------------------------
 # Condition types
@@ -55,6 +54,8 @@ class ConstraintPresentCondition(MonitorCondition):
     type: str = "constraint_present"
     constraint_key: str = ""
     constraint_dir: str = "analysis/constraints"
+    constraint_id: str = ""
+    slice_id: str = ""
 
 
 @dataclass
@@ -111,6 +112,8 @@ def condition_from_dict(d: dict[str, Any]) -> MonitorCondition:
         return cls(
             constraint_key=d.get("constraint_key", ""),
             constraint_dir=d.get("constraint_dir", "analysis/constraints"),
+            constraint_id=d.get("constraint_id", ""),
+            slice_id=d.get("slice_id", ""),
         )
     if cls is SliceMergedCondition:
         return cls(
@@ -210,7 +213,7 @@ class MonitorSpec:
         if not self.monitor_id:
             self.monitor_id = os.urandom(8).hex()
         if not self.status.created_at:
-            self.status.created_at = datetime.now(timezone.utc).isoformat()
+            self.status.created_at = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict[str, Any]:
         return {

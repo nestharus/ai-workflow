@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.coordination.monitor_executor import (
     ConditionChecker,
     MonitorExecutor,
@@ -22,7 +21,6 @@ from spec_manager.orchestration.coordination.monitors import (
     SliceInfo,
 )
 from spec_manager.orchestration.coordination.wake_queue import WakeQueue
-
 
 # ------------------------------------------------------------------
 # Helpers
@@ -62,7 +60,7 @@ def _make_spec(
     if condition is None:
         condition = {"type": "work_item_done", "work_item_id": "wi_1"}
     if not created_at:
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
     return MonitorSpec(
         monitor_id=monitor_id,
         run_id="run_1",
@@ -168,6 +166,86 @@ class TestConditionCheckerConstraintPresent:
 
         cond = ConstraintPresentCondition(constraint_key="")
         assert checker.check(cond) is False
+
+    def test_uses_load_merged_when_available(self, tmp_path: Path) -> None:
+        """Verify that ConditionChecker uses load_merged method when available."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class _MockConstraint:
+            constraint_id: str
+
+        class _MockConstraintsStoreWithLoadMerged:
+            """Mock store that tracks which method was called."""
+
+            def __init__(self) -> None:
+                self.load_merged_called = False
+                self.load_called = False
+                self._constraints = [
+                    _MockConstraint(constraint_id="CON-1"),
+                    _MockConstraint(constraint_id="CON-2"),
+                ]
+
+            def load_merged(self, slice_id: str) -> list:
+                self.load_merged_called = True
+                return self._constraints
+
+            def load(self, slice_id: str) -> list:
+                self.load_called = True
+                return self._constraints
+
+        store = _MockConstraintsStoreWithLoadMerged()
+        checker = ConditionChecker(tmp_path, constraints_store=store)
+
+        from spec_manager.orchestration.coordination.monitors import ConstraintPresentCondition
+
+        # Check for an existing constraint
+        cond = ConstraintPresentCondition(
+            constraint_id="CON-1",
+            slice_id="my_slice",
+        )
+        result = checker.check(cond)
+
+        # Verify load_merged was called, not load
+        assert result is True
+        assert store.load_merged_called is True
+        assert store.load_called is False
+
+    def test_falls_back_to_load_when_load_merged_not_available(self, tmp_path: Path) -> None:
+        """Verify fallback to load() when load_merged() doesn't exist."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class _MockConstraint:
+            constraint_id: str
+
+        class _MockConstraintsStoreWithoutLoadMerged:
+            """Mock store without load_merged method."""
+
+            def __init__(self) -> None:
+                self.load_called = False
+                self._constraints = [
+                    _MockConstraint(constraint_id="CON-3"),
+                ]
+
+            def load(self, slice_id: str) -> list:
+                self.load_called = True
+                return self._constraints
+
+        store = _MockConstraintsStoreWithoutLoadMerged()
+        checker = ConditionChecker(tmp_path, constraints_store=store)
+
+        from spec_manager.orchestration.coordination.monitors import ConstraintPresentCondition
+
+        cond = ConstraintPresentCondition(
+            constraint_id="CON-3",
+            slice_id="my_slice",
+        )
+        result = checker.check(cond)
+
+        # Verify load was called as fallback
+        assert result is True
+        assert store.load_called is True
 
 
 class TestConditionCheckerCompound:
@@ -307,7 +385,11 @@ class TestMonitorExecutorRunOnce:
         reg = MonitorRegistry(coord_dir)
         spec = _make_spec(
             monitor_id="m1",
-            condition={"type": "work_item_done", "work_item_id": "wi_1", "required_status": "MERGED"},
+            condition={
+                "type": "work_item_done",
+                "work_item_id": "wi_1",
+                "required_status": "MERGED",
+            },
         )
         reg.register(spec)
 
@@ -337,7 +419,11 @@ class TestMonitorExecutorRunOnce:
         reg = MonitorRegistry(coord_dir)
         spec = _make_spec(
             monitor_id="m1",
-            condition={"type": "work_item_done", "work_item_id": "wi_1", "required_status": "MERGED"},
+            condition={
+                "type": "work_item_done",
+                "work_item_id": "wi_1",
+                "required_status": "MERGED",
+            },
         )
         reg.register(spec)
 
@@ -364,14 +450,22 @@ class TestMonitorExecutorRunOnce:
             _make_spec(
                 monitor_id="m1",
                 signal_id="sig_1",
-                condition={"type": "work_item_done", "work_item_id": "wi_1", "required_status": "MERGED"},
+                condition={
+                    "type": "work_item_done",
+                    "work_item_id": "wi_1",
+                    "required_status": "MERGED",
+                },
             )
         )
         reg.register(
             _make_spec(
                 monitor_id="m2",
                 signal_id="sig_2",
-                condition={"type": "work_item_done", "work_item_id": "wi_2", "required_status": "MERGED"},
+                condition={
+                    "type": "work_item_done",
+                    "work_item_id": "wi_2",
+                    "required_status": "MERGED",
+                },
             )
         )
 
@@ -387,7 +481,7 @@ class TestMonitorExecutorRunOnce:
 class TestMonitorExecutorTimeout:
     def test_escalate_on_timeout(self, tmp_path: Path) -> None:
         coord_dir = tmp_path / "coord"
-        past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
 
         reg = MonitorRegistry(coord_dir)
         spec = _make_spec(
@@ -411,7 +505,7 @@ class TestMonitorExecutorTimeout:
 
     def test_fail_on_timeout(self, tmp_path: Path) -> None:
         coord_dir = tmp_path / "coord"
-        past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
 
         reg = MonitorRegistry(coord_dir)
         spec = _make_spec(
@@ -435,7 +529,7 @@ class TestMonitorExecutorTimeout:
 
     def test_retry_on_timeout_resets(self, tmp_path: Path) -> None:
         coord_dir = tmp_path / "coord"
-        past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        past = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
 
         reg = MonitorRegistry(coord_dir)
         spec = _make_spec(
@@ -508,7 +602,11 @@ class TestMonitorExecutorOnEvent:
                 monitor_id="m1",
                 signal_id="sig_1",
                 event_triggers=["SLICE_MERGED"],
-                condition={"type": "work_item_done", "work_item_id": "wi_1", "required_status": "MERGED"},
+                condition={
+                    "type": "work_item_done",
+                    "work_item_id": "wi_1",
+                    "required_status": "MERGED",
+                },
             )
         )
         # m2 does not subscribe to SLICE_MERGED
@@ -517,7 +615,11 @@ class TestMonitorExecutorOnEvent:
                 monitor_id="m2",
                 signal_id="sig_2",
                 event_triggers=["GIT_DIRTY_ADVANCED"],
-                condition={"type": "work_item_done", "work_item_id": "wi_2", "required_status": "MERGED"},
+                condition={
+                    "type": "work_item_done",
+                    "work_item_id": "wi_2",
+                    "required_status": "MERGED",
+                },
             )
         )
 

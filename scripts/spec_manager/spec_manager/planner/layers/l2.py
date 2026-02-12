@@ -98,6 +98,10 @@ class L2Planner:
     evidence_tool:
         Optional callable for evidence-store lookups.
         ``None`` to skip.
+    constraints_store_adapter:
+        Optional :class:`ConstraintStoreAdapter` for loading/saving
+        constraints.  When provided, ``build_plan`` uses the strategy
+        pipeline.
     """
 
     def __init__(
@@ -106,12 +110,18 @@ class L2Planner:
         integration_tool: _ToolFn = None,
         evidence_tool: _ToolFn = None,
         constraints_tool: _ToolFn = None,
+        constraints_store_adapter: Any = None,
+        work_item_store: Any = None,
+        wait_graph: Any = None,
     ) -> None:
         self.layer: Literal["l2"] = "l2"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
         self._evidence_tool = evidence_tool
         self._constraints_tool = constraints_tool
+        self._constraints_store_adapter = constraints_store_adapter
+        self._work_item_store = work_item_store
+        self._wait_graph = wait_graph
 
     # ------------------------------------------------------------------
     # LayerPlanner interface
@@ -162,17 +172,15 @@ class L2Planner:
     ) -> dict[str, Any]:
         """Produce wiring intentions from *gaps* and architecture *discovery*.
 
-        Each intention contains:
-        - ``component_id``: target component
-        - ``target_files``: files to touch
-        - ``approach``: human-readable description
-        - ``pin_refs``: related pins / edges
-        - ``dependencies``: other component ids this depends on
+        When a ``constraints_store_adapter`` is available, uses the full
+        strategy pipeline (impact classification, constraint loading,
+        problem framing, architecture decisions, authority checks).
 
-        If a ``research_tool`` is available it is called with the gaps
-        and topology for LLM-driven intention generation.  Otherwise a
-        one-to-one gap-to-intention mapping is produced locally.
+        Otherwise falls back to direct gap-to-intention mapping.
         """
+        if self._constraints_store_adapter is not None:
+            return self._build_plan_via_strategies(ctx, gaps, discovery)
+
         if self._research_tool is not None:
             try:
                 result = self._research_tool(
@@ -203,6 +211,78 @@ class L2Planner:
             )
         return {"intentions": intentions}
 
+    def _build_plan_via_strategies(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run the strategy pipeline for L2 plan building."""
+        from spec_manager.planner.strategies.architecture_strategy import (
+            ArchitecturePlannerStrategy,
+        )
+        from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
+        from spec_manager.planner.strategies.constraint_strategies import (
+            ConstraintCollectionStrategy,
+            ConstraintEnricherStrategy,
+            ImpactClassifierStrategy,
+            NonSoftwareChecklistStrategy,
+            ProblemFramerStrategy,
+            QuestionComposerStrategy,
+            TradeoffMapperStrategy,
+        )
+        from spec_manager.planner.strategies.protocol import PlanningSession, PlanningSessionRunner
+
+        workspace_root = Path(getattr(ctx, "workspace_root", "") or "")
+
+        session_ctx: dict[str, Any] = {
+            "layer": "L2",
+            "slice_id": getattr(ctx, "slice_id", ""),
+            "run_id": getattr(ctx, "run_id", "default"),
+            "workspace_root": str(workspace_root),
+        }
+
+        session = PlanningSession(
+            ctx=session_ctx,
+            gaps=gaps,
+            discovery=discovery,
+        )
+
+        run_agent = self._research_tool
+
+        strategies = [
+            ImpactClassifierStrategy(),
+            ConstraintCollectionStrategy(workspace_root),
+            TradeoffMapperStrategy(workspace_root),
+            ProblemFramerStrategy(run_agent=run_agent),
+            ConstraintEnricherStrategy(run_agent=run_agent),
+            NonSoftwareChecklistStrategy(),
+            ArchitecturePlannerStrategy(
+                workspace_root,
+                run_agent=run_agent,
+                work_item_store=self._work_item_store,
+                wait_graph=self._wait_graph,
+            ),
+            AuthorityDeciderStrategy(workspace_root),
+            QuestionComposerStrategy(run_agent=run_agent),
+        ]
+
+        runner = PlanningSessionRunner(strategies)
+        session = runner.run(session)
+
+        result: dict[str, Any] = {
+            "intentions": session.intentions,
+        }
+        if session.decision_requirements:
+            result["decision_requirements"] = [dr.to_dict() for dr in session.decision_requirements]
+        if session.new_constraints:
+            result["new_constraints"] = [c.to_dict() for c in session.new_constraints]
+        if session.under_spec_events:
+            result["under_spec_events"] = session.under_spec_events
+        if session.decision_outcomes:
+            result["decision_outcomes"] = [o.to_dict() for o in session.decision_outcomes]
+        return result
+
     def resolve_under_spec(
         self,
         ctx: Any,
@@ -219,8 +299,6 @@ class L2Planner:
         3. If still unresolved, return ``blocked=True`` with questions
            for human input.
         """
-        topology_nodes = discovery.get("nodes", [])
-        topology_edges = discovery.get("edges", [])
 
         resolved_constraints: dict[str, Any] = {}
         remaining_questions: list[str] = []
@@ -229,15 +307,7 @@ class L2Planner:
             event_id = event.get("id", "")
             question = event.get("question", event.get("description", ""))
 
-            # Strategy 1: check if any topology node/edge answers this.
-            resolved_from_topology = _try_resolve_from_topology(
-                question, topology_nodes, topology_edges
-            )
-            if resolved_from_topology is not None:
-                resolved_constraints[event_id] = resolved_from_topology
-                continue
-
-            # Strategy 2: evidence lookup.
+            # Strategy 1: evidence lookup.
             if self._evidence_tool is not None:
                 try:
                     evidence_hit = self._evidence_tool(
@@ -255,7 +325,7 @@ class L2Planner:
                         exc_info=True,
                     )
 
-            # Strategy 3: cannot resolve -- block.
+            # Strategy 2: cannot resolve -- block.
             remaining_questions.append(question)
 
         blocked = len(remaining_questions) > 0
@@ -307,19 +377,3 @@ class L2Planner:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _try_resolve_from_topology(
-    question: str,
-    nodes: list[dict[str, Any]],
-    edges: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    """Check whether *question* can be answered by existing topology data.
-
-    This is intentionally a placeholder for future LLM-based matching.
-    Currently it returns ``None`` unconditionally -- real resolution
-    requires an LLM call that will be wired through the tools layer.
-    """
-    # Future: pass question + topology to an LLM to see if it can derive
-    # the answer.  For now, always return None (unresolved).
-    return None

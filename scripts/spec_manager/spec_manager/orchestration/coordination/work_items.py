@@ -13,7 +13,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -86,6 +86,8 @@ class WorkItem:
     tags: list[str] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
+    kind: str = "SPEC_WORK"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -107,6 +109,8 @@ class WorkItem:
             tags=d.get("tags", []),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
+            kind=d.get("kind", "SPEC_WORK"),
+            metadata=d.get("metadata", {}),
         )
 
 
@@ -156,7 +160,7 @@ class WorkItemStore:
     def add(self, item: WorkItem) -> None:
         """Append a work item to JSONL and rebuild index."""
         if not item.created_at:
-            item.created_at = datetime.now(timezone.utc).isoformat()
+            item.created_at = datetime.now(UTC).isoformat()
         item.updated_at = item.created_at
         self._items[item.work_item_id] = item
         self._append_jsonl(item)
@@ -170,7 +174,7 @@ class WorkItemStore:
         if item is None:
             raise KeyError(f"Work item not found: {work_item_id}")
         item.status = status
-        item.updated_at = datetime.now(timezone.utc).isoformat()
+        item.updated_at = datetime.now(UTC).isoformat()
         self._append_jsonl(item)
         self._write_index()
 
@@ -204,9 +208,7 @@ class WorkItemStore:
         results.sort(key=lambda r: r.score, reverse=True)
         return results[: query.max_results]
 
-    def rerank_with_llm(
-        self, query: SearchQuery, candidates: list[WorkItem]
-    ) -> list[SearchResult]:
+    def rerank_with_llm(self, query: SearchQuery, candidates: list[WorkItem]) -> list[SearchResult]:
         """Stage C placeholder: LLM semantic rerank.
 
         Currently returns candidates sorted by fuzzy score.
@@ -361,6 +363,4 @@ class WorkItemStore:
                 "owner": item.owner_slice_id,
                 "spec_text_preview": item.spec_text[:80],
             }
-        self._index_path.write_text(
-            json.dumps(index, indent=2) + "\n", encoding="utf-8"
-        )
+        self._index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")

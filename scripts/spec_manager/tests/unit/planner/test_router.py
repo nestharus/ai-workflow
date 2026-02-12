@@ -144,6 +144,32 @@ class TestCapabilityRouter:
         assert len(intentions) == 1
         assert intentions[0]["gap_count"] == 2
 
+    def test_capability_router_plan_forwards_strategy_outputs(self) -> None:
+        """PLAN capability forwards decision_requirements, new_constraints, etc."""
+
+        class _StrategyPlanner(_FakePlanner):
+            def build_plan(
+                self, ctx: Any, gaps: list[dict[str, Any]], discovery: dict[str, Any]
+            ) -> dict[str, Any]:
+                return {
+                    "intentions": [{"wiring": "test"}],
+                    "decision_requirements": [{"id": "DR-1"}],
+                    "new_constraints": [{"id": "CON-1"}],
+                    "under_spec_events": [{"type": "authority_required"}],
+                    "decision_outcomes": [{"id": "DO-1"}],
+                }
+
+        router = CapabilityRouter()
+        planner = _StrategyPlanner("l2")
+        req = self._make_request("PLAN", {"gaps": []})
+        result = router.route(planner, req)
+        assert result.status == "OK"
+        assert result.outputs["intentions"] == [{"wiring": "test"}]
+        assert result.outputs["decision_requirements"] == [{"id": "DR-1"}]
+        assert result.outputs["new_constraints"] == [{"id": "CON-1"}]
+        assert result.outputs["under_spec_events"] == [{"type": "authority_required"}]
+        assert result.outputs["decision_outcomes"] == [{"id": "DO-1"}]
+
     def test_capability_router_under_spec_blocked(self) -> None:
         router = CapabilityRouter()
         planner = _FakePlanner("l1")

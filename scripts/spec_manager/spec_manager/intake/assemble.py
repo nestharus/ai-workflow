@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -161,9 +162,70 @@ def assemble_output(
                 len(cat_routes),
             )
 
+    # Write constraints_index.json for each library that has CONSTRAINTS routes
+    _write_constraints_indexes(source_cache, source_dir, routes, libraries_dir)
+
     logger.info(
         "Assembly complete: %d libraries in %s",
         len(lib_cat_routes),
         libraries_dir,
     )
     return libraries_dir
+
+
+def _write_constraints_indexes(
+    source_cache: dict[str, list[str]],
+    source_dir: Path,
+    routes: list[RouteEntry],
+    libraries_dir: Path,
+) -> None:
+    """Write constraints_index.json per library with subtype tags.
+
+    For each library that has CONSTRAINTS-category routes, classifies each
+    constraint element and writes a JSON index file alongside constraints.md.
+    """
+    from spec_manager.planner.constraints.bootstrap import _classify_constraint_subtype
+
+    # Group CONSTRAINTS routes by library
+    lib_constraint_routes: dict[str, list[RouteEntry]] = defaultdict(list)
+    for route in routes:
+        if route.category == "CONSTRAINTS":
+            lib_constraint_routes[route.library].append(route)
+
+    for lib_id, constraint_routes in lib_constraint_routes.items():
+        if not lib_id:
+            continue  # Skip system-level for now
+
+        entries: list[dict[str, str | list[str]]] = []
+        for route in constraint_routes:
+            if route.src.file not in source_cache:
+                try:
+                    source_cache[route.src.file] = _read_source_lines(source_dir, route.src.file)
+                except FileNotFoundError:
+                    continue
+            source_lines = source_cache[route.src.file]
+            text = _extract_verbatim(source_lines, route.src.start, route.src.end)
+            entry = _classify_constraint_subtype(route.element_id, text)
+            entries.append(
+                {
+                    "element_id": entry.element_id,
+                    "subtype": entry.subtype,
+                    "scope_hint": entry.scope_hint,
+                    "entities": entry.entities,
+                    "text_preview": entry.text_preview,
+                }
+            )
+
+        if entries:
+            lib_dir = libraries_dir / lib_id
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            index_path = lib_dir / "constraints_index.json"
+            index_path.write_text(
+                json.dumps(entries, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info(
+                "Wrote constraints_index.json for %s: %d entries",
+                lib_id,
+                len(entries),
+            )

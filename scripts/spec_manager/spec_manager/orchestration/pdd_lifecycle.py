@@ -263,6 +263,22 @@ class PddLifecycle:
 
         # Phase 0: Intake (raw prose → code-as-spec, if needed)
         results["intake"] = self._run_intake()
+
+        # Bootstrap constraints from intake artifacts
+        try:
+            from spec_manager.planner.constraints.bootstrap import bootstrap_constraints_from_intake
+
+            libraries_dir = self.manager.structure.libraries_dir
+            system_dir = self.manager.structure.root / "system"
+            results["constraints_bootstrapped"] = bootstrap_constraints_from_intake(
+                workspace_root=self.manager.workspace_path,
+                libraries_dir=libraries_dir,
+                system_dir=system_dir if system_dir.exists() else None,
+            )
+        except Exception as exc:
+            logger.warning("Constraint bootstrap failed: %s", exc)
+            results["constraints_bootstrapped"] = {"error": str(exc)}
+
         state_mgr.update_state(phase="intake_done")
 
         # Overall pipeline pass cap (budget #4)

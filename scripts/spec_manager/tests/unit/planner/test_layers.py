@@ -216,6 +216,21 @@ class TestL2Planner:
         assert intention["approach"] == "wire payment processor pin"
         assert intention["pin_refs"] == ["pin-001"]
 
+    def test_l2_build_plan_with_constraints_adapter(self, tmp_path: Path) -> None:
+        """When constraints_store_adapter is present, build_plan uses the strategy pipeline."""
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+
+        adapter = ConstraintStoreAdapter(tmp_path)
+        planner = L2Planner(constraints_store_adapter=adapter)
+        ctx = _make_ctx(workspace_root=str(tmp_path), metadata={}, slice_id="test_lib", run_id="r1")
+        discovery = {"nodes": [], "edges": [], "arch_files": []}
+        gaps = [{"component_id": "c1", "description": "test gap"}]
+
+        plan = planner.build_plan(ctx, gaps, discovery)
+
+        # Strategy pipeline always returns intentions key
+        assert "intentions" in plan
+
     def test_l2_resolve_signal_no_evidence(self) -> None:
         """Without an evidence tool, resolve_signal returns None."""
         planner = L2Planner()
@@ -548,3 +563,117 @@ class TestL1TriageSignal:
         assert result["monitors"][0]["kind"] == "symbol_available"
         assert "routing" in result
         assert len(result["routing"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# L1 build_plan constraint loading
+# ---------------------------------------------------------------------------
+
+
+class TestL1BuildPlanConstraintLoading:
+    def test_l1_build_plan_surfaces_decision_requirements_for_external_dep(
+        self, tmp_path: Path
+    ) -> None:
+        """Gaps mentioning external dependency should surface decision_requirements."""
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+
+        skeleton = tmp_path / "calc.py"
+        skeleton.write_text(
+            "# Spec: Compute net\ndef compute_net():\n    pass\n",
+            encoding="utf-8",
+        )
+
+        adapter = ConstraintStoreAdapter(tmp_path)
+        planner = L1Planner(constraints_store_adapter=adapter)
+        ctx = _make_ctx(slice_root=str(tmp_path))
+        discovery = planner.discover(ctx)
+
+        gaps = [
+            {
+                "target": "compute_net",
+                "description": "implement external dependency for payment gateway",
+            }
+        ]
+        plan = planner.build_plan(ctx, gaps, discovery)
+
+        assert "decision_requirements" in plan
+        assert len(plan["decision_requirements"]) >= 1
+        req = plan["decision_requirements"][0]
+        assert "dependency" in req["question"].lower() or "external" in req["question"].lower()
+
+    def test_l1_build_plan_surfaces_decision_requirements_for_security(
+        self, tmp_path: Path
+    ) -> None:
+        """Gaps mentioning security with external dependency should surface decision_requirements."""
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+
+        skeleton = tmp_path / "auth.py"
+        skeleton.write_text(
+            "# Spec: Handle authentication\ndef authenticate():\n    pass\n",
+            encoding="utf-8",
+        )
+
+        adapter = ConstraintStoreAdapter(tmp_path)
+        planner = L1Planner(constraints_store_adapter=adapter)
+        ctx = _make_ctx(slice_root=str(tmp_path))
+        discovery = planner.discover(ctx)
+
+        # Need to trigger MEDIUM/HIGH impact - use "auth" (security) + "external" (dependency)
+        gaps = [
+            {
+                "target": "authenticate",
+                "description": "implement auth with external security provider",
+            }
+        ]
+        plan = planner.build_plan(ctx, gaps, discovery)
+
+        assert "decision_requirements" in plan
+        assert len(plan["decision_requirements"]) >= 1
+        # Should surface both security and dependency
+        questions_lower = " ".join(req["question"].lower() for req in plan["decision_requirements"])
+        assert "security" in questions_lower or "dependency" in questions_lower
+
+    def test_l1_build_plan_no_requirements_for_normal_gaps(self, tmp_path: Path) -> None:
+        """Gaps without sensitive dimensions should not add decision_requirements."""
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+
+        skeleton = tmp_path / "utils.py"
+        skeleton.write_text(
+            "# Spec: Format strings\ndef format_string():\n    pass\n",
+            encoding="utf-8",
+        )
+
+        adapter = ConstraintStoreAdapter(tmp_path)
+        planner = L1Planner(constraints_store_adapter=adapter)
+        ctx = _make_ctx(slice_root=str(tmp_path))
+        discovery = planner.discover(ctx)
+
+        gaps = [{"target": "format_string", "description": "format user input strings"}]
+        plan = planner.build_plan(ctx, gaps, discovery)
+
+        # No sensitive markers, so no decision_requirements
+        assert "decision_requirements" not in plan
+
+    def test_l1_build_plan_no_requirements_without_adapter(self, tmp_path: Path) -> None:
+        """Without constraints_store_adapter, no decision_requirements even with sensitive gaps."""
+        skeleton = tmp_path / "db.py"
+        skeleton.write_text(
+            "# Spec: Database operations\ndef query_database():\n    pass\n",
+            encoding="utf-8",
+        )
+
+        # No adapter provided
+        planner = L1Planner()
+        ctx = _make_ctx(slice_root=str(tmp_path))
+        discovery = planner.discover(ctx)
+
+        gaps = [
+            {
+                "target": "query_database",
+                "description": "implement database connection with security",
+            }
+        ]
+        plan = planner.build_plan(ctx, gaps, discovery)
+
+        # Adapter is None, so constraint check is skipped
+        assert "decision_requirements" not in plan

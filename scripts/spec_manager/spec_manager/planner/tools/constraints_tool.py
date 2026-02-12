@@ -63,8 +63,9 @@ class ConstraintsTool:
 
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            constraints_list = data if isinstance(data, list) else data.get("constraints", [])
             records = []
-            for c in data.get("constraints", []):
+            for c in constraints_list:
                 records.append(
                     ConstraintRecord(
                         constraint_id=c.get("constraint_id", ""),

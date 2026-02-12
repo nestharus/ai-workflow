@@ -947,7 +947,7 @@ class CoordinateStep:
             mode=ctx.mode,
             planner=self._planner,
         )
-        outcome = manager.resolve(slice_id=ctx.slice_id, events=events)
+        outcome = manager.resolve(slice_id=ctx.slice_id, events=events, layer=ctx.layer)
 
         # Record decisions in the bundle
         bundle.under_spec.decisions = [

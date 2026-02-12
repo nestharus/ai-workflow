@@ -106,6 +106,13 @@ class Constraint:
     source: Literal["user", "research", "steering", "existing"] = "existing"
     confidence: float = 1.0
     validated: bool = True
+    dimension: str = "software"
+    authority_required: str = "planner_ok"
+    scope: str = ""
+    applies_to_layers: list[str] = field(default_factory=list)
+    status: str = "ACTIVE"
+    supersedes: list[str] = field(default_factory=list)
+    trace: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Constraint:
@@ -116,6 +123,13 @@ class Constraint:
             source=d.get("source", "existing"),
             confidence=d.get("confidence", 1.0),
             validated=d.get("validated", True),
+            dimension=d.get("dimension", "software"),
+            authority_required=d.get("authority_required", "planner_ok"),
+            scope=d.get("scope", ""),
+            applies_to_layers=d.get("applies_to_layers", []),
+            status=d.get("status", "ACTIVE"),
+            supersedes=d.get("supersedes", []),
+            trace=d.get("trace", []),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,6 +140,13 @@ class Constraint:
             "source": self.source,
             "confidence": self.confidence,
             "validated": self.validated,
+            "dimension": self.dimension,
+            "authority_required": self.authority_required,
+            "scope": self.scope,
+            "applies_to_layers": self.applies_to_layers,
+            "status": self.status,
+            "supersedes": self.supersedes,
+            "trace": self.trace,
         }
 
 
@@ -168,16 +189,39 @@ class ConstraintsStore:
         self._root = workspace_root / "analysis" / "constraints"
 
     def load(self, slice_id: str) -> list[Constraint]:
-        """Load all constraints for a slice."""
+        """Load all constraints for a slice.
+
+        Accepts both list format ``[{...}, ...]`` and dict format
+        ``{"constraints": [{...}, ...]}``.
+        """
         path = self._root / f"{slice_id}.json"
         if not path.exists():
             return []
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            data = raw if isinstance(raw, list) else raw.get("constraints", [])
             return [Constraint.from_dict(c) for c in data]
         except (json.JSONDecodeError, KeyError) as exc:
             logger.warning("Failed to load constraints for %s: %s", slice_id, exc)
             return []
+
+    def load_merged(self, slice_id: str) -> list[Constraint]:
+        """Load constraints from both ``__system__`` and *slice_id*, merged.
+
+        System-level constraints are loaded first, then slice-specific
+        constraints are appended (duplicates by constraint_id are skipped).
+        """
+        system = self.load("__system__")
+        if slice_id == "__system__":
+            return system
+        specific = self.load(slice_id)
+        seen_ids = {c.constraint_id for c in system}
+        merged = list(system)
+        for c in specific:
+            if c.constraint_id not in seen_ids:
+                merged.append(c)
+                seen_ids.add(c.constraint_id)
+        return merged
 
     def save(self, slice_id: str, constraints: list[Constraint]) -> Path:
         """Save constraints for a slice (merges with existing)."""
@@ -253,6 +297,8 @@ class UnderSpecManager:
         self,
         slice_id: str,
         events: list[UnderSpecEvent],
+        *,
+        layer: str = "any",
     ) -> UnderSpecOutcome:
         """Attempt to resolve all under-spec events.
 
@@ -260,6 +306,11 @@ class UnderSpecManager:
         2. For uncovered events, delegate to interactive/auto resolver.
         3. Validate any new constraints.
         4. Return outcome with resolved/blocked partitions.
+
+        Args:
+            slice_id: The slice identifier.
+            events: Under-spec events to resolve.
+            layer: The layer context (l1, l2, l3, or any).
         """
         if not events:
             return UnderSpecOutcome()
@@ -288,7 +339,7 @@ class UnderSpecManager:
         if self._mode == "interactive":
             new_constraints, still_blocked = self._resolve_interactive(slice_id, uncovered)
         else:
-            new_constraints, still_blocked = self._resolve_auto(slice_id, uncovered)
+            new_constraints, still_blocked = self._resolve_auto(slice_id, uncovered, layer=layer)
 
         # Phase 3: Validate and persist new constraints
         validated = []
@@ -365,6 +416,8 @@ class UnderSpecManager:
         self,
         slice_id: str,
         events: list[UnderSpecEvent],
+        *,
+        layer: str = "any",
     ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
         """Resolve via planner (preferred) or ResearchCoordinator (fallback).
 
@@ -373,7 +426,7 @@ class UnderSpecManager:
         """
         # Try planner-based resolution first
         if self._planner is not None:
-            return self._resolve_via_planner(slice_id, events)
+            return self._resolve_via_planner(slice_id, events, layer=layer)
 
         return self._resolve_via_coordinator(events)
 
@@ -381,6 +434,8 @@ class UnderSpecManager:
         self,
         slice_id: str,
         events: list[UnderSpecEvent],
+        *,
+        layer: str = "any",
     ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
         """Resolve under-spec events via the planner module."""
         constraints: list[Constraint] = []
@@ -392,7 +447,7 @@ class UnderSpecManager:
             event_dicts = [e.to_dict() for e in events]
             ctx = PlanningContext(
                 slice_id=slice_id,
-                layer="any",
+                layer=layer,
                 mode="auto",
                 workspace_root=str(self._workspace),
             )

@@ -154,10 +154,17 @@ class CapabilityRouter:
             gaps = inputs.get("gaps", [])
             discovery = planner.discover(ctx)
             plan = planner.build_plan(ctx, gaps, discovery)
-            return PlanningResult(
-                status="OK",
-                outputs={"intentions": plan.get("intentions", [])},
-            )
+            outputs: dict[str, Any] = {"intentions": plan.get("intentions", [])}
+            # Forward strategy pipeline outputs when present
+            for key in (
+                "decision_requirements",
+                "new_constraints",
+                "under_spec_events",
+                "decision_outcomes",
+            ):
+                if key in plan:
+                    outputs[key] = plan[key]
+            return PlanningResult(status="OK", outputs=outputs)
 
         if capability == "UNDER_SPEC":
             events = inputs.get("events", [])

@@ -57,7 +57,7 @@ def check_decision_coverage(
     Returns:
         CoverageResult with coverage status and rationale.
     """
-    constraints = constraints_store.load(slice_id)
+    constraints = constraints_store.load_merged(slice_id)
     decision_id = decision.get("decision_id", "")
     decision_question = decision.get("question", "").lower().strip()
 
