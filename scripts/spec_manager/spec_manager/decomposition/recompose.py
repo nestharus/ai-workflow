@@ -15,6 +15,7 @@ Outputs (under output/recomposed/):
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,12 +27,15 @@ from spec_manager.decomposition.id_generator import (
     load_id_map,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _id_sort_key(id_str: str) -> tuple[str, int]:
     try:
         prefix, n = id_str.split("-", 1)
         return prefix, int(n)
     except Exception:
+        logger.debug("ID parsing failed for %s", id_str, exc_info=True)
         return id_str, 0
 
 

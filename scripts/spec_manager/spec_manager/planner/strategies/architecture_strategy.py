@@ -106,7 +106,10 @@ class ArchitecturePlannerStrategy:
         for dp in decision_points:
             # 3. Build ScopePacket with routed source artifacts
             scope_packet = self._build_scope_packet(
-                dp, slice_id, auth_constraints, session,
+                dp,
+                slice_id,
+                auth_constraints,
+                session,
             )
 
             # 4. Propose candidates
@@ -209,16 +212,29 @@ class ArchitecturePlannerStrategy:
                 try:
                     artifacts[key] = path.read_text(encoding="utf-8")
                 except OSError:
-                    pass
+                    # C03: Surface errors — missing artifact needs diagnosis
+                    logger.warning(
+                        "Failed to read %s for architecture strategy", path, exc_info=True
+                    )
 
         # Load arch files if present
-        for arch_name in ["component_manifest.yaml", "pins_registry.yaml", "wiring.yaml", "entrypoints.yaml"]:
+        for arch_name in [
+            "component_manifest.yaml",
+            "pins_registry.yaml",
+            "wiring.yaml",
+            "entrypoints.yaml",
+        ]:
             path = lib_dir / arch_name
             if path.exists():
                 try:
-                    artifacts.setdefault("arch_files", {})[arch_name] = path.read_text(encoding="utf-8")
+                    artifacts.setdefault("arch_files", {})[arch_name] = path.read_text(
+                        encoding="utf-8"
+                    )
                 except OSError:
-                    pass
+                    # C03: Surface errors — missing artifact needs diagnosis
+                    logger.warning(
+                        "Failed to read %s for architecture strategy", path, exc_info=True
+                    )
 
         return artifacts
 
@@ -281,7 +297,10 @@ class ArchitecturePlannerStrategy:
                 )
 
     def _update_coordination(
-        self, dp: Any, outcome: DecisionOutcome, slice_id: str,
+        self,
+        dp: Any,
+        outcome: DecisionOutcome,
+        slice_id: str,
     ) -> None:
         """Update work item status and add WaitGraph edges for blocked decisions."""
         # Update work item status
@@ -301,11 +320,7 @@ class ArchitecturePlannerStrategy:
                 )
 
         # Add WaitGraph edges for blocked decisions
-        if (
-            self._wait_graph is not None
-            and not outcome.committed
-            and outcome.decision_requirements
-        ):
+        if self._wait_graph is not None and not outcome.committed and outcome.decision_requirements:
             from spec_manager.orchestration.coordination.wait_graph import WaitEdge
 
             for req_id in outcome.decision_requirements:

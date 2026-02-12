@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from spec_manager.orchestration.under_spec.manager import ConstraintsStore
+from spec_manager.planner.constraints.store import ConstraintsStore
 
 logger = logging.getLogger(__name__)
 

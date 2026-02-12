@@ -21,9 +21,14 @@ from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
+from spec_manager.evaluation.report import FinalReportGenerator
+from spec_manager.evaluation.scoring import (
+    RunReporter,
+    Scorecard,
+    ScorecardMetric,
+)
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
 from spec_manager.orchestration.evidence import EvidenceBundle, GapReportRef
-from spec_manager.orchestration.final_report import FinalReportGenerator
 from spec_manager.orchestration.models import Layer
 from spec_manager.orchestration.promotion_loop import (
     LoopStep,
@@ -35,11 +40,6 @@ from spec_manager.orchestration.promotion_loop import (
     StepResult,
 )
 from spec_manager.orchestration.run_state import RunConfig, RunState, RunStateManager
-from spec_manager.orchestration.scoring import (
-    RunReporter,
-    Scorecard,
-    ScorecardMetric,
-)
 
 # ===================================================================
 # Stub step classes for PromotionLoop testing

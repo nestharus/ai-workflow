@@ -214,6 +214,13 @@ class ImplementationRunner:
                     functions_implemented=count,
                     functions_skipped=result.functions_skipped,
                 ),
+                # C01: Preserve provenance — carry original event for traceability
+                payload={
+                    "origin_event_kind": event.kind,
+                    "origin_options": event.options,
+                    "origin_needed_for": event.needed_for or "",
+                    "origin_evidence_paths": event.evidence_paths,
+                },
             )
             all_signals.append(signal)
 
@@ -265,10 +272,24 @@ class ImplementationRunner:
                 workspace=self._workspace,
             )
             cleaned = _strip_code_fences(output)
-            data = json.loads(_extract_json_payload(cleaned))
+            payload = _extract_json_payload(cleaned)
+            data = json.loads(payload)
             return ImplementorOutput.from_dict(data)
+        except json.JSONDecodeError:
+            # C03: Surface errors — record malformed output for diagnosis
+            logger.exception(
+                "Implementor returned unparseable JSON for %s (raw: %.200s)",
+                func.qualified_name,
+                cleaned if "cleaned" in dir() else "<unavailable>",
+            )
+            return None
         except Exception as exc:
-            logger.warning("Implementor failed for %s: %s", func.qualified_name, exc)
+            logger.error(
+                "Implementor failed for %s: %s",
+                func.qualified_name,
+                exc,
+                exc_info=True,
+            )
             return None
 
     def _build_prompt(
@@ -383,4 +404,13 @@ def _classify_under_spec(event: UnderSpecEvent) -> str:
         "NEEDS_PRODUCT_DECISION": "AMBIGUOUS_SPEC",
         "NEEDS_API_DECISION": "MISSING_INTERFACE",
     }
-    return mapping.get(event.kind, "AMBIGUOUS_SPEC")
+    classification = mapping.get(event.kind)
+    if classification is None:
+        # C00: Surface ambiguity — don't silently map unknown kinds
+        logger.warning(
+            "Unknown under-spec event kind %r — defaulting to AMBIGUOUS_SPEC. "
+            "Consider adding it to the classification mapping.",
+            event.kind,
+        )
+        return "AMBIGUOUS_SPEC"
+    return classification

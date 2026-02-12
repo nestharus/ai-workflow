@@ -3,7 +3,7 @@
 import json
 from unittest.mock import MagicMock
 
-from spec_manager.orchestration.comparison import ComparisonRunner
+from spec_manager.evaluation.comparison import ComparisonRunner
 
 SAMPLE_MANIFEST = {
     "comparison_id": "test-cmp",

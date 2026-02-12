@@ -10,6 +10,7 @@ from spec_manager.core.gap import (
     GapType,
 )
 from spec_manager.core.gap_queue import GapQueue
+from spec_manager.refinement.workspace.manager import WorkspaceManager
 
 __all__ = [
     "Gap",
@@ -17,5 +18,6 @@ __all__ = [
     "GapQueue",
     "GapSynthesizer",
     "GapType",
+    "WorkspaceManager",
     "run_agent",
 ]

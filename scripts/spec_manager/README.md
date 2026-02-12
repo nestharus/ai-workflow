@@ -129,10 +129,10 @@ uv run agents spec-manager-orchestrator "Manage spec folder: .tasks/plans/my-spe
 
 ```python
 from pathlib import Path
-from spec_manager.workspace import WorkspaceManager
+from spec_manager.refinement.workspace import WorkspaceManager
 from spec_manager.core.libs_registry import LibsRegistry
 from spec_manager.staging import run_staging  # CLEANING phase
-from spec_manager.planning import run_planning  # DISCOVERY phase
+from spec_manager.comment_planning import run_planning  # DISCOVERY phase
 from spec_manager.merging import run_merging  # REVIEW phase
 from spec_manager.verification import run_verification  # FINALIZATION phase
 from spec_manager.analysis import run_analysis
@@ -255,9 +255,6 @@ scripts/spec_manager/
     │   ├── sections.py      # Section extraction
     │   ├── ids.py           # ID validation
     │   └── libs_registry.py # libs.md parsing
-    ├── workspace/       # Workspace management
-    │   ├── manager.py       # WorkspaceManager
-    │   └── state.py         # State persistence
     ├── staging/         # CLEANING phase (legacy: staging)
     │   └── operations.py    # Validation operations
     ├── planning/        # DISCOVERY phase (legacy: planning)

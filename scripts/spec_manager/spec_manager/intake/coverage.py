@@ -62,6 +62,8 @@ def check_coverage(
         total_lines += line_count
 
         if line_count == 0:
+            # C01: Account for all inputs — record empty files
+            logger.warning("Empty source file: %s — skipping coverage check", rel_path)
             continue
 
         covered = [False] * (line_count + 1)

@@ -2,14 +2,14 @@
 
 import json
 
-from spec_manager.orchestration.digests import (
-    build_architecture_digest,
-    build_code_digest,
+from spec_manager.evaluation.digests import (
+    _build_file_list,
     _build_topology,
     _count_severity,
-    _top_files_by_findings,
-    _build_file_list,
     _load_json,
+    _top_files_by_findings,
+    build_architecture_digest,
+    build_code_digest,
 )
 
 
@@ -20,12 +20,14 @@ class TestBuildArchitectureDigest:
         reports = tmp_path / "reports" / "pdd" / run_id
         reports.mkdir(parents=True)
         (reports / "component_manifest.json").write_text(
-            json.dumps({
-                "components": [
-                    {"component_id": "svc.auth", "type": "service", "depends_on": ["svc.db"]},
-                    {"component_id": "svc.db", "type": "service", "depends_on": []},
-                ]
-            }),
+            json.dumps(
+                {
+                    "components": [
+                        {"component_id": "svc.auth", "type": "service", "depends_on": ["svc.db"]},
+                        {"component_id": "svc.db", "type": "service", "depends_on": []},
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -50,13 +52,15 @@ class TestBuildArchitectureDigest:
         reports = tmp_path / "reports" / "pdd" / run_id
         reports.mkdir(parents=True)
         (reports / "code_quality_report.json").write_text(
-            json.dumps({
-                "findings": [
-                    {"severity": "MAJOR", "file": "a.py"},
-                    {"severity": "MINOR", "file": "b.py"},
-                    {"severity": "MAJOR", "file": "c.py"},
-                ]
-            }),
+            json.dumps(
+                {
+                    "findings": [
+                        {"severity": "MAJOR", "file": "a.py"},
+                        {"severity": "MINOR", "file": "b.py"},
+                        {"severity": "MAJOR", "file": "c.py"},
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -139,8 +143,10 @@ class TestHelpers:
 
     def test_count_severity(self):
         findings = [
-            {"severity": "MAJOR"}, {"severity": "MINOR"},
-            {"severity": "BLOCKER"}, {"severity": "MAJOR"},
+            {"severity": "MAJOR"},
+            {"severity": "MINOR"},
+            {"severity": "BLOCKER"},
+            {"severity": "MAJOR"},
         ]
         counts = _count_severity(findings)
         assert counts == {"BLOCKER": 1, "MAJOR": 2, "MINOR": 1}

@@ -6,8 +6,31 @@ and are consumed by ``ImplementationRunner`` and downstream steps.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
+
+_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "PinProposal": ["pin_id", "fqn", "file"],
+    "EdgeProposal": ["src", "dst"],
+    "TestArtifact": ["path", "purpose"],
+    "EditEntry": ["path"],
+    "ImplementorOutput": [],
+}
+
+
+def _check_required(cls_name: str, d: dict[str, Any]) -> None:
+    """Log warnings for missing required fields in LLM output (C00/C01)."""
+    for key in _REQUIRED_FIELDS.get(cls_name, []):
+        if key not in d or d[key] in (None, ""):
+            logger.warning(
+                "LLM output missing required field %r in %s — "
+                "defaulting to empty (potential data loss)",
+                key,
+                cls_name,
+            )
 
 
 @dataclass
@@ -24,6 +47,7 @@ class PinProposal:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PinProposal:
+        _check_required("PinProposal", d)
         return cls(
             pin_id=d.get("pin_id", ""),
             fqn=d.get("fqn", ""),
@@ -60,6 +84,7 @@ class EdgeProposal:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> EdgeProposal:
+        _check_required("EdgeProposal", d)
         return cls(
             src=d.get("src", ""),
             dst=d.get("dst", ""),
@@ -90,6 +115,7 @@ class TestArtifact:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TestArtifact:
+        _check_required("TestArtifact", d)
         return cls(
             path=d.get("path", ""),
             purpose=d.get("purpose", ""),
@@ -176,6 +202,7 @@ class EditEntry:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> EditEntry:
+        _check_required("EditEntry", d)
         return cls(
             path=d.get("path", ""),
             unified_diff=d.get("unified_diff", ""),

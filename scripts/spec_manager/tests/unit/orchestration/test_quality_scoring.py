@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from spec_manager.orchestration.quality_scoring import (
+from spec_manager.evaluation.quality import (
     ArchitectureQualityScorer,
     CodeQualityScorer,
     QualityMetric,

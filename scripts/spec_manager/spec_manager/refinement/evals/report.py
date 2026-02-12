@@ -10,10 +10,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from spec_manager.refinement.evals.baselines.results.comparison import ComparisonReport
+from typing import Any
 
 from spec_manager.refinement.evals.metrics import (
     ConvergenceAnalysis,
@@ -417,60 +414,6 @@ def generate_markdown_report(report: EvalReport) -> str:
 def _format_percentage(value: float) -> str:
     """Format a float as a percentage string."""
     return f"{value * 100:.1f}%"
-
-
-def generate_labyrinth_report(comparison: ComparisonReport) -> str:
-    """Generate markdown report for labyrinth baseline comparison.
-
-    Args:
-        comparison: ComparisonReport from baselines.results.comparison.
-
-    Returns:
-        Markdown formatted report string.
-    """
-    lines = ["# Labyrinth Evaluation Report", ""]
-
-    model_summaries = comparison.summary.get("by_model", {})
-    level_summaries = comparison.summary.get("by_level", {})
-
-    lines.append(f"**Models:** {len(model_summaries)}")
-    lines.append(f"**Levels:** {len(level_summaries)}")
-    lines.append("")
-
-    # By model
-    lines.append("## Results by Model")
-    lines.append("")
-    lines.append("| Model | Avg Rule Accuracy | Avg Integration | Broken Levels |")
-    lines.append("|-------|-------------------|-----------------|---------------|")
-    for model, summary in sorted(model_summaries.items()):
-        lines.append(
-            f"| {model} | {summary.get('avg_rule_accuracy', 0):.1%} "
-            f"| {summary.get('avg_integration', 0):.1%} "
-            f"| {summary.get('broken_count', 0)} |"
-        )
-    lines.append("")
-
-    # By level - compute averages from results since by_level only has broken/passed lists
-    by_level_results: dict[int, list] = {}
-    for r in comparison.results:
-        by_level_results.setdefault(r.level, []).append(r)
-
-    lines.append("## Results by Level")
-    lines.append("")
-    lines.append("| Level | Avg Rule Accuracy | Avg Integration | Models Broken |")
-    lines.append("|-------|-------------------|-----------------|---------------|")
-    for level in sorted(by_level_results.keys()):
-        results = by_level_results[level]
-        avg_rule = sum(r.rule_accuracy for r in results) / len(results) if results else 0
-        avg_integ = (
-            sum(r.integration_completeness for r in results) / len(results) if results else 0
-        )
-        level_summary = level_summaries.get(str(level), {})
-        broken_count = len(level_summary.get("models_broken", []))
-        lines.append(f"| L{level} | {avg_rule:.1%} | {avg_integ:.1%} | {broken_count} |")
-    lines.append("")
-
-    return "\n".join(lines)
 
 
 def save_report(

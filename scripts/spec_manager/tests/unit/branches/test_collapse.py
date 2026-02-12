@@ -218,34 +218,6 @@ class TestCollapseWorkflow:
         assert desc.signature != ""
 
 
-class TestCollapseWithLabyrinth:
-    """Integration test against the labyrinth codebase."""
-
-    def test_collapse_labyrinth(self, engine: CollapseEngine) -> None:
-        labyrinth_dir = (
-            Path(__file__).resolve().parents[4] / "spec_manager" / "spec_manager" / "labyrinth"
-        )
-        if not labyrinth_dir.exists():
-            pytest.skip("Labyrinth codebase not found")
-
-        with _patch_llm_classify():
-            result = engine.collapse(labyrinth_dir)
-
-        # Should find functions across multiple categories
-        total = (
-            len(result.extracted_atoms)
-            + len(result.extracted_stores)
-            + len(result.extracted_shapes)
-            + len(result.architectural_remnants)
-        )
-        assert total > 0, "Should find at least some functions"
-
-        # Labyrinth has async bus code (architectural)
-        # and record dataclasses (shapes) and services
-        assert len(result.extracted_shapes) + len(result.extracted_atoms) > 0
-        assert len(result.warnings) == 0 or all("Syntax error" not in w for w in result.warnings)
-
-
 class TestCollapseResultSerialization:
     """Tests for CollapseResult serialization."""
 

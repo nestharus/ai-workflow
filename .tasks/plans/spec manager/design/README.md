@@ -21,10 +21,30 @@ design/
 │   └── 05_FRACTAL_SCOPING.md             # Work at smallest scope, compose results
 ├── patterns/                              # Core algorithms (recurring problem solvers)
 │   └── CORE_PATTERNS.md                   # 7 reusable algorithms for design decisions
-└── overview/                              # Architecture overviews (how the system works)
-    ├── 00_SYSTEM_OVERVIEW.md              # Package inventory + data flow
-    ├── 01_PIPELINE_ARCHITECTURE.md        # Promotion loop, layer pipeline, coordination
-    └── 02_EXTERNAL_BOUNDARIES.md          # Inputs, outputs, LLM call sites, file I/O
+├── overview/                              # Architecture overviews (how the system works)
+│   ├── 00_SYSTEM_OVERVIEW.md              # Package inventory + data flow
+│   ├── 01_PIPELINE_ARCHITECTURE.md        # Promotion loop, layer pipeline, coordination
+│   └── 02_EXTERNAL_BOUNDARIES.md          # Inputs, outputs, LLM call sites, file I/O
+└── routing/                               # Per-package routing summaries (WHERE things live)
+    ├── INDEX.md                           # Master index with classification + dependency tiers
+    ├── DEPENDENCIES.md                    # Cross-system dependency graph + bottlenecks
+    ├── orchestration.md                   # Structural: PDD lifecycle, promotion loop, coordination
+    ├── planner.md                         # Business: decision authority, layers, strategies
+    ├── refinement.md                      # Business: workspace, evals, judges, evidence store
+    ├── compliance.md                      # Business: coverage, detection, promotion gates
+    ├── projection.md                      # Structural: lineage, drift, pin propagation
+    ├── analysis.md                        # Business: adjacency, restructuring suggestions
+    ├── branches.md                        # Structural: multi-branch atom/slice management
+    ├── intake.md                          # Business: Phase 0 prose-to-spec routing
+    ├── core.md                            # Utility: agent utils, code analysis, gaps, IDs
+    ├── schemas.md                         # Utility: 40+ Pydantic data models
+    ├── pin_functions.md                   # Business: pin extraction and registration
+    ├── strategies.md                      # Business: reasoning strategy framework
+    ├── comment_planning.md                # Business: algorithmic planning (comment insertion)
+    ├── cohesion.md                        # Business: coupling/cohesion refinement
+    ├── vcs.md                             # Structural: version control, worktree management
+    ├── evaluation.md                      # Business: quality scoring, model comparison, reporting
+    └── auxiliary.md                       # Mixed: decomposition, labyrinth
 ```
 
 ## What Goes Where
@@ -44,9 +64,14 @@ design/
   module paths — just the abstract algorithm and the reasoning behind it.
 
 * **overview/**: WHAT the system is and HOW it works. Package inventory,
-aires,
   data flow diagrams, class names, module paths. These describe the current
   implementation.
+
+* **routing/**: WHERE things live. Per-package routing summaries with
+  classification (structural/business/utility), surface APIs, dependencies,
+  and consumers. Use these to find which module handles what. Start with
+  `INDEX.md` for the master index and `DEPENDENCIES.md` for the cross-system
+  dependency graph.
 
 ## Reading Order
 

@@ -10,6 +10,7 @@ Orchestrates the strategy evolution loop where:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,8 @@ from spec_manager.strategies.registry import (
     LLMClient,
     StrategyGapEvidence,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from spec_manager.strategies.registry import StrategyRegistry
@@ -245,6 +248,7 @@ Output as JSON:
             return proposed
 
         except Exception:
+            logger.debug("Strategy evolution proposal failed", exc_info=True)
             return None
 
 

@@ -2,7 +2,7 @@
 
 import json
 
-from spec_manager.orchestration.snapshot import snapshot_run
+from spec_manager.evaluation.snapshot import snapshot_run
 
 
 class TestSnapshotRun:

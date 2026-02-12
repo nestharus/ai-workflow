@@ -8,6 +8,7 @@ CRITICAL: LLM outputs are EVIDENCE, not truth.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,8 @@ from spec_manager.core.provenance import (
     UnitStatus,
     UnitType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,11 +76,7 @@ class ProseFragmentInferenceDetector:
         """Analyze a single prose fragment for hidden requirements."""
         inferences: list[InferenceResult] = []
 
-        if not self._llm:
-            # Fallback: use heuristics
-            inferences = self._heuristic_inference(unit)
-        else:
-            inferences = self._llm_inference(unit)
+        inferences = self._heuristic_inference(unit) if not self._llm else self._llm_inference(unit)
 
         return ProseFragmentEvidence(
             fragment=unit.content,
@@ -121,18 +120,18 @@ class ProseFragmentInferenceDetector:
 
     def _llm_inference(self, unit: TrackedUnit) -> list[InferenceResult]:
         """Use LLM to infer requirements from prose."""
-        prompt = f"""Analyze this prose fragment and extract any hidden requirements, claims, or invariants.
-
-Fragment:
-{unit.content}
-
-For each inference:
-1. State the requirement/claim clearly
-2. Provide a confidence score (0.0-1.0)
-3. Explain your reasoning
-
-Output as JSON array:
-[{{"content": "...", "confidence": 0.X, "type": "requirement|claim|invariant", "rationale": "..."}}]"""
+        prompt = "Analyze this prose fragment and extract any "
+        prompt += "hidden requirements, claims, or invariants.\n\n"
+        prompt += f"Fragment:\n{unit.content}\n\n"
+        prompt += (
+            "For each inference:\n"
+            "1. State the requirement/claim clearly\n"
+            "2. Provide a confidence score (0.0-1.0)\n"
+            "3. Explain your reasoning\n\n"
+            "Output as JSON array:\n"
+            '[{"content": "...", "confidence": 0.X, '
+            '"type": "requirement|claim|invariant", "rationale": "..."}]'
+        )
 
         try:
             response = self._llm.complete(prompt)
@@ -313,6 +312,7 @@ Output as JSON: [{{"id": "...", "confidence": 0.X, "reason": "..."}}]"""
                         break
 
         except Exception:
-            pass  # Keep original scores on error
+            logger.debug("LLM score adjustment failed", exc_info=True)
+            # Keep original scores on error
 
         return candidates

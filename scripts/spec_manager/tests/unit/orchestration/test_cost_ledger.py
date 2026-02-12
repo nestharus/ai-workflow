@@ -2,7 +2,7 @@
 
 import time
 
-from spec_manager.orchestration.cost_ledger import CostLedger, LLMCallRecord
+from spec_manager.evaluation.cost_ledger import CostLedger, LLMCallRecord
 
 
 class TestLLMCallRecord:

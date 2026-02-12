@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from spec_manager.orchestration.model_profile import ModelProfile
-from spec_manager.orchestration.multi_model_runner import (
+from spec_manager.evaluation.model_profile import ModelProfile
+from spec_manager.evaluation.multi_model import (
     MultiModelRunConfig,
     MultiModelRunner,
     RunManifestEntry,
@@ -39,7 +39,7 @@ class TestMultiModelRunConfig:
         assert config.compute_quality is True
 
 
-_PATCH_PREFIX = "spec_manager.orchestration.multi_model_runner"
+_PATCH_PREFIX = "spec_manager.evaluation.multi_model"
 
 
 class TestMultiModelRunner:
@@ -165,11 +165,6 @@ class TestMultiModelRunner:
             runner.run([ModelProfile(name="t")], comparison_id="disk-test")
 
             manifest_path = (
-                tmp_path
-                / "reports"
-                / "pdd"
-                / "comparisons"
-                / "disk-test"
-                / "manifest.json"
+                tmp_path / "reports" / "pdd" / "comparisons" / "disk-test" / "manifest.json"
             )
             assert manifest_path.exists()

@@ -15,8 +15,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 from spec_manager.orchestration.models import LAYER_ORDER
-from spec_manager.orchestration.vcs import GitVcs, VcsOperations
-from spec_manager.orchestration.worktree_manager import WorktreeManager
+from spec_manager.vcs.operations import GitVcs, VcsOperations
+from spec_manager.vcs.worktree import WorktreeManager
 
 # ======================================================================
 # Helpers
@@ -63,7 +63,7 @@ def _make_mock_vcs() -> MagicMock:
 # GitVcs tests
 # ======================================================================
 
-_SUBPROCESS_TARGET = "spec_manager.orchestration.vcs.subprocess.run"
+_SUBPROCESS_TARGET = "spec_manager.vcs.operations.subprocess.run"
 
 
 class TestGitVcsCreateWorktree:

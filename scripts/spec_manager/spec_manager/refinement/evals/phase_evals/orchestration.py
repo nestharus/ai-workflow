@@ -201,7 +201,7 @@ def run_scoring(
     Returns:
         Dict with scorecard, paths, overall_pass, and summary.
     """
-    from spec_manager.orchestration.scoring import RunReporter
+    from spec_manager.evaluation.scoring import RunReporter
 
     reporter = RunReporter(
         workspace_root=manager.workspace_path,
@@ -233,8 +233,8 @@ def run_final_report(
     Returns:
         Dict with report_path and scorecard_json_path.
     """
-    from spec_manager.orchestration.final_report import FinalReportGenerator
-    from spec_manager.orchestration.scoring import RunReporter
+    from spec_manager.evaluation.report import FinalReportGenerator
+    from spec_manager.evaluation.scoring import RunReporter
 
     reporter = RunReporter(
         workspace_root=manager.workspace_path,

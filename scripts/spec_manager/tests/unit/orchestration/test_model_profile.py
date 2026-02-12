@@ -1,6 +1,6 @@
 """Tests for model profile configuration."""
 
-from spec_manager.orchestration.model_profile import ModelProfile
+from spec_manager.evaluation.model_profile import ModelProfile
 
 
 class TestModelProfile:

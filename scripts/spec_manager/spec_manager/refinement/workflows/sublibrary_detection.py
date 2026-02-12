@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -41,6 +42,8 @@ from .spec_patches import (
     validate_patch_citations,
     validate_patch_operation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def detect_sublibraries(
@@ -563,6 +566,7 @@ def _expand_sublibrary_evidence(manager: WorkspaceManager, sub_lib_dir: Path) ->
         try:
             parsed = parse_file_summary(content)
         except Exception:
+            logger.debug("Sub-library detection parse failed", exc_info=True)
             parsed = None
         summaries[file_id] = {"content": content, "parsed": parsed}
 

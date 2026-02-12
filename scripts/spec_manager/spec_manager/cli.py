@@ -109,8 +109,8 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
     # Setup worktree manager if requested
     worktree_manager = None
     if use_worktrees:
-        from spec_manager.orchestration.vcs import GitVcs
-        from spec_manager.orchestration.worktree_manager import WorktreeManager
+        from spec_manager.vcs.operations import GitVcs
+        from spec_manager.vcs.worktree import WorktreeManager
 
         vcs = GitVcs(repo_root=input_folder)
         worktree_manager = WorktreeManager(
@@ -144,8 +144,8 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     """Run multi-model comparison."""
-    from spec_manager.orchestration.model_profile import ModelProfile
-    from spec_manager.orchestration.multi_model_runner import MultiModelRunner
+    from spec_manager.evaluation.model_profile import ModelProfile
+    from spec_manager.evaluation.multi_model import MultiModelRunner
 
     profiles = []
     for profile_str in args.profiles:
@@ -179,11 +179,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_quality(args: argparse.Namespace) -> int:
     """Compute quality scorecard for a run."""
-    from spec_manager.orchestration.digests import (
+    from spec_manager.evaluation.digests import (
         build_architecture_digest,
         build_code_digest,
     )
-    from spec_manager.orchestration.quality_scoring import QualityReporter
+    from spec_manager.evaluation.quality import QualityReporter
 
     workspace = Path.cwd()
     run_id = args.run_id
@@ -1253,7 +1253,7 @@ def main() -> int:
     setup_eval_parser(subparsers)
 
     # plan-v2 - algorithmic planning subcommand group
-    from spec_manager.planning.algo_cli import setup_plan_v2_parser
+    from spec_manager.comment_planning.algo_cli import setup_plan_v2_parser
 
     setup_plan_v2_parser(subparsers)
 
@@ -1305,7 +1305,7 @@ def main() -> int:
 
     # Handle plan-v2 sub-group
     if args.command == "plan-v2":
-        from spec_manager.planning.algo_cli import handle_plan_v2_command
+        from spec_manager.comment_planning.algo_cli import handle_plan_v2_command
 
         return handle_plan_v2_command(args)
 

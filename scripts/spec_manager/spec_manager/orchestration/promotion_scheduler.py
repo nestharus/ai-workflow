@@ -275,7 +275,7 @@ class ReactivePromotionScheduler:
                                 newly_done.append(f)
                                 break  # Process one at a time for responsiveness
                         except TimeoutError:
-                            pass
+                            pass  # Expected — polling loop, not an error
 
                     if newly_done:
                         idle_polls = 0

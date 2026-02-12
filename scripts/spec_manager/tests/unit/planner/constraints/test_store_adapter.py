@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from spec_manager.orchestration.under_spec.manager import Constraint, ConstraintsStore
+from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
 from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
     ConstraintFact,
@@ -38,9 +37,12 @@ class TestLoadMerged:
 
     def test_system_only(self, workspace: Path, adapter: ConstraintStoreAdapter):
         store = ConstraintsStore(workspace)
-        store.save("__system__", [
-            Constraint(constraint_id="SYS-1", question="Q1", answer="A1"),
-        ])
+        store.save(
+            "__system__",
+            [
+                Constraint(constraint_id="SYS-1", question="Q1", answer="A1"),
+            ],
+        )
         result = adapter.load_merged("my_slice")
         assert len(result) == 1
         assert result[0].constraint_id == "SYS-1"
@@ -48,43 +50,63 @@ class TestLoadMerged:
 
     def test_slice_only(self, workspace: Path, adapter: ConstraintStoreAdapter):
         store = ConstraintsStore(workspace)
-        store.save("my_slice", [
-            Constraint(constraint_id="LOC-1", question="Q2", answer="A2"),
-        ])
+        store.save(
+            "my_slice",
+            [
+                Constraint(constraint_id="LOC-1", question="Q2", answer="A2"),
+            ],
+        )
         result = adapter.load_merged("my_slice")
         assert len(result) == 1
         assert result[0].constraint_id == "LOC-1"
 
     def test_merge_system_and_slice(self, workspace: Path, adapter: ConstraintStoreAdapter):
         store = ConstraintsStore(workspace)
-        store.save("__system__", [
-            Constraint(constraint_id="SYS-1", question="Q1", answer="A1"),
-            Constraint(constraint_id="SYS-2", question="Q2", answer="A2"),
-        ])
-        store.save("my_slice", [
-            Constraint(constraint_id="LOC-1", question="Q3", answer="A3"),
-        ])
+        store.save(
+            "__system__",
+            [
+                Constraint(constraint_id="SYS-1", question="Q1", answer="A1"),
+                Constraint(constraint_id="SYS-2", question="Q2", answer="A2"),
+            ],
+        )
+        store.save(
+            "my_slice",
+            [
+                Constraint(constraint_id="LOC-1", question="Q3", answer="A3"),
+            ],
+        )
         result = adapter.load_merged("my_slice")
         ids = {f.constraint_id for f in result}
         assert ids == {"SYS-1", "SYS-2", "LOC-1"}
 
     def test_slice_overrides_system(self, workspace: Path, adapter: ConstraintStoreAdapter):
         store = ConstraintsStore(workspace)
-        store.save("__system__", [
-            Constraint(constraint_id="C-1", question="Q", answer="system_answer"),
-        ])
-        store.save("my_slice", [
-            Constraint(constraint_id="C-1", question="Q", answer="slice_answer"),
-        ])
+        store.save(
+            "__system__",
+            [
+                Constraint(constraint_id="C-1", question="Q", answer="system_answer"),
+            ],
+        )
+        store.save(
+            "my_slice",
+            [
+                Constraint(constraint_id="C-1", question="Q", answer="slice_answer"),
+            ],
+        )
         result = adapter.load_merged("my_slice")
         assert len(result) == 1
         assert result[0].answer == "slice_answer"
 
-    def test_result_types_are_constraint_facts(self, workspace: Path, adapter: ConstraintStoreAdapter):
+    def test_result_types_are_constraint_facts(
+        self, workspace: Path, adapter: ConstraintStoreAdapter
+    ):
         store = ConstraintsStore(workspace)
-        store.save("__system__", [
-            Constraint(constraint_id="X", question="Q", answer="A", source="user"),
-        ])
+        store.save(
+            "__system__",
+            [
+                Constraint(constraint_id="X", question="Q", answer="A", source="user"),
+            ],
+        )
         result = adapter.load_merged("test")
         assert all(isinstance(f, ConstraintFact) for f in result)
         assert result[0].source == "user"
@@ -129,17 +151,23 @@ class TestSaveFacts:
         store = ConstraintsStore(workspace)
         store.save("s", [Constraint(constraint_id="OLD", question="Q0", answer="A0")])
 
-        adapter.save_facts("s", [
-            ConstraintFact(constraint_id="NEW", question="Q1", answer="A1"),
-        ])
+        adapter.save_facts(
+            "s",
+            [
+                ConstraintFact(constraint_id="NEW", question="Q1", answer="A1"),
+            ],
+        )
         reloaded = adapter.load_merged("s")
         ids = {f.constraint_id for f in reloaded}
         assert ids == {"OLD", "NEW"}
 
     def test_save_returns_path(self, adapter: ConstraintStoreAdapter):
-        path = adapter.save_facts("s", [
-            ConstraintFact(constraint_id="X", question="Q", answer="A"),
-        ])
+        path = adapter.save_facts(
+            "s",
+            [
+                ConstraintFact(constraint_id="X", question="Q", answer="A"),
+            ],
+        )
         assert isinstance(path, Path)
         assert path.suffix == ".json"
 
@@ -190,12 +218,18 @@ class TestHypotheses:
         assert adapter.load_hypotheses("nope") == []
 
     def test_save_overwrites(self, adapter: ConstraintStoreAdapter):
-        adapter.save_hypotheses("s", [
-            ConstraintHypothesis(hypothesis_id="H1"),
-        ])
-        adapter.save_hypotheses("s", [
-            ConstraintHypothesis(hypothesis_id="H2"),
-        ])
+        adapter.save_hypotheses(
+            "s",
+            [
+                ConstraintHypothesis(hypothesis_id="H1"),
+            ],
+        )
+        adapter.save_hypotheses(
+            "s",
+            [
+                ConstraintHypothesis(hypothesis_id="H2"),
+            ],
+        )
         reloaded = adapter.load_hypotheses("s")
         assert len(reloaded) == 1
         assert reloaded[0].hypothesis_id == "H2"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -16,6 +17,8 @@ from spec_manager.refinement.formats import (
 )
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 MAX_WORKERS = 4
 
@@ -157,6 +160,7 @@ def _compute_pair_priority(
         )
         data = json.loads(json_payload)
     except Exception:
+        logger.debug("Evidence expansion classifier failed", exc_info=True)
         return 0.5, "classifier_uncertain"
 
     relevant = str(data.get("relevant", "")).strip().lower()

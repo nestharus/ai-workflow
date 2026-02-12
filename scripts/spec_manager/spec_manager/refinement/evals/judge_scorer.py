@@ -113,14 +113,14 @@ def _parse_judge_output(raw: str) -> EvalJudgeOutput:
     try:
         return EvalJudgeOutput.model_validate_json(cleaned)
     except Exception:
-        pass
+        logger.debug("Direct Pydantic parse failed for judge output", exc_info=True)
 
     # Fallback: extract JSON payload
     extracted = _extract_json_payload(cleaned)
     try:
         return EvalJudgeOutput.model_validate_json(extracted)
     except Exception:
-        pass
+        logger.debug("Pydantic parse of extracted JSON failed for judge output", exc_info=True)
 
     # Final fallback: parse as dict then validate
     data = json.loads(extracted)

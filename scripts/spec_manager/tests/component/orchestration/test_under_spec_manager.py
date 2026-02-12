@@ -12,12 +12,11 @@ from pathlib import Path
 
 import pytest
 from spec_manager.orchestration.under_spec.manager import (
-    Constraint,
-    ConstraintsStore,
     UnderSpecEvent,
     UnderSpecManager,
     UnderSpecOutcome,
 )
+from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
 
 # ======================================================================
 # UnderSpecEvent

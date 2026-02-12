@@ -113,9 +113,7 @@ class CodeQualityJudge:
 
         return list(selected.values())
 
-    def _read_files(
-        self, sampled: list[dict], snapshot_dir: Path
-    ) -> dict[str, str]:
+    def _read_files(self, sampled: list[dict], snapshot_dir: Path) -> dict[str, str]:
         """Read file contents from snapshot."""
         contents: dict[str, str] = {}
         for f in sampled:
@@ -128,7 +126,8 @@ class CodeQualityJudge:
                         text = text[:5000] + "\n... (truncated)"
                     contents[f["path"]] = text
                 except OSError:
-                    pass
+                    # C03: Surface errors — file read failure during quality sampling
+                    logger.warning("Failed to read %s for code quality judge", path, exc_info=True)
         return contents
 
     def _build_prompt(
@@ -145,7 +144,9 @@ class CodeQualityJudge:
             "# Code Quality Evaluation",
             "",
             f"Total files: {totals.get('files', 0)}, Total LOC: {totals.get('loc', 0)}",
-            f"L3 findings: BLOCKER={l3_findings.get('BLOCKER', 0)}, MAJOR={l3_findings.get('MAJOR', 0)}, MINOR={l3_findings.get('MINOR', 0)}",
+            f"L3 findings: BLOCKER={l3_findings.get('BLOCKER', 0)}, "
+            f"MAJOR={l3_findings.get('MAJOR', 0)}, "
+            f"MINOR={l3_findings.get('MINOR', 0)}",
             "",
             f"## Sampled Files ({len(sampled)})",
             "",

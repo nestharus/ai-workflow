@@ -239,14 +239,14 @@ class LLMUnitizer(Unitizer):
             return SentenceUnitizer().unitize(content, file_path, patch_id)
 
         # Prompt LLM for clause extraction
-        prompt = f"""Split the following text into logical units (clauses, requirements, or statements).
-Each unit should express ONE idea or requirement.
-Return as JSON array of strings.
-
-Text:
-{content}
-
-Output format: ["unit 1", "unit 2", ...]"""
+        prompt = (
+            "Split the following text into logical units "
+            "(clauses, requirements, or statements).\n"
+            "Each unit should express ONE idea or requirement.\n"
+            "Return as JSON array of strings.\n\n"
+            f"Text:\n{content}\n\n"
+            'Output format: ["unit 1", "unit 2", ...]'
+        )
 
         try:
             response = self._llm.complete(prompt)

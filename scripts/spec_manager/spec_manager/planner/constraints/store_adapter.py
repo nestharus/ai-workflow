@@ -11,9 +11,8 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
-from spec_manager.orchestration.under_spec.manager import (
+from spec_manager.planner.constraints.store import (
     Constraint,
     ConstraintsStore,
 )
@@ -104,9 +103,7 @@ class ConstraintStoreAdapter:
     # Hypotheses
     # ------------------------------------------------------------------
 
-    def save_hypotheses(
-        self, slice_id: str, hypotheses: list[ConstraintHypothesis]
-    ) -> Path:
+    def save_hypotheses(self, slice_id: str, hypotheses: list[ConstraintHypothesis]) -> Path:
         """Persist hypotheses to a separate JSON file.
 
         Hypotheses live in ``analysis/constraints_hypotheses/<slice_id>.json``.
@@ -128,21 +125,14 @@ class ConstraintStoreAdapter:
         Returns:
             List of :class:`ConstraintHypothesis` objects (empty if not found).
         """
-        path = (
-            self._workspace
-            / "analysis"
-            / "constraints_hypotheses"
-            / f"{slice_id}.json"
-        )
+        path = self._workspace / "analysis" / "constraints_hypotheses" / f"{slice_id}.json"
         if not path.exists():
             return []
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             return [ConstraintHypothesis.from_dict(h) for h in data]
         except (json.JSONDecodeError, KeyError) as exc:
-            logger.warning(
-                "Failed to load hypotheses for %s: %s", slice_id, exc
-            )
+            logger.warning("Failed to load hypotheses for %s: %s", slice_id, exc)
             return []
 
     # ------------------------------------------------------------------

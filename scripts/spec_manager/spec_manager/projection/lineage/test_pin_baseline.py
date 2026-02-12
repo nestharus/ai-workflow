@@ -273,6 +273,7 @@ def _find_function_info(file_path: str, test_function: str) -> RawFunctionInfo |
     try:
         analysis = analyze_source(source, filepath=file_path)
     except Exception:
+        logger.debug("Pin baseline test parse failed", exc_info=True)
         return None
 
     # Match by qualified_name for class methods, by name for top-level functions

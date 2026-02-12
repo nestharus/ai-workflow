@@ -439,8 +439,8 @@ class PddOrchestrator:
         2. ``core.edit_in_place.analyze_project()`` — translation state
            (which functions are implemented, which have gaps).
         """
+        from spec_manager.comment_planning.models import parse_file
         from spec_manager.core.edit_in_place import analyze_project, find_gaps
-        from spec_manager.planning.models import parse_file
 
         all_files = self.manager.get_all_files()
         parsed_count = 0
@@ -494,8 +494,8 @@ class PddOrchestrator:
         Note: ``plan_insertions()`` is a directed operation requiring a
         user-provided intention string, so it is not called in batch mode.
         """
-        from spec_manager.planning.models import parse_file
-        from spec_manager.planning.reverser import reverse_translate
+        from spec_manager.comment_planning.models import parse_file
+        from spec_manager.comment_planning.reverser import reverse_translate
 
         all_files = self.manager.get_all_files()
         reversal_count = 0
@@ -783,9 +783,24 @@ class PddOrchestrator:
         for lib_id, lib_path in lib_dirs.items():
             spec_index_path = lib_path / "spec_index.json"
             if not spec_index_path.exists():
+                # C01: Account for all inputs — don't silently omit libraries
+                logger.warning(
+                    "Library %s has no spec_index.json at %s — skipping projection",
+                    lib_id,
+                    spec_index_path,
+                )
                 continue
             spec_data = json.loads(spec_index_path.read_text(encoding="utf-8"))
             for elem_data in spec_data.get("elements", []):
+                atom_ids = elem_data.get("evidence_atom_ids")
+                if not atom_ids:
+                    # C01: Missing provenance — surface it, don't use placeholder
+                    logger.warning(
+                        "Element %s in %s has no evidence_atom_ids — provenance chain is broken",
+                        elem_data.get("element_id", elem_data.get("elem_id", "?")),
+                        lib_id,
+                    )
+                    atom_ids = []
                 elements.append(
                     DerivedElement(
                         elem_id=elem_data.get("element_id", elem_data.get("elem_id", "")),
@@ -793,7 +808,7 @@ class PddOrchestrator:
                         lib_id=lib_id if lib_id.startswith("LIB-") else f"LIB-{lib_id}",
                         title=elem_data.get("title", ""),
                         body=elem_data.get("text", elem_data.get("body", "")),
-                        evidence_atom_ids=elem_data.get("evidence_atom_ids", ["ATOM-0000"]),
+                        evidence_atom_ids=atom_ids,
                     )
                 )
 
@@ -815,7 +830,7 @@ class PddOrchestrator:
         compliance gap descriptions as intentions, then calls
         ``run_planning_v2_phase()`` to produce insertion plans.
         """
-        from spec_manager.planning.workflow import run_planning_v2_phase
+        from spec_manager.comment_planning.workflow import run_planning_v2_phase
 
         # Gather target files from workspace snapshot
         all_files = self.manager.get_all_files()
@@ -1359,11 +1374,11 @@ class PddOrchestrator:
             Summary dict with issues found and operations proposed.
         """
         from spec_manager.analysis.adjacency.graph import AdjacencyGraph
-        from spec_manager.refinement_engine.detector import (
+        from spec_manager.cohesion.detector import (
             GroupingUnit,
             detect_all,
         )
-        from spec_manager.refinement_engine.operations import (
+        from spec_manager.cohesion.operations import (
             propose_operations,
             validate_operation,
         )

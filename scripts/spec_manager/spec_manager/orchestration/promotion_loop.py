@@ -519,11 +519,11 @@ class PlanStep:
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
         if workspace:
             try:
-                from spec_manager.orchestration.under_spec.manager import (
-                    ConstraintsStore,
-                )
                 from spec_manager.orchestration.under_spec.planning_gate import (
                     run_planning_gate,
+                )
+                from spec_manager.planner.constraints.store import (
+                    ConstraintsStore,
                 )
 
                 store = ConstraintsStore(workspace)
@@ -1824,6 +1824,12 @@ class VerifyStep:
                 cleaned = _strip_code_fences(out)
                 return json.loads(_extract_json_payload(cleaned))
             except Exception:
+                # C03: Surface errors — LLM agent failure needs diagnosis
+                logger.warning(
+                    "Agent %s failed for verify step — returning empty",
+                    agent_name,
+                    exc_info=True,
+                )
                 return {}
 
         # 0) Governance / oversight

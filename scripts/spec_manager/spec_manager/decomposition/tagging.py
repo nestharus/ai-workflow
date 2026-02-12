@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,8 @@ from spec_manager.decomposition.id_generator import (
     save_id_map,
 )
 from spec_manager.decomposition.workspace import resolve_original_copy
+
+logger = logging.getLogger(__name__)
 
 
 def _skip_header_lines(lines: list[str]) -> int:
@@ -100,6 +103,10 @@ def tag_facts(workspace: Path) -> dict[str, Any]:
         try:
             facts = json.loads(facts_path.read_text(encoding="utf-8"))
         except Exception:
+            # C03: Surface errors — corrupted facts file needs diagnosis
+            logger.warning(
+                "Failed to parse facts.json at %s — starting fresh", facts_path, exc_info=True
+            )
             facts = {}
 
     # Reverse index by (file|line) for stability.

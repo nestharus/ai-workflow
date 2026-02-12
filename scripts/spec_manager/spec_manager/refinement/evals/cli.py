@@ -5,7 +5,6 @@ Commands:
     eval resume                     Resume an interrupted evaluation
     eval report                     Generate report from a completed run
     eval list                       List available spec fixtures
-    eval labyrinth <cmd>            Labyrinth evaluation framework
     eval orchestration <cmd>        Orchestration-level QA (PromotionLoop / PddLifecycle)
 """
 
@@ -408,73 +407,6 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Directory containing spec fixtures (default: <project>/.../fixtures)",
     )
 
-    # --- Labyrinth commands ---
-
-    # eval labyrinth (sub-subcommand group)
-    p_labyrinth = eval_subparsers.add_parser(
-        "labyrinth",
-        help="Labyrinth evaluation framework",
-        description="Stress-test spec refinement against raw model baselines",
-    )
-    lab_sub = p_labyrinth.add_subparsers(dest="labyrinth_command", required=True)
-
-    # eval labyrinth build
-    p_lab_build = lab_sub.add_parser("build", help="Build a labyrinth instance")
-    p_lab_build.add_argument("--level", type=int, default=1, help="Complexity level (1+)")
-    p_lab_build.add_argument("--seed", type=int, default=42, help="Random seed")
-    p_lab_build.add_argument("--output-dir", help="Output directory")
-
-    # eval labyrinth baseline
-    p_lab_baseline = lab_sub.add_parser("baseline", help="Run baseline model evaluation")
-    p_lab_baseline.add_argument("--level", type=int, default=1, help="Complexity level (1+)")
-    p_lab_baseline.add_argument("--seed", type=int, default=42, help="Random seed")
-    p_lab_baseline.add_argument("--model", required=True, help="Model name (glm, opus, gpt)")
-    p_lab_baseline.add_argument("--output-dir", help="Output directory")
-    p_lab_baseline.add_argument("--timeout", type=int, default=600, help="Timeout in seconds")
-
-    # eval labyrinth system
-    p_lab_system = lab_sub.add_parser("system", help="Run system evaluation on labyrinth")
-    p_lab_system.add_argument("--level", type=int, default=1, help="Complexity level (1+)")
-    p_lab_system.add_argument("--seed", type=int, default=42, help="Random seed")
-    p_lab_system.add_argument("--steering", help="Path to steering script JSON")
-    p_lab_system.add_argument(
-        "--research", action="store_true", help="Use research for disambiguation"
-    )
-    p_lab_system.add_argument(
-        "--model",
-        help="Score refined spec by running this model (glm, opus, gpt) on it",
-    )
-
-    # eval labyrinth compare
-    p_lab_compare = lab_sub.add_parser("compare", help="Compare results across models and levels")
-    p_lab_compare.add_argument(
-        "--levels", required=True, help="Comma-separated levels (e.g., 1,2,3)"
-    )
-    p_lab_compare.add_argument(
-        "--models", required=True, help="Comma-separated models (e.g., glm,opus,gpt)"
-    )
-    p_lab_compare.add_argument("--output-dir", help="Output directory")
-
-    # eval labyrinth escalate
-    p_lab_escalate = lab_sub.add_parser(
-        "escalate",
-        help="Sequential level escalation (run until model breaks)",
-    )
-    p_lab_escalate.add_argument("--model", required=True, help="Model name (glm, opus, gpt)")
-    p_lab_escalate.add_argument(
-        "--max-level", type=int, default=4, help="Maximum level to attempt (default: 4)"
-    )
-    p_lab_escalate.add_argument("--seed", type=int, default=42, help="Random seed")
-    p_lab_escalate.add_argument("--output-dir", help="Output directory")
-    p_lab_escalate.add_argument(
-        "--timeout", type=int, default=600, help="Timeout per level in seconds"
-    )
-
-    # eval labyrinth research
-    p_lab_research = lab_sub.add_parser("research", help="Run research-based evaluation")
-    p_lab_research.add_argument("--level", type=int, default=1, help="Complexity level (1+)")
-    p_lab_research.add_argument("--seed", type=int, default=42, help="Random seed")
-
     # --- Planner commands ---
 
     p_planner = eval_subparsers.add_parser(
@@ -638,229 +570,6 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         "--judge-model",
         default="",
         help="Model ID for judges",
-    )
-
-
-def cmd_labyrinth_build(args: argparse.Namespace) -> int:
-    """Build a labyrinth instance."""
-    from pathlib import Path as P
-
-    from spec_manager.labyrinth.generator.labyrinth_builder import LabyrinthBuilder
-
-    output_dir = P(args.output_dir) if args.output_dir else None
-    builder = LabyrinthBuilder()
-    instance = builder.build_and_save(level=args.level, seed=args.seed, output_dir=output_dir)
-
-    print(f"Labyrinth Level {args.level} built (seed={args.seed}):")
-    print(f"  Rules: {len(instance.rules)}")
-    print(f"  Integration Points: {len(instance.integration_points)}")
-    print(f"  Side Effect Chains: {len(instance.chains)}")
-    print(f"  Topics: {len(instance.topics)}")
-    print(f"  Output: {instance.output_dir}")
-    return 0
-
-
-def cmd_labyrinth_baseline(args: argparse.Namespace) -> int:
-    """Run baseline model evaluation."""
-    from spec_manager.refinement.evals.baselines.config import BaselineConfig
-    from spec_manager.refinement.evals.baselines.harness import BaselineHarness
-
-    config = BaselineConfig(
-        level=args.level,
-        seed=args.seed,
-        model=args.model,
-        timeout_seconds=args.timeout,
-    )
-    if args.output_dir:
-        config.output_dir = Path(args.output_dir)
-
-    print(f"Running baseline: model={args.model}, level={args.level}, seed={args.seed}")
-    harness = BaselineHarness(config)
-    result = harness.run()
-
-    print("\nBaseline Result:")
-    print(f"  Model: {result.model_name}")
-    print(f"  Level: {result.level}")
-    print(f"  Rule Accuracy: {result.rule_accuracy:.1%}")
-    print(f"  Integration Completeness: {result.integration_completeness:.1%}")
-    print(f"  Broken: {result.broken}")
-    print(f"  Duration: {result.duration_ms:.0f}ms")
-    if result.errors:
-        print(f"  Errors: {result.errors}")
-    return 0
-
-
-def cmd_labyrinth_system(args: argparse.Namespace) -> int:
-    """Run system evaluation on labyrinth."""
-    from spec_manager.labyrinth.generator.labyrinth_builder import LabyrinthBuilder
-    from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
-
-    builder = LabyrinthBuilder()
-    instance = builder.build_and_save(level=args.level, seed=args.seed)
-
-    workspace = instance.output_dir
-    steering_path = Path(args.steering) if args.steering else workspace / "steering.json"
-
-    print(f"Running system eval: level={args.level}")
-    workflow = InteractiveWorkflow(
-        workspace=workspace,
-        interactive=False,
-        steering_path=steering_path if steering_path.exists() else None,
-        use_research=args.research,
-    )
-
-    refined_spec = workflow.run(instance.sparse_spec)
-    output_path = workspace / "refined_spec.md"
-    output_path.write_text(refined_spec, encoding="utf-8")
-    print(f"Refined spec saved: {output_path}")
-
-    # If --model is provided, score the refined spec via a baseline model runner
-    model = getattr(args, "model", None)
-    if model:
-        print(f"\nScoring refined spec with model: {model}")
-        from spec_manager.refinement.evals.baselines.config import BaselineConfig
-        from spec_manager.refinement.evals.baselines.harness import BaselineHarness
-
-        config = BaselineConfig(
-            level=args.level,
-            seed=args.seed,
-            model=model,
-        )
-        # Use a separate workspace for the scoring run
-        config.output_dir = workspace / "scoring"
-
-        harness = BaselineHarness(config)
-        # Override the dense spec with the refined spec so the model
-        # implements from the system's output instead of the original
-        result = harness.run_with_spec(refined_spec)
-
-        print(f"\nScoring Result ({model}):")
-        print(f"  Rule Accuracy: {result.rule_accuracy:.1%}")
-        print(f"  Integration:   {result.integration_completeness:.1%}")
-        print(f"  Broken:        {result.broken}")
-
-    return 0
-
-
-def cmd_labyrinth_compare(args: argparse.Namespace) -> int:
-    """Compare results across models and levels."""
-    from spec_manager.refinement.evals.baselines.results.baseline_result import BaselineResult
-    from spec_manager.refinement.evals.baselines.results.comparison import ComparisonReport
-
-    levels = [int(x.strip()) for x in args.levels.split(",")]
-    models = [x.strip() for x in args.models.split(",")]
-    output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir()
-
-    report = ComparisonReport()
-
-    from spec_manager.core.project_root import resolve_from_root
-
-    baselines_dir = resolve_from_root("runs", "labyrinth", "baselines")
-
-    for level in levels:
-        for model in models:
-            result_path = baselines_dir / f"L{level}_s42_{model}" / "result.json"
-            if result_path.exists():
-                result = BaselineResult.load(result_path)
-                report.add_result(result)
-            else:
-                print(f"  Missing: {result_path}")
-
-    report.compute_summary()
-    report_path = output_dir / "labyrinth_comparison.json"
-    report.save(report_path)
-    print(f"Comparison saved: {report_path}")
-    print(report.to_markdown())
-
-    # Also save markdown report
-    from spec_manager.refinement.evals.report import generate_labyrinth_report
-
-    md_report = generate_labyrinth_report(report)
-    md_path = output_dir / "labyrinth_comparison.md"
-    md_path.write_text(md_report, encoding="utf-8")
-    print(f"Markdown report: {md_path}")
-
-    return 0
-
-
-def cmd_labyrinth_escalate(args: argparse.Namespace) -> int:
-    """Run sequential level escalation until model breaks.
-
-    Starts at level 1 and escalates through increasing complexity.
-    Stops when the model is marked as 'broken' (both rule accuracy
-    and integration completeness fall below 50%).
-    """
-    from spec_manager.refinement.evals.baselines.config import BaselineConfig
-    from spec_manager.refinement.evals.baselines.harness import BaselineHarness
-    from spec_manager.refinement.evals.baselines.results.baseline_result import BaselineResult
-
-    model = args.model
-    max_level = args.max_level
-    seed = args.seed
-    timeout = args.timeout
-
-    results: list[BaselineResult] = []
-    broke_at: int | None = None
-
-    print(f"Escalation: model={model}, max_level={max_level}, seed={seed}")
-    print("=" * 60)
-
-    for level in range(1, max_level + 1):
-        print(f"\n--- Level {level} ---")
-
-        config = BaselineConfig(
-            level=level,
-            seed=seed,
-            model=model,
-            timeout_seconds=timeout,
-        )
-        if args.output_dir:
-            config.output_dir = Path(args.output_dir)
-
-        harness = BaselineHarness(config)
-        result = harness.run()
-        results.append(result)
-
-        print(f"  Rule Accuracy:    {result.rule_accuracy:.1%}")
-        print(f"  Integration:      {result.integration_completeness:.1%}")
-        print(f"  Broken:           {result.broken}")
-        print(f"  Duration:         {result.duration_ms:.0f}ms")
-        if result.errors:
-            print(f"  Errors:           {result.errors}")
-
-        if result.broken:
-            broke_at = level
-            print(f"\n** {model} BROKE at level {level} **")
-            break
-        else:
-            print(f"  => PASSED level {level}, escalating...")
-
-    print("\n" + "=" * 60)
-    print("ESCALATION SUMMARY")
-    print("=" * 60)
-    print(f"Model: {model}")
-    print(f"Levels completed: {len(results)}")
-    if broke_at:
-        print(f"Broke at level: {broke_at}")
-    else:
-        print(f"Survived all {max_level} levels!")
-
-    print("\n| Level | Rule Acc | Integration | Broken |")
-    print("|-------|----------|-------------|--------|")
-    for r in results:
-        broken_str = "YES" if r.broken else "no"
-        print(
-            f"| L{r.level}    | {r.rule_accuracy:.1%}   | "
-            f"{r.integration_completeness:.1%}       | {broken_str}    |"
-        )
-
-    return 0
-
-
-def cmd_labyrinth_research(args: argparse.Namespace) -> int:
-    """Run research-based evaluation."""
-    return cmd_labyrinth_system(
-        argparse.Namespace(level=args.level, seed=args.seed, steering=None, research=True)
     )
 
 
@@ -1261,11 +970,11 @@ def cmd_orchestration_full(args: argparse.Namespace) -> int:
 
 def cmd_eval_quality(args: argparse.Namespace) -> int:
     """Compute quality scorecard via eval framework."""
-    from spec_manager.orchestration.digests import (
+    from spec_manager.evaluation.digests import (
         build_architecture_digest,
         build_code_digest,
     )
-    from spec_manager.orchestration.quality_scoring import QualityReporter
+    from spec_manager.evaluation.quality import QualityReporter
 
     workspace = Path.cwd()
     run_id = args.run_id
@@ -1284,8 +993,8 @@ def cmd_eval_quality(args: argparse.Namespace) -> int:
 
 def cmd_eval_compare(args: argparse.Namespace) -> int:
     """Run multi-model comparison via eval framework."""
-    from spec_manager.orchestration.model_profile import ModelProfile
-    from spec_manager.orchestration.multi_model_runner import MultiModelRunner
+    from spec_manager.evaluation.model_profile import ModelProfile
+    from spec_manager.evaluation.multi_model import MultiModelRunner
 
     profiles = []
     for profile_str in args.profiles:
@@ -1325,17 +1034,6 @@ def handle_eval_command(args: argparse.Namespace) -> int:
         "report": cmd_eval_report,
         "list": cmd_eval_list,
     }
-
-    if args.eval_command == "labyrinth":
-        labyrinth_commands = {
-            "build": cmd_labyrinth_build,
-            "baseline": cmd_labyrinth_baseline,
-            "system": cmd_labyrinth_system,
-            "compare": cmd_labyrinth_compare,
-            "escalate": cmd_labyrinth_escalate,
-            "research": cmd_labyrinth_research,
-        }
-        return labyrinth_commands[args.labyrinth_command](args)
 
     if args.eval_command == "planner":
         planner_commands = {

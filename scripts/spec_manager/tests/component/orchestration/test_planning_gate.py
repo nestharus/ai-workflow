@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 
 import pytest
-from spec_manager.orchestration.under_spec.manager import ConstraintsStore
 from spec_manager.orchestration.under_spec.planning_gate import (
     CoverageResult,
     PlanningGateResult,
     check_decision_coverage,
     run_planning_gate,
 )
+from spec_manager.planner.constraints.store import ConstraintsStore
 
 # ------------------------------------------------------------------
 # Fixtures

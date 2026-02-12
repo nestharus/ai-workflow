@@ -39,8 +39,8 @@ Usage::
 
 Worktree support::
 
-    from spec_manager.orchestration.vcs import GitVcs
-    from spec_manager.orchestration.worktree_manager import WorktreeManager
+    from spec_manager.vcs.operations import GitVcs
+    from spec_manager.vcs.worktree import WorktreeManager
 
     vcs = GitVcs(repo_root=Path("."))
     wm = WorktreeManager(vcs=vcs, workspace_root=Path("."), run_id="my-run")
@@ -59,7 +59,7 @@ from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 
 if TYPE_CHECKING:
-    from spec_manager.orchestration.worktree_manager import WorktreeManager
+    from spec_manager.vcs.worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +345,7 @@ class PddLifecycle:
         results["qa"] = self.qa()
 
         # Scoring
-        from spec_manager.orchestration.scoring import RunReporter
+        from spec_manager.evaluation.scoring import RunReporter
 
         reporter = RunReporter(
             workspace_root=self.manager.workspace_path,
@@ -365,11 +365,11 @@ class PddLifecycle:
         # Quality scoring (optional)
         if _enable_quality:
             try:
-                from spec_manager.orchestration.digests import (
+                from spec_manager.evaluation.digests import (
                     build_architecture_digest,
                     build_code_digest,
                 )
-                from spec_manager.orchestration.quality_scoring import QualityReporter
+                from spec_manager.evaluation.quality import QualityReporter
 
                 arch_digest = build_architecture_digest(
                     self.manager.structure.root, self.manager.run_id
@@ -385,14 +385,14 @@ class PddLifecycle:
         # Snapshot
         if _enable_snapshots:
             try:
-                from spec_manager.orchestration.snapshot import snapshot_run
+                from spec_manager.evaluation.snapshot import snapshot_run
 
                 snapshot_run(self.manager.structure.root, self.manager.run_id)
             except Exception as exc:
                 logger.warning("Snapshot failed: %s", exc)
 
         # Final report
-        from spec_manager.orchestration.final_report import FinalReportGenerator
+        from spec_manager.evaluation.report import FinalReportGenerator
 
         report_gen = FinalReportGenerator(
             workspace_root=self.manager.workspace_path,

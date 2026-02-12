@@ -46,9 +46,12 @@ def _build_alignment_prompt(
         "",
         "## SCHEMA",
         "",
-        '{"drift_findings": [{"element": "str", "description": "str", "severity": "high|medium|low"}],',
-        ' "reward_hacking_findings": [{"element": "str", "description": "str", "severity": "high|medium|low"}],',
-        ' "patches": [{"op": "edit", "section": "str", "bullet_index": int, "content": "str", "citations": []}]}',
+        '{"drift_findings": [{"element": "str", "description": "str", '
+        '"severity": "high|medium|low"}],',
+        ' "reward_hacking_findings": [{"element": "str", "description": "str", '
+        '"severity": "high|medium|low"}],',
+        ' "patches": [{"op": "edit", "section": "str", "bullet_index": int, '
+        '"content": "str", "citations": []}]}',
         "",
         f"Library ID: {lib_id}",
         "",
@@ -182,7 +185,7 @@ def check_alignment(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
                             try:
                                 apply_patch(spec_doc, op)
                             except Exception:
-                                pass
+                                logger.debug("Alignment check parsing failed", exc_info=True)
                     spec_content = render_spec(spec_doc, lib_id)
                     spec_path.write_text(spec_content, encoding="utf-8")
                 except Exception as exc:

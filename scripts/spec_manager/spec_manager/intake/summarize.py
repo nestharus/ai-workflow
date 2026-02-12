@@ -67,7 +67,17 @@ def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
             )
 
         # Override file_id — LLM may mangle it (e.g. $ instead of _).
-        summary["file_id"] = source_file.stem
+        llm_file_id = summary.get("file_id", "")
+        canonical_id = source_file.stem
+        if llm_file_id and llm_file_id != canonical_id:
+            # C00: Surface ambiguity — record the override
+            logger.info(
+                "Overriding LLM file_id %r with canonical %r for %s",
+                llm_file_id,
+                canonical_id,
+                source_file.name,
+            )
+        summary["file_id"] = canonical_id
 
         # Write individual summary
         summary_file = summaries_dir / f"{source_file.stem}.json"

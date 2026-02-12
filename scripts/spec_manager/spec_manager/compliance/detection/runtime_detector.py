@@ -82,7 +82,7 @@ def generate_probe_script(
     4. Catches NotImplementedError specially, all others as "error"
 
     Args:
-        module_path: Dotted module path (e.g., "spec_manager.labyrinth.core.bus")
+        module_path: Dotted module path (e.g., "spec_manager.intake.router")
         function_name: Function to call within the module
         test_inputs: Optional keyword arguments to pass
 

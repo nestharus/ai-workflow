@@ -11,6 +11,7 @@ Phase 5 (CON-0003/CON-0004 compliance):
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -24,6 +25,8 @@ from spec_manager.strategies.base import (
     Tool,
 )
 from spec_manager.strategies.implementations.llm_inference import VagueReferenceResolver
+
+logger = logging.getLogger(__name__)
 
 # System-owned ID reference pattern - allowed by CON-0004
 # This matches explicit ID references like (@[+ATOM-0001]) or (@[=P1I1]) or (@[+Algorithm 1])
@@ -370,6 +373,7 @@ Return a JSON array of vague reference phrases found (empty array if none):
             refs = json.loads(response)
             return refs if isinstance(refs, list) else []
         except Exception:
+            logger.debug("Entity resolution failed", exc_info=True)
             return []
 
     def _build_resolution_context(self, context: ProcessingContext, index: int) -> dict[str, Any]:

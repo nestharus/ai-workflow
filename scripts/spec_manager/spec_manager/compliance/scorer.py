@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from spec_manager.core.data_structures import ComplianceMetrics
 from spec_manager.core.gaps import Severity
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.config import PromotionGateConfig
@@ -408,13 +411,15 @@ class ComplianceScorer:
                 comments = scan_comments(filepath)
                 total_comments += len(comments)
             except (OSError, UnicodeDecodeError):
-                pass
+                # C03: Surface errors — file read failure during compliance scan
+                logger.warning("Failed to scan comments in %s", filepath, exc_info=True)
 
             try:
                 stubs = scan_stubs(filepath)
                 total_stubs += len(stubs)
             except (OSError, UnicodeDecodeError):
-                pass
+                # C03: Surface errors — file read failure during compliance scan
+                logger.warning("Failed to scan stubs in %s", filepath, exc_info=True)
 
         if total_comments > 0:
             blockers.append(

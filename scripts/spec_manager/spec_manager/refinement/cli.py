@@ -1310,13 +1310,21 @@ def cmd_project(args: argparse.Namespace) -> int:
         if spec_index_path.exists():
             spec_data = json.loads(spec_index_path.read_text(encoding="utf-8"))
             for elem_data in spec_data.get("elements", []):
+                atom_ids = elem_data.get("evidence_atom_ids")
+                if not atom_ids:
+                    # C01: Missing provenance — surface, don't use placeholder
+                    print(
+                        f"  WARNING: element {elem_data.get('element_id', '?')} "
+                        f"in {lib_id} has no evidence_atom_ids"
+                    )
+                    atom_ids = []
                 elem = DerivedElement(
                     elem_id=elem_data.get("element_id", ""),
                     kind=elem_data.get("kind", "REQ"),
                     lib_id=lib_id,
                     title=elem_data.get("title", ""),
                     body=elem_data.get("text", ""),
-                    evidence_atom_ids=elem_data.get("evidence_atom_ids", ["ATOM-PLACEHOLDER"]),
+                    evidence_atom_ids=atom_ids,
                 )
                 elements.append(elem)
 

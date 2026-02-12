@@ -72,3 +72,6 @@ def run_phase0(source_dir: Path, output_dir: Path) -> dict[str, Any]:
         "coverage_uncovered": uncovered,
         "output_dir": str(libraries_dir),
     }
+
+
+__all__ = ["run_phase0"]

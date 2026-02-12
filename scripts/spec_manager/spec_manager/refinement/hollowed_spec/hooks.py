@@ -77,6 +77,12 @@ def on_spec_completed(
         try:
             index = EvidenceIndex.load(index_path)
         except Exception:
+            # C03: Surface errors — corrupted index needs diagnosis
+            logger.warning(
+                "Failed to load evidence index at %s — starting fresh",
+                index_path,
+                exc_info=True,
+            )
             index = EvidenceIndex()
     else:
         index = EvidenceIndex()

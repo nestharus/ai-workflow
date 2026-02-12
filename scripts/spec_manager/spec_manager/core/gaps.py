@@ -939,6 +939,8 @@ List any claims you find as JSON: ["claim 1 description", "claim 2 description"]
 
             return json.loads(response)
         except Exception:
+            # C03: Surface errors — LLM claim extraction failure
+            logger.debug("LLM claim extraction failed", exc_info=True)
             return []
 
     def _find_prose_claim(self, claim_id: str, content: str) -> str | None:
@@ -958,6 +960,8 @@ Output: Just the prose snippet or "null"."""
             response = self._llm.complete(prompt)
             return response if response.lower() != "null" else None
         except Exception:
+            # C03: Surface errors — LLM prose search failure
+            logger.debug("LLM prose claim search failed for %s", claim_id, exc_info=True)
             return None
 
     def _find_prose_proof(self, claim_id: str, content: str) -> str | None:
@@ -977,6 +981,8 @@ Output: Just the prose snippet or "null"."""
             response = self._llm.complete(prompt)
             return response if response.lower() != "null" else None
         except Exception:
+            # C03: Surface errors — LLM proof search failure
+            logger.debug("LLM prose proof search failed for %s", claim_id, exc_info=True)
             return None
 
 

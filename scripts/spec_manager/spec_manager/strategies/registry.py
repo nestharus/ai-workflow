@@ -9,6 +9,7 @@ The registry:
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,8 @@ from spec_manager.strategies.base import (
     Tool,
     TranslationContext,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class FailureMode:
@@ -608,6 +611,7 @@ Output as JSON:
             return proposed
 
         except Exception:
+            logger.debug("Strategy selection failed", exc_info=True)
             return None
 
     def register_experimental_from_gap(self, gap_evidence: StrategyGapEvidence) -> bool:
