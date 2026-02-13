@@ -47,7 +47,22 @@ implementation to inform the prompt.
 * Context: `.research/constraint-reasoning/context.zip` (37 files)
 * Includes full design foundations: 6 constraint principles, tradeoffs, 7 patterns
 
-## 6. Model Routing Refinement (if needed)
+## 6. Intent Ingest — User-Facing Intent Agent & Question Queue — READY
+
+* Single user-facing Intent Agent mediates ALL user interaction
+* Intent understanding: discover real problem, not just capture spec text
+* Question queue: prioritized, reassessed on answer, deduplicated
+* Signal flow: internal agent questions → Intent Agent → user → constraints → wake
+* Skeleton output: constraints + patterns + tradeoffs + high-level functions with TODO prose
+* Problem redefinition loop: as understanding deepens, confirm with user
+* Session persistence: resume context across sessions
+* Phase 0 relationship: subsume, wrap, or coexist
+* Alpha interface for entire pipeline lifecycle
+* Prompt: `.research/intent-ingest/prompt.md`
+* Context: `.research/intent-ingest/context.zip` (31 files)
+* Builds on: RP4 (coordination signals), RP5 (constraint reasoning + question composition)
+
+## 7. Model Routing Refinement (if needed)
 
 * Refine routing based on QA eval results
 * Tune which models for which tasks based on actual performance
