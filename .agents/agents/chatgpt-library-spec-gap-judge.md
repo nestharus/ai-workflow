@@ -1,6 +1,6 @@
 ---
 description: Detects dropped details by comparing library specs against source files
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

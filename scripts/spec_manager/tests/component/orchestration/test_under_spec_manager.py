@@ -11,6 +11,10 @@ import json
 from pathlib import Path
 
 import pytest
+from spec_manager.orchestration.intent_agent.signals import (
+    UserQuestionSignal,
+    UserQuestionSignalStore,
+)
 from spec_manager.orchestration.under_spec.manager import (
     UnderSpecEvent,
     UnderSpecManager,
@@ -499,50 +503,143 @@ class TestUnderSpecManagerValidateConstraint:
         assert manager._validate_constraint(c) is True
 
 
-class TestUnderSpecManagerWriteConstraintRequest:
-    """Test UnderSpecManager._write_constraint_request()."""
+# ======================================================================
+# _resolve_interactive — UserQuestionSignal emission (Gap 3)
+# ======================================================================
 
-    def test_creates_markdown_file(self, tmp_path: Path) -> None:
-        """_write_constraint_request() writes a markdown constraint request document."""
-        manager = UnderSpecManager(workspace_root=tmp_path)
+
+class TestResolveInteractiveEmitsSignals:
+    """Test _resolve_interactive() emits UserQuestionSignals."""
+
+    def test_emits_one_signal_per_event(self, tmp_path: Path) -> None:
+        """_resolve_interactive() writes one UserQuestionSignal per event."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="interactive",
+            run_id="run-42",
+        )
         events = [
-            UnderSpecEvent(
-                event_id="evt-1",
-                kind="MISSING_CONSTRAINT",
-                question="What timeout should be used?",
-                source_file="client.py",
-                source_line=42,
-                context={"api": "payments"},
-            ),
-            UnderSpecEvent(
-                event_id="evt-2",
-                kind="AMBIGUOUS_REQUIREMENT",
-                question="Which format for responses?",
-            ),
+            UnderSpecEvent(event_id="evt-1", kind="MISSING_CONSTRAINT", question="What format?"),
+            UnderSpecEvent(event_id="evt-2", kind="AMBIGUOUS_REQUIREMENT", question="Which API?"),
         ]
 
-        path = manager._write_constraint_request("test-slice", events)
+        constraints, blocked = manager._resolve_interactive("my-slice", events)
 
-        assert path.exists()
-        assert path.name == "test-slice.md"
-        assert path.parent.name == "constraint_requests"
+        # No constraints — Planner is the only writer
+        assert constraints == []
+        # All events remain blocked
+        assert len(blocked) == 2
 
-        content = path.read_text(encoding="utf-8")
-        assert "# Constraint Request: test-slice" in content
-        assert "MISSING_CONSTRAINT" in content
-        assert "What timeout should be used?" in content
-        assert "`client.py`:42" in content
-        assert "api: payments" in content
-        assert "AMBIGUOUS_REQUIREMENT" in content
-        assert "Which format for responses?" in content
+        # Read back signals from the store
+        run_dir = tmp_path / ".pdd_runs" / "run-42"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
 
-    def test_creates_directory_structure(self, tmp_path: Path) -> None:
-        """_write_constraint_request() creates parent directories."""
-        manager = UnderSpecManager(workspace_root=tmp_path)
-        events = [UnderSpecEvent(event_id="e1", question="Q?")]
+        assert len(signals) == 2
+        assert signals[0].source.kind == "UNDER_SPEC"
+        assert signals[0].source.slice_id == "my-slice"
+        assert signals[0].source.trace_id == "evt-1"
+        assert signals[0].question.text == "What format?"
+        assert signals[0].question.canonical_key_hint == "underspec.evt-1"
+        assert signals[0].context.blocking.severity == "BLOCKING"
+        assert "my-slice" in signals[0].context.blocking.blocked_slices
+        assert signals[0].run_id == "run-42"
 
-        path = manager._write_constraint_request("s1", events)
+        assert signals[1].source.trace_id == "evt-2"
+        assert signals[1].question.text == "Which API?"
 
-        expected_dir = tmp_path / "analysis" / "constraint_requests"
-        assert expected_dir.exists()
-        assert path.parent == expected_dir
+    def test_payload_contains_event_dict(self, tmp_path: Path) -> None:
+        """_resolve_interactive() stores the event dict as payload."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="interactive",
+            run_id="run-payload",
+        )
+        event = UnderSpecEvent(
+            event_id="evt-p",
+            kind="MISSING_CONSTRAINT",
+            question="What timeout?",
+            source_file="client.py",
+            source_line=42,
+            context={"api": "payments"},
+        )
+
+        manager._resolve_interactive("slice-p", [event])
+
+        run_dir = tmp_path / ".pdd_runs" / "run-payload"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+
+        assert len(signals) == 1
+        assert signals[0].payload["event_id"] == "evt-p"
+        assert signals[0].payload["kind"] == "MISSING_CONSTRAINT"
+        assert signals[0].payload["question"] == "What timeout?"
+        assert signals[0].payload["source_file"] == "client.py"
+        assert signals[0].payload["source_line"] == 42
+
+    def test_code_refs_populated_when_source_file_present(self, tmp_path: Path) -> None:
+        """_resolve_interactive() populates code_refs when source_file is set."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="interactive",
+            run_id="run-refs",
+        )
+        event = UnderSpecEvent(
+            event_id="evt-r",
+            question="What encoding?",
+            source_file="parser.py",
+            source_line=99,
+        )
+
+        manager._resolve_interactive("slice-r", [event])
+
+        run_dir = tmp_path / ".pdd_runs" / "run-refs"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+
+        assert len(signals) == 1
+        assert len(signals[0].context.code_refs) == 1
+        assert signals[0].context.code_refs[0].file == "parser.py"
+        assert signals[0].context.code_refs[0].line == 99
+
+    def test_no_code_refs_when_no_source_file(self, tmp_path: Path) -> None:
+        """_resolve_interactive() omits code_refs when source_file is empty."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="interactive",
+            run_id="run-norefs",
+        )
+        event = UnderSpecEvent(event_id="evt-n", question="What?")
+
+        manager._resolve_interactive("slice-n", [event])
+
+        run_dir = tmp_path / ".pdd_runs" / "run-norefs"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+
+        assert len(signals) == 1
+        assert signals[0].context.code_refs == []
+
+    def test_resolve_routes_to_interactive_signal_emission(self, tmp_path: Path) -> None:
+        """resolve() in interactive mode delegates to _resolve_interactive, emitting signals."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="interactive",
+            run_id="run-resolve",
+        )
+        events = [
+            UnderSpecEvent(event_id="evt-x", question="What should X do?"),
+        ]
+
+        outcome = manager.resolve(slice_id="my-slice", events=events)
+
+        # Event is blocked (no constraints from interactive mode)
+        assert outcome.is_blocked is True
+        assert len(outcome.blocked) == 1
+
+        # Signal was emitted
+        run_dir = tmp_path / ".pdd_runs" / "run-resolve"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+        assert len(signals) == 1
+        assert signals[0].question.text == "What should X do?"

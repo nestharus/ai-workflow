@@ -1,6 +1,6 @@
 ---
 description: Quality gate that detects internal contradictions and cross-artifact inconsistencies
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

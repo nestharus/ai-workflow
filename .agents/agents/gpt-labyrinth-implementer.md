@@ -1,6 +1,6 @@
 ---
 description: Implements algorithm integration into the labyrinth codebase based on specifications
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 ---
 
 # Labyrinth Implementer

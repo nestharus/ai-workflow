@@ -5,8 +5,9 @@ emits under-spec events that cannot be resolved from existing constraints,
 the slice is BLOCKED until constraints are provided.
 
 Modes:
-  * **interactive** — generates a ``constraint_request.md`` and delegates
-    to :class:`InteractiveWorkflow` to collect constraints from the user.
+  * **interactive** — emits :class:`UserQuestionSignal` events to the
+    Intent Agent queue.  The Planner is the only constraint writer;
+    the slice stays BLOCKED until constraints arrive.
   * **auto** — delegates to :class:`ResearchCoordinator` which may propose
     constraints.  Only if the proposal passes validation does the slice
     unblock; otherwise it stays BLOCKED.
@@ -127,6 +128,7 @@ class UnderSpecManager:
         workspace_root: Repository root path.
         mode: Resolution mode (interactive or auto).
         planner: Optional planner instance for resolution.
+        run_id: PDD run identifier (used for signal store path).
     """
 
     def __init__(
@@ -134,11 +136,13 @@ class UnderSpecManager:
         workspace_root: Path,
         mode: Literal["interactive", "auto"] = "auto",
         planner: Any = None,
+        run_id: str = "",
     ) -> None:
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
         self._planner = planner
+        self._run_id = run_id
 
     def resolve(
         self,
@@ -230,34 +234,74 @@ class UnderSpecManager:
         slice_id: str,
         events: list[UnderSpecEvent],
     ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
-        """Resolve via InteractiveWorkflow.
+        """Emit UserQuestionSignals for the Intent Agent queue.
 
-        Generates a constraint_request.md and presents it to the user
-        through the interactive workflow.
+        Instead of running InteractiveWorkflow directly, this emits one
+        UserQuestionSignal per under-spec event.  The Planner is the only
+        writer of constraints — this method intentionally returns no
+        constraints and marks all events as still blocked.
+
+        The signals are written to
+        ``<workspace>/.pdd_runs/<run_id>/coordination/user_questions.jsonl``
+        where the Intent Agent will pick them up, rewrite them into
+        user-facing language, and present them through its quality gate.
         """
-        request_path = self._write_constraint_request(slice_id, events)
-        logger.info("Wrote constraint request: %s", request_path)
+        # Lazy import to avoid circular dependency
+        from spec_manager.orchestration.intent_agent.signals import (
+            CodeRefItem,
+            SignalBlocking,
+            SignalContext,
+            SignalQuestion,
+            SignalSource,
+            UserQuestionSignal,
+            UserQuestionSignalStore,
+        )
 
-        try:
-            from spec_manager.refinement.interactive.workflow import (
-                InteractiveWorkflow,
+        run_dir = self._workspace / ".pdd_runs" / self._run_id
+        store = UserQuestionSignalStore(run_dir)
+
+        for event in events:
+            signal = UserQuestionSignal(
+                run_id=self._run_id,
+                source=SignalSource(
+                    kind="UNDER_SPEC",
+                    slice_id=slice_id,
+                    layer="any",
+                    trace_id=event.event_id,
+                ),
+                question=SignalQuestion(
+                    text=event.question,
+                    canonical_key_hint=f"underspec.{event.event_id}",
+                ),
+                context=SignalContext(
+                    blocking=SignalBlocking(
+                        severity="BLOCKING",
+                        blocked_slices=[slice_id],
+                    ),
+                    code_refs=[
+                        CodeRefItem(
+                            file=event.source_file,
+                            line=event.source_line,
+                        )
+                    ]
+                    if event.source_file
+                    else [],
+                ),
+                payload=event.to_dict(),
             )
+            store.write(signal)
 
-            workflow = InteractiveWorkflow(
-                workspace=self._workspace,
-                interactive=True,
-                max_iterations=1,
-            )
+        logger.info(
+            "Emitted %d UserQuestionSignals for slice '%s' (run_id=%s)",
+            len(events),
+            slice_id,
+            self._run_id,
+        )
 
-            # Build a spec text from the constraint request
-            request_text = request_path.read_text(encoding="utf-8")
-            refined = workflow.run(request_text)
-
-            # Parse responses into constraints
-            return self._parse_interactive_response(events, refined)
-        except Exception as exc:
-            logger.warning("Interactive resolution failed: %s", exc)
-            return [], list(events)
+        # No constraints resolved — Planner is the only writer.
+        # All events remain blocked until Planner writes constraints
+        # after user answers via the Intent Agent.
+        return [], list(events)
 
     def _resolve_auto(
         self,
@@ -408,80 +452,6 @@ class UnderSpecManager:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _write_constraint_request(
-        self,
-        slice_id: str,
-        events: list[UnderSpecEvent],
-    ) -> Path:
-        """Write a human-readable constraint request document."""
-        out_dir = self._workspace / "analysis" / "constraint_requests"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{slice_id}.md"
-
-        lines = [
-            f"# Constraint Request: {slice_id}",
-            "",
-            "The following questions need explicit constraints before implementation can proceed.",
-            "",
-        ]
-
-        for i, event in enumerate(events, 1):
-            lines.append(f"## Question {i}: {event.kind}")
-            lines.append("")
-            lines.append(f"**Question:** {event.question}")
-            lines.append("")
-            if event.source_file:
-                lines.append(f"**Source:** `{event.source_file}`:{event.source_line}")
-                lines.append("")
-            if event.context:
-                lines.append("**Context:**")
-                for k, v in event.context.items():
-                    lines.append(f"- {k}: {v}")
-                lines.append("")
-            lines.append("**Required answer format:** Free text or structured YAML/JSON.")
-            lines.append("")
-            lines.append("---")
-            lines.append("")
-
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return path
-
-    def _parse_interactive_response(
-        self,
-        events: list[UnderSpecEvent],
-        refined_text: str,
-    ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
-        """Parse the refined text from InteractiveWorkflow into constraints.
-
-        If the workflow produced substantive changes, treat them as answers.
-        Otherwise, events remain blocked.
-        """
-        constraints: list[Constraint] = []
-        blocked: list[UnderSpecEvent] = []
-
-        # Simple heuristic: if the refined text differs significantly from
-        # the request, consider it answered
-        for event in events:
-            # Check if the question appears answered in the output
-            if event.question and event.question in refined_text:
-                # Question still present unmodified — likely not answered
-                blocked.append(event)
-            elif refined_text.strip():
-                constraints.append(
-                    Constraint(
-                        constraint_id=event.event_id,
-                        question=event.question,
-                        answer=refined_text,
-                        source="user",
-                        confidence=1.0,
-                        validated=False,
-                    )
-                )
-            else:
-                blocked.append(event)
-
-        return constraints, blocked
 
     def _validate_constraint(self, constraint: Constraint) -> bool:
         """Validate that a constraint is concrete and usable.

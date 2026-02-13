@@ -1,6 +1,6 @@
 ---
 description: Detects QA failures by evaluating agent outputs against expected behavior and acceptance criteria
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

@@ -1,6 +1,6 @@
 ---
 description: Quality gate that verifies specification completeness against evidence and charter scope
-model: gpt-5.2-xhigh
+model: gpt-5.2-codex-high
 output_format: json
 ---
 

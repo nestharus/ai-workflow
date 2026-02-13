@@ -1,6 +1,6 @@
 ---
 description: Repairs invalid patches based on validation errors without changing semantic intent
-model: gpt-5.2-low
+model: gpt-5.3-codex-low
 output_format: json
 ---
 

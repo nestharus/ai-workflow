@@ -5,7 +5,7 @@ description: 'Investigates lint errors that the lint-fixer couldn''t resolve. An
   conflicts, complex type issues, and reports detailed findings with solutions.
 
   '
-model: gpt-5.2-high
+model: gpt-5.3-codex-high
 ---
 
 # Lint Investigator

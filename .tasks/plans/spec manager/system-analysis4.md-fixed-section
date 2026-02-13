@@ -1,0 +1,30 @@
+`question_id`, `answer_id`, `created_at`, `extracted_claims`,
+  `extracted_ambiguities`, `recursion_budget`, `provenance`, `follow_ups`.
+
+### 19.2 Planner-update bridge
+
+* `coordination/planner_updates.jsonl` is the canonical closure bridge for
+   interactive questions.
+* Question closure and reassessment should be driven by planner callbacks
+  (`constraint_saved`, `decision_recorded`, `on_conflict`) and
+  `PddLifecycleManager` watermark consumption.
+* `IntentAgentOrchestrator` should preserve queue state until planner update
+   validation and callback persistence complete.
+
+### 19.3 Interactive ownership split
+
+* Interactive ownership remains in `intent_agent` for question UX, session
+   artifacts, and status transitions.
+* Planner computes authoritative constraints/decisions; intent runtime owns
+   presentation semantics (`next_action`, reselection, waiting/stale state) and answer
+   artifact persistence.
+* `pdd_lifecycle.py` remains wake/dispatch glue for this boundary and should not
+   directly bypass planner-authored decisions.
+
+### 19.4 Checkpoint taxonomy and replacement semantics
+* Replace legacy generic blocking framing with explicit checkpoint types:
+  * `VALIDATION`: evidence/quality precondition completion and ambiguity surfacing.
+  * `SCOPE`: dependency pruning, stale/obsolete question handling.
+  * `TRADEOFF`: conflict/confidence alternatives and constrained replacement behavior.
+* Document replacement routing from legacy checkpoint-like paths to these
+   canonical types in the architecture narrative.

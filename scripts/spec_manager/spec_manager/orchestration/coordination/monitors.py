@@ -76,6 +76,15 @@ class CompoundCondition(MonitorCondition):
     conditions: list[dict] = field(default_factory=list)
 
 
+@dataclass
+class UserQuestionAnsweredCondition(MonitorCondition):
+    """True when a user question has been answered and Planner has written the constraint."""
+
+    type: str = "user_question_answered"
+    question_id: str = ""
+    canonical_key: str = ""
+
+
 # ------------------------------------------------------------------
 # Factory
 # ------------------------------------------------------------------
@@ -86,6 +95,7 @@ _TYPE_MAP: dict[str, type[MonitorCondition]] = {
     "constraint_present": ConstraintPresentCondition,
     "slice_merged": SliceMergedCondition,
     "compound": CompoundCondition,
+    "user_question_answered": UserQuestionAnsweredCondition,
 }
 
 
@@ -124,6 +134,11 @@ def condition_from_dict(d: dict[str, Any]) -> MonitorCondition:
         return cls(
             operator=d.get("operator", "OR"),
             conditions=d.get("conditions", []),
+        )
+    if cls is UserQuestionAnsweredCondition:
+        return cls(
+            question_id=d.get("question_id", ""),
+            canonical_key=d.get("canonical_key", ""),
         )
     return MonitorCondition(type=cond_type)  # pragma: no cover
 

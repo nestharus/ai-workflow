@@ -1,6 +1,6 @@
 ---
 description: Reviews implementation against spec requirements
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 ---
 
 Review implementation files against spec requirements.

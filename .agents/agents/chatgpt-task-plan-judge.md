@@ -1,6 +1,6 @@
 ---
 description: Validates task plan for coverage completeness, quality, and compliance
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

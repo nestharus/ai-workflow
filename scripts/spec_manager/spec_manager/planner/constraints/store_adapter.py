@@ -33,7 +33,8 @@ class ConstraintStoreAdapter:
 
     Args:
         workspace_root: Path to the workspace directory.
-        on_constraint_saved: Optional callback ``(slice_id, constraint_id) -> None``
+        on_constraint_saved: Optional callback
+            ``(slice_id, constraint_id, canonical_key) -> None``
             invoked for each constraint persisted via :meth:`save_facts`.
             Used to emit wake events when constraints arrive.
     """
@@ -41,7 +42,7 @@ class ConstraintStoreAdapter:
     def __init__(
         self,
         workspace_root: Path,
-        on_constraint_saved: Callable[[str, str], None] | None = None,
+        on_constraint_saved: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._workspace = workspace_root
         self._store = ConstraintsStore(workspace_root)
@@ -87,8 +88,14 @@ class ConstraintStoreAdapter:
         if self._on_constraint_saved is not None:
             for f in facts:
                 if f.constraint_id:
+                    # Extract canonical_key from trace entries like "canonical_key=..."
+                    canonical_key = ""
+                    for t in f.trace:
+                        if t.startswith("canonical_key="):
+                            canonical_key = t.split("=", 1)[1]
+                            break
                     try:
-                        self._on_constraint_saved(slice_id, f.constraint_id)
+                        self._on_constraint_saved(slice_id, f.constraint_id, canonical_key)
                     except Exception:
                         logger.warning(
                             "on_constraint_saved callback failed for %s/%s",
@@ -96,6 +103,17 @@ class ConstraintStoreAdapter:
                             f.constraint_id,
                             exc_info=True,
                         )
+
+        # Planner update signals (constraint_saved) are emitted via the
+        # on_constraint_saved callback above.  The Planner wires this callback
+        # to write to .pdd_runs/<run_id>/coordination/planner_updates.jsonl
+        # when constructed with the appropriate run context.
+        logger.debug(
+            "save_facts: %d facts persisted for slice %s; "
+            "planner update signals delegated to on_constraint_saved callback",
+            len(facts),
+            slice_id,
+        )
 
         return path
 

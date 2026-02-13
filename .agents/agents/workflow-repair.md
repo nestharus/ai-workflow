@@ -1,7 +1,7 @@
 ---
 description: Investigates and repairs failed workflow tooling, not the content being
   processed
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 ---
 
 # Workflow Repair Agent

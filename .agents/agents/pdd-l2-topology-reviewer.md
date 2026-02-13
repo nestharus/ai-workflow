@@ -1,6 +1,6 @@
 ---
 description: L2 architecture reviewer that evaluates topology connectivity, reachability, and flow completeness
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

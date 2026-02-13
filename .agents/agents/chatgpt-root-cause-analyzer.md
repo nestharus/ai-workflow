@@ -1,6 +1,6 @@
 ---
 description: Performs root cause analysis on refinement failures to identify systemic issues and actionable fixes
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

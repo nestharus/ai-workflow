@@ -1,6 +1,6 @@
 ---
 description: Spot-checks evidence coverage by scanning full files for missed relevant sections
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 ---
 
 You spot-check evidence coverage by scanning a full file for relevant sections that were missed.

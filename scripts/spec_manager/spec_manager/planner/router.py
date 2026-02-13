@@ -185,6 +185,14 @@ class CapabilityRouter:
             status = "WAITING" if action != "NOOP" else "NOOP"
             return PlanningResult(status=status, outputs=triage_result)
 
+        if capability == "INGEST_USER_ANSWER":
+            # Normally handled in Planner.plan() before reaching the router.
+            # If reached here, return ERROR since it requires Planner-level state.
+            return PlanningResult(
+                status="ERROR",
+                error="INGEST_USER_ANSWER must be handled by Planner, not LayerPlanner",
+            )
+
         return PlanningResult(
             status="ERROR",
             error=f"Unknown capability: {capability!r}",

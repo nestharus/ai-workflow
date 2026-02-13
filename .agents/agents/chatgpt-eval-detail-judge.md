@@ -1,6 +1,6 @@
 ---
 description: Judges semantic match between expected ground-truth items and actual system-extracted items for eval scoring
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

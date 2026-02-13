@@ -491,11 +491,19 @@ def _build_work_item_monitor(
     work_item_dict: dict[str, Any],
     ctx: Any,
 ) -> dict[str, Any]:
-    """Build a MonitorSpec-compatible dict that watches a work item for completion."""
+    """Build a monitor payload that watches a work item for completion."""
+    target_statuses = work_item_dict.get("target_statuses", [])
+    if isinstance(target_statuses, list) and target_statuses:
+        required_status = str(target_statuses[0])
+    else:
+        required_status = "MERGED"
+        target_statuses = ["MERGED", "DONE"]
     return {
-        "kind": "work_item_status",
+        "type": "work_item_done",
         "work_item_id": work_item_dict.get("work_item_id", ""),
-        "target_statuses": ["MERGED", "DONE"],
+        "required_status": required_status,
+        "target_statuses": target_statuses,
+        "kind": "work_item_status",
         "signal_id": signal.get("signal_id", ""),
         "run_id": getattr(ctx, "run_id", ""),
         "timeout_seconds": 3600,
@@ -507,10 +515,13 @@ def _build_git_symbol_monitor(
     need: dict[str, Any],
     ctx: Any,
 ) -> dict[str, Any]:
-    """Build a MonitorSpec-compatible dict that watches for a symbol to appear."""
+    """Build a monitor payload that watches for a symbol to appear."""
+    artifact_key = need.get("artifact_key", "")
     return {
+        "type": "git_symbol_exists",
+        "symbol_fqn": artifact_key,
+        "artifact_key": artifact_key,
         "kind": "symbol_available",
-        "artifact_key": need.get("artifact_key", ""),
         "signal_id": signal.get("signal_id", ""),
         "run_id": getattr(ctx, "run_id", ""),
         "timeout_seconds": 3600,
@@ -522,7 +533,7 @@ def _build_expansion_monitor(
     expansion: dict[str, Any],
     ctx: Any,
 ) -> dict[str, Any]:
-    """Build a MonitorSpec-compatible dict that watches for spec expansion."""
+    """Build an expansion monitor payload."""
     return {
         "kind": "spec_expanded",
         "expansion_id": expansion.get("expansion_id", ""),

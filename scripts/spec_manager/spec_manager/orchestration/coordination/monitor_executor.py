@@ -8,6 +8,7 @@ is a read-only evaluator for individual condition types.
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from .monitors import (
     MonitorRegistry,
     MonitorSpec,
     SliceMergedCondition,
+    UserQuestionAnsweredCondition,
     WorkItemDoneCondition,
     condition_from_dict,
 )
@@ -45,10 +47,12 @@ class ConditionChecker:
         workspace_root: Path,
         work_item_store: Any = None,
         constraints_store: Any = None,
+        coordination_dir: Path | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._work_item_store = work_item_store
         self._constraints_store = constraints_store
+        self._coordination_dir = coordination_dir
 
     def check(self, condition: MonitorCondition) -> bool:
         """Dispatch to the appropriate checker."""
@@ -62,6 +66,8 @@ class ConditionChecker:
             return self._check_slice_merged(condition)
         if isinstance(condition, CompoundCondition):
             return self._check_compound(condition)
+        if isinstance(condition, UserQuestionAnsweredCondition):
+            return self._check_user_question_answered(condition)
         return False
 
     def _check_git_symbol_exists(self, cond: GitSymbolExistsCondition) -> bool:
@@ -133,6 +139,64 @@ class ConditionChecker:
         # Convention: merge marker at slices/<id>/merged_<layer>
         marker = self._workspace_root / "slices" / cond.provider_slice_id / f"merged_{cond.layer}"
         return marker.exists()
+
+    def _check_user_question_answered(self, cond: UserQuestionAnsweredCondition) -> bool:
+        """Check if a user question has been answered and Planner has written the constraint.
+
+        Primary: checks planner_updates.jsonl for a ``constraint_saved``
+        or ``decision_recorded`` signal matching the ``canonical_key``.
+        This is the clean signal-based wake path per response2.md.
+
+        Fallback: scans constraint traces for an exact
+        ``canonical_key=<key>`` entry (legacy path).
+        """
+        if not cond.canonical_key or not cond.question_id:
+            return False
+
+        # Primary: check planner_updates.jsonl for signal-based confirmation
+        if self._coordination_dir is not None:
+            updates_path = self._coordination_dir / "planner_updates.jsonl"
+            if updates_path.exists():
+                try:
+                    for line in updates_path.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = json.loads(line)
+                        if (
+                            entry.get("type") in ("constraint_saved", "decision_recorded")
+                            and entry.get("canonical_key") == cond.canonical_key
+                        ):
+                            return True
+                except Exception:
+                    logger.debug("Failed to read planner_updates.jsonl", exc_info=True)
+
+        # Fallback: constraint trace check
+        if self._constraints_store is None:
+            return False
+
+        expected_trace = f"canonical_key={cond.canonical_key}"
+
+        # Check under the question_id (used as slice_id by ingest_user_answer)
+        # and the "global" fallback slice.
+        slice_ids_to_check = [cond.question_id]
+        if cond.question_id != "global":
+            slice_ids_to_check.append("global")
+
+        for sid in slice_ids_to_check:
+            try:
+                if hasattr(self._constraints_store, "load_merged"):
+                    constraints = self._constraints_store.load_merged(sid)
+                else:
+                    constraints = self._constraints_store.load(sid)
+            except Exception as e:
+                logger.debug("Failed to load constraints for slice %s: %s", sid, e)
+                continue
+            for c in constraints:
+                trace = getattr(c, "trace", [])
+                if expected_trace in trace:
+                    return True
+        return False
 
     def _check_compound(self, cond: CompoundCondition) -> bool:
         """Evaluate AND/OR over sub-conditions."""

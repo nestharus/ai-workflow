@@ -1,6 +1,6 @@
 ---
 description: Selects best architecture by analyzing tradeoffs against library specs
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

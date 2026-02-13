@@ -1,6 +1,6 @@
 ---
 description: L2 architecture reviewer that evaluates conformance between the component manifest and realized topology
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

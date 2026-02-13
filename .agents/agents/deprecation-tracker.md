@@ -1,6 +1,6 @@
 ---
 description: Tracks deprecated components and cascades removal
-model: gpt-5.2-high
+model: gpt-5.3-codex-high
 ---
 
 You track deprecated components and detect when they become empty.

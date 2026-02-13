@@ -1,6 +1,6 @@
 ---
 description: Quality gate that verifies factual correctness and evidence grounding of specification claims
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

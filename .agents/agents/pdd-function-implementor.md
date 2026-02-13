@@ -1,6 +1,6 @@
 ---
 description: Implements a function from its PDD spec comments
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

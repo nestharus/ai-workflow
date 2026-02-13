@@ -1,6 +1,6 @@
 ---
 description: Repairs interface contract compliance issues without changing semantic content
-model: gpt-5.2-low
+model: gpt-5.3-codex-low
 ---
 
 ## Output Contract (REQUIRED - Read First)

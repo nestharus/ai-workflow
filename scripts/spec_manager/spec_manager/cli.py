@@ -21,6 +21,7 @@ Module CLIs (standalone PDD modules):
 Legacy:
     refine              Run spec refinement (interactive or auto mode)
     ambiguities list    List detected ambiguities
+    intent              Intent-agent queue and answer adapters
     evidence-store *    Evidence store management
     phase-02            Run Phase 2 clean/compose/compliance workflow
 """
@@ -31,6 +32,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from spec_manager.core.project_root import resolve_from_root
 
@@ -41,6 +43,100 @@ def _resolve_spec_folder(raw_path: str) -> Path:
     if p.is_absolute():
         return p
     return resolve_from_root(raw_path)
+
+
+def _resolve_workspace(raw_path: str | None) -> Path:
+    """Resolve a workspace path relative to the project root when not absolute."""
+    if not raw_path:
+        return Path.cwd()
+    p = Path(raw_path)
+    if p.is_absolute():
+        return p
+    return resolve_from_root(raw_path)
+
+
+def _build_intent_agent(workspace: Path, run_id: str) -> Any:
+    """Build a detached Intent Agent for question queue and answer handling."""
+
+    from spec_manager.orchestration.intent_agent.agent import IntentAgentOrchestrator
+    from spec_manager.planner.api import Planner
+
+    run_dir = workspace / ".pdd_runs" / run_id
+    planner_cell: dict[str, Planner] = {}
+
+    def _on_translation_saved(translation: Any) -> None:
+        if "planner" not in planner_cell:
+            planner_cell["planner"] = Planner(workspace_root=workspace)
+        planner = planner_cell["planner"]
+        planner.ingest_user_answer(translation.save(run_dir))
+
+    return IntentAgentOrchestrator(
+        run_dir=run_dir,
+        mode="interactive",
+        on_translation_saved=_on_translation_saved,
+    )
+
+
+def _intent_run_dir(workspace: Path, run_id: str) -> Path:
+    """Return the lifecycle run directory for a run id."""
+    return workspace / ".pdd_runs" / run_id
+
+
+def _load_intent_queue(workspace: Path, run_id: str) -> Any:
+    """Load the persisted intent queue for an active run."""
+    run_dir = _intent_run_dir(workspace, run_id)
+    try:
+        from spec_manager.orchestration.intent_agent.queue import QuestionQueue
+
+        return QuestionQueue.load(run_dir)
+    except Exception:
+        return None
+
+
+def _intent_open_questions(workspace: Path, run_id: str) -> list[Any]:
+    """Return open intent queue items from the persisted snapshot."""
+    queue = _load_intent_queue(workspace, run_id)
+    if queue is None or not hasattr(queue, "get_open_items"):
+        return []
+
+    try:
+        return list(queue.get_open_items())
+    except Exception:
+        return []
+
+
+def _build_intent_session(workspace: Path, run_id: str) -> Any:
+    """Build and refresh an Intent Agent session for CLI ingress."""
+    run_dir = _intent_run_dir(workspace, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+
+    intent_agent = _build_intent_agent(workspace, run_id)
+    intent_agent.resume()
+    intent_agent.save_state()
+    return intent_agent
+
+
+def _intent_question_payload(item: object) -> dict[str, Any]:
+    """Convert a queue question item to JSON-serializable CLI payload."""
+    prompt = item.user_prompt
+    answer_spec = prompt.answer_spec
+
+    return {
+        "question_id": item.question_id,
+        "taxonomy_type": item.taxonomy_type,
+        "status": item.status,
+        "scope_kind": item.scope_kind,
+        "severity": item.blockers.severity,
+        "canonical_key": item.canonical_key,
+        "text": prompt.text,
+        "scenario": prompt.scenario,
+        "answer_choices": answer_spec.choices,
+        "answer_kind": answer_spec.kind,
+        "value_type": answer_spec.value_type,
+        "blocked_slices": item.blockers.blocked_slices,
+        "blocked_layers": item.blockers.blocked_layers,
+    }
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -360,6 +456,106 @@ def cmd_refine(args: argparse.Namespace) -> int:
     output_path = workspace / "refined_spec.md"
     output_path.write_text(refined, encoding="utf-8")
     print(f"Refined spec saved: {output_path}")
+    return 0
+
+
+def cmd_intent(args: argparse.Namespace) -> int:
+    """Dispatch intent subcommands."""
+    command = args.intent_command
+    if command == "questions":
+        return cmd_intent_questions(args)
+    if command == "answer":
+        return cmd_intent_answer(args)
+    print(f"Unknown intent command: {command}", file=sys.stderr)
+    return 1
+
+
+def cmd_intent_questions(args: argparse.Namespace) -> int:
+    """List open intent questions for a lifecycle run."""
+    workspace = _resolve_workspace(args.workspace)
+    run_id = args.run_id
+    run_dir = _intent_run_dir(workspace, run_id)
+
+    if not run_dir.exists():
+        print(f"Run directory not found: {run_dir}", file=sys.stderr)
+        return 1
+
+    try:
+        _build_intent_session(workspace, run_id)
+    except Exception as exc:  # pragma: no cover - defensive CLI boundary
+        print(f"Failed to refresh intent state: {exc}", file=sys.stderr)
+        return 1
+
+    open_items = _intent_open_questions(workspace, run_id)
+    payload = [_intent_question_payload(item) for item in open_items]
+
+    if args.json:
+        print(json.dumps(payload, indent=2, default=str))
+        return 0
+
+    print(f"Open intent questions for run_id={run_id} (workspace={workspace})")
+    if not payload:
+        print("No open intent questions.")
+        return 0
+
+    for item in payload:
+        print(f"\n[{item['severity']}] {item['question_id']} [{item['taxonomy_type']}]")
+        print(f"  Text: {item['text']}")
+        if item["scenario"]:
+            print(f"  Scenario: {item['scenario']}")
+        if item["answer_choices"]:
+            print("  Choices:")
+            for choice in item["answer_choices"]:
+                print(f"    {choice.get('id', '')}: {choice.get('label', '')}")
+
+    return 0
+
+
+def cmd_intent_answer(args: argparse.Namespace) -> int:
+    """Submit an answer for a queued intent question."""
+    workspace = _resolve_workspace(args.workspace)
+    run_id = args.run_id
+    question_id = args.question_id
+    answer = " ".join(args.answer).strip()
+    if not answer:
+        print("Answer text is required.", file=sys.stderr)
+        return 1
+
+    run_dir = _intent_run_dir(workspace, run_id)
+    if not run_dir.exists():
+        print(f"Run directory not found: {run_dir}", file=sys.stderr)
+        return 1
+
+    intent_agent = _build_intent_session(workspace, run_id)
+    try:
+        translation = intent_agent.handle_answer(
+            question_id=question_id,
+            raw_text=answer,
+            selected_choice_id=args.choice or "",
+        )
+        intent_agent.save_state()
+    except Exception as exc:
+        print(f"Failed to submit intent answer: {exc}", file=sys.stderr)
+        return 1
+
+    open_count = len(_intent_open_questions(workspace, run_id))
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "question_id": question_id,
+                    "answer_id": getattr(translation, "answer_id", ""),
+                    "open_blocking_count": open_count,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(f"Submitted answer for run_id={run_id}, question_id={question_id}")
+    print(f"  Translation: {getattr(translation, 'answer_id', '')}")
+    print(f"  Open question count: {open_count}")
     return 0
 
 
@@ -1119,6 +1315,44 @@ def main() -> int:
     p_amb_list.add_argument("run_id", help="Run identifier")
     p_amb_list.add_argument("--workspace", help="Workspace directory")
 
+    # intent adapter commands (question queue + answer bridge)
+    p_intent = subparsers.add_parser("intent", help="Intent adapter commands")
+    intent_sub = p_intent.add_subparsers(dest="intent_command", required=True)
+
+    p_intent_questions = intent_sub.add_parser(
+        "questions",
+        help="List open intent questions for a run",
+    )
+    p_intent_questions.add_argument("run_id", help="Run identifier")
+    p_intent_questions.add_argument("--workspace", help="Workspace directory")
+    p_intent_questions.add_argument(
+        "--json",
+        action="store_true",
+        help="Print JSON payload",
+    )
+
+    p_intent_answer = intent_sub.add_parser(
+        "answer",
+        help="Submit an answer to an intent question",
+    )
+    p_intent_answer.add_argument("run_id", help="Run identifier")
+    p_intent_answer.add_argument("question_id", help="Question identifier")
+    p_intent_answer.add_argument(
+        "answer",
+        nargs="+",
+        help="Answer text to submit",
+    )
+    p_intent_answer.add_argument(
+        "--choice",
+        help="Choice identifier when answering choice questions",
+    )
+    p_intent_answer.add_argument("--workspace", help="Workspace directory")
+    p_intent_answer.add_argument(
+        "--json",
+        action="store_true",
+        help="Print JSON payload",
+    )
+
     # evidence-store
     p_evidence_store = subparsers.add_parser(
         "evidence-store", help="Evidence store management commands"
@@ -1325,6 +1559,10 @@ def main() -> int:
             "list": cmd_ambiguities_list,
         }
         return ambiguities_commands[args.ambiguities_command](args)
+
+    # Handle intent adapter sub-group
+    if args.command == "intent":
+        return cmd_intent(args)
 
     return commands[args.command](args)
 

@@ -1,6 +1,6 @@
 ---
 description: Assigns file concerns to libraries or marks gaps/decisions
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

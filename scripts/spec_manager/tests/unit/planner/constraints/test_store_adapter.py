@@ -415,27 +415,31 @@ class TestOnConstraintSavedCallback:
     def test_save_facts_fires_callback(self, workspace: Path):
         """Verify that save_facts invokes the callback for each constraint."""
         # Track callback invocations
-        calls: list[tuple[str, str]] = []
+        calls: list[tuple[str, str, str]] = []
 
-        def callback(slice_id: str, constraint_id: str) -> None:
-            calls.append((slice_id, constraint_id))
+        def callback(slice_id: str, constraint_id: str, canonical_key: str = "") -> None:
+            calls.append((slice_id, constraint_id, canonical_key))
 
         adapter = ConstraintStoreAdapter(workspace, on_constraint_saved=callback)
 
         facts = [
-            ConstraintFact(constraint_id="C-1", question="Q1", answer="A1"),
+            ConstraintFact(
+                constraint_id="C-1", question="Q1", answer="A1", trace=["canonical_key=k1"]
+            ),
             ConstraintFact(constraint_id="C-2", question="Q2", answer="A2"),
-            ConstraintFact(constraint_id="C-3", question="Q3", answer="A3"),
+            ConstraintFact(
+                constraint_id="C-3", question="Q3", answer="A3", trace=["canonical_key=k3"]
+            ),
         ]
 
         adapter.save_facts("my_slice", facts)
 
-        # Verify callback was called for each constraint
+        # Verify callback was called for each constraint with canonical_key
         assert len(calls) == 3
         assert calls == [
-            ("my_slice", "C-1"),
-            ("my_slice", "C-2"),
-            ("my_slice", "C-3"),
+            ("my_slice", "C-1", "k1"),
+            ("my_slice", "C-2", ""),
+            ("my_slice", "C-3", "k3"),
         ]
 
     def test_save_facts_no_callback(self, workspace: Path):
@@ -458,7 +462,7 @@ class TestOnConstraintSavedCallback:
     def test_save_facts_callback_error_suppressed(self, workspace: Path):
         """Verify that callback errors don't prevent saving."""
 
-        def bad_callback(slice_id: str, constraint_id: str) -> None:
+        def bad_callback(slice_id: str, constraint_id: str, canonical_key: str = "") -> None:
             raise RuntimeError("Callback intentionally failed")
 
         adapter = ConstraintStoreAdapter(workspace, on_constraint_saved=bad_callback)
@@ -478,10 +482,10 @@ class TestOnConstraintSavedCallback:
 
     def test_callback_not_invoked_for_empty_constraint_id(self, workspace: Path):
         """Verify that callback is skipped for facts with empty constraint_id."""
-        calls: list[tuple[str, str]] = []
+        calls: list[tuple[str, str, str]] = []
 
-        def callback(slice_id: str, constraint_id: str) -> None:
-            calls.append((slice_id, constraint_id))
+        def callback(slice_id: str, constraint_id: str, canonical_key: str = "") -> None:
+            calls.append((slice_id, constraint_id, canonical_key))
 
         adapter = ConstraintStoreAdapter(workspace, on_constraint_saved=callback)
 
@@ -496,6 +500,6 @@ class TestOnConstraintSavedCallback:
         # Callback should only be invoked for C-1 and C-3
         assert len(calls) == 2
         assert calls == [
-            ("slice", "C-1"),
-            ("slice", "C-3"),
+            ("slice", "C-1", ""),
+            ("slice", "C-3", ""),
         ]

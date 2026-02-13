@@ -1,6 +1,6 @@
 ---
 description: Validates interface contracts for completeness, correctness, and compliance
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

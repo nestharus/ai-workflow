@@ -1,6 +1,6 @@
 ---
 description: Validates patches against task acceptance criteria and spec compliance
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: markdown
 ---
 

@@ -1002,3 +1002,184 @@ class TestRunContextMaxWaitCycles:
         """RunContext allows custom max_wait_cycles."""
         ctx = RunContext(max_wait_cycles=5)
         assert ctx.max_wait_cycles == 5
+
+
+# ======================================================================
+# CoordinateStep L1 UserQuestionSignal emission (Gap 4)
+# ======================================================================
+
+
+class TestCoordinateStepL1UserQuestionSignals:
+    """Tests for CoordinateStep._coordinate_l1() UserQuestionSignal emission."""
+
+    def test_emits_user_question_signals(self, tmp_path: Path) -> None:
+        """_coordinate_l1 emits UserQuestionSignals for events with question field."""
+        from spec_manager.orchestration.intent_agent.signals import (
+            UserQuestionSignalStore,
+        )
+
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-uq",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-uq",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[
+                {
+                    "event_id": "evt-1",
+                    "kind": "MISSING_CONSTRAINT",
+                    "question": "What format for output?",
+                },
+                {
+                    "event_id": "evt-2",
+                    "kind": "AMBIGUITY",
+                    "question": "Which API version?",
+                },
+            ]
+        )
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "WAITING"
+
+        # Read back UserQuestionSignals
+        run_dir = tmp_path / ".pdd_runs" / "run-uq"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+
+        assert len(signals) == 2
+        assert signals[0].source.kind == "PROMOTION_LOOP"
+        assert signals[0].source.slice_id == "test-slice"
+        assert signals[0].source.layer == "l1"
+        assert signals[0].source.trace_id == "evt-1"
+        assert signals[0].question.text == "What format for output?"
+        assert signals[0].question.canonical_key_hint == "coordinate_l1.evt-1"  # gitleaks:allow
+        assert signals[0].context.blocking.severity == "BLOCKING"
+        assert "test-slice" in signals[0].context.blocking.blocked_slices
+        assert signals[0].run_id == "run-uq"
+
+        assert signals[1].source.trace_id == "evt-2"
+        assert signals[1].question.text == "Which API version?"
+
+    def test_skips_events_without_question(self, tmp_path: Path) -> None:
+        """_coordinate_l1 skips UserQuestionSignals for events with empty question."""
+        from spec_manager.orchestration.intent_agent.signals import (
+            UserQuestionSignalStore,
+        )
+
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-skip",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-skip",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[
+                {"event_id": "evt-1", "kind": "MISSING_CONSTRAINT", "question": "Real question?"},
+                {"event_id": "evt-no-q", "kind": "MISSING_CONSTRAINT", "question": ""},
+                {"event_id": "evt-no-q2", "kind": "AMBIGUITY"},  # no question key at all
+            ]
+        )
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "WAITING"
+
+        # Only one signal — the event with an actual question
+        run_dir = tmp_path / ".pdd_runs" / "run-skip"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+
+        assert len(signals) == 1
+        assert signals[0].question.text == "Real question?"
+
+    def test_payload_contains_raw_event(self, tmp_path: Path) -> None:
+        """_coordinate_l1 stores the raw event dict as signal payload."""
+        from spec_manager.orchestration.intent_agent.signals import (
+            UserQuestionSignalStore,
+        )
+
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-payload",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-payload",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        raw_event = {
+            "event_id": "evt-p",
+            "kind": "MISSING_CONSTRAINT",
+            "question": "What timeout?",
+            "context": {"api": "payments"},
+        }
+        bundle.implementation = ImplementationRef(under_spec_events=[raw_event])
+
+        step = CoordinateStep()
+        step.run(ctx, bundle)
+
+        run_dir = tmp_path / ".pdd_runs" / "run-payload"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+
+        assert len(signals) == 1
+        assert signals[0].payload == raw_event
+
+    def test_coordination_signals_still_written(self, tmp_path: Path) -> None:
+        """_coordinate_l1 still writes CoordinationSignals alongside UserQuestionSignals."""
+        ctx = SliceContext(
+            slice_id="test-slice",
+            layer="l1",
+            workspace_root=str(tmp_path),
+            run_id="run-both",
+        )
+        bundle = EvidenceBundle(
+            run_id="run-both",
+            slice_id="test-slice",
+            iteration=1,
+            workspace_root=str(tmp_path),
+        )
+        bundle.implementation = ImplementationRef(
+            under_spec_events=[
+                {"event_id": "evt-1", "kind": "MISSING_CONSTRAINT", "question": "What format?"}
+            ]
+        )
+
+        step = CoordinateStep()
+        result = step.run(ctx, bundle)
+
+        assert result.status == "WAITING"
+
+        # CoordinationSignals written to iteration dir
+        iteration_dir = bundle.iter_dir(tmp_path)
+        signals_path = iteration_dir / "signals.json"
+        assert signals_path.exists()
+
+        # UserQuestionSignals also written
+        from spec_manager.orchestration.intent_agent.signals import (
+            UserQuestionSignalStore,
+        )
+
+        run_dir = tmp_path / ".pdd_runs" / "run-both"
+        store = UserQuestionSignalStore(run_dir)
+        signals = store.read_all()
+        assert len(signals) == 1

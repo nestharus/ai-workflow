@@ -1,6 +1,6 @@
 ---
 description: Judges a single agent-step QA case against acceptance criteria and produces a scored report
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 

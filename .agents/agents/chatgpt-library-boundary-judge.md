@@ -1,6 +1,6 @@
 ---
 description: Judges boundary overlaps between two libraries and recommends merge, keep separate, or move elements
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-high
 ---
 
 You judge whether two libraries with overlapping elements should be merged, kept separate, or have specific elements moved between them.

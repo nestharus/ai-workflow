@@ -1,6 +1,6 @@
 ---
 description: L3 drift reviewer that evaluates whether refactored code stays within scope and conforms to the refactor plan
-model: gpt-5.3-codex-xhigh
+model: gpt-5.3-codex-high
 output_format: json
 ---
 
