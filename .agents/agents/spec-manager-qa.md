@@ -3,7 +3,7 @@ description: 'Resolves spec management problems - diagnoses failures, provides f
   handles edge cases
 
   '
-model: claude-opus
+model: gpt-5.3-codex-xhigh
 ---
 
 # Spec Manager QA Agent

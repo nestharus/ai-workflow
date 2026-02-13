@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from spec_manager.planner.constraints.bootstrap import (
     _classify_constraint_subtype,
     _parse_constraints_md,
@@ -13,7 +12,6 @@ from spec_manager.planner.constraints.bootstrap import (
 )
 from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import ConstraintIndexEntry
-
 
 # ===================================================================
 # _parse_constraints_md

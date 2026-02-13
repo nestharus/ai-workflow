@@ -1,6 +1,6 @@
 ---
 description: Reviews implementation against a plan for completeness and correctness
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 ---
 
 # Implementation Reviewer Agent

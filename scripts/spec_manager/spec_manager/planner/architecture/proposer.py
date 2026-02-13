@@ -191,14 +191,14 @@ def _select_axes(decision_point: DecisionPoint, k: int) -> list[str]:
 
     axes = list(_DEFAULT_TRADEOFF_AXES)
 
-    if "system" in scope or "cross_slice" in decision_point.impact.blast_radius.lower():
-        if "scalability" not in axes:
-            axes.insert(0, "scalability")
-    if "security" in desc:
-        if "security" not in axes:
-            axes.insert(0, "security")
+    if (
+        "system" in scope or "cross_slice" in decision_point.impact.blast_radius.lower()
+    ) and "scalability" not in axes:
+        axes.insert(0, "scalability")
+    if "security" in desc and "security" not in axes:
+        axes.insert(0, "security")
 
-    return axes[:max(k, 2)]
+    return axes[: max(k, 2)]
 
 
 def _build_proposal_prompt(
@@ -207,14 +207,17 @@ def _build_proposal_prompt(
     position: dict[str, str],
 ) -> str:
     """Build the LLM prompt for a single proposal."""
-    constraints_text = "\n".join(
-        f"  - [{c.constraint_id}] {c.question}: {c.answer}"
-        for c in scope_packet.authoritative_constraints[:20]
-    ) or "  (none)"
+    constraints_text = (
+        "\n".join(
+            f"  - [{c.constraint_id}] {c.question}: {c.answer}"
+            for c in scope_packet.authoritative_constraints[:20]
+        )
+        or "  (none)"
+    )
 
-    position_text = "\n".join(
-        f"  - {axis}: {priority}" for axis, priority in position.items()
-    ) or "  (none)"
+    position_text = (
+        "\n".join(f"  - {axis}: {priority}" for axis, priority in position.items()) or "  (none)"
+    )
 
     return f"""Propose an architecture candidate for the following decision.
 

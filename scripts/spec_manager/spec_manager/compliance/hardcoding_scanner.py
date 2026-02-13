@@ -167,6 +167,8 @@ ALLOWLIST_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"""["'](atom_id|elem_id|lib_id|file_uid|rev_id)["']"""),
     # Test file patterns (tests are allowed to use these)
     # Match only actual test files, not temp directories with "test_" in path
+    # NOTE: Language-specific regex; see core.language.TEST_FILE_PATTERNS for the
+    # canonical list of test file globs.
     re.compile(r"""(?:^|[/\\])test_[^/\\]*\.py$|_test\.py$|conftest\.py$"""),
 ]
 
@@ -317,7 +319,9 @@ def scan_for_hardcoding_violations(
             continue
         if not path.is_file():
             continue
-        if path.suffix != ".py":
+        from spec_manager.core.language import is_source_file
+
+        if not is_source_file(path.suffix):
             continue
 
         file_findings = scan_file_for_hardcoding_violations(path, allowlist)

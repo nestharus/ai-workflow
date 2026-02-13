@@ -82,15 +82,10 @@ class GapScorer:
             if any(_matches_gap(gap, match_spec) for gap in gaps):
                 must_find_matched += 1
 
-        recall = (
-            must_find_matched / must_find_total
-            if must_find_total
-            else 1.0
-        )
+        recall = must_find_matched / must_find_total if must_find_total else 1.0
 
         # ---- must_not_find precision ----
         must_not_violations = 0
-        must_not_total = len(must_not_find)
         violation_ids: list[str] = []
         for atom in must_not_find:
             match_spec = atom.get("match", {})
@@ -101,31 +96,22 @@ class GapScorer:
         # Precision: proportion of found gaps that are NOT false positives.
         # If no gaps found, precision is 1.0 (no false positives possible).
         total_gaps_found = len(gaps)
-        if total_gaps_found > 0:
-            precision = 1.0 - (must_not_violations / total_gaps_found)
-        else:
-            precision = 1.0
+        precision = 1.0 - (must_not_violations / total_gaps_found) if total_gaps_found > 0 else 1.0
 
         # Clamp precision to [0.0, 1.0] in case must_not_violations > total_gaps_found
         precision = max(0.0, min(1.0, precision))
 
         # ---- F1 ----
-        if recall + precision > 0:
-            f1 = 2.0 * (recall * precision) / (recall + precision)
-        else:
-            f1 = 0.0
+        f1 = 2.0 * (recall * precision) / (recall + precision) if recall + precision > 0 else 0.0
 
         # ---- threshold gates ----
         recall_threshold = thresholds.get("recall", 0.75)
         if recall < recall_threshold:
-            hard_gate_failures.append(
-                f"recall_below_threshold({recall:.2f}<{recall_threshold})"
-            )
+            hard_gate_failures.append(f"recall_below_threshold({recall:.2f}<{recall_threshold})")
 
         if must_not_violations > 0:
             hard_gate_failures.append(
-                f"must_not_find_matched({must_not_violations}: "
-                f"{', '.join(violation_ids)})"
+                f"must_not_find_matched({must_not_violations}: {', '.join(violation_ids)})"
             )
 
         passed = len(hard_gate_failures) == 0
@@ -138,9 +124,7 @@ class GapScorer:
             f"gaps_found={total_gaps_found}",
         ]
         if must_not_violations:
-            detail_parts.append(
-                f"must_not_find_violations={must_not_violations}"
-            )
+            detail_parts.append(f"must_not_find_violations={must_not_violations}")
         if hard_gate_failures:
             detail_parts.append(f"hard_gate_failures={hard_gate_failures}")
         if soft_signal_warnings:
@@ -203,15 +187,11 @@ def _extract_gaps(outputs: dict[str, Any]) -> list[dict[str, Any]]:
             if isinstance(value, list):
                 for item in value:
                     if isinstance(item, dict) and (
-                        "description" in item
-                        or "target" in item
-                        or "summary" in item
+                        "description" in item or "target" in item or "summary" in item
                     ):
                         gaps.append(item)
             elif isinstance(value, dict) and (
-                "description" in value
-                or "target" in value
-                or "summary" in value
+                "description" in value or "target" in value or "summary" in value
             ):
                 gaps.append(value)
 

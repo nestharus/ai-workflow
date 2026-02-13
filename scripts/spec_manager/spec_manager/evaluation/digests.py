@@ -37,22 +37,28 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
     global_reports = workspace_root / "reports"
 
     # Load component manifest
-    manifest = _load_json(run_reports / "component_manifest.json") or _load_json(
-        global_reports / "component_manifest.json"
-    ) or {}
+    manifest = (
+        _load_json(run_reports / "component_manifest.json")
+        or _load_json(global_reports / "component_manifest.json")
+        or {}
+    )
 
     components = manifest.get("components", [])
     topology = _build_topology(components)
 
     # Load architecture proposals
-    proposals = _load_json(run_reports / "architecture_proposals.json") or _load_json(
-        global_reports / "architecture_proposals.json"
-    ) or {}
+    _ = (
+        _load_json(run_reports / "architecture_proposals.json")
+        or _load_json(global_reports / "architecture_proposals.json")
+        or {}
+    )
 
     # Load L2 findings
-    l2_findings = _load_json(run_reports / "code_quality_report.json") or _load_json(
-        global_reports / "code_quality_report.json"
-    ) or {}
+    l2_findings = (
+        _load_json(run_reports / "code_quality_report.json")
+        or _load_json(global_reports / "code_quality_report.json")
+        or {}
+    )
     l2_severity = _count_severity(l2_findings.get("findings", []))
 
     # Load spec summary if available
@@ -82,12 +88,8 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
             "final_findings": l2_severity,
         },
         "notes": {
-            "architecture_proposals_path": str(
-                run_reports / "architecture_proposals.json"
-            ),
-            "component_manifest_path": str(
-                run_reports / "component_manifest.json"
-            ),
+            "architecture_proposals_path": str(run_reports / "architecture_proposals.json"),
+            "component_manifest_path": str(run_reports / "component_manifest.json"),
         },
     }
 
@@ -114,9 +116,11 @@ def build_code_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
     files_info = _build_file_list(snapshot_dir if snapshot_dir.exists() else workspace_root)
 
     # Load L3 / code quality findings
-    code_quality = _load_json(run_reports / "code_quality_report.json") or _load_json(
-        global_reports / "code_quality_report.json"
-    ) or {}
+    code_quality = (
+        _load_json(run_reports / "code_quality_report.json")
+        or _load_json(global_reports / "code_quality_report.json")
+        or {}
+    )
     findings = code_quality.get("findings", [])
     l3_severity = _count_severity(findings)
     top_files = _top_files_by_findings(findings)
@@ -177,16 +181,18 @@ def _build_topology(components: list[dict]) -> dict[str, Any]:
 
     for comp in components:
         comp_id = comp.get("component_id", comp.get("id", "unknown"))
-        nodes.append({
-            "id": comp_id,
-            "type": comp.get("type", "unknown"),
-            "summary": comp.get("summary", ""),
-            "responsibilities": comp.get("responsibilities", []),
-            "owned_data": comp.get("owned_data", []),
-            "public_contracts": comp.get("public_contracts", []),
-            "depends_on": comp.get("depends_on", []),
-            "depended_by": comp.get("depended_by", []),
-        })
+        nodes.append(
+            {
+                "id": comp_id,
+                "type": comp.get("type", "unknown"),
+                "summary": comp.get("summary", ""),
+                "responsibilities": comp.get("responsibilities", []),
+                "owned_data": comp.get("owned_data", []),
+                "public_contracts": comp.get("public_contracts", []),
+                "depends_on": comp.get("depends_on", []),
+                "depended_by": comp.get("depended_by", []),
+            }
+        )
         for dep in comp.get("depends_on", []):
             edges.append({"from": comp_id, "to": dep, "kind": "import"})
 
@@ -232,12 +238,14 @@ def _build_file_list(directory: Path) -> list[dict[str, Any]]:
                 content = fp.read_bytes()
                 loc = content.count(b"\n")
                 sha = hashlib.sha256(content).hexdigest()
-                files.append({
-                    "path": str(fp.relative_to(directory)),
-                    "loc": loc,
-                    "sha256": sha,
-                    "role_hint": "",
-                })
+                files.append(
+                    {
+                        "path": str(fp.relative_to(directory)),
+                        "loc": loc,
+                        "sha256": sha,
+                        "role_hint": "",
+                    }
+                )
             except OSError:
                 continue
 

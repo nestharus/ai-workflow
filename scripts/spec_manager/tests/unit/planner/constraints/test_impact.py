@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from spec_manager.planner.constraints.impact import classify_impact
 from spec_manager.planner.constraints.types import ImpactClassification
 

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.coordination.monitors import (
     CompoundCondition,
     ConstraintPresentCondition,
@@ -23,7 +22,6 @@ from spec_manager.orchestration.coordination.monitors import (
     WorkItemDoneCondition,
     condition_from_dict,
 )
-
 
 # ------------------------------------------------------------------
 # condition_from_dict

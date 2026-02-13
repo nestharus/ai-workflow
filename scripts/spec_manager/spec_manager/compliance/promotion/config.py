@@ -7,6 +7,13 @@ from enum import Enum
 from typing import Any
 
 
+def _default_test_command() -> list[str]:
+    """Build default test command from language module + algorithmic test dir."""
+    from spec_manager.core.language import DEFAULT_TEST_COMMAND
+
+    return [*DEFAULT_TEST_COMMAND, "tests/algorithmic/"]
+
+
 class GateMode(Enum):
     """How a gate failure is treated."""
 
@@ -84,9 +91,7 @@ class PromotionGateConfig:
     atom_directories: list[str] = field(
         default_factory=lambda: ["algorithmic/atoms", "algorithmic/shapes"]
     )
-    test_command: list[str] = field(
-        default_factory=lambda: ["pytest", "tests/algorithmic/", "-x", "--tb=short"]
-    )
+    test_command: list[str] = field(default_factory=lambda: _default_test_command())
     project_root: str = "."
 
     def get_gate(self, gate_id: GateId) -> GateSpec:

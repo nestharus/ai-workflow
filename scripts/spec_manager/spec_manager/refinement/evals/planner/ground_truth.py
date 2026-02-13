@@ -262,8 +262,7 @@ def _parse_case(raw: dict[str, Any]) -> GroundTruthCase:
         input_fingerprint=raw.get("input_fingerprint", {}),
         expected=raw.get("expected", {}),
         process_expectations=[
-            _parse_process_expectation(pe)
-            for pe in raw.get("process_expectations", [])
+            _parse_process_expectation(pe) for pe in raw.get("process_expectations", [])
         ],
         rubric=_parse_rubric(raw.get("rubric")),
     )
@@ -291,9 +290,7 @@ def _load_raw(path: Path) -> dict[str, Any]:
 
     if suffix == ".json" or not _HAS_YAML:
         if not _HAS_YAML and suffix not in (".json",):
-            _logger.warning(
-                "PyYAML not installed; attempting JSON parse for %s", path
-            )
+            _logger.warning("PyYAML not installed; attempting JSON parse for %s", path)
         return json.loads(text)  # type: ignore[no-any-return]
 
     # YAML path (.yaml / .yml / anything else when pyyaml is available)
@@ -337,9 +334,7 @@ def load_ground_truth(path: Path) -> PlannerGroundTruth:
         raise ValueError(f"Failed to parse ground truth file {path}: {exc}") from exc
 
     if not isinstance(raw, dict):
-        raise ValueError(
-            f"Ground truth file must contain a mapping, got {type(raw).__name__}"
-        )
+        raise TypeError(f"Ground truth file must contain a mapping, got {type(raw).__name__}")
 
     meta = _parse_meta(raw.get("meta"))
     cases = [_parse_case(c) for c in raw.get("cases", [])]
@@ -365,15 +360,12 @@ def save_ground_truth(gt: PlannerGroundTruth, path: Path) -> None:
     suffix = path.suffix.lower()
 
     if suffix == ".json":
-        path.write_text(
-            json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8"
-        )
+        path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
         return
 
     if not _HAS_YAML:
         raise RuntimeError(
-            "PyYAML is required to save YAML files. "
-            "Install it with: pip install pyyaml"
+            "PyYAML is required to save YAML files. Install it with: pip install pyyaml"
         )
 
     path.write_text(
@@ -382,9 +374,7 @@ def save_ground_truth(gt: PlannerGroundTruth, path: Path) -> None:
     )
 
 
-def find_case(
-    gt: PlannerGroundTruth, decision_key: str
-) -> GroundTruthCase | None:
+def find_case(gt: PlannerGroundTruth, decision_key: str) -> GroundTruthCase | None:
     """Look up a single ground-truth case by its decision key.
 
     Parameters:
@@ -400,9 +390,7 @@ def find_case(
     return None
 
 
-def find_cases_by_capability(
-    gt: PlannerGroundTruth, capability: str
-) -> list[GroundTruthCase]:
+def find_cases_by_capability(gt: PlannerGroundTruth, capability: str) -> list[GroundTruthCase]:
     """Filter ground-truth cases by capability name.
 
     Parameters:

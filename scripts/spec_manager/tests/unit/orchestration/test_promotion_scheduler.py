@@ -22,7 +22,6 @@ from spec_manager.orchestration.promotion_scheduler import (
     SchedulerResult,
 )
 
-
 # ======================================================================
 # Helpers
 # ======================================================================
@@ -73,8 +72,9 @@ class FakeWakeQueue:
 class FakeMonitorExecutor:
     """Fake monitor executor for testing."""
 
-    def __init__(self, fire_on_call: int = 0, wake_queue: FakeWakeQueue | None = None,
-                 slice_id: str = "") -> None:
+    def __init__(
+        self, fire_on_call: int = 0, wake_queue: FakeWakeQueue | None = None, slice_id: str = ""
+    ) -> None:
         self._call_count = 0
         self._fire_on_call = fire_on_call
         self._wake_queue = wake_queue
@@ -332,9 +332,7 @@ class TestWakeEventRequeue:
     def test_wake_requeues_and_completes(self) -> None:
         wake_queue = FakeWakeQueue()
         # The monitor fires on call 1, which enqueues a wake event
-        monitor_exec = FakeMonitorExecutor(
-            fire_on_call=1, wake_queue=wake_queue, slice_id="s1"
-        )
+        monitor_exec = FakeMonitorExecutor(fire_on_call=1, wake_queue=wake_queue, slice_id="s1")
 
         call_count = 0
 
@@ -482,8 +480,6 @@ class TestStopOnFirstFailure:
     """Test stop_on_first_failure cancels remaining slices."""
 
     def test_cancels_on_failure(self) -> None:
-        results_returned = []
-
         def mock_run_slice(ref, ctx):
             if ref.slice_id == "s1":
                 return _make_slice_result("s1", "FAILED", error="boom")

@@ -58,6 +58,9 @@ class ImplementationConfig:
 
 
 def _read_test_command_from_pyproject(repo_root: Path) -> str | None:
+    # NOTE: This function is Python-specific — reads pyproject.toml for a
+    # custom test command.  See core.language.DEFAULT_TEST_COMMAND for the
+    # language-agnostic default.
     pyproject_path = repo_root / "pyproject.toml"
     if not pyproject_path.exists():
         return None
@@ -118,9 +121,12 @@ def run_tests(
     if not run_tests_flag:
         return None
 
-    effective_command = (
-        test_command or _read_test_command_from_pyproject(repo_root) or "uv run pytest"
-    )
+    # NOTE: The "uv run" prefix is Python-specific (uv package manager).
+    # The fallback test command is derived from core.language.DEFAULT_TEST_COMMAND.
+    from spec_manager.core.language import DEFAULT_TEST_COMMAND
+
+    _default_cmd = "uv run " + " ".join(DEFAULT_TEST_COMMAND)
+    effective_command = test_command or _read_test_command_from_pyproject(repo_root) or _default_cmd
     cmd = shlex.split(effective_command)
     output_path = task_dir / "test_output.txt"
     started_at = datetime.now()

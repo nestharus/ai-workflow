@@ -72,11 +72,7 @@ class IntegrationAnalysisScorer:
             if _risk_present(risk_desc, discovered_descriptions):
                 must_include_matched += 1
 
-        recall = (
-            must_include_matched / must_include_total
-            if must_include_total
-            else 1.0
-        )
+        recall = must_include_matched / must_include_total if must_include_total else 1.0
 
         # ---- must_not_include precision ----
         must_not_violations = 0
@@ -86,11 +82,7 @@ class IntegrationAnalysisScorer:
             if _risk_present(risk_desc, discovered_descriptions):
                 must_not_violations += 1
 
-        precision = (
-            1.0 - (must_not_violations / must_not_total)
-            if must_not_total
-            else 1.0
-        )
+        precision = 1.0 - (must_not_violations / must_not_total) if must_not_total else 1.0
 
         score = min(recall, precision)
         passed = len(hard_gate_failures) == 0

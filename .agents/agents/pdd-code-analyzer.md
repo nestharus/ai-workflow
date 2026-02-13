@@ -1,6 +1,6 @@
 ---
 description: Analyzes source code structure in any programming language
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 output_format: json
 ---
 

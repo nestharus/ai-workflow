@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import pytest
-
 from spec_manager.orchestration.coordination.wait_graph import (
     CyclicDependencyError,
     WaitEdge,
     WaitGraph,
 )
-
 
 # ------------------------------------------------------------------
 # WaitEdge tests
@@ -165,7 +163,9 @@ class TestWaitGraphSerialization:
 
     def test_round_trip_with_edges(self):
         g = WaitGraph()
-        g.add_edge(WaitEdge(waiting_slice="a", provider_slice="b", signal_id="s1", artifact_key="X"))
+        g.add_edge(
+            WaitEdge(waiting_slice="a", provider_slice="b", signal_id="s1", artifact_key="X")
+        )
         g.add_edge(WaitEdge(waiting_slice="c", provider_slice="d", signal_id="s2", monitor_id="m1"))
         d = g.to_dict()
         restored = WaitGraph.from_dict(d)

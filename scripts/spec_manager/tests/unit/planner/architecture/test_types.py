@@ -14,7 +14,6 @@ from spec_manager.planner.architecture.types import (
 )
 from spec_manager.planner.constraints.types import ConstraintFact, ImpactClassification
 
-
 # ---------------------------------------------------------------------------
 # DecisionPoint
 # ---------------------------------------------------------------------------

@@ -1222,6 +1222,8 @@ class PddOrchestrator:
         Returns:
             Modified lines list.
         """
+        from spec_manager.core.language import IMPORT_KEYWORDS
+
         new_lines = list(lines)
         file_text = "".join(new_lines)
 
@@ -1239,7 +1241,7 @@ class PddOrchestrator:
         last_import_idx = -1
         for idx, line in enumerate(new_lines):
             stripped = line.strip()
-            if stripped.startswith("import ") or stripped.startswith("from "):
+            if any(stripped.startswith(kw) for kw in IMPORT_KEYWORDS):
                 last_import_idx = idx
 
         # If no imports found, insert after module docstring
@@ -1247,6 +1249,7 @@ class PddOrchestrator:
             in_docstring = False
             for idx, line in enumerate(new_lines):
                 stripped = line.strip()
+                # Language-specific: Python docstring detection
                 if stripped.startswith('"""') or stripped.startswith("'''"):
                     if in_docstring:
                         # Closing quote — insert after this line

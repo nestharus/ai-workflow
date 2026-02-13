@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-
 # ------------------------------------------------------------------
 # Sub-types carried by every signal
 # ------------------------------------------------------------------
@@ -176,14 +175,16 @@ class SearchHints:
 # Main signal type
 # ------------------------------------------------------------------
 
-_CLASSIFICATION_VALUES = frozenset({
-    "MISSING_INTERFACE",
-    "AMBIGUOUS_SPEC",
-    "CONFLICTING_REQUIREMENTS",
-    "INTERFACE_MISMATCH",
-    "MERGE_CONFLICT",
-    "MONITOR_FAILED",
-})
+_CLASSIFICATION_VALUES = frozenset(
+    {
+        "MISSING_INTERFACE",
+        "AMBIGUOUS_SPEC",
+        "CONFLICTING_REQUIREMENTS",
+        "INTERFACE_MISMATCH",
+        "MERGE_CONFLICT",
+        "MONITOR_FAILED",
+    }
+)
 
 
 @dataclass

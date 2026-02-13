@@ -25,7 +25,7 @@ class ProjectionType(str, Enum):
     - Novel: INTRODUCTION
     """
 
-    PASS_THROUGH = "pass_through"  # Architecture imports and calls atom directly  # noqa: S105
+    PASS_THROUGH = "pass_through"  # Architecture imports and calls atom directly
     EVENT_BRIDGE = "event_bridge"  # Atom wrapped in event handler
     MIDDLEWARE_WRAP = "middleware_wrap"  # Atom wrapped in middleware layer
     RETRY_DECORATE = "retry_decorate"  # Atom wrapped with retry/resilience

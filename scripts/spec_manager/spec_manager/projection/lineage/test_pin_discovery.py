@@ -155,7 +155,9 @@ def _scan_test_file(
     Returns:
         List of associations found in the file.
     """
-    if not test_file.exists() or test_file.suffix != ".py":
+    from spec_manager.core.language import is_source_file
+
+    if not test_file.exists() or not is_source_file(test_file.suffix):
         return []
 
     try:

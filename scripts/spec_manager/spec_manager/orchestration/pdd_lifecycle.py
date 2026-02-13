@@ -303,6 +303,26 @@ class PddLifecycle:
             active_layer="l1",
         )
 
+        # C02: Validate L1 completion before L2 starts
+        l1_slices = l1_result.get("slices", [])
+        incomplete = [s for s in l1_slices if s.get("status") not in ("COMPLETE", "PROMOTED")]
+        if incomplete:
+            incomplete_ids = [s.get("slice_id", "?") for s in incomplete]
+            logger.warning(
+                "L1 has %d incomplete slices: %s — L2 input may be partial",
+                len(incomplete),
+                incomplete_ids,
+            )
+            results["l1_incomplete_slices"] = incomplete_ids
+            if not l1_result.get("all_complete", False):
+                logger.error(
+                    "L1 NOT all_complete — blocking L2 transition. "
+                    "Incomplete slices must be resolved before L2 can start."
+                )
+                results["l2_blocked"] = True
+                results["l2_blocked_reason"] = "L1 slices incomplete"
+                return results
+
         # L1→L2 transition: architectural refinement (may demote to L1)
         results["l1_l2_transition"] = self._run_transition("l1", "l2")
         state_mgr.update_state(
@@ -380,7 +400,8 @@ class PddLifecycle:
                 quality_reporter.write(quality_scorecard)
                 results["quality_scorecard"] = quality_scorecard.to_dict()
             except Exception as exc:
-                logger.warning("Quality scoring failed: %s", exc)
+                logger.warning("Quality scoring failed: %s", exc, exc_info=True)
+                results["quality_scorecard"] = {"error": str(exc)}
 
         # Snapshot
         if _enable_snapshots:
@@ -788,6 +809,7 @@ class PddLifecycle:
         Returns:
             List of SliceRef objects.
         """
+        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.promotion_loop import SliceRef
 
         slice_refs: list[SliceRef] = []
@@ -867,7 +889,7 @@ class PddLifecycle:
             # L3: one slice per code file (finding clusters handled internally)
             spec_snapshot_dir = self.manager.structure.spec_snapshot_dir
             if spec_snapshot_dir.exists():
-                for py_file in sorted(spec_snapshot_dir.rglob("*.py")):
+                for py_file in source_rglob(spec_snapshot_dir):
                     if py_file.is_file():
                         slice_refs.append(
                             SliceRef(
@@ -1537,10 +1559,12 @@ class PddLifecycle:
         Returns:
             Dict mapping relative path to file content.
         """
+        from spec_manager.core.language import source_rglob
+
         code_files: dict[str, str] = {}
         spec_snapshot_dir = self.manager.structure.spec_snapshot_dir
         if spec_snapshot_dir.exists():
-            for py_file in sorted(spec_snapshot_dir.rglob("*.py")):
+            for py_file in source_rglob(spec_snapshot_dir):
                 if py_file.is_file():
                     try:
                         code_files[str(py_file.relative_to(spec_snapshot_dir))] = py_file.read_text(

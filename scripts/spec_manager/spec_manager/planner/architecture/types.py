@@ -10,7 +10,6 @@ from typing import Any, Literal
 
 from spec_manager.planner.constraints.types import ConstraintFact, ImpactClassification
 
-
 # ------------------------------------------------------------------
 # Decision point
 # ------------------------------------------------------------------

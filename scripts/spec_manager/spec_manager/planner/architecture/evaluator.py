@@ -119,9 +119,7 @@ class CandidateEvaluator:
                 continue
 
             if assess.recommendation == "accept" and not assess.blockers:
-                has_unknown = any(
-                    v == "unknown" for v in assess.constraint_satisfaction.values()
-                )
+                has_unknown = any(v == "unknown" for v in assess.constraint_satisfaction.values())
                 if not has_unknown:
                     acceptable.append((cand, assess))
                 else:
@@ -132,7 +130,7 @@ class CandidateEvaluator:
         # Path 1: commit the lowest-risk acceptable candidate
         if acceptable:
             acceptable.sort(key=lambda pair: pair[1].risk_score)
-            best_cand, best_assess = acceptable[0]
+            best_cand, _ = acceptable[0]
 
             wiring_intentions = _extract_wiring_intentions(best_cand)
             new_constraints = _extract_new_constraint_ids(best_cand)
@@ -147,7 +145,7 @@ class CandidateEvaluator:
 
         # Path 2: needs human authority
         if needs_human:
-            best_cand, best_assess = needs_human[0]
+            best_cand, _ = needs_human[0]
             reqs = list(best_cand.decision_requirements)
             if not reqs:
                 reqs = [
@@ -169,14 +167,16 @@ class CandidateEvaluator:
             if assess and assess.blockers:
                 all_blockers.extend(assess.blockers)
 
-        under_spec_events = [
-            {"type": "architecture_blocked", "detail": b} for b in all_blockers
-        ] if all_blockers else [
-            {
-                "type": "architecture_blocked",
-                "detail": f"All candidates rejected for {decision_point.decision_id}",
-            }
-        ]
+        under_spec_events = (
+            [{"type": "architecture_blocked", "detail": b} for b in all_blockers]
+            if all_blockers
+            else [
+                {
+                    "type": "architecture_blocked",
+                    "detail": f"All candidates rejected for {decision_point.decision_id}",
+                }
+            ]
+        )
 
         return DecisionOutcome(
             decision_id=decision_point.decision_id,
@@ -223,7 +223,8 @@ class CandidateEvaluator:
         """Deterministic heuristic evaluation (no LLM)."""
         constraint_ids = [c.constraint_id for c in authoritative_constraints]
         human_required_ids = {
-            c.constraint_id for c in authoritative_constraints
+            c.constraint_id
+            for c in authoritative_constraints
             if c.authority_required == "human_required"
         }
 
@@ -239,9 +240,7 @@ class CandidateEvaluator:
                     satisfaction[cid] = "satisfied"
 
             # Check for decision_requirements -> needs_human
-            if cand.decision_requirements:
-                recommendation = "needs_human"
-            elif human_required_ids:
+            if cand.decision_requirements or human_required_ids:
                 recommendation = "needs_human"
             elif blockers:
                 recommendation = "reject"
@@ -313,11 +312,13 @@ def _build_evaluation_prompt(
     authoritative_constraints: list[ConstraintFact],
 ) -> str:
     """Build the LLM prompt for candidate evaluation."""
-    constraints_text = "\n".join(
-        f"  - [{c.constraint_id}] {c.question}: {c.answer} "
-        f"(authority: {c.authority_required})"
-        for c in authoritative_constraints[:30]
-    ) or "  (none)"
+    constraints_text = (
+        "\n".join(
+            f"  - [{c.constraint_id}] {c.question}: {c.answer} (authority: {c.authority_required})"
+            for c in authoritative_constraints[:30]
+        )
+        or "  (none)"
+    )
 
     candidates_text_parts: list[str] = []
     for cand in candidates:

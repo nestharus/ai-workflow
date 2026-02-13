@@ -134,13 +134,9 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             if isinstance(obj, dict):
                 results.append(obj)
             else:
-                logger.debug(
-                    "Skipping non-dict line %d in %s", lineno, path
-                )
+                logger.debug("Skipping non-dict line %d in %s", lineno, path)
         except json.JSONDecodeError:
-            logger.debug(
-                "Skipping malformed JSON at line %d in %s", lineno, path
-            )
+            logger.debug("Skipping malformed JSON at line %d in %s", lineno, path)
     return results
 
 
@@ -221,9 +217,7 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
     """
     trace_dir = _traces_dir(workspace_root) / trace_id
     if not trace_dir.is_dir():
-        raise FileNotFoundError(
-            f"Trace directory not found: {trace_dir}"
-        )
+        raise FileNotFoundError(f"Trace directory not found: {trace_dir}")
 
     request = _read_json(trace_dir / "request.json")
     decision = _read_json(trace_dir / "decision.json")
@@ -292,9 +286,7 @@ def filter_traces(
     return result
 
 
-def load_traces_for_run(
-    workspace_root: Path, run_id: str
-) -> list[LoadedTrace]:
+def load_traces_for_run(workspace_root: Path, run_id: str) -> list[LoadedTrace]:
     """Load all traces for a given run.
 
     Convenience function: reads the index, filters by *run_id*, and
@@ -316,9 +308,7 @@ def load_traces_for_run(
         try:
             traces.append(load_trace(workspace_root, entry.trace_id))
         except (FileNotFoundError, OSError) as exc:
-            logger.warning(
-                "Skipping trace %s: %s", entry.trace_id, exc
-            )
+            logger.warning("Skipping trace %s: %s", entry.trace_id, exc)
     return traces
 
 

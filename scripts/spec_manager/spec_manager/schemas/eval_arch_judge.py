@@ -16,7 +16,9 @@ class ArchRisk(BaseModel):
 class ArchJudgeOutput(BaseModel):
     """Structured output from the architecture quality judge."""
 
-    scores: dict[str, int] = Field(default_factory=dict)  # cohesion, coupling, completeness, consistency, clarity, extensibility (1-5)
+    scores: dict[str, int] = Field(
+        default_factory=dict
+    )  # cohesion, coupling, completeness, consistency, clarity, extensibility (1-5)
     overall: int = 3
     strengths: list[str] = Field(default_factory=list)
     risks: list[ArchRisk] = Field(default_factory=list)

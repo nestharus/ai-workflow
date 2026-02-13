@@ -9,7 +9,9 @@ class FileScore(BaseModel):
     """Quality scores for a single file."""
 
     path: str
-    scores: dict[str, int] = Field(default_factory=dict)  # readability, maintainability, error_handling, consistency, contract_clarity (1-5)
+    scores: dict[str, int] = Field(
+        default_factory=dict
+    )  # readability, maintainability, error_handling, consistency, contract_clarity (1-5)
     overall: int = 3
     notes: list[str] = Field(default_factory=list)
     risks: list[dict] = Field(default_factory=list)

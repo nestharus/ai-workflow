@@ -7,27 +7,25 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from spec_manager.planner.strategies.protocol import PlanningSession
-from spec_manager.planner.strategies.constraint_strategies import (
-    ImpactClassifierStrategy,
-    ConstraintCollectionStrategy,
-    ProblemFramerStrategy,
-    ConstraintEnricherStrategy,
-    NonSoftwareChecklistStrategy,
-    QuestionComposerStrategy,
-    _impact_at_least_medium,
-)
 from spec_manager.planner.constraints.types import (
+    ConflictReport,
     ConstraintContext,
     ConstraintFact,
     ConstraintHypothesis,
-    ConflictReport,
     DecisionRequirement,
     ImpactClassification,
     ProblemFrame,
 )
-
+from spec_manager.planner.strategies.constraint_strategies import (
+    ConstraintCollectionStrategy,
+    ConstraintEnricherStrategy,
+    ImpactClassifierStrategy,
+    NonSoftwareChecklistStrategy,
+    ProblemFramerStrategy,
+    QuestionComposerStrategy,
+    _impact_at_least_medium,
+)
+from spec_manager.planner.strategies.protocol import PlanningSession
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -138,16 +136,18 @@ class TestConstraintCollectionStrategy:
         constraints_dir = tmp_path / "analysis" / "constraints"
         constraints_dir.mkdir(parents=True)
         (constraints_dir / "__system__.json").write_text(
-            json.dumps([
-                {
-                    "constraint_id": "CON-SYS-001",
-                    "question": "Use REST?",
-                    "answer": "Yes",
-                    "source": "user",
-                    "confidence": 1.0,
-                    "validated": True,
-                }
-            ]),
+            json.dumps(
+                [
+                    {
+                        "constraint_id": "CON-SYS-001",
+                        "question": "Use REST?",
+                        "answer": "Yes",
+                        "source": "user",
+                        "confidence": 1.0,
+                        "validated": True,
+                    }
+                ]
+            ),
             encoding="utf-8",
         )
         (constraints_dir / "test_lib.json").write_text(
@@ -161,7 +161,9 @@ class TestConstraintCollectionStrategy:
 
         assert result.constraint_context is not None
         # System constraint loaded as authoritative (no decision_type)
-        total = len(result.constraint_context.authoritative) + len(result.constraint_context.decisions)
+        total = len(result.constraint_context.authoritative) + len(
+            result.constraint_context.decisions
+        )
         assert total >= 1
 
     def test_empty_store(self, tmp_path):
@@ -202,14 +204,18 @@ class TestProblemFramerStrategy:
         assert result.problem_frame is not None
 
     def test_calls_llm_for_medium_impact(self):
-        mock_agent = MagicMock(return_value=json.dumps({
-            "goal": "Build payment processor",
-            "scope": "PaymentLib",
-            "domain_markers": ["transaction", "settlement"],
-            "decision_points": ["Which protocol?"],
-            "tradeoff_axes": ["performance vs safety"],
-            "unknowns": ["Volume requirements"],
-        }))
+        mock_agent = MagicMock(
+            return_value=json.dumps(
+                {
+                    "goal": "Build payment processor",
+                    "scope": "PaymentLib",
+                    "domain_markers": ["transaction", "settlement"],
+                    "decision_points": ["Which protocol?"],
+                    "tradeoff_axes": ["performance vs safety"],
+                    "unknowns": ["Volume requirements"],
+                }
+            )
+        )
 
         s = ProblemFramerStrategy(run_agent=mock_agent)
         session = _session_medium()
@@ -253,34 +259,36 @@ class TestConstraintEnricherStrategy:
         assert result.hypotheses == []
 
     def test_enriches_with_llm(self):
-        mock_agent = MagicMock(return_value=json.dumps({
-            "hypotheses": [
+        mock_agent = MagicMock(
+            return_value=json.dumps(
                 {
-                    "hypothesis_id": "HYP-001",
-                    "question": "Is caching needed?",
-                    "inferred_answer": "Probably yes",
-                    "source": "gap_analysis",
-                    "confidence": 0.7,
-                    "dimension": "software",
-                    "reasoning": "Multiple read-heavy endpoints",
+                    "hypotheses": [
+                        {
+                            "hypothesis_id": "HYP-001",
+                            "question": "Is caching needed?",
+                            "inferred_answer": "Probably yes",
+                            "source": "gap_analysis",
+                            "confidence": 0.7,
+                            "dimension": "software",
+                            "reasoning": "Multiple read-heavy endpoints",
+                        }
+                    ],
+                    "decision_requirements": [
+                        {
+                            "decision_id": "DR-001",
+                            "question": "Which cache backend?",
+                            "kind": "technology_choice",
+                            "dimension": "software",
+                            "scope": "intra:LIB",
+                            "impact": "MEDIUM",
+                            "options": ["redis", "memcached"],
+                            "needed_for": ["PaymentLib"],
+                        }
+                    ],
+                    "conflicts": [{"between": "CON-001 and CON-002", "nature": "contradictory"}],
                 }
-            ],
-            "decision_requirements": [
-                {
-                    "decision_id": "DR-001",
-                    "question": "Which cache backend?",
-                    "kind": "technology_choice",
-                    "dimension": "software",
-                    "scope": "intra:LIB",
-                    "impact": "MEDIUM",
-                    "options": ["redis", "memcached"],
-                    "needed_for": ["PaymentLib"],
-                }
-            ],
-            "conflicts": [
-                {"between": "CON-001 and CON-002", "nature": "contradictory"}
-            ],
-        }))
+            )
+        )
 
         s = ConstraintEnricherStrategy(run_agent=mock_agent)
         session = _session_medium()
@@ -407,14 +415,18 @@ class TestQuestionComposerStrategy:
         assert len(result.under_spec_events) == 1  # unchanged
 
     def test_refines_events_with_llm(self):
-        mock_agent = MagicMock(return_value=json.dumps([
-            {
-                "type": "gap",
-                "question": "What is the expected latency SLA?",
-                "context": "Performance requirement unclear",
-                "original_detail": "missing info",
-            }
-        ]))
+        mock_agent = MagicMock(
+            return_value=json.dumps(
+                [
+                    {
+                        "type": "gap",
+                        "question": "What is the expected latency SLA?",
+                        "context": "Performance requirement unclear",
+                        "original_detail": "missing info",
+                    }
+                ]
+            )
+        )
 
         s = QuestionComposerStrategy(run_agent=mock_agent)
         session = PlanningSession(

@@ -124,14 +124,16 @@ def _count_statements_in_range(
 
     This is a rough approximation of statement count.
     """
+    from spec_manager.core.language import COMMENT_PREFIX, DECORATOR_PREFIX
+
     count = 0
     for i in range(start - 1, min(end, len(source_lines))):
         line = source_lines[i].strip()
         if not line:
             continue
-        if line.startswith("#"):
+        if line.startswith(COMMENT_PREFIX.rstrip()):
             continue
-        if line.startswith("@"):
+        if line.startswith(DECORATOR_PREFIX):
             continue
         count += 1
     return count

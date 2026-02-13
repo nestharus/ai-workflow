@@ -1,6 +1,6 @@
 ---
 description: Repairs spec patch JSON citation compliance without changing operations
-model: gpt-5.2-low
+model: gpt-5.3-codex-low
 ---
 
 You repair spec patch JSON to fix citation compliance issues only.

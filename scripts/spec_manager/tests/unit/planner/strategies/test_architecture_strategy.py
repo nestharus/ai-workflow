@@ -7,26 +7,24 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from spec_manager.planner.strategies.protocol import PlanningSession
-from spec_manager.planner.strategies.architecture_strategy import (
-    ArchitecturePlannerStrategy,
+from spec_manager.orchestration.coordination.wait_graph import WaitEdge, WaitGraph
+from spec_manager.orchestration.coordination.work_items import WorkItemStore
+from spec_manager.planner.architecture.types import (
+    ArchitectureCandidate,
+    CandidateAssessment,
+    DecisionOutcome,
+    DecisionPoint,
+    ScopePacket,
 )
 from spec_manager.planner.constraints.types import (
     ConstraintContext,
     ConstraintFact,
     ImpactClassification,
 )
-from spec_manager.planner.architecture.types import (
-    DecisionOutcome,
-    DecisionPoint,
-    ArchitectureCandidate,
-    CandidateAssessment,
-    ScopePacket,
+from spec_manager.planner.strategies.architecture_strategy import (
+    ArchitecturePlannerStrategy,
 )
-from spec_manager.orchestration.coordination.work_items import WorkItemStore
-from spec_manager.orchestration.coordination.wait_graph import WaitGraph, WaitEdge
-
+from spec_manager.planner.strategies.protocol import PlanningSession
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,7 +41,9 @@ def _mock_candidate(candidate_id: str = "C1", decision_id: str = "DP-001") -> Ar
     )
 
 
-def _mock_assessment(candidate_id: str = "C1", recommendation: str = "accept") -> CandidateAssessment:
+def _mock_assessment(
+    candidate_id: str = "C1", recommendation: str = "accept"
+) -> CandidateAssessment:
     """Helper to create a mock CandidateAssessment."""
     return CandidateAssessment(
         candidate_id=candidate_id,
@@ -62,7 +62,13 @@ def _l2_medium_session(**ctx_overrides) -> PlanningSession:
     return PlanningSession(
         ctx=ctx,
         impact=ImpactClassification(impact="MEDIUM"),
-        gaps=[{"kind": "topology", "description": "architecture pattern needed", "target": "PaymentService"}],
+        gaps=[
+            {
+                "kind": "topology",
+                "description": "architecture pattern needed",
+                "target": "PaymentService",
+            }
+        ],
         discovery={"nodes": [{"kind": "component", "name": "PaymentService"}]},
         constraint_context=ConstraintContext(
             authoritative=[
@@ -152,7 +158,7 @@ class TestArchitectureStrategyHeuristic:
         """Verifies HIGH impact produces more candidates (K=3)."""
         s = ArchitecturePlannerStrategy(workspace_root=tmp_path)
         session = _l2_high_session()
-        result = s.run(session)
+        _ = s.run(session)
 
         # Check that artifacts were written
         decisions_dir = tmp_path / "reports" / "pdd" / "run-001" / "architecture" / "decisions"
@@ -207,9 +213,8 @@ class TestArchitectureStrategyHeuristic:
         blocked = [o for o in result.decision_outcomes if not o.committed]
         if blocked:
             # Either decision_requirements or under_spec_events should be non-empty
-            has_escalation = (
-                any(o.decision_requirements for o in blocked) or
-                any(o.under_spec_events for o in blocked)
+            has_escalation = any(o.decision_requirements for o in blocked) or any(
+                o.under_spec_events for o in blocked
             )
             assert has_escalation
 
@@ -239,7 +244,7 @@ class TestArchitectureStrategyWorkItems:
         store = WorkItemStore(tmp_path / "coordination")
 
         # Create strategy with work item store
-        strategy = ArchitecturePlannerStrategy(
+        _ = ArchitecturePlannerStrategy(
             workspace_root=tmp_path,
             work_item_store=store,
         )
@@ -272,18 +277,23 @@ class TestArchitectureStrategyWorkItems:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            side_effect=mock_detect,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[mock_candidate],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[mock_assessment],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                side_effect=mock_detect,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[mock_candidate],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[mock_assessment],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session()
             strategy.run(session)
@@ -324,18 +334,23 @@ class TestArchitectureStrategyWorkItems:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[_mock_candidate("C1", "DP-002")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[_mock_candidate("C1", "DP-002")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session()
             strategy.run(session)
@@ -374,18 +389,23 @@ class TestArchitectureStrategyWorkItems:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[_mock_candidate("C1", "DP-003")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "reject")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[_mock_candidate("C1", "DP-003")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "reject")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session()
             strategy.run(session)
@@ -422,18 +442,23 @@ class TestArchitectureStrategyWorkItems:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[_mock_candidate("C1", "DP-004")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[_mock_candidate("C1", "DP-004")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session()
             result = strategy.run(session)
@@ -478,18 +503,23 @@ class TestArchitectureStrategyWaitGraph:
             decision_requirements=["DP-001"],  # Requires another decision
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[_mock_candidate("C1", "DP-005")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "needs_human")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[_mock_candidate("C1", "DP-005")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "needs_human")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session(slice_id="test_lib")
             strategy.run(session)
@@ -530,18 +560,23 @@ class TestArchitectureStrategyWaitGraph:
             decision_requirements=["DP-001"],  # Has requirements but committed
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[_mock_candidate("C1", "DP-006")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[_mock_candidate("C1", "DP-006")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session()
             strategy.run(session)
@@ -577,18 +612,23 @@ class TestArchitectureStrategyWaitGraph:
             decision_requirements=["DP-002"],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            return_value=[_mock_candidate("C1", "DP-007")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "needs_human")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                return_value=[_mock_candidate("C1", "DP-007")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "needs_human")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session()
             result = strategy.run(session)
@@ -642,18 +682,23 @@ class TestArchitectureStrategyScopePacket:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            side_effect=mock_run_proposers,
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                side_effect=mock_run_proposers,
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session(slice_id="mylib")
             strategy.run(session)
@@ -699,18 +744,23 @@ class TestArchitectureStrategyScopePacket:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            side_effect=mock_run_proposers,
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                side_effect=mock_run_proposers,
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session(slice_id="mylib")
             strategy.run(session)
@@ -759,18 +809,23 @@ class TestArchitectureStrategyScopePacket:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            side_effect=mock_run_proposers,
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                side_effect=mock_run_proposers,
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             session = _l2_medium_session(slice_id="libA")
             strategy.run(session)
@@ -813,18 +868,23 @@ class TestArchitectureStrategyScopePacket:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            side_effect=mock_run_proposers,
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                side_effect=mock_run_proposers,
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             # Session with arch_files in discovery
             session = _l2_medium_session(slice_id="mylib")
@@ -870,18 +930,23 @@ class TestArchitectureStrategyScopePacket:
             decision_requirements=[],
         )
 
-        with patch(
-            "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
-            return_value=mock_decision_points,
-        ), patch(
-            "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
-            side_effect=mock_run_proposers,
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
-            return_value=[_mock_assessment("C1", "accept")],
-        ), patch(
-            "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
-            return_value=mock_outcome,
+        with (
+            patch(
+                "spec_manager.planner.architecture.decision_detector.DecisionPointDetector.detect",
+                return_value=mock_decision_points,
+            ),
+            patch(
+                "spec_manager.planner.architecture.proposer.ProposerOrchestrator.run_proposers",
+                side_effect=mock_run_proposers,
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.evaluate",
+                return_value=[_mock_assessment("C1", "accept")],
+            ),
+            patch(
+                "spec_manager.planner.architecture.evaluator.CandidateEvaluator.select_or_block",
+                return_value=mock_outcome,
+            ),
         ):
             # Session with tradeoff axes
             session = _l2_medium_session(slice_id="mylib")

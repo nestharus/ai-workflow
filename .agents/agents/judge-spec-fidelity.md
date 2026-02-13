@@ -1,6 +1,6 @@
 ---
 description: Evaluates spec fidelity by checking requirement coverage and hallucinations
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 output_format: json
 ---
 

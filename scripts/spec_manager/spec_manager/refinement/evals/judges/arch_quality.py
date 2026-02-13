@@ -93,17 +93,19 @@ class ArchitectureQualityJudge:
                     sections.append(f"Depends on: {', '.join(deps)}")
                 sections.append("")
 
-        sections.extend([
-            "## Coverage",
-            f"- Requirements total: {coverage.get('requirements_total', 0)}",
-            f"- Requirements mapped: {coverage.get('requirements_mapped', 0)}",
-            "",
-            "## L2 Review Findings",
-            f"- BLOCKER: {l2_findings.get('BLOCKER', 0)}",
-            f"- MAJOR: {l2_findings.get('MAJOR', 0)}",
-            f"- MINOR: {l2_findings.get('MINOR', 0)}",
-            "",
-            "Evaluate this architecture and return your assessment as JSON.",
-        ])
+        sections.extend(
+            [
+                "## Coverage",
+                f"- Requirements total: {coverage.get('requirements_total', 0)}",
+                f"- Requirements mapped: {coverage.get('requirements_mapped', 0)}",
+                "",
+                "## L2 Review Findings",
+                f"- BLOCKER: {l2_findings.get('BLOCKER', 0)}",
+                f"- MAJOR: {l2_findings.get('MAJOR', 0)}",
+                f"- MINOR: {l2_findings.get('MINOR', 0)}",
+                "",
+                "Evaluate this architecture and return your assessment as JSON.",
+            ]
+        )
 
         return "\n".join(sections)

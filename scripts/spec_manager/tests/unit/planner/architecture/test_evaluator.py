@@ -84,9 +84,7 @@ def candidates() -> list[ArchitectureCandidate]:
 
 
 class TestHeuristicEvaluation:
-    def test_evaluate_returns_one_per_candidate(
-        self, workspace: Path, candidates, constraints
-    ):
+    def test_evaluate_returns_one_per_candidate(self, workspace: Path, candidates, constraints):
         evaluator = CandidateEvaluator(workspace)
         assessments = evaluator.evaluate(candidates, constraints)
         assert len(assessments) == 2
@@ -143,25 +141,30 @@ class TestHeuristicEvaluation:
 
 class TestLLMEvaluation:
     def test_evaluate_via_llm(self, workspace: Path, candidates, constraints):
-        llm_response = json.dumps([
-            {
-                "candidate_id": "CAND-001",
-                "constraint_satisfaction": {"CON-001": "satisfied", "CON-002": "satisfied"},
-                "blockers": [],
-                "risk_score": 0.1,
-                "reversibility": "EASY",
-                "recommendation": "accept",
-            },
-            {
-                "candidate_id": "CAND-002",
-                "constraint_satisfaction": {"CON-001": "satisfied", "CON-002": "unknown"},
-                "blockers": [],
-                "risk_score": 0.4,
-                "reversibility": "MEDIUM",
-                "recommendation": "needs_human",
-            },
-        ])
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-001",
+                    "constraint_satisfaction": {"CON-001": "satisfied", "CON-002": "satisfied"},
+                    "blockers": [],
+                    "risk_score": 0.1,
+                    "reversibility": "EASY",
+                    "recommendation": "accept",
+                },
+                {
+                    "candidate_id": "CAND-002",
+                    "constraint_satisfaction": {"CON-001": "satisfied", "CON-002": "unknown"},
+                    "blockers": [],
+                    "risk_score": 0.4,
+                    "reversibility": "MEDIUM",
+                    "recommendation": "needs_human",
+                },
+            ]
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
+
         evaluator = CandidateEvaluator(workspace, run_agent=mock_agent)
         assessments = evaluator.evaluate(candidates, constraints)
         assert len(assessments) == 2
@@ -170,7 +173,9 @@ class TestLLMEvaluation:
         assert a1.risk_score == 0.1
 
     def test_llm_returns_garbage(self, workspace: Path, candidates, constraints):
-        mock_agent = lambda prompt: "not json"
+        def mock_agent(prompt: str) -> str:
+            return "not json"
+
         evaluator = CandidateEvaluator(workspace, run_agent=mock_agent)
         assessments = evaluator.evaluate(candidates, constraints)
         # Should still produce one assessment per candidate (fallback)
@@ -179,17 +184,22 @@ class TestLLMEvaluation:
             assert a.recommendation == "needs_human"
 
     def test_llm_misses_candidate(self, workspace: Path, candidates, constraints):
-        llm_response = json.dumps([
-            {
-                "candidate_id": "CAND-001",
-                "constraint_satisfaction": {},
-                "blockers": [],
-                "risk_score": 0.2,
-                "reversibility": "EASY",
-                "recommendation": "accept",
-            },
-        ])
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-001",
+                    "constraint_satisfaction": {},
+                    "blockers": [],
+                    "risk_score": 0.2,
+                    "reversibility": "EASY",
+                    "recommendation": "accept",
+                },
+            ]
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
+
         evaluator = CandidateEvaluator(workspace, run_agent=mock_agent)
         assessments = evaluator.evaluate(candidates, constraints)
         assert len(assessments) == 2
@@ -217,9 +227,7 @@ class TestSelectOrBlock:
             ),
         ]
         evaluator = CandidateEvaluator(workspace)
-        outcome = evaluator.select_or_block(
-            decision_point, candidates, assessments, []
-        )
+        outcome = evaluator.select_or_block(decision_point, candidates, assessments, [])
         assert outcome.committed is True
         assert outcome.selected_candidate_id == "CAND-002"  # lowest risk
 
@@ -238,9 +246,7 @@ class TestSelectOrBlock:
             ),
         ]
         evaluator = CandidateEvaluator(workspace)
-        outcome = evaluator.select_or_block(
-            decision_point, candidates, assessments, []
-        )
+        outcome = evaluator.select_or_block(decision_point, candidates, assessments, [])
         assert outcome.committed is False
         assert len(outcome.decision_requirements) > 0
 
@@ -258,9 +264,7 @@ class TestSelectOrBlock:
             ),
         ]
         evaluator = CandidateEvaluator(workspace)
-        outcome = evaluator.select_or_block(
-            decision_point, candidates, assessments, []
-        )
+        outcome = evaluator.select_or_block(decision_point, candidates, assessments, [])
         assert outcome.committed is False
         assert len(outcome.under_spec_events) > 0
 
@@ -270,9 +274,7 @@ class TestSelectOrBlock:
         assert outcome.committed is False
         assert "No candidates" in outcome.decision_requirements[0]
 
-    def test_commit_extracts_wiring_intentions(
-        self, workspace: Path, decision_point, candidates
-    ):
+    def test_commit_extracts_wiring_intentions(self, workspace: Path, decision_point, candidates):
         assessments = [
             CandidateAssessment(
                 candidate_id="CAND-001",
@@ -281,16 +283,12 @@ class TestSelectOrBlock:
             ),
         ]
         evaluator = CandidateEvaluator(workspace)
-        outcome = evaluator.select_or_block(
-            decision_point, [candidates[0]], assessments, []
-        )
+        outcome = evaluator.select_or_block(decision_point, [candidates[0]], assessments, [])
         assert outcome.committed is True
         assert len(outcome.wiring_intentions) == 1
         assert outcome.wiring_intentions[0]["approach"] == "in-memory-cache"
 
-    def test_commit_extracts_new_constraints(
-        self, workspace: Path, decision_point, candidates
-    ):
+    def test_commit_extracts_new_constraints(self, workspace: Path, decision_point, candidates):
         assessments = [
             CandidateAssessment(
                 candidate_id="CAND-001",
@@ -299,14 +297,10 @@ class TestSelectOrBlock:
             ),
         ]
         evaluator = CandidateEvaluator(workspace)
-        outcome = evaluator.select_or_block(
-            decision_point, [candidates[0]], assessments, []
-        )
+        outcome = evaluator.select_or_block(decision_point, [candidates[0]], assessments, [])
         assert "cache-ttl" in outcome.new_constraints
 
-    def test_unknown_satisfaction_blocks_accept(
-        self, workspace: Path, decision_point, candidates
-    ):
+    def test_unknown_satisfaction_blocks_accept(self, workspace: Path, decision_point, candidates):
         assessments = [
             CandidateAssessment(
                 candidate_id="CAND-001",
@@ -316,9 +310,7 @@ class TestSelectOrBlock:
             ),
         ]
         evaluator = CandidateEvaluator(workspace)
-        outcome = evaluator.select_or_block(
-            decision_point, [candidates[0]], assessments, []
-        )
+        outcome = evaluator.select_or_block(decision_point, [candidates[0]], assessments, [])
         # Unknown constraint means needs_human path, not commit
         assert outcome.committed is False
 

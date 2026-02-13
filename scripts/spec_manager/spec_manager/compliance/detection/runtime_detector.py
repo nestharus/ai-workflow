@@ -2,6 +2,11 @@
 
 Executes algorithmic code in a subprocess sandbox and catches
 NotImplementedError at runtime as proof of gaps.
+
+NOTE: This module is inherently Python-specific (generates probe scripts).
+The probe script generation, module-path resolution, and subprocess invocation
+all assume a Python runtime.  See ``spec_manager.core.language`` for the
+centralised language constants used elsewhere.
 """
 
 from __future__ import annotations
@@ -275,11 +280,19 @@ def _filepath_to_module_path(filepath: str, project_root: Path) -> str | None:
         return None
 
     parts = list(rel.parts)
-    if not parts or not parts[-1].endswith(".py"):
+    from pathlib import PurePosixPath
+
+    from spec_manager.core.language import is_package_marker, is_source_file
+
+    if not parts:
+        return None
+    last = parts[-1]
+    last_suffix = PurePosixPath(last).suffix  # e.g. ".py"
+    if not is_source_file(last_suffix):
         return None
 
-    parts[-1] = parts[-1][:-3]  # strip .py
-    if parts[-1] == "__init__":
+    parts[-1] = last[: -len(last_suffix)]  # strip extension
+    if is_package_marker(last):
         parts = parts[:-1]
     if not parts:
         return None

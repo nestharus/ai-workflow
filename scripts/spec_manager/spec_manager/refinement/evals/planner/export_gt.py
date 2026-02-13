@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -78,16 +78,18 @@ class GroundTruthExporter:
             outputs = trace.artifacts.get("outputs", {})
             parts = entry.decision_key.split(":") if entry.decision_key else []
 
-            cases.append(ExportedCase(
-                decision_key=entry.decision_key,
-                capability=parts[1] if len(parts) > 1 else entry.capability,
-                layer=parts[0] if parts else entry.layer,
-                slice_id=parts[2] if len(parts) > 2 else entry.slice_id,
-                iteration=int(parts[3]) if len(parts) > 3 else 0,
-                trace_id=entry.trace_id,
-                observed_status=entry.status,
-                observed_outputs=outputs,
-            ))
+            cases.append(
+                ExportedCase(
+                    decision_key=entry.decision_key,
+                    capability=parts[1] if len(parts) > 1 else entry.capability,
+                    layer=parts[0] if parts else entry.layer,
+                    slice_id=parts[2] if len(parts) > 2 else entry.slice_id,
+                    iteration=int(parts[3]) if len(parts) > 3 else 0,
+                    trace_id=entry.trace_id,
+                    observed_status=entry.status,
+                    observed_outputs=outputs,
+                )
+            )
 
         # Build the GT template
         gt_doc = self._build_template(spec_id, cases)
@@ -104,9 +106,7 @@ class GroundTruthExporter:
         )
         return out_path
 
-    def _build_template(
-        self, spec_id: str, cases: list[ExportedCase]
-    ) -> dict[str, Any]:
+    def _build_template(self, spec_id: str, cases: list[ExportedCase]) -> dict[str, Any]:
         """Build a GT document dict from exported cases."""
         doc: dict[str, Any] = {
             "meta": {
@@ -175,11 +175,13 @@ class GroundTruthExporter:
             questions = outputs.get("questions", [])
             events_gt = []
             for q in questions:
-                events_gt.append({
-                    "event_id": "",
-                    "should_block": blocked,
-                    "observed_question": q,
-                })
+                events_gt.append(
+                    {
+                        "event_id": "",
+                        "should_block": blocked,
+                        "observed_question": q,
+                    }
+                )
             return {"events": events_gt}
 
         if cap == "GAP":
@@ -187,7 +189,9 @@ class GroundTruthExporter:
             return {
                 "must_find": [],
                 "must_not_find": [],
-                "observed_discovery_keys": sorted(discovery.keys()) if isinstance(discovery, dict) else [],
+                "observed_discovery_keys": sorted(discovery.keys())
+                if isinstance(discovery, dict)
+                else [],
             }
 
         if cap == "INTEGRATION_ANALYSIS":
@@ -195,7 +199,9 @@ class GroundTruthExporter:
             return {
                 "must_include_risks": [],
                 "must_not_include_risks": [],
-                "observed_topology_keys": sorted(discovery.keys()) if isinstance(discovery, dict) else [],
+                "observed_topology_keys": sorted(discovery.keys())
+                if isinstance(discovery, dict)
+                else [],
             }
 
         return {"_raw_outputs": outputs}

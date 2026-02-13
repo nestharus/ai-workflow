@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spec_manager.core.code_analysis import analyze_source
+from spec_manager.core.language import INFRASTRUCTURE_COMMENT_PATTERNS
 
 # =============================================================================
 # Plan 1: Core Data Structures
@@ -181,17 +182,13 @@ class ProjectTranslationState:
 
 # These patterns match on clean comment TEXT, not on raw tokens with delimiters.
 # The LLM extracts comment text without language-specific delimiters (#, //, --, etc.)
+# The canonical list lives in spec_manager.core.language.INFRASTRUCTURE_COMMENT_PATTERNS;
+# this module extends it with a few edit-in-place-specific patterns (shebang, encoding).
+
 _INFRASTRUCTURE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^type:\s*ignore"),  # type: ignore[...]
-    re.compile(r"^noqa"),
-    re.compile(r"^pragma:\s*no\s*cover"),  # pragma: no cover
-    re.compile(r"^pylint:\s*(disable|enable)"),  # pylint directives
-    re.compile(r"^fmt:\s*(on|off)"),  # black/ruff format directives
-    re.compile(r"^isort:\s*(skip|on|off)"),  # isort directives
+    *INFRASTRUCTURE_COMMENT_PATTERNS,
     re.compile(r"^!"),  # shebang (delimiter stripped, leading ! remains)
     re.compile(r"^-\*-\s*coding"),  # encoding declarations
-    re.compile(r"^mypy:\s*"),  # mypy directives
-    re.compile(r"^ruff:\s*"),  # ruff directives
 ]
 
 _SECTION_MARKER_PATTERN: re.Pattern[str] = re.compile(
@@ -535,8 +532,10 @@ def analyze_project(
     if not root_path.is_dir():
         raise NotADirectoryError(f"Not a directory: {root}")
 
-    include_patterns = include or ["**/*.py"]
-    exclude_patterns = exclude or ["**/test_*", "**/__pycache__/**"]
+    from spec_manager.core.language import EXCLUDE_DIRS, SOURCE_RGLOBS
+
+    include_patterns = include or list(SOURCE_RGLOBS)
+    exclude_patterns = exclude or ["**/test_*"] + [f"**/{d}/**" for d in sorted(EXCLUDE_DIRS)]
 
     # Collect matching files
     all_files: set[Path] = set()

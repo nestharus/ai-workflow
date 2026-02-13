@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.coordination.signals import (
     CoordinationSignal,
     FunctionRef,
@@ -16,7 +15,6 @@ from spec_manager.orchestration.coordination.signals import (
     SignalProgress,
     SpecRef,
 )
-
 
 # ------------------------------------------------------------------
 # Helpers

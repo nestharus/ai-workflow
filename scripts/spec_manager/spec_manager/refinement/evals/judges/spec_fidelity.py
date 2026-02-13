@@ -52,9 +52,7 @@ class SpecFidelityJudge:
 
         cache_key = None
         if self.cache is not None:
-            combined = json.dumps(
-                {"spec": spec_summary, "code": code_digest}, sort_keys=True
-            )
+            combined = json.dumps({"spec": spec_summary, "code": code_digest}, sort_keys=True)
             input_hash = JudgeCache.compute_hash(combined)
             cache_key = JudgeCacheKey(
                 judge_type="spec_fidelity",
@@ -92,18 +90,22 @@ class SpecFidelityJudge:
             elif isinstance(req, dict):
                 sections.append(f"{i}. {req.get('text', req.get('requirement', str(req)))}")
 
-        sections.extend([
-            "",
-            f"## Produced Files ({len(files)})",
-            "",
-        ])
+        sections.extend(
+            [
+                "",
+                f"## Produced Files ({len(files)})",
+                "",
+            ]
+        )
 
         for f in files[:20]:  # Cap to avoid prompt explosion
             sections.append(f"- {f.get('path', '?')} ({f.get('loc', 0)} LOC)")
 
-        sections.extend([
-            "",
-            "Evaluate spec fidelity and return your assessment as JSON.",
-        ])
+        sections.extend(
+            [
+                "",
+                "Evaluate spec fidelity and return your assessment as JSON.",
+            ]
+        )
 
         return "\n".join(sections)

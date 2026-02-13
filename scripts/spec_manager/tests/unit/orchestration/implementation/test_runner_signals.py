@@ -1,4 +1,5 @@
 """Unit tests for signal emission in ImplementationRunner."""
+
 from __future__ import annotations
 
 import json
@@ -6,12 +7,11 @@ from pathlib import Path
 
 from spec_manager.orchestration.coordination.signals import CoordinationSignal
 from spec_manager.orchestration.implementation.runner import (
-    ImplementationRunResult,
     ImplementationRunner,
+    ImplementationRunResult,
     _classify_under_spec,
 )
 from spec_manager.orchestration.implementation.types import UnderSpecEvent
-
 
 # ======================================================================
 # ImplementationRunResult.signals field
@@ -68,9 +68,7 @@ class TestWriteSignals:
             classification="MISSING_INTERFACE",
         )
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], [], [], [], [], signals=[sig]
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], [], [], [], signals=[sig])
 
         path = tmp_path / "signals.json"
         assert path.exists()
@@ -96,9 +94,7 @@ class TestWriteSignals:
     def test_no_signals_file_when_empty(self, tmp_path: Path) -> None:
         result = ImplementationRunResult()
 
-        ImplementationRunner._write_artifacts(
-            tmp_path, result, [], [], [], [], [], signals=[]
-        )
+        ImplementationRunner._write_artifacts(tmp_path, result, [], [], [], [], [], signals=[])
 
         assert not (tmp_path / "signals.json").exists()
 

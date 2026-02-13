@@ -99,9 +99,7 @@ def classify_impact(
     # ------------------------------------------------------------------
     if introduces_infra or introduces_external_dep:
         reversibility = "HARD"
-    elif cross_library_contract or impact == "HIGH":
-        reversibility = "MEDIUM"
-    elif impact == "MEDIUM":
+    elif cross_library_contract or impact == "HIGH" or impact == "MEDIUM":
         reversibility = "MEDIUM"
     else:
         reversibility = "EASY"

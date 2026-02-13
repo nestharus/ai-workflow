@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Literal
 
 from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
@@ -31,13 +32,38 @@ _MARKER_RE = re.compile(
 # Keyword → subtype mapping for heuristic classification.
 _SUBTYPE_KEYWORDS: dict[str, list[str]] = {
     "performance": ["latency", "throughput", "performance", "sla", "response time", "benchmark"],
-    "security": ["auth", "security", "encrypt", "credential", "permission", "access control", "token"],
+    "security": [
+        "auth",
+        "security",
+        "encrypt",
+        "credential",
+        "permission",
+        "access control",
+        "token",
+    ],
     "api_contract": ["api", "contract", "endpoint", "interface", "protocol", "rest", "grpc"],
-    "data_model": ["schema", "table", "column", "field", "entity", "relation", "data model", "database"],
+    "data_model": [
+        "schema",
+        "table",
+        "column",
+        "field",
+        "entity",
+        "relation",
+        "data model",
+        "database",
+    ],
     "concurrency": ["thread", "concurrent", "lock", "mutex", "async", "parallel", "race"],
     "error_handling": ["error", "exception", "retry", "fallback", "timeout", "circuit breaker"],
     "compliance": ["compliance", "regulation", "gdpr", "hipaa", "audit", "legal"],
-    "deployment": ["deploy", "infrastructure", "container", "kubernetes", "docker", "ci/cd", "pipeline"],
+    "deployment": [
+        "deploy",
+        "infrastructure",
+        "container",
+        "kubernetes",
+        "docker",
+        "ci/cd",
+        "pipeline",
+    ],
 }
 
 
@@ -142,7 +168,7 @@ def _parse_constraints_md(content: str) -> list[tuple[str, str, str]]:
 
 def _parsed_to_facts(
     parsed: list[tuple[str, str, str]],
-    source: str = "existing",
+    source: Literal["user", "research", "steering", "existing"] = "existing",
 ) -> list[ConstraintFact]:
     """Convert parsed triples into :class:`ConstraintFact` objects."""
     facts: list[ConstraintFact] = []
@@ -167,9 +193,7 @@ def _parsed_to_facts(
 # ------------------------------------------------------------------
 
 
-def _classify_constraint_subtype(
-    element_id: str, text: str
-) -> ConstraintIndexEntry:
+def _classify_constraint_subtype(element_id: str, text: str) -> ConstraintIndexEntry:
     """Classify a constraint's subtype using keyword heuristics.
 
     Examines the constraint text for domain-specific keywords and returns
@@ -201,15 +225,32 @@ def _classify_constraint_subtype(
 
     # Extract entity-like tokens (capitalized words that aren't common English)
     _common = {
-        "the", "and", "for", "with", "must", "shall", "should",
-        "will", "not", "all", "any", "each", "this", "that",
+        "the",
+        "and",
+        "for",
+        "with",
+        "must",
+        "shall",
+        "should",
+        "will",
+        "not",
+        "all",
+        "any",
+        "each",
+        "this",
+        "that",
     }
     entities = []
     for word in text.split():
         clean = word.strip(".,;:()[]{}\"'")
-        if clean and clean[0].isupper() and clean.lower() not in _common and len(clean) > 2:
-            if clean not in entities:
-                entities.append(clean)
+        if (
+            clean
+            and clean[0].isupper()
+            and clean.lower() not in _common
+            and len(clean) > 2
+            and clean not in entities
+        ):
+            entities.append(clean)
 
     preview = text[:120].replace("\n", " ").strip()
     if len(text) > 120:

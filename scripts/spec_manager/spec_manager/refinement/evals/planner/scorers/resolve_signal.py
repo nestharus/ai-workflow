@@ -111,9 +111,7 @@ class ResolveSignalScorer:
             if cite_id not in evidence_refs:
                 missing_citations.append(cite_id)
         if missing_citations:
-            soft_signal_warnings.append(
-                f"missing_citations: {', '.join(missing_citations)}"
-            )
+            soft_signal_warnings.append(f"missing_citations: {', '.join(missing_citations)}")
 
         passed = len(hard_gate_failures) == 0
         score = 1.0 if passed else 0.0
@@ -123,8 +121,7 @@ class ResolveSignalScorer:
             detail_parts.append("Answer matches expected.")
         elif "wrong_answer" in hard_gate_failures:
             detail_parts.append(
-                f"Answer does not match any of {answers_any_of}. "
-                f"Got: {_truncate(answer, 120)}"
+                f"Answer does not match any of {answers_any_of}. Got: {_truncate(answer, 120)}"
             )
         elif "missing_answer" in hard_gate_failures:
             detail_parts.append("Planner returned empty answer for should_resolve=true.")

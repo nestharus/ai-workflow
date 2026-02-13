@@ -78,8 +78,12 @@ class TestPersist:
         self, workspace: Path, sample_candidates, sample_assessments, committed_outcome
     ):
         result_dir = persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, committed_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            committed_outcome,
         )
         assert result_dir.is_dir()
         assert (result_dir / "candidates.json").exists()
@@ -90,18 +94,28 @@ class TestPersist:
         self, workspace: Path, sample_candidates, sample_assessments, committed_outcome
     ):
         result_dir = persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, committed_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            committed_outcome,
         )
-        expected = workspace / "reports" / "pdd" / "run-1" / "architecture" / "decisions" / "DEC-001"
+        expected = (
+            workspace / "reports" / "pdd" / "run-1" / "architecture" / "decisions" / "DEC-001"
+        )
         assert result_dir == expected
 
     def test_candidates_json_content(
         self, workspace: Path, sample_candidates, sample_assessments, committed_outcome
     ):
         result_dir = persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, committed_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            committed_outcome,
         )
         data = json.loads((result_dir / "candidates.json").read_text())
         assert len(data) == 2
@@ -111,8 +125,12 @@ class TestPersist:
         self, workspace: Path, sample_candidates, sample_assessments, committed_outcome
     ):
         result_dir = persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, committed_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            committed_outcome,
         )
         data = json.loads((result_dir / "outcome.json").read_text())
         assert data["committed"] is True
@@ -122,14 +140,22 @@ class TestPersist:
         self, workspace: Path, sample_candidates, sample_assessments, committed_outcome
     ):
         persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, committed_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            committed_outcome,
         )
         # Persist again with different outcome
         new_outcome = DecisionOutcome(decision_id="DEC-001", committed=False)
         result_dir = persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, new_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            new_outcome,
         )
         data = json.loads((result_dir / "outcome.json").read_text())
         assert data["committed"] is False
@@ -142,16 +168,28 @@ class TestPersist:
 
 class TestLoadCommitted:
     def test_load_committed_only(
-        self, workspace: Path, sample_candidates, sample_assessments,
-        committed_outcome, blocked_outcome,
+        self,
+        workspace: Path,
+        sample_candidates,
+        sample_assessments,
+        committed_outcome,
+        blocked_outcome,
     ):
         persist_decision_artifacts(
-            workspace, "run-1", "DEC-001",
-            sample_candidates, sample_assessments, committed_outcome,
+            workspace,
+            "run-1",
+            "DEC-001",
+            sample_candidates,
+            sample_assessments,
+            committed_outcome,
         )
         persist_decision_artifacts(
-            workspace, "run-1", "DEC-002",
-            [], [], blocked_outcome,
+            workspace,
+            "run-1",
+            "DEC-002",
+            [],
+            [],
+            blocked_outcome,
         )
         results = load_committed_decisions(workspace, "run-1")
         assert len(results) == 1

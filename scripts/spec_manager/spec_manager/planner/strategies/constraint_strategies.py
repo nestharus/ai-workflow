@@ -11,14 +11,14 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from spec_manager.planner.constraints.impact import classify_impact
 from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
+    ConflictReport,
     ConstraintContext,
     ConstraintHypothesis,
-    ConflictReport,
     DecisionRequirement,
     ProblemFrame,
 )
@@ -165,8 +165,7 @@ class NonSoftwareChecklistStrategy:
 
             # Check if gaps or context mention this dimension
             gap_text = " ".join(
-                g.get("description", "") + " " + g.get("target", "")
-                for g in session.gaps
+                g.get("description", "") + " " + g.get("target", "") for g in session.gaps
             ).lower()
 
             ctx_text = json.dumps(session.ctx).lower() if session.ctx else ""
@@ -197,7 +196,7 @@ class TradeoffMapperStrategy:
     tradeoff dimensions.
     """
 
-    _DEFAULT_AXES = [
+    _DEFAULT_AXES: ClassVar[tuple[str, ...]] = (
         "performance",
         "maintainability",
         "simplicity",
@@ -205,7 +204,7 @@ class TradeoffMapperStrategy:
         "reliability",
         "scalability",
         "security",
-    ]
+    )
 
     @property
     def name(self) -> str:
@@ -247,11 +246,19 @@ class TradeoffMapperStrategy:
         for line in content.splitlines():
             line = line.strip()
             # Match ## headings or - list items
-            m = re.match(r"^#{1,3}\s+(.+)", line) or re.match(r"^[-*]\s+\*?\*?(.+?)\*?\*?\s*$", line)
+            m = re.match(r"^#{1,3}\s+(.+)", line) or re.match(
+                r"^[-*]\s+\*?\*?(.+?)\*?\*?\s*$", line
+            )
             if m:
                 axis = m.group(1).strip().lower()
                 # Skip generic headings
-                if axis and axis not in seen and len(axis) < 40 and axis not in ("overview", "introduction", "summary", "tradeoffs", "tradeoff axes"):
+                if (
+                    axis
+                    and axis not in seen
+                    and len(axis) < 40
+                    and axis
+                    not in ("overview", "introduction", "summary", "tradeoffs", "tradeoff axes")
+                ):
                     axes.append(axis)
                     seen.add(axis)
 
@@ -303,10 +310,12 @@ def _impact_at_least_medium(session: PlanningSession) -> bool:
 
 
 def _build_problem_frame_prompt(session: PlanningSession) -> str:
-    gaps_text = "\n".join(
-        f"  - {g.get('target', '?')}: {g.get('description', '')}"
-        for g in session.gaps[:30]
-    ) or "  (none)"
+    gaps_text = (
+        "\n".join(
+            f"  - {g.get('target', '?')}: {g.get('description', '')}" for g in session.gaps[:30]
+        )
+        or "  (none)"
+    )
 
     constraint_text = ""
     if session.constraint_context and session.constraint_context.authoritative:
@@ -318,8 +327,8 @@ def _build_problem_frame_prompt(session: PlanningSession) -> str:
 
     return f"""Frame the problem for the following planning context.
 
-Slice: {session.ctx.get('slice_id', 'unknown')}
-Layer: {session.ctx.get('layer', 'L1')}
+Slice: {session.ctx.get("slice_id", "unknown")}
+Layer: {session.ctx.get("layer", "L1")}
 
 Gaps:
 {gaps_text}
@@ -359,10 +368,12 @@ def _parse_problem_frame(raw: str) -> ProblemFrame:
 
 
 def _build_enrichment_prompt(session: PlanningSession) -> str:
-    gaps_text = "\n".join(
-        f"  - {g.get('target', '?')}: {g.get('description', '')}"
-        for g in session.gaps[:30]
-    ) or "  (none)"
+    gaps_text = (
+        "\n".join(
+            f"  - {g.get('target', '?')}: {g.get('description', '')}" for g in session.gaps[:30]
+        )
+        or "  (none)"
+    )
 
     frame_text = ""
     if session.problem_frame:
@@ -373,21 +384,20 @@ def _build_enrichment_prompt(session: PlanningSession) -> str:
         )
     frame_text = frame_text or "  (no problem frame)"
 
-    return f"""Analyze the following for constraint hypotheses, decision requirements, and conflicts.
-
-Slice: {session.ctx.get('slice_id', 'unknown')}
-
-Problem frame:
-{frame_text}
-
-Gaps:
-{gaps_text}
-
-Return a JSON object with keys:
-- hypotheses: list of objects with hypothesis_id, question, inferred_answer, source, confidence, dimension, reasoning
-- decision_requirements: list of objects with decision_id, question, kind, dimension, scope, impact, options, needed_for
-- conflicts: list of objects describing detected conflicts (arbitrary keys)
-"""
+    return (
+        "Analyze the following for constraint hypotheses,"
+        " decision requirements, and conflicts.\n"
+        f"\nSlice: {session.ctx.get('slice_id', 'unknown')}\n"
+        f"\nProblem frame:\n{frame_text}\n"
+        f"\nGaps:\n{gaps_text}\n"
+        "\nReturn a JSON object with keys:\n"
+        "- hypotheses: list of objects with hypothesis_id, question,"
+        " inferred_answer, source, confidence, dimension, reasoning\n"
+        "- decision_requirements: list of objects with decision_id,"
+        " question, kind, dimension, scope, impact, options, needed_for\n"
+        "- conflicts: list of objects describing detected conflicts"
+        " (arbitrary keys)\n"
+    )
 
 
 def _parse_enrichment_output(
@@ -426,27 +436,27 @@ def _parse_enrichment_output(
 
 
 def _build_question_prompt(events: list[dict[str, Any]]) -> str:
-    events_text = "\n".join(
-        f"  - {e.get('type', '?')}: {e.get('detail', e.get('question', ''))}"
-        for e in events[:20]
-    ) or "  (none)"
+    events_text = (
+        "\n".join(
+            f"  - {e.get('type', '?')}: {e.get('detail', e.get('question', ''))}"
+            for e in events[:20]
+        )
+        or "  (none)"
+    )
 
-    return f"""Refine the following under-spec events into clear, actionable questions for human review.
+    return (
+        "Refine the following under-spec events into clear,"
+        " actionable questions for human review.\n"
+        f"\nEvents:\n{events_text}\n"
+        "\nReturn a JSON array of objects with keys:\n"
+        "- type: the event type\n"
+        "- question: a clear, actionable question\n"
+        "- context: relevant context for the reviewer\n"
+        "- original_detail: the original event detail\n"
+    )
 
-Events:
-{events_text}
 
-Return a JSON array of objects with keys:
-- type: the event type
-- question: a clear, actionable question
-- context: relevant context for the reviewer
-- original_detail: the original event detail
-"""
-
-
-def _parse_question_output(
-    raw: str, original_events: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def _parse_question_output(raw: str, original_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     try:
         text = raw.strip()
         start = text.find("[")

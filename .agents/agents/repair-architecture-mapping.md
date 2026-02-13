@@ -1,6 +1,6 @@
 ---
 description: Repairs architecture mapping compliance issues without changing semantic content
-model: gpt-5.2-low
+model: gpt-5.3-codex-low
 ---
 
 You repair architecture mapping markdown to fix compliance issues.

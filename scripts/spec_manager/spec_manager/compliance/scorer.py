@@ -404,7 +404,9 @@ class ComplianceScorer:
         total_stubs = 0
 
         for filepath in algorithmic_files:
-            if not filepath.exists() or filepath.suffix != ".py":
+            from spec_manager.core.language import is_source_file
+
+            if not filepath.exists() or not is_source_file(filepath.suffix):
                 continue
 
             try:

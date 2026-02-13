@@ -57,9 +57,7 @@ _LIB_TO_PDD_FILES: dict[str, list[str]] = {
 # Fixture paths (relative to repo root)
 # ---------------------------------------------------------------------------
 
-_FIXTURES_REL = Path(
-    "scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures"
-)
+_FIXTURES_REL = Path("scripts/spec_manager/spec_manager/refinement/evals/inputs/fixtures")
 _PDD_SKELETONS_REL = _FIXTURES_REL / "chaotic_treasury_expanded_pdd"
 _PHASE0_OUTPUT_REL = _FIXTURES_REL / "chaotic_treasury_expanded_phase0_output"
 _GROUND_TRUTH_REL = _FIXTURES_REL / "chaotic_treasury_expanded_ground_truth.yaml"
@@ -93,12 +91,8 @@ class GroundTruth:
         return cls(
             sections=data.get("sectionization", {}).get("expected_sections", []),
             libraries=data.get("summarization", {}).get("expected_libraries", []),
-            library_names=data.get("library_synthesis", {}).get(
-                "expected_libraries", []
-            ),
-            requirements=data.get("library_synthesis", {}).get(
-                "expected_requirements", []
-            ),
+            library_names=data.get("library_synthesis", {}).get("expected_libraries", []),
+            requirements=data.get("library_synthesis", {}).get("expected_requirements", []),
             total_requirements=data.get("overall_requirements_count", 52),
         )
 
@@ -193,7 +187,7 @@ class EvalCapture:
             "run_id": self.run_id,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
-            "layers": [l.to_dict() for l in self.layers],
+            "layers": [layer.to_dict() for layer in self.layers],
             "ground_truth_comparison": self.ground_truth_comparison,
             "final_scoring": self.final_scoring,
         }
@@ -204,9 +198,7 @@ class EvalCapture:
 # ---------------------------------------------------------------------------
 
 
-def setup_workspace(
-    run_id: str, *, force: bool = True
-) -> tuple[Any, Path]:
+def setup_workspace(run_id: str, *, force: bool = True) -> tuple[Any, Path]:
     """Initialize workspace with PDD skeletons + Phase 0 output.
 
     1. Create workspace with PDD skeleton files as ``spec_snapshot``
@@ -322,9 +314,7 @@ def _create_l1_slice_dirs(workspace_root: Path) -> None:
     )
 
 
-def _remap_l1_slices(
-    slice_refs: list[Any], workspace_root: Path
-) -> list[Any]:
+def _remap_l1_slices(slice_refs: list[Any], workspace_root: Path) -> list[Any]:
     """Remap L1 slice worktree_path from libraries/ to l1_slices/.
 
     Returns a new list of SliceRef objects with corrected paths.
@@ -464,12 +454,7 @@ def run_slice_step_by_step(
 
             # Save bundle state after each step
             if save_dir:
-                step_dir = (
-                    save_dir
-                    / slice_ref.slice_id
-                    / f"iter_{iteration:03d}"
-                    / step.name
-                )
+                step_dir = save_dir / slice_ref.slice_id / f"iter_{iteration:03d}" / step.name
                 step_dir.mkdir(parents=True, exist_ok=True)
                 _save_bundle_snapshot(bundle, step_dir)
                 (step_dir / "step_capture.json").write_text(
@@ -746,7 +731,6 @@ class E2EEval:
         from spec_manager.orchestration.promotion_loop import (
             PromotionLoop,
             RunContext,
-            SliceRef,
         )
 
         loop = PromotionLoop(
@@ -808,7 +792,6 @@ class E2EEval:
         workspace_root: Path,
     ) -> LayerCapture:
         """Run a single layer with step-by-step capture."""
-        from spec_manager.orchestration.promotion_loop import SliceRef
 
         layer_capture = LayerCapture(layer=layer)
         t0 = time.monotonic()
@@ -820,7 +803,11 @@ class E2EEval:
         try:
             refinement_method = getattr(
                 lifecycle,
-                {"l1": "_library_refinement", "l2": "_architectural_refinement", "l3": "_code_quality_refinement"}[layer],
+                {
+                    "l1": "_library_refinement",
+                    "l2": "_architectural_refinement",
+                    "l3": "_code_quality_refinement",
+                }[layer],
             )
             layer_capture.entry_refinement = refinement_method()
         except Exception as exc:
@@ -969,8 +956,12 @@ class E2EEval:
                     f"{sl.total_duration_s:.1f}s)"
                 )
 
-        print(f"\n  Requirements coverage: {gt.get('requirements_found', '?')}/{gt.get('total_requirements', '?')}")
-        print(f"  Functions implemented: {gt.get('implemented_functions', '?')}/{gt.get('total_functions', '?')}")
+        req_found = gt.get("requirements_found", "?")
+        req_total = gt.get("total_requirements", "?")
+        func_impl = gt.get("implemented_functions", "?")
+        func_total = gt.get("total_functions", "?")
+        print(f"\n  Requirements coverage: {req_found}/{req_total}")
+        print(f"  Functions implemented: {func_impl}/{func_total}")
         print(f"  Step success rate: {score.get('step_success_rate', 0):.1%}")
         print(f"  Slice completion rate: {score.get('slice_completion_rate', 0):.1%}")
         print(f"  Total duration: {score.get('total_duration_s', 0):.1f}s")
@@ -987,9 +978,7 @@ def main() -> int:
     """CLI entrypoint for e2e eval."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="End-to-end QA evaluation for PDD pipeline"
-    )
+    parser = argparse.ArgumentParser(description="End-to-end QA evaluation for PDD pipeline")
     parser.add_argument(
         "--run-id",
         help="Custom run ID (default: auto-generated)",

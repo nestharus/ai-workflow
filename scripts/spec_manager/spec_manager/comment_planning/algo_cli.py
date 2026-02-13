@@ -223,8 +223,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"Not a directory: {directory}", file=sys.stderr)
         return 1
 
+    from spec_manager.core.language import source_rglob
+
     code_files = []
-    for py_file in sorted(directory.rglob("*.py")):
+    for py_file in source_rglob(directory):
         try:
             code_files.append(parse_file(str(py_file)))
         except (SyntaxError, OSError):
@@ -266,9 +268,11 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
         print(f"Not a directory: {directory}", file=sys.stderr)
         return 1
 
+    from spec_manager.core.language import source_rglob
+
     # Parse all files for call graph
     code_files = []
-    for py_file in sorted(directory.rglob("*.py")):
+    for py_file in source_rglob(directory):
         try:
             code_files.append(parse_file(str(py_file)))
         except (SyntaxError, OSError):

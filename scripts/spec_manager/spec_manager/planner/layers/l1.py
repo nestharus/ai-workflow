@@ -347,6 +347,10 @@ def _parse_skeleton_file(
     intentionally NOT a language parser — real analysis is deferred to
     LLM calls wired in later.
     """
+    from spec_manager.core.language import CLASS_KEYWORDS, COMMENT_PREFIX, FUNCTION_KEYWORDS
+
+    comment_char = COMMENT_PREFIX.rstrip()  # e.g. "#"
+
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     current_spec_block: list[str] | None = None
@@ -355,8 +359,8 @@ def _parse_skeleton_file(
     for lineno, line in enumerate(content.splitlines(), start=1):
         stripped = line.strip()
 
-        # Spec-comment blocks: contiguous lines starting with #
-        if stripped.startswith("#") and not stripped.startswith("#!"):
+        # Spec-comment blocks: contiguous lines starting with comment prefix
+        if stripped.startswith(comment_char) and not stripped.startswith("#!"):
             if current_spec_block is None:
                 current_spec_block = []
                 spec_block_start = lineno
@@ -379,8 +383,9 @@ def _parse_skeleton_file(
             spec_block_start = None
 
         # Function definitions
-        if stripped.startswith("def "):
-            name = _extract_name(stripped, "def ")
+        if any(stripped.startswith(kw) for kw in FUNCTION_KEYWORDS):
+            matched_kw = next(kw for kw in FUNCTION_KEYWORDS if stripped.startswith(kw))
+            name = _extract_name(stripped, matched_kw)
             node_id = f"{rel_path}:function:{name}"
             spec_ref = (
                 nodes[-1]["id"] if nodes and nodes[-1]["kind"] == "spec_comment_block" else ""
@@ -399,8 +404,9 @@ def _parse_skeleton_file(
                 edges.append({"source": spec_ref, "target": node_id, "kind": "declares"})
 
         # Class definitions
-        elif stripped.startswith("class "):
-            name = _extract_name(stripped, "class ")
+        elif any(stripped.startswith(kw) for kw in CLASS_KEYWORDS):
+            matched_kw = next(kw for kw in CLASS_KEYWORDS if stripped.startswith(kw))
+            name = _extract_name(stripped, matched_kw)
             node_id = f"{rel_path}:class:{name}"
             nodes.append(
                 {

@@ -201,7 +201,9 @@ class GapExplorationStep:
         from spec_manager.orchestration.evidence import GapReportRef
 
         slice_root = Path(ctx.slice_root)
-        py_files = list(slice_root.rglob("*.py"))
+        from spec_manager.core.language import source_rglob
+
+        py_files = source_rglob(slice_root)
 
         if not py_files:
             bundle.gaps = GapReportRef(open_gaps=[])
@@ -231,8 +233,9 @@ class GapExplorationStep:
 
             bundle.gaps = GapReportRef(open_gaps=gaps)
         except Exception as exc:
-            logger.warning("L1 gap exploration failed: %s", exc)
+            logger.warning("L1 gap exploration failed: %s", exc, exc_info=True)
             bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="RETRY", error=f"L1 gap exploration failed: {exc}")
 
         return StepResult(status="OK")
 
@@ -245,6 +248,7 @@ class GapExplorationStep:
         """
         import json
 
+        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.evidence import GapReportRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -256,7 +260,7 @@ class GapExplorationStep:
 
         # Gather code summaries from slice for LLM analysis
         code_summaries: list[str] = []
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
                 try:
                     content = py_file.read_text(encoding="utf-8")
@@ -359,6 +363,7 @@ class GapExplorationStep:
         """
         import json
 
+        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.evidence import GapReportRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -372,7 +377,7 @@ class GapExplorationStep:
         # so only review the matching file, not all files in the worktree
         code_files: dict[str, str] = {}
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
                 if target_stem and py_file.stem != target_stem:
                     continue
@@ -681,8 +686,9 @@ class ImplementStep:
                 return StepResult(status="OK", notes_path=run_result.notes_path)
 
         except Exception as exc:
-            logger.warning("L1 implementation failed: %s", exc)
+            logger.warning("L1 implementation failed: %s", exc, exc_info=True)
             bundle.implementation = ImplementationRef()
+            return StepResult(status="RETRY", error=f"L1 implementation failed: {exc}")
 
         return StepResult(status="OK")
 
@@ -692,13 +698,14 @@ class ImplementStep:
         """L2: architectural assembler — wiring, dispatch, lifecycle, IO boundaries."""
         import json
 
+        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.evidence import ImplementationRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         # Gather current code for context
         code_summaries: list[str] = []
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
                 try:
                     content = py_file.read_text(encoding="utf-8")
@@ -760,6 +767,7 @@ class ImplementStep:
         """L3: clean-code refactorer — targeted refactors, no behavior change."""
         import json
 
+        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.evidence import ImplementationRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -771,7 +779,7 @@ class ImplementStep:
         code_summaries: list[str] = []
         target_files = {i.get("target_file", "") for i in bundle.plan.intentions}
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if target_stem and py_file.stem != target_stem:
                 continue
             rel = (
@@ -1002,6 +1010,8 @@ class AnalyzeStep:
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
     ) -> StepResult:
         """L1: source analysis via cache (P1 + P2)."""
+        from spec_manager.core.language import source_rglob
+
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         try:
@@ -1015,7 +1025,7 @@ class AnalyzeStep:
             )
 
             entries: list[dict[str, str]] = []
-            for py_file in sorted(slice_root.rglob("*.py")):
+            for py_file in source_rglob(slice_root):
                 if not py_file.is_file():
                     continue
                 if any(part.startswith(".") for part in py_file.parts):
@@ -1045,7 +1055,8 @@ class AnalyzeStep:
             )
 
         except Exception as exc:
-            logger.warning("L1 analysis failed: %s", exc)
+            logger.warning("L1 analysis failed: %s", exc, exc_info=True)
+            return StepResult(status="RETRY", error=f"L1 analysis failed: {exc}")
 
         return StepResult(status="OK")
 
@@ -1055,11 +1066,13 @@ class AnalyzeStep:
         """L2: build architecture graph summary (components, pins, edges)."""
         import json
 
+        from spec_manager.core.language import source_rglob
+
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         # Gather file summaries for LLM analysis
         code_summaries: list[str] = []
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
                 try:
                     content = py_file.read_text(encoding="utf-8")
@@ -1116,7 +1129,8 @@ class AnalyzeStep:
             )
 
         except Exception as exc:
-            logger.warning("L2 analysis failed: %s", exc)
+            logger.warning("L2 analysis failed: %s", exc, exc_info=True)
+            return StepResult(status="RETRY", error=f"L2 analysis failed: {exc}")
 
         return StepResult(status="OK")
 
@@ -1124,12 +1138,14 @@ class AnalyzeStep:
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
     ) -> StepResult:
         """L3: diff summary + structural metrics."""
+        from spec_manager.core.language import FUNCTION_KEYWORDS, source_rglob
+
         entries: list[dict[str, str]] = []
         total_lines = 0
         total_functions = 0
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
 
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if not py_file.is_file():
                 continue
             if any(part.startswith(".") for part in py_file.parts):
@@ -1140,7 +1156,11 @@ class AnalyzeStep:
                 content = py_file.read_text(encoding="utf-8")
                 lines = content.split("\n")
                 # Simple function count (heuristic — actual analysis done by reviewers)
-                func_count = sum(1 for line in lines if line.strip().startswith("def "))
+                func_count = sum(
+                    1
+                    for line in lines
+                    if any(line.strip().startswith(kw) for kw in FUNCTION_KEYWORDS)
+                )
                 total_lines += len(lines)
                 total_functions += func_count
                 entries.append(
@@ -1312,11 +1332,13 @@ class PromoteStep:
         """L2: architecture compliance gates via LLM evaluation."""
         import json
 
+        from spec_manager.core.language import source_rglob
+
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         # Gather code for gate evaluation
         code_summaries: list[str] = []
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
                 try:
                     content = py_file.read_text(encoding="utf-8")
@@ -1418,6 +1440,8 @@ class PromoteStep:
         """L3: quality reviewers + diff-impact classifier."""
         import json
 
+        from spec_manager.core.language import source_rglob
+
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         # Check if there are still open quality gaps
@@ -1476,7 +1500,7 @@ class PromoteStep:
         # Run diff-impact classifier to ensure no behavior change — scope to slice file
         code_summaries: list[str] = []
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if target_stem and py_file.stem != target_stem:
                 continue
             if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
@@ -1584,11 +1608,13 @@ class PromoteStep:
     @staticmethod
     def _resolve_files(roots: list[str], project_root: Path) -> list[Path]:
         """Resolve directory roots to Python file lists."""
+        from spec_manager.core.language import source_rglob
+
         files: list[Path] = []
         for root in roots:
             root_path = project_root / root
             if root_path.exists():
-                files.extend(sorted(root_path.rglob("*.py")))
+                files.extend(source_rglob(root_path))
         return files
 
 
@@ -1954,6 +1980,8 @@ class AlignStep:
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Run POWER alignment on the slice."""
+        from spec_manager.core.language import source_rglob
+
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
         if not slice_root or not slice_root.exists():
             return StepResult(status="OK")
@@ -1983,7 +2011,7 @@ class AlignStep:
                     )
 
         # Gather current code from slice
-        for py_file in sorted(slice_root.rglob("*.py")):
+        for py_file in source_rglob(slice_root):
             if not py_file.is_file():
                 continue
             if any(part.startswith(".") for part in py_file.parts):
@@ -2062,9 +2090,8 @@ class AlignStep:
                 )
 
         except Exception as exc:
-            logger.debug("Alignment check skipped: %s", exc)
-
-        return StepResult(status="OK")
+            logger.warning("POWER alignment check failed: %s", exc, exc_info=True)
+            return StepResult(status="RETRY", error=f"POWER alignment check failed: {exc}")
 
 
 # ------------------------------------------------------------------

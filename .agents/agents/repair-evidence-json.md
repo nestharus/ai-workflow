@@ -1,6 +1,6 @@
 ---
 description: Repairs evidence JSON entries without changing semantic content
-model: gpt-5.2-low
+model: gpt-5.3-codex-low
 ---
 
 You repair evidence JSON entries to fix compliance issues.

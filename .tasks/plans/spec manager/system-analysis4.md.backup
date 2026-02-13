@@ -54,148 +54,42 @@ flowchart TB
 ### Package Classification
 
 | Package | Tier | Class | Files | Role |
-|---------|------|-------|-------|------|
-| `core` | 1 | Utility | 32 | Shared primitives, LLM wrapper, gap structures |
-| `schemas` | 1 | Utility | 36 | 40+ Pydantic data models for all agent outputs |
-| `projection` | 2 | Structural | 14 | Import graphs, lineage tracing, drift detection |
-| `analysis` | 2 | Business | 12 | Adjacency graphs, restructuring suggestions |
-| `comment_planning` | 2 | Business | 9 | Pseudocode comment insertion, reverse translation |
-| `strategies` | 2 | Business | 21 | Reasoning strategy framework |
-| `pin_functions` | 2 | Business | 3 | Pin extraction and registration orchestration |
-| `vcs` | 2 | Structural | 3 | Git abstraction, worktree management |
-| `decomposition` | 2 | Business | 12 | Spec decomposition (isolated, 0 consumers) |
-| `intake` | 3 | Business | 9 | Phase 0 prose-to-spec routing |
-| `compliance` | 3 | Business | 32 | Coverage, detection, promotion gates |
-| `evaluation` | 3 | Business | 10 | Quality scoring, model comparison, reporting |
-| `cohesion` | 3 | Business | 4 | Coupling/cohesion detection and refinement |
-| `branches` | 3 | Structural | 15 | Multi-branch atom/slice management |
-| `refinement` | 3 | Business | 155 | Workspace, evidence indexing, evals, judges |
-| `orchestration` | 4 | Structural | 45 | PDD lifecycle, promotion loop, coordination |
-| `planner` | 4 | Business | 34 | Single decision authority, layers, constraints |
-
----
-
-## 2. Pipeline Architecture
-
-### 2.1 Layer Pipeline
-
-Work flows through three promotion layers, each stabilizing before the
-next begins (Source Authority constraint: fix problems at the layer with
-authority).
-
-```mermaid
-flowchart LR
-    P0["Phase 0<br/>Intake"]
-    L1["L1<br/>Per-Library"]
-    HA["Human<br/>Approval"]
-    L2["L2<br/>Per-Component"]
-    L3["L3<br/>Per-File"]
-
-    P0 --> L1
-    L1 --> HA
-    HA --> L2
-    L2 --> L3
-```
-
-### 2.2 Promotion Loop (10-Step State Machine per Slice)
-
-Each slice passes through 10 sequential steps. Steps dispatch differently
-per layer (L1/L2/L3).
-
-```mermaid
-flowchart TB
-    subgraph ROW1["Gather Phase"]
-        COLLECT["1. COLLECT"]
-        GAP["2. GAP"]
-        PLAN["3. PLAN"]
-        IMPL["4. IMPLEMENT"]
-        COORD["5. COORDINATE"]
-    end
-
-    subgraph ROW2["Assess Phase"]
-        ANALYZE["6. ANALYZE"]
-        PROMOTE["7. PROMOTE"]
-        INTEGRATE["8. INTEGRATE"]
-        VERIFY["9. VERIFY"]
-        ALIGN["10. ALIGN"]
-    end
-
-    COLLECT --> GAP --> PLAN
-    PLAN --> IMPL --> COORD
-    COORD --> ANALYZE --> PROMOTE
-    PROMOTE --> INTEGRATE --> VERIFY
-    VERIFY --> ALIGN
-```
-
-### 2.3 Layer-Specific Step Dispatch
-
-| Step | L1 (Per-Library) | L2 (Per-Component) | L3 (Per-File) |
-|------|------------------|--------------------|----|
-| GAP | P3 compliance check | LLM arch gap analysis | 5 quality reviewers |
-| PLAN | Function intentions (no-op: code IS spec) | Wiring intentions | Refactor intentions |
-| IMPLEMENT | ImplementationRunner | Architecture assembler | Clean-code refactorer |
-| COORDINATE | Signals → triage → WAITING | Signals → triage → WAITING | Signals → triage → WAITING |
-| ANALYZE | SourceAnalysisCache | LLM arch graph | File metrics |
-| PROMOTE | 5 algorithmic gates | 8 LLM-based gates | Quality gaps + diff-impact |
-| VERIFY | Governance + lineage | Governance + topology | Governance + closure |
-
----
-
-## 3. Design Constraint Enforcement
-
-Six fundamental constraints govern all design decisions. Each constraint
-is enforced by specific code mechanisms — the enforcement points listed
-below are active in the current codebase.
-
-### 3.1 Proportional Commitment (C00)
-
-*"Solution quality is bounded by problem framing quality. Match method to
-certainty. Surface ambiguity rather than resolving it silently."*
-
-```mermaid
-flowchart LR
-    subgraph IMPLEMENTS["Components Enforcing C00"]
-        PL["planner<br/>Decision authority"]
-        US["under_spec<br/>Hard-stop blocking"]
-        CO["coordination<br/>WAITING signals"]
-    end
-
-    subgraph MECHANISM["Mechanisms"]
-        M1["Block on ambiguity"]
-        M2["Surface unknowns"]
-        M3["Incremental planning"]
-    end
-
-    PL --> M1
-    US --> M2
-    CO --> M3
-```
-
+|-----------|------|-------|-------|------|
 | Component | How C00 Is Enforced |
 |-----------|---------------------|
-| `planner/api` | Routes decisions to layer-specific planners. NOOP when no decision needed.
-  BLOCKED when insufficient info. WAITING when dependencies unresolved. |
-| `planner/jit` | Micro-state-machine: plans only the next action, not the full sequence.
-|  Re-evaluates after each step. |
-| `planner/constraints` | `ConstraintFact` + `DecisionRequirement` — explicit records of
-|  what is known vs. assumed. `ImpactClassification` sizes decisions to knowledge. |
-| `orchestration/under_spec` | `UnderSpecManager` hard-stops when spec is insufficient. Does not
-|  guess. Surfaces the gap. |
-| `orchestration/coordination` | `CoordinationSignal` emitted on uncertainty. Slice
-|  enters WAITING state instead of proceeding with assumptions. |
-| `strategies` | `StrategyEvolutionPipeline` requires evidence before changing strategy. New
-|  strategies evaluated against same inputs as old. |
+| `planner/api` | Routes decisions to layer-specific planners. NOOP when no |
+| | decision needed. BLOCKED when insufficient info. |
+| | WAITING when dependencies unresolved. |
+| `planner/jit` | Micro-state-machine: plans only the next action, not the |
+| | full sequence. Re-evaluates after each step. |
+| `planner/constraints` | `ConstraintFact` + `DecisionRequirement` — explicit |
+| | records of what is known vs. assumed. |
+| | `ImpactClassification` sizes decisions to knowledge. |
+| `orchestration/under_spec` | `UnderSpecManager` hard-stops when spec is |
+| | insufficient. Does not guess. Surfaces the gap. |
+| `orchestration/coordination` | `CoordinationSignal` emitted on uncertainty. |
+| | Slice enters WAITING state instead of proceeding with |
+| | assumptions. |
+| `intake` | Phase 0 discovers library boundaries through LLM inference |
+| | (match method to certainty on uncontrolled prose |
+| | input). |
+| `strategies` | `StrategyEvolutionPipeline` requires evidence before |
+| | changing strategy. New strategies evaluated against |
+| | same inputs as old. |
 
 **Active enforcement:**
 
-* `implementation/types.py`: `_check_required()` logs warnings when LLM output is missing
-  required fields — surfaces data gaps instead of silently defaulting.
-* `implementation/runner.py`: Unknown under-spec event kinds log a warning and classify as
-  `AMBIGUOUS_SPEC` (surfaced, not guessed).
-* `pdd_orchestrator.py`: Missing `evidence_atom_ids` produces an empty list +
-  warning — no fabricated `ATOM-0000` placeholders.
-* `intake/summarize.py`: LLM `file_id` overrides are logged with both values so
-  the override is visible.
+* `implementation/types.py`: `_check_required()` logs warnings when |
+| | LLM output is missing required fields — surfaces data gaps |
+| | instead of silently defaulting.
+* `implementation/runner.py`: Unknown under-spec event kinds log a |
+| | warning and classify as `AMBIGUOUS_SPEC` (surfaced, not |
+| | guessed).
+* `pdd_orchestrator.py`: Missing `evidence_atom_ids` produces an |
+| | empty list + warning — no fabricated `ATOM-0000` |
+| | placeholders.
+* `intake/summarize.py`: LLM `file_id` overrides are logged with |
+| | both values so the override is visible.
 
 ### 3.2 Information Permanence (C01)
 
@@ -223,28 +117,27 @@ flowchart LR
 
 | Component | How C01 Is Enforced |
 |-----------|---------------------|
-| `orchestration/evidence` | `EvidenceBundle` is immutable per slice/iteration. 18+ `Ref` sub-types trace
-|  every finding back to source. Never overwritten — new iterations produce new bundles. |
-| `refinement/workspace` | `WorkspaceManager` creates immutable `spec_snapshot/` on init. All processing
-|  references the snapshot, never the mutable input. |
-| `compliance/coverage_gate` | `verify_coverage_or_emit_gap()` enforces 100% atom accounting. Every atom
-|  must be mapped, in remainder, or explicitly excluded. Unaccounted atoms block promotion. |
-| `compliance/detection` | Executable gap scanning — no silent omission. Every gap is surfaced as a `GapElement`
-|  with severity. |
-| `core/ids` | Stable IDs (F####, SEC-*, ATOM-*, LIB-*) persist across runs. Content-based revision tracking
-|  with SHA-256 hashes. |
-| `projection/lineage` | `LineageBuilder` maintains forward/backward trace chains from atoms through
-|  sections to elements. Chain is never broken. |
-| `evaluation/snapshot` | `snapshot_run()` preserves all run artifacts for audit and
-  replay. | |
+| `orchestration/evidence` | `EvidenceBundle` is immutable per slice/iteration. 18+ `Ref`
+  sub-types trace every finding back to source. Never overwritten — new iterations
+  produce new bundles. |
+| `refinement/workspace` | `WorkspaceManager` creates immutable `spec_snapshot/` on init.
+  All processing references the snapshot, never the mutable input. |
+| `compliance/coverage_gate` | `verify_coverage_or_emit_gap()` enforces 100% atom
+  accounting. Every atom must be mapped, in remainder, or explicitly excluded.
+  Unaccounted atoms block promotion. |
+| `compliance/detection` | Executable gap scanning — no silent omission. Every gap
+  is surfaced as a `GapElement` with severity. |
+| `core/ids` | Stable IDs (F####, SEC-*, ATOM-*, LIB-*) persist across runs.
+  Content-based revision tracking with SHA-256 hashes. |
+| `projection/lineage` | `LineageBuilder` maintains forward/backward trace chains from
+  atoms through sections to elements. Chain is never broken. |
+| `evaluation/snapshot` | `snapshot_run()` preserves all run artifacts for audit and replay. |
 
 **Active enforcement:**
-* `implementation/runner.py`: `CoordinationSignal` payloads carry origin provenance (`origin_event_kind`,
-  `origin_options`, `origin_needed_for`, `origin_evidence_paths`) — signals trace back to their source event.
-* `pdd_orchestrator.py`: Elements with no `evidence_atom_ids` get an empty list + warning log instead
-  of fabricated placeholder IDs. Broken provenance chains are visible, not hidden.
-* `refinement/cli.py`: Same pattern — no `ATOM-PLACEHOLDER` values; missing atoms are empty + warned.
-* `intake/coverage.py`: Empty source files are logged and skipped, not silently omitted from coverage accounting.
+- `implementation/runner.py`: `CoordinationSignal` payloads carry origin provenance (`origin_event_kind`, `origin_options`, `origin_needed_for`, `origin_evidence_paths`) — signals trace back to their source event.
+- `pdd_orchestrator.py`: Elements with no `evidence_atom_ids` get an empty list + warning log instead of fabricated placeholder IDs. Broken provenance chains are visible, not hidden.
+- `refinement/cli.py`: Same pattern — no `ATOM-PLACEHOLDER` values; missing atoms are empty + warned.
+- `intake/coverage.py`: Empty source files are logged and skipped, not silently omitted from coverage accounting.
 
 ### 3.3 Source Authority (C02)
 
@@ -272,25 +165,18 @@ flowchart LR
 
 | Component | How C02 Is Enforced |
 |-----------|---------------------|
-| `orchestration/pdd_lifecycle` | L1 (source-closest) stabilizes before L2 begins. L2 stabilizes before
-|  L3. No derived layer starts while source layer is changing. |
-| `orchestration/demotion` | `DemotionRouter.route()` sends failures to the layer with authority: behavior_change→L1,
-|  wiring_only→L2, refactor_only→fix-in-layer. |
-| `orchestration/downward_flow` | `DownwardFlowEngine.trace()` traces test failures through pin graph
-|  to root cause. Does not patch symptoms. |
+| `orchestration/pdd_lifecycle` | L1 (source-closest) stabilizes before L2 begins. L2 stabilizes before L3. No derived layer starts while source layer is changing. |  |
+| `orchestration/demotion` | `DemotionRouter.route()` sends failures to the layer with authority: behavior_change→L1, wiring_only→L2, refactor_only→fix-in-layer. |  |
+| `orchestration/downward_flow` | `DownwardFlowEngine.trace()` traces test failures through pin graph to root cause. Does not patch symptoms. |  |
 | `planner/layers/l1` | L1Planner operates on spec comments (source authority). Code IS the spec at L1. |
 | `planner/layers/l2` | L2Planner operates on promoted L1 output only. Never reads raw spec — only L1-verified atoms. |
 | `planner/layers/l3` | L3Planner operates on promoted L2 output. Quality refinement, not requirement interpretation. |
-| `projection/drift` | `AtomAwareDriftComparator` detects when derived artifacts diverge from source.
-|  Drift signals trigger re-derivation, not source editing. |
+| `projection/drift` | `AtomAwareDriftComparator` detects when derived artifacts diverge from source. Drift signals trigger re-derivation, not source editing. |  |
 
 **Active enforcement:**
-* Layer isolation is structural: `pdd_lifecycle.py` gates L2 start on L1 completion, L3 start on L2 completion.
-  No bypass path exists.
-* `demotion/triage.py` classifies every failure by `required_change_type` and routes to the layer with
-  authority — not the layer where the symptom appeared.
-* `downward_flow/engine.py` traces through the pin graph before any fix attempt — root cause identification
-  is mandatory.
+- Layer isolation is structural: `pdd_lifecycle.py` gates L2 start on L1 completion, L3 start on L2 completion. No bypass path exists.
+- `demotion/triage.py` classifies every failure by `required_change_type` and routes to the layer with authority — not the layer where the symptom appeared.
+- `downward_flow/engine.py` traces through the pin graph before any fix attempt — root cause identification is mandatory.
 
 ### 3.4 Error Amplification (C03)
 
@@ -318,30 +204,26 @@ flowchart LR
 
 | Component | How C03 Is Enforced |
 |-----------|---------------------|
-| `compliance/promotion` | Progressive gating: L1 has 5 algorithmic gates (no comments, no stubs, tests
-|  pass, call graph connected, store monogamy). L2 has 8 LLM-based gates. Each gate blocks until passed. |
-| `evaluation/scoring` | `RunReporter` computes 5 hard gates + 6 soft signals. Hard gate failure blocks
-|  promotion. Soft signal degradation triggers warnings. |
-| `evaluation/quality` | `QualityReporter` blends mechanical metrics (0.35-0.40 weight) with LLM judge
-|  scores (0.60-0.65 weight). Thresholds: PASS ≥ 0.80, WARN 0.65-0.80, FAIL < 0.65. |
-| `orchestration/review` | `convert_findings()` immediately converts reviewer findings to `DemotionTicket`s.
-|  Errors don't accumulate — they route to the correct layer for fixing. |
-| `orchestration/promotion_loop` | Each of 10 steps checks its preconditions. Failure at any step halts
-|  forward progress until resolved. |
-| `compliance/coverage_gate` | Coverage < 100% blocks promotion but produces valid fallback state (CON-0009)
-|  . Error is caught before propagation. |
+| `compliance/promotion` | Progressive gating: L1 has 5 algorithmic gates (no comments, no stubs, tests pass, call graph connected, store monogamy). L2 has 8 LLM-based gates. Each gate blocks until passed. |  |
+| `evaluation/scoring` | `RunReporter` computes 5 hard gates + 6 soft signals. Hard gate failure blocks promotion. Soft signal degradation triggers warnings. |  |
+| `evaluation/quality` | `QualityReporter` blends mechanical metrics (0.35-0.40 weight) with LLM judge scores (0.60-0.65 weight). Thresholds: PASS ≥ 0.80, WARN 0.65-0.80, FAIL < 0.65. |  |
+| `orchestration/review` | `convert_findings()` immediately converts reviewer findings to `DemotionTicket`s. Errors don't accumulate — they route to the correct layer for fixing. |  |
+| `orchestration/promotion_loop` | Each of 10 steps checks its preconditions. Failure at any step halts forward progress until resolved. |  |
+| `compliance/coverage_gate` | Coverage < 100% blocks promotion but produces valid fallback state (CON-0009). Error is caught before propagation. |  |
+
+*
 
 **Active enforcement:**
-* All silent `except` handlers across the codebase now log with `logger.warning()` or `logger.debug()`
-* All silent `except` handlers across the codebase now log with
-  `logger.warning()` or `logger.debug()` and `exc_info=True`. 30+ handlers fixed in:
-  `comment_planning/`, `decomposition/`, `compliance/`, `planner/strategies/`,
-  `refinement/evals/`, `refinement/workflows/`, `strategies/`, `projection/`,
-  `orchestration/`, `core/`, `evaluation/`.
-* `promotion_loop.py`: Verify step agent failures log warnings (previously returned `{}` silently).
-* `promotion_scheduler.py`: `TimeoutError` in polling loop is documented as expected behavior, not a swallowed error.
-* `hollowed_spec/hooks.py`: Corrupted evidence index triggers a warning + fresh rebuild, not silent fallback.
-* `core/gaps.py`: LLM-based claim/proof search failures log at debug level with full exception info.
+*
+- All silent `except` handlers across the codebase now log with
+  `logger.warning()` or `logger.debug()` and `exc_info=True`. 30+ handlers
+  fixed in: `comment_planning/`, `decomposition/`, `compliance/`,
+  `planner/strategies/`, `refinement/evals/`, `refinement/workflows/`,
+  `strategies/`, `projection/`, `orchestration/`, `core/`, `evaluation/`.
+- `promotion_loop.py`: Verify step agent failures log warnings (previously returned `{}` silently).
+- `promotion_scheduler.py`: `TimeoutError` in polling loop is documented as expected behavior, not a swallowed error.
+- `hollowed_spec/hooks.py`: Corrupted evidence index triggers a warning + fresh rebuild, not silent fallback.
+- `core/gaps.py`: LLM-based claim/proof search failures log at debug level with full exception info.
 
 ### 3.5 Coupling (C04)
 
@@ -369,27 +251,18 @@ flowchart LR
 
 | Component | How C04 Is Enforced |
 |-----------|---------------------|
-| `orchestration/coordination` | `CoordinationSignal` is an emit-react pattern. Producers emit signals;
-|  consumers subscribe and react independently. No direct call coupling between slices. |
-| `orchestration/coordination/wake_queue` | File-based wake events decouple scheduler from slice execution.
-|  Slice completes → writes wake file → scheduler discovers. |
-| `orchestration/coordination/wait_graph` | `WaitGraph` with cycle detection prevents deadlock from circular
-|  dependencies. |
-| `orchestration/coordination/monitors` | `MonitorSpec` (declarative JSON DSL) decouples condition definition
-|  from condition checking. |
-| `projection` | `ProjectionGenerator` produces read-only derived views.
-|  Consumers never modify the projection — they read it. Source changes
-|  → projection regenerated. |
-| `planner/tools` | Each tool is an adapter over a subsystem. `ResearchTool` wraps
-  `ResearchCoordinator`. |  `IntegrationTool` wraps `SourceAnalysisCache`. Tools provide stable interfaces
-   that decouple planner from subsystem internals. |
+| `orchestration/coordination` | `CoordinationSignal` is an emit-react pattern. Producers emit signals; consumers subscribe and react independently. No direct call coupling between slices. |  |
+| `orchestration/coordination/wake_queue` | File-based wake events decouple scheduler from slice execution. Slice completes → writes wake file → scheduler discovers. |  |
+| `orchestration/coordination/wait_graph` | `WaitGraph` with cycle detection prevents deadlock from circular dependencies. |  |
+| `orchestration/coordination/monitors` | `MonitorSpec` (declarative JSON DSL) decouples condition definition from condition checking. |  |
+| `projection` | `ProjectionGenerator` produces read-only derived views. Consumers never modify the projection — they read it. Source changes → projection regenerated. |  |
+| `planner/tools` | Each tool is an adapter over a subsystem. `ResearchTool` wraps `ResearchCoordinator`. `IntegrationTool` wraps `SourceAnalysisCache`. Tools provide stable interfaces that decouple planner from subsystem internals. |  |
 | `orchestration/run_state` | `RunStateManager` isolates each run's state. No accidental sharing between runs. |
+
 **Active enforcement:**
-* Package `__init__.py` exports added for `orchestration`, `core`, `planner`, `planner/constraints`,
-  `planner/architecture`, `planner/tools`, `planner/strategies`, `refinement`, `intake`. Consumers
-  can import through the public API.
-* Backward-compatible re-exports in `orchestration/models.py` (→ `core/layer_types.py`) allow gradual migration.
-* `vcs/` and `evaluation/` extracted as independent packages — no longer coupled through `orchestration/` internals.
+- Package `__init__.py` exports added for `orchestration`, `core`, `planner`, `planner/constraints`, `planner/architecture`, `planner/tools`, `planner/strategies`, `refinement`, `intake`. Consumers can import through the public API.
+- Backward-compatible re-exports in `orchestration/models.py` (→ `core/layer_types.py`) allow gradual migration.
+- `vcs/` and `evaluation/` extracted as independent packages — no longer coupled through `orchestration/` internals.
 
 ### 3.6 Fractal Scoping (C05)
 
@@ -417,26 +290,18 @@ flowchart LR
 
 | Component | How C05 Is Enforced |
 |-----------|---------------------|
-| `orchestration/promotion_loop` | Each slice is an independent, self-contained scope. The 10-step state
-|  machine runs per-slice. Results compose at the layer level. |
-| `branches/atoms` | `AtomRegistry` manages atomic units of work. Each atom is self-contained and independently
-|  verifiable. |
+| `orchestration/promotion_loop` | Each slice is an independent, self-contained scope. The 10-step state machine runs per-slice. Results compose at the layer level. |  |
+| `branches/atoms` | `AtomRegistry` manages atomic units of work. Each atom is self-contained and independently verifiable. |  |
 | `branches/slices` | `SliceNavigator` scopes work to the minimum set of atoms needed for a decision. |
-| `cohesion/detector` | Detects scope violations: overlap (two units share responsibility), divergence
-|  (one unit has unrelated responsibilities), overload (unit too large). |
-| `compliance/promotion` | Same progressive gating pattern at L1, L2, and L3 — different gates, same
-|  structure. Scale-invariant process. |
-| `planner/layers` | L1, L2, L3 planners share the same `LayerPlanner` protocol. Same interface at every
-|  scale, different implementations for different scopes. |
-| `orchestration/pdd_lifecycle` | Composition: L1 outputs compose into L2 inputs. L2 outputs compose
-|  into L3 inputs. Bottom-up assembly. |
+| `cohesion/detector` | Detects scope violations: overlap (two units share responsibility), divergence (one unit has unrelated responsibilities), overload (unit too large). |  |
+| `compliance/promotion` | Same progressive gating pattern at L1, L2, and L3 — different gates, same structure. Scale-invariant process. |  |
+| `planner/layers` | L1, L2, L3 planners share the same `LayerPlanner` protocol. Same interface at every scale, different implementations for different scopes. |  |
+| `orchestration/pdd_lifecycle` | Composition: L1 outputs compose into L2 inputs. L2 outputs compose into L3 inputs. Bottom-up assembly. |  |
 
 **Active enforcement:**
-* Scope isolation is structural: `promotion_loop.py` processes one slice at a time through all 10 steps.
-  No batch operations mix slice scopes.
-* `cohesion/detector.py` flags scope violations (overlap, divergence, overload) as structured findings
-  that feed back into the demotion system.
-* Layer planners share `LayerPlanner` protocol — same process shape at L1/L2/L3, enforced by the type system.
+- Scope isolation is structural: `promotion_loop.py` processes one slice at a time through all 10 steps. No batch operations mix slice scopes.
+- `cohesion/detector.py` flags scope violations (overlap, divergence, overload) as structured findings that feed back into the demotion system.
+- Layer planners share `LayerPlanner` protocol — same process shape at L1/L2/L3, enforced by the type system.
 
 ---
 
@@ -469,15 +334,11 @@ flowchart TB
 
 | Gate | Module | What It Checks |
 |------|--------|----------------|
-| No remaining comments | `compliance/promotion/algorithmic_gates.py` | Every comment in algorithmic
-|  code is unimplemented spec. None may remain. |
-| No stub functions | `compliance/promotion/algorithmic_gates.py` | Scans for `pass`, `...`, `NotImplementedError`.
-|  No stubs allowed. |
+| No remaining comments | `compliance/promotion/algorithmic_gates.py` |  Every comment in algorithmic code is unimplemented spec. None may remain. | |
+| No stub functions | `compliance/promotion/algorithmic_gates.py` |  Scans for `pass`, `...`, `NotImplementedError`. No stubs allowed. | |
 | All tests pass | `compliance/promotion/algorithmic_gates.py` | pytest verification. All tests must pass. |
-| Call graph connected | `compliance/promotion/algorithmic_gates.py` | All functions reachable from entry
-|  points. No orphaned code. |
-| Store monogamy | `compliance/promotion/algorithmic_gates.py` | Each data store accessed by exactly
-|  one component. No shared mutable state. |
+| Call graph connected | `compliance/promotion/algorithmic_gates.py` |  All functions reachable from entry points. No orphaned code. | |
+| Store monogamy | `compliance/promotion/algorithmic_gates.py` |  Each data store accessed by exactly one component. No shared mutable state. | |
 
 ### 4.2 L2 Architectural Gates (8 LLM-Based Gates)
 
@@ -486,8 +347,7 @@ architectural quality.
 
 | Gate | What It Checks |
 |------|----------------|
-| No inlined atom logic | Architectural layer must not copy-paste algorithmic logic. Detection: hash
-|  match, text similarity (>0.80), fingerprint overlap (>0.60). |
+| No inlined atom logic | Architectural layer must not copy-paste algorithmic logic. Detection: hash match, text similarity (>0.80), fingerprint overlap (>0.60). |  |
 | Interface completeness | All consumed interfaces have matching providers. |
 | Dependency direction | Dependencies flow downward through tiers. No upward violations. |
 | Component cohesion | Each component has a single responsibility. |
@@ -567,8 +427,7 @@ decisions are mapped below.
 |-----------|--------------------|--------------------|
 | `compliance/coverage_gate` | 100% atom accounting. Blocks on incomplete coverage. | Speed (blocks pipeline). |
 | `orchestration/under_spec` | Hard-stop on ambiguity. Does not guess. | Automation (requires human input). |
-| `evaluation/quality` | Multi-model judge scoring. Powerful models for verification. | Token cost (LLM
-|  calls for every assessment). |
+| `evaluation/quality` | Multi-model judge scoring. Powerful models for verification. |  Token cost (LLM calls for every assessment). | |
 | `planner/api` | BLOCKED/WAITING states. Never proceeds with insufficient info. | Speed (slice waits). |
 | `orchestration/promotion_loop` | Sequential 10-step validation per slice. | Speed (no shortcuts). |
 | `refinement/workspace` | Immutable spec snapshot. Never modifies source. | Storage (duplicated artifacts). |
@@ -577,26 +436,21 @@ decisions are mapped below.
 
 | Component | Robustness Mechanism | What It Sacrifices |
 |-----------|----------------------|--------------------|
-| `core/agent_utils` | `run_agent()` accepts arbitrary prompts, any model. Language/domain agnostic.
-|  | Simplicity (generic interface). |
+| `core/agent_utils` | `run_agent()` accepts arbitrary prompts, any model. Language/domain agnostic. |  Simplicity (generic interface). | |
 | `schemas` | Dynamic Pydantic models accommodate arbitrary domain types. | Type safety (flexible > rigid). |
 | `intake` | LLM inference for library discovery (handles any prose format). | Determinism (LLM non-deterministic). |
-| `strategies` | Strategy framework with evolution pipeline. Adapts to new domains. | Simplicity (strategy
-|  infrastructure). |
-| `orchestration/coordination` | 5 monitor condition types. Handles diverse coordination patterns. |
-|  Complexity (rich coordination). |
+| `strategies` | Strategy framework with evolution pipeline. Adapts to new domains. |  Simplicity (strategy infrastructure). | |
+| `orchestration/coordination` | 5 monitor condition types. Handles diverse coordination patterns. |  Complexity (rich coordination). | |
 
 ### 5.3 Diagnosability Enforcement
 
 | Component | Diagnosability Mechanism | What It Sacrifices |
 |-----------|--------------------------|---------------------|
-| `orchestration/evidence` | Immutable `EvidenceBundle` per slice/iteration. 18+ Ref sub-types. | Storage
-|  (audit trail grows). |
+| `orchestration/evidence` | Immutable `EvidenceBundle` per slice/iteration. 18+ Ref sub-types. |  Storage (audit trail grows). | |
 | `planner/trace` | `PlannerTrace` + `DecisionRecord` + index. Every decision logged. | Storage (trace files). |
 | `evaluation/report` | `FinalReportGenerator` writes end-of-run diagnostic reports. | Speed (report generation). |
 | `evaluation/cost_ledger` | `CostLedger` tracks every LLM call with cost. | Overhead (per-call tracking). |
-| `orchestration/review` | Findings converted to structured tickets. Nothing silently discarded. | Convenience
-|  (verbose output). |
+| `orchestration/review` | Findings converted to structured tickets. Nothing silently discarded. |  Convenience (verbose output). | |
 
 ---
 
@@ -848,19 +702,19 @@ without updating all consumers:
 | `deployment_and_operations.md` | Deployment operations |
 
 Phase 0 output workspace at `chaotic_treasury_expanded_phase0_output/`:
-* `libraries.json` — 8 discovered libraries (LIB-01 through LIB-08)
-* `coverage_ledger.jsonl` — atom accounting
-* `route_table.jsonl` — source routing
-* `libraries/LIB-*/` — per-library details, algorithms, constraints
-* `summaries/*.json` — per-section summaries
-* `system/constraints.md` — system-wide constraints
+- `libraries.json` — 8 discovered libraries (LIB-01 through LIB-08)
+- `coverage_ledger.jsonl` — atom accounting
+- `route_table.jsonl` — source routing
+- `libraries/LIB-*/` — per-library details, algorithms, constraints
+- `summaries/*.json` — per-section summaries
+- `system/constraints.md` — system-wide constraints
 
 ### Eval Results (Phase 0)
 
-* Sectionization: 100% (10/10 sections)
-* Library discovery: 7/8 (LLM merged TransactionValidator into SettlementProcessor)
-* Requirement capture: 52/52 (100% — manual verification)
-* PDD Phases 1-10: ALL PASS (38/38 functions, 0 errors, 0 gaps)
+- Sectionization: 100% (10/10 sections)
+- Library discovery: 7/8 (LLM merged TransactionValidator into SettlementProcessor)
+- Requirement capture: 52/52 (100% — manual verification)
+- PDD Phases 1-10: ALL PASS (38/38 functions, 0 errors, 0 gaps)
 
 ---
 
@@ -958,12 +812,9 @@ flowchart TB
 | Aspect | L1 (Code-as-Spec) | L2 (Architecture) | L3 (Quality) |
 |--------|--------------------|--------------------|---------------|
 | Input | PDD skeleton files | Component manifests, YAML | Changed files, diffs |
-| discover() | Parse skeletons → function/class/comment graph | Scan arch YAML → topology graph | Build
-|  quality graph → file/smell/risk nodes |
-| build_plan() | Map gaps → skeleton functions → intentions | Run 9-strategy pipeline OR research fallback
-|  | Map gaps → smell nodes → refactor intentions |
-| resolve_under_spec() | 3-strategy cascade: local → evidence → block | Evidence lookup per event, block
-|  if unresolved | Match events to smell nodes, infer or block |
+| discover() | Parse skeletons → function/class/comment graph |  Scan arch YAML → topology graph | Build quality graph → file/smell/risk nodes | |
+| build_plan() | Map gaps → skeleton functions → intentions |  Run 9-strategy pipeline OR research fallback | Map gaps → smell nodes → refactor intentions | |
+| resolve_under_spec() | 3-strategy cascade: local → evidence → block |  Evidence lookup per event, block if unresolved | Match events to smell nodes, infer or block | |
 | triage_signal() | Full coordination triage (only L1 implements) | NOOP (defers to L1) | NOOP |
 | Tools used | evidence_tool, research_tool | All 4 tools + strategy pipeline | integration_tool, evidence_tool |
 
@@ -996,10 +847,8 @@ flowchart LR
 
 | Tool | Input | Output | Resolution Order |
 |------|-------|--------|------------------|
-| ResearchTool | `ResearchQuery(question, dimension)` | `ResearchResult(findings, confidence)` | Steering
-|  script → evidence store → web research |
-| IntegrationTool | `file_paths` | `IntegrationGraph(nodes, edges)` + `RiskAssessment` | SourceAnalysisCache
-|  → BFS blast radius |
+| ResearchTool | `ResearchQuery(question, dimension)` |  `ResearchResult(findings, confidence)` | Steering script → evidence store → web research | |
+| IntegrationTool | `file_paths` |  `IntegrationGraph(nodes, edges)` + `RiskAssessment` | SourceAnalysisCache → BFS blast radius | |
 | EvidenceTool | `query` | `EvidenceSearchResult(hits)` | TF-IDF over hollowed specs |
 | ConstraintsTool | `slice_id` | `ConstraintsSnapshot` | Read-only constraint store access |
 
@@ -1386,7 +1235,7 @@ eval harnesses.
 
 ### 14.1 Internal Structure
 
-```text
+```mermaid
 mindmap
   root((refinement))
     workspace/
@@ -1427,7 +1276,6 @@ mindmap
 ### 14.2 Workspace Structure
 
 ```text
-
 runs/<run_id>/
 ├── spec_snapshot/              # Immutable copy of input specs
 ├── manifest/
@@ -1702,10 +1550,8 @@ mindmap
 
 | Module | Key API | Description |
 |--------|---------|-------------|
-| `agent_utils.py` | `run_agent(name, prompt, workspace, model_id)` | LLM wrapper with retry, file output
-|  pointers, cost hooks |
-| `code_analysis.py` | `analyze_source(content, filepath)` | LLM-based code analysis → `SourceAnalysis`
-|  (functions, comments) |
+| `agent_utils.py` | `run_agent(name, prompt, workspace, model_id)` |  LLM wrapper with retry, file output pointers, cost hooks | |
+| `code_analysis.py` | `analyze_source(content, filepath)` |  LLM-based code analysis → `SourceAnalysis` (functions, comments) | |
 | `gap.py` | `GapSynthesizer.cluster_evidence()` | Cluster evidence → gaps via target + invariant |
 | `ids.py` | `IdValidator` | Regex validation for all ID types |
 | `json_extraction.py` | `_extract_json_payload(output)` | Tolerant extraction from fenced blocks, preamble noise |
@@ -1743,8 +1589,7 @@ flowchart LR
 |------|--------|--------|
 | Summarize | `summarize.py` | Per-file key sections |
 | Discover | `discover.py` | `libraries.json` |
-| Route | `route.py` | `route_table.jsonl` (DETAIL/ALGORITHM, DETAIL/STORE, DETAIL/SHAPE, CONSTRAINTS,
-|  ANALYSIS, IGNORED) |
+| Route | `route.py` |  `route_table.jsonl` (DETAIL/ALGORITHM, DETAIL/STORE, DETAIL/SHAPE, CONSTRAINTS, ANALYSIS, IGNORED) | |
 | Coverage | `coverage.py` | `coverage_ledger.jsonl` (all lines accounted) |
 | Assemble | `assemble.py` | `libraries/LIB-####/*.md` (verbatim copy) |
 

@@ -422,9 +422,12 @@ def check_store_monogamy(
         GateCheckResult with findings for each store monogamy violation.
     """
     start = time.monotonic()
-    store_patterns: list[str] = gate_spec.params.get(
-        "store_patterns", ["**/stores/*.py", "**/stores/**/*.py"]
-    )
+    from spec_manager.core.language import SOURCE_EXTENSIONS
+
+    _default_store_patterns = [f"**/stores/*{ext}" for ext in sorted(SOURCE_EXTENSIONS)] + [
+        f"**/stores/**/*{ext}" for ext in sorted(SOURCE_EXTENSIONS)
+    ]
+    store_patterns: list[str] = gate_spec.params.get("store_patterns", _default_store_patterns)
     vertical_depth: int = gate_spec.params.get("vertical_depth", 2)
     findings: list[dict[str, Any]] = []
 
@@ -455,7 +458,9 @@ def check_store_monogamy(
     for sf in store_files:
         # Use the stem as the store module name
         module_name = sf.stem
-        if module_name != "__init__":
+        from spec_manager.core.language import is_package_marker
+
+        if not is_package_marker(sf.name):
             store_modules[module_name] = sf
 
     # Step 2: For each algorithmic file, find store imports using evidence-based scanning

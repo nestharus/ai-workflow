@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
+from spec_manager.planner.architecture.types import DecisionOutcome
+from spec_manager.planner.constraints.types import (
+    ConstraintContext,
+    ConstraintFact,
+    ImpactClassification,
+)
 from spec_manager.planner.strategies.protocol import (
     PlanningSession,
     PlanningSessionRunner,
     PlanningStrategy,
 )
-from spec_manager.planner.constraints.types import (
-    ImpactClassification,
-    ConstraintContext,
-    ConstraintFact,
-)
-from spec_manager.planner.architecture.types import DecisionOutcome
-
 
 # ---------------------------------------------------------------------------
 # Concrete strategy for testing
 # ---------------------------------------------------------------------------
+
 
 class AppendStrategy:
     """Test strategy that appends a value to session.intentions."""
@@ -61,6 +61,7 @@ class FailingStrategy:
 # Tests: PlanningSession
 # ---------------------------------------------------------------------------
 
+
 class TestPlanningSession:
     def test_default_fields(self):
         session = PlanningSession()
@@ -101,6 +102,7 @@ class TestPlanningSession:
 # Tests: PlanningStrategy protocol
 # ---------------------------------------------------------------------------
 
+
 class TestPlanningStrategyProtocol:
     def test_append_strategy_satisfies_protocol(self):
         strategy = AppendStrategy("test")
@@ -114,6 +116,7 @@ class TestPlanningStrategyProtocol:
 # ---------------------------------------------------------------------------
 # Tests: PlanningSessionRunner
 # ---------------------------------------------------------------------------
+
 
 class TestPlanningSessionRunner:
     def test_empty_strategies_returns_session_unchanged(self):
@@ -131,11 +134,13 @@ class TestPlanningSessionRunner:
         assert result.intentions[0]["added_by"] == "alpha"
 
     def test_multiple_strategies_run_in_order(self):
-        runner = PlanningSessionRunner([
-            AppendStrategy("first"),
-            AppendStrategy("second"),
-            AppendStrategy("third"),
-        ])
+        runner = PlanningSessionRunner(
+            [
+                AppendStrategy("first"),
+                AppendStrategy("second"),
+                AppendStrategy("third"),
+            ]
+        )
         session = PlanningSession()
         result = runner.run(session)
         assert len(result.intentions) == 3
@@ -144,10 +149,12 @@ class TestPlanningSessionRunner:
         assert result.intentions[2]["added_by"] == "third"
 
     def test_strategies_share_session_state(self):
-        runner = PlanningSessionRunner([
-            SetImpactStrategy(),
-            AppendStrategy("after_impact"),
-        ])
+        runner = PlanningSessionRunner(
+            [
+                SetImpactStrategy(),
+                AppendStrategy("after_impact"),
+            ]
+        )
         session = PlanningSession()
         result = runner.run(session)
         assert result.impact is not None
@@ -163,11 +170,13 @@ class TestPlanningSessionRunner:
         assert len(runner.strategies) == 1  # original unchanged
 
     def test_failing_strategy_propagates_error(self):
-        runner = PlanningSessionRunner([
-            AppendStrategy("ok"),
-            FailingStrategy(),
-            AppendStrategy("never"),
-        ])
+        runner = PlanningSessionRunner(
+            [
+                AppendStrategy("ok"),
+                FailingStrategy(),
+                AppendStrategy("never"),
+            ]
+        )
         session = PlanningSession()
         try:
             runner.run(session)

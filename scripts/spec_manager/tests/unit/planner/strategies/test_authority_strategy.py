@@ -6,16 +6,14 @@ import json
 from pathlib import Path
 
 import pytest
-
-from spec_manager.planner.strategies.protocol import PlanningSession
-from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
 from spec_manager.planner.constraints.types import (
     ConstraintContext,
     ConstraintFact,
     DecisionRequirement,
     ImpactClassification,
 )
-
+from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
+from spec_manager.planner.strategies.protocol import PlanningSession
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -96,9 +94,7 @@ class TestAuthorityDeciderConstraints:
             answer="Yes",
             dimension="software",
         )
-        session = _session_with_new_constraints(
-            tmp_path, impact="HIGH", constraints=[fact]
-        )
+        session = _session_with_new_constraints(tmp_path, impact="HIGH", constraints=[fact])
         result = s.run(session)
 
         # HIGH impact -> human_required even for software dimension
@@ -120,9 +116,7 @@ class TestAuthorityDeciderConstraints:
             answer="Unknown",
             dimension="legal",
         )
-        session = _session_with_new_constraints(
-            tmp_path, constraints=[sw_fact, legal_fact]
-        )
+        session = _session_with_new_constraints(tmp_path, constraints=[sw_fact, legal_fact])
         result = s.run(session)
 
         # Software: planner_ok -> persisted; Legal: human_required -> escalated

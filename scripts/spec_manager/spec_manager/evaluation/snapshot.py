@@ -91,10 +91,12 @@ def _copy_tree(src: Path, dst: Path, base: Path) -> list[dict[str, Any]]:
         except OSError:
             sha = ""
 
-        entries.append({
-            "path": str(rel),
-            "sha256": sha,
-            "size_bytes": fp.stat().st_size if fp.exists() else 0,
-        })
+        entries.append(
+            {
+                "path": str(rel),
+                "sha256": sha,
+                "size_bytes": fp.stat().st_size if fp.exists() else 0,
+            }
+        )
 
     return entries

@@ -98,25 +98,17 @@ class UnderSpecScorer:
 
         # Hard gate: any false unblock is critical.
         if false_unblock_count > 0:
-            hard_gate_failures.append(
-                f"false_unblock({false_unblock_count})"
-            )
+            hard_gate_failures.append(f"false_unblock({false_unblock_count})")
 
         # Compute rates.
         false_unblock_rate = (
-            false_unblock_count / max(1, total_should_block)
-            if total_should_block
-            else 0.0
+            false_unblock_count / max(1, total_should_block) if total_should_block else 0.0
         )
         correct_block_rate = (
-            correct_block_count / max(1, total_should_block)
-            if total_should_block
-            else 1.0
+            correct_block_count / max(1, total_should_block) if total_should_block else 1.0
         )
         correct_resolve_rate = (
-            correct_resolve_count / max(1, total_should_resolve)
-            if total_should_resolve
-            else 1.0
+            correct_resolve_count / max(1, total_should_resolve) if total_should_resolve else 1.0
         )
 
         # Score: average of correct rates, but floor to 0 if any false unblocks.

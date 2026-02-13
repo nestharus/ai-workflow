@@ -71,12 +71,18 @@ class TestTriageSourceRouting:
 
 
 class TestTriageDefaultRouting:
-    def test_defaults_to_l1_when_nothing_matches(self) -> None:
+    def test_defaults_to_current_layer_when_nothing_matches(self) -> None:
         ctx = DemotionContext(active_layer="L1")
         r = triage(ctx)
         assert r.target_layer == "L1"
-        assert r.confidence == 0.5
-        assert r.reason == "Default routing to L1"
+        assert r.confidence == 0.3
+        assert "fix in current layer" in r.reason.lower()
+
+    def test_defaults_to_l2_when_active_is_l2(self) -> None:
+        ctx = DemotionContext(active_layer="L2")
+        r = triage(ctx)
+        assert r.target_layer == "L2"
+        assert r.confidence == 0.3
 
 
 class TestConstrainToActive:
@@ -107,6 +113,6 @@ class TestTriageConfidenceVariation:
         ctx = DemotionContext(active_layer="L1", source="TEST_FAILURE")
         assert triage(ctx).confidence == 0.7
 
-    def test_default_confidence_is_0_5(self) -> None:
+    def test_default_confidence_is_0_3(self) -> None:
         ctx = DemotionContext(active_layer="L1")
-        assert triage(ctx).confidence == 0.5
+        assert triage(ctx).confidence == 0.3

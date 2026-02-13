@@ -12,13 +12,13 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from spec_manager.core.code_analysis import analyze_source
 from spec_manager.comment_planning.models import (
     CodeFile,
     FunctionInfo,
     InsertionPlan,
     InsertionPoint,
 )
+from spec_manager.core.code_analysis import analyze_source
 
 if TYPE_CHECKING:
     from spec_manager.comment_planning.evidence_store import EvidenceStore
@@ -113,9 +113,11 @@ def apply_insertion_plan_to_lines(plan: InsertionPlan, lines: list[str]) -> str:
     # Sort insertions by line number descending (bottom-up)
     sorted_insertions = sorted(plan.insertions, key=lambda x: x[0].line_no, reverse=True)
 
+    from spec_manager.core.language import COMMENT_PREFIX
+
     for point, comment_text in sorted_insertions:
         indent = " " * point.indent_level
-        comment_line = f"{indent}# {comment_text}\n"
+        comment_line = f"{indent}{COMMENT_PREFIX}{comment_text}\n"
 
         # Insert after the specified line number
         insert_idx = point.line_no  # 0-based index for insertion = line_no (after line_no)
@@ -440,7 +442,9 @@ def _find_insertion_points_from_source(
     if raw_func is None:
         return points
 
-    body_indent = func.indent_level + 4  # Standard Python indentation
+    from spec_manager.core.language import INDENT_SIZE
+
+    body_indent = func.indent_level + INDENT_SIZE
 
     # Determine body start: body_start_line from analysis, accounting for docstring
     body_start = raw_func.body_start_line

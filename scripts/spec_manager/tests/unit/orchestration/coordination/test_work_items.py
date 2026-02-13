@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from spec_manager.orchestration.coordination.work_items import (
     SearchQuery,
     SearchResult,
@@ -16,7 +15,6 @@ from spec_manager.orchestration.coordination.work_items import (
     _normalize,
     _tokenize,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -242,24 +240,18 @@ class TestSearchExact:
         item = _make_item(spec_text="Validate settlement amounts")
         store.add(item)
 
-        results = store.search(
-            SearchQuery(spec_text="  VALIDATE  Settlement  Amounts  ")
-        )
+        results = store.search(SearchQuery(spec_text="  VALIDATE  Settlement  Amounts  "))
         assert len(results) >= 1
         assert results[0].match_stage == "EXACT"
         assert results[0].match_reason == "fingerprint_match"
 
     def test_substring_containment(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        item = _make_item(
-            spec_text="Validate settlement amounts and reconcile with ledger"
-        )
+        item = _make_item(spec_text="Validate settlement amounts and reconcile with ledger")
         store.add(item)
 
         # Query is a substring of the stored spec_text
-        results = store.search(
-            SearchQuery(spec_text="validate settlement amounts")
-        )
+        results = store.search(SearchQuery(spec_text="validate settlement amounts"))
         # Should get either fingerprint or substring match
         assert len(results) >= 1
         exact_results = [r for r in results if r.match_stage == "EXACT"]
@@ -281,9 +273,7 @@ class TestSearchFuzzy:
         )
         store.add(item)
 
-        results = store.search(
-            SearchQuery(artifact_key="RiskEngine.check_exposure")
-        )
+        results = store.search(SearchQuery(artifact_key="RiskEngine.check_exposure"))
         assert len(results) >= 1
         # Should match via fuzzy tokens + identifier boost
         assert any(r.work_item.work_item_id == item.work_item_id for r in results)
@@ -310,9 +300,7 @@ class TestSearchFuzzy:
 class TestSearchEdgeCases:
     def test_no_match_returns_empty(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        store.add(
-            _make_item(spec_text="Calculate risk exposure for the portfolio")
-        )
+        store.add(_make_item(spec_text="Calculate risk exposure for the portfolio"))
         results = store.search(
             SearchQuery(spec_text="completely unrelated database migration query")
         )
@@ -347,9 +335,7 @@ class TestSearchEdgeCases:
             )
         )
 
-        results = store.search(
-            SearchQuery(keywords=["settlement", "validate"])
-        )
+        results = store.search(SearchQuery(keywords=["settlement", "validate"]))
         assert len(results) >= 1
         # Results should be sorted by score descending
         for i in range(len(results) - 1):

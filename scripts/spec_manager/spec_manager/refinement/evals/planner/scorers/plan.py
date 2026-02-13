@@ -86,11 +86,7 @@ class PlanScorer:
             if any(_matches_atom(intent, match_spec) for intent in intentions):
                 must_not_violations += 1
 
-        precision = (
-            1.0 - (must_not_violations / must_not_total)
-            if must_not_total
-            else 1.0
-        )
+        precision = 1.0 - (must_not_violations / must_not_total) if must_not_total else 1.0
 
         # ---- invariants ----
         for inv in invariants:
@@ -105,9 +101,7 @@ class PlanScorer:
         precision_threshold = thresholds.get("precision", 0.0)
 
         if recall_threshold and recall < recall_threshold:
-            hard_gate_failures.append(
-                f"recall_below_threshold({recall:.2f}<{recall_threshold})"
-            )
+            hard_gate_failures.append(f"recall_below_threshold({recall:.2f}<{recall_threshold})")
         if precision_threshold and precision < precision_threshold:
             hard_gate_failures.append(
                 f"precision_below_threshold({precision:.2f}<{precision_threshold})"
@@ -187,6 +181,4 @@ def _check_scope(
             out_of_scope.append(file_path)
 
     if out_of_scope:
-        hard_gate_failures.append(
-            f"scope_violation({len(out_of_scope)} files outside '{root}')"
-        )
+        hard_gate_failures.append(f"scope_violation({len(out_of_scope)} files outside '{root}')")

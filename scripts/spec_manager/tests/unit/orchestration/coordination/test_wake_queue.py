@@ -5,12 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from spec_manager.orchestration.coordination.wake_queue import (
     WakeEvent,
     WakeQueue,
 )
-
 
 # ------------------------------------------------------------------
 # WakeEvent tests
@@ -92,8 +90,22 @@ class TestWakeQueue:
 
     def test_peek_all(self, tmp_path: Path):
         q = WakeQueue(tmp_path / "coord")
-        e1 = WakeEvent(event_id="e1", timestamp="2026-01-01T00-00-00", slice_id="slice-a", monitor_id="m1", signal_id="s1", reason="r")
-        e2 = WakeEvent(event_id="e2", timestamp="2026-01-01T00-00-01", slice_id="slice-b", monitor_id="m2", signal_id="s2", reason="r")
+        e1 = WakeEvent(
+            event_id="e1",
+            timestamp="2026-01-01T00-00-00",
+            slice_id="slice-a",
+            monitor_id="m1",
+            signal_id="s1",
+            reason="r",
+        )
+        e2 = WakeEvent(
+            event_id="e2",
+            timestamp="2026-01-01T00-00-01",
+            slice_id="slice-b",
+            monitor_id="m2",
+            signal_id="s2",
+            reason="r",
+        )
         q.enqueue(e1)
         q.enqueue(e2)
         all_events = q.peek()
@@ -118,8 +130,22 @@ class TestWakeQueue:
 
     def test_dequeue_only_target_slice(self, tmp_path: Path):
         q = WakeQueue(tmp_path / "coord")
-        e1 = WakeEvent(event_id="e1", timestamp="2026-01-01T00-00-00", slice_id="slice-a", monitor_id="m1", signal_id="s1", reason="r")
-        e2 = WakeEvent(event_id="e2", timestamp="2026-01-01T00-00-01", slice_id="slice-b", monitor_id="m2", signal_id="s2", reason="r")
+        e1 = WakeEvent(
+            event_id="e1",
+            timestamp="2026-01-01T00-00-00",
+            slice_id="slice-a",
+            monitor_id="m1",
+            signal_id="s1",
+            reason="r",
+        )
+        e2 = WakeEvent(
+            event_id="e2",
+            timestamp="2026-01-01T00-00-01",
+            slice_id="slice-b",
+            monitor_id="m2",
+            signal_id="s2",
+            reason="r",
+        )
         q.enqueue(e1)
         q.enqueue(e2)
         consumed = q.dequeue("slice-a")
@@ -130,8 +156,22 @@ class TestWakeQueue:
 
     def test_clear(self, tmp_path: Path):
         q = WakeQueue(tmp_path / "coord")
-        e1 = WakeEvent(event_id="e1", timestamp="2026-01-01T00-00-00", slice_id="slice-a", monitor_id="m1", signal_id="s1", reason="r")
-        e2 = WakeEvent(event_id="e2", timestamp="2026-01-01T00-00-01", slice_id="slice-a", monitor_id="m2", signal_id="s2", reason="r")
+        e1 = WakeEvent(
+            event_id="e1",
+            timestamp="2026-01-01T00-00-00",
+            slice_id="slice-a",
+            monitor_id="m1",
+            signal_id="s1",
+            reason="r",
+        )
+        e2 = WakeEvent(
+            event_id="e2",
+            timestamp="2026-01-01T00-00-01",
+            slice_id="slice-a",
+            monitor_id="m2",
+            signal_id="s2",
+            reason="r",
+        )
         q.enqueue(e1)
         q.enqueue(e2)
         q.clear("slice-a")
@@ -149,14 +189,16 @@ class TestWakeQueue:
     def test_multiple_enqueue_same_slice(self, tmp_path: Path):
         q = WakeQueue(tmp_path / "coord")
         for i in range(3):
-            q.enqueue(WakeEvent(
-                event_id=f"e{i}",
-                timestamp=f"2026-01-01T00-00-0{i}",
-                slice_id="slice-a",
-                monitor_id=f"m{i}",
-                signal_id=f"s{i}",
-                reason="r",
-            ))
+            q.enqueue(
+                WakeEvent(
+                    event_id=f"e{i}",
+                    timestamp=f"2026-01-01T00-00-0{i}",
+                    slice_id="slice-a",
+                    monitor_id=f"m{i}",
+                    signal_id=f"s{i}",
+                    reason="r",
+                )
+            )
         assert len(q.peek(slice_id="slice-a")) == 3
         consumed = q.dequeue("slice-a")
         assert len(consumed) == 3

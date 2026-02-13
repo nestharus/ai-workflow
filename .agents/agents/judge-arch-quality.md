@@ -1,6 +1,6 @@
 ---
 description: Evaluates architecture quality across 6 dimensions from digest data
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 output_format: json
 ---
 

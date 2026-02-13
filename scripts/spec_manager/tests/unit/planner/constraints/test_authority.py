@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from spec_manager.planner.constraints.authority import (
     build_question_pack,
     check_authority,
@@ -12,7 +11,6 @@ from spec_manager.planner.constraints.types import (
     DecisionRequirement,
     ImpactClassification,
 )
-
 
 # ===================================================================
 # check_authority

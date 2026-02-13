@@ -8,7 +8,6 @@ from spec_manager.schemas.eval_spec_fidelity_judge import (
     SpecFidelityOutput,
 )
 
-
 # --- ArchJudgeOutput ---
 
 

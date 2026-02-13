@@ -369,7 +369,9 @@ class GapDetector:
             return []
         return [_stub_to_gap_item(sf) for sf in canonical_stubs]
 
-    # Pattern matches "raise RuntimeError(" at any indentation level
+    # NOTE: The full pattern (raise RuntimeError specifically) is language-specific.
+    # RAISE_PATTERN from language module matches any raise statement; we use it as
+    # the base and further filter for RuntimeError in the match text.
     _RUNTIME_ERROR_RE = re.compile(r"^\s*raise\s+RuntimeError\s*\(", re.MULTILINE)
 
     def detect_runtime_errors(self, filepath: Path) -> list[GapItem]:
@@ -416,12 +418,14 @@ class GapDetector:
         Returns:
             All detected gap items.
         """
+        from spec_manager.core.language import is_package_marker, source_rglob
+
         gaps: list[GapItem] = []
         if not algorithmic_dir.exists():
             return gaps
 
-        for py_file in sorted(algorithmic_dir.rglob("*.py")):
-            if py_file.name == "__init__.py":
+        for py_file in source_rglob(algorithmic_dir):
+            if is_package_marker(py_file.name):
                 continue
             gaps.extend(self.find_unimplemented_comments(py_file))
             gaps.extend(self.detect_stubs(py_file))

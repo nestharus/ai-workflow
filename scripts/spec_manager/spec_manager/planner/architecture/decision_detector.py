@@ -221,7 +221,9 @@ def _build_detection_prompt(
     """Build the LLM prompt for decision detection."""
     nodes_summary = []
     for node in discovery.get("nodes", [])[:50]:
-        nodes_summary.append(f"  - {node.get('kind', '?')}: {node.get('name', node.get('id', '?'))}")
+        nodes_summary.append(
+            f"  - {node.get('kind', '?')}: {node.get('name', node.get('id', '?'))}"
+        )
     nodes_text = "\n".join(nodes_summary) if nodes_summary else "  (none)"
 
     gaps_summary = []
@@ -229,7 +231,9 @@ def _build_detection_prompt(
         gaps_summary.append(f"  - {gap.get('target', '?')}: {gap.get('description', '')}")
     gaps_text = "\n".join(gaps_summary) if gaps_summary else "  (none)"
 
-    evidence_text = "\n".join(f"  - {ref}" for ref in evidence_refs[:20]) if evidence_refs else "  (none)"
+    evidence_text = (
+        "\n".join(f"  - {ref}" for ref in evidence_refs[:20]) if evidence_refs else "  (none)"
+    )
 
     return f"""Analyze the following slice for architecture decision points.
 
@@ -251,7 +255,8 @@ Identify architecture decisions that need to be made. For each, provide:
 - impact: LOW/MEDIUM/HIGH
 - blast_radius: LOCAL/SLICE/CROSS_SLICE/SYSTEM
 
-Return a JSON array of objects with keys: scope, description, trigger_evidence (list), impact, blast_radius.
+Return a JSON array of objects with keys: scope, description,
+trigger_evidence (list), impact, blast_radius.
 Return [] if no architecture decisions are needed.
 """
 

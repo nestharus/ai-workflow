@@ -90,23 +90,27 @@ class TestHeuristicDetection:
 
 class TestLLMDetection:
     def test_detect_via_llm(self, workspace: Path, sample_gaps, sample_discovery):
-        llm_response = json.dumps([
-            {
-                "scope": "intra:LIB",
-                "description": "Choose event-driven vs request-response",
-                "trigger_evidence": ["ev-1"],
-                "impact": "HIGH",
-                "blast_radius": "CROSS_SLICE",
-            },
-            {
-                "scope": "inter:A->B",
-                "description": "Define API contract",
-                "trigger_evidence": ["ev-2"],
-                "impact": "MEDIUM",
-                "blast_radius": "SLICE",
-            },
-        ])
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            [
+                {
+                    "scope": "intra:LIB",
+                    "description": "Choose event-driven vs request-response",
+                    "trigger_evidence": ["ev-1"],
+                    "impact": "HIGH",
+                    "blast_radius": "CROSS_SLICE",
+                },
+                {
+                    "scope": "inter:A->B",
+                    "description": "Define API contract",
+                    "trigger_evidence": ["ev-2"],
+                    "impact": "MEDIUM",
+                    "blast_radius": "SLICE",
+                },
+            ]
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
 
         detector = DecisionPointDetector(workspace, run_agent=mock_agent)
         results = detector.detect(
@@ -120,7 +124,9 @@ class TestLLMDetection:
         assert results[1].scope == "inter:A->B"
 
     def test_llm_returns_empty_array(self, workspace: Path, sample_gaps, sample_discovery):
-        mock_agent = lambda prompt: "[]"
+        def mock_agent(prompt: str) -> str:
+            return "[]"
+
         detector = DecisionPointDetector(workspace, run_agent=mock_agent)
         results = detector.detect(
             slice_id="s1",
@@ -130,7 +136,9 @@ class TestLLMDetection:
         assert results == []
 
     def test_llm_returns_garbage(self, workspace: Path, sample_gaps, sample_discovery):
-        mock_agent = lambda prompt: "not valid json at all"
+        def mock_agent(prompt: str) -> str:
+            return "not valid json at all"
+
         detector = DecisionPointDetector(workspace, run_agent=mock_agent)
         results = detector.detect(
             slice_id="s1",
@@ -141,7 +149,10 @@ class TestLLMDetection:
 
     def test_llm_returns_json_with_wrapper(self, workspace: Path, sample_gaps, sample_discovery):
         llm_response = 'Here are the decisions:\n```json\n[{"scope":"system","description":"Global config","trigger_evidence":[],"impact":"LOW","blast_radius":"LOCAL"}]\n```'
-        mock_agent = lambda prompt: llm_response
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
+
         detector = DecisionPointDetector(workspace, run_agent=mock_agent)
         results = detector.detect(
             slice_id="s1",
@@ -159,23 +170,27 @@ class TestLLMDetection:
 
 class TestFilterDecided:
     def test_filters_exact_match(self, workspace: Path, sample_gaps, sample_discovery):
-        llm_response = json.dumps([
-            {
-                "scope": "intra:LIB",
-                "description": "Use caching",
-                "trigger_evidence": [],
-                "impact": "LOW",
-                "blast_radius": "LOCAL",
-            },
-            {
-                "scope": "inter:A->B",
-                "description": "Define API contract",
-                "trigger_evidence": [],
-                "impact": "MEDIUM",
-                "blast_radius": "SLICE",
-            },
-        ])
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            [
+                {
+                    "scope": "intra:LIB",
+                    "description": "Use caching",
+                    "trigger_evidence": [],
+                    "impact": "LOW",
+                    "blast_radius": "LOCAL",
+                },
+                {
+                    "scope": "inter:A->B",
+                    "description": "Define API contract",
+                    "trigger_evidence": [],
+                    "impact": "MEDIUM",
+                    "blast_radius": "SLICE",
+                },
+            ]
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
 
         constraints = [
             ConstraintFact(
@@ -200,10 +215,21 @@ class TestFilterDecided:
         assert results[0].description == "Define API contract"
 
     def test_no_filter_when_no_constraints(self, workspace: Path, sample_gaps, sample_discovery):
-        llm_response = json.dumps([
-            {"scope": "intra:LIB", "description": "Pick DB", "trigger_evidence": [], "impact": "LOW", "blast_radius": "LOCAL"},
-        ])
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            [
+                {
+                    "scope": "intra:LIB",
+                    "description": "Pick DB",
+                    "trigger_evidence": [],
+                    "impact": "LOW",
+                    "blast_radius": "LOCAL",
+                },
+            ]
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
+
         detector = DecisionPointDetector(workspace, run_agent=mock_agent)
         results = detector.detect(
             slice_id="s1",
@@ -213,11 +239,23 @@ class TestFilterDecided:
         )
         assert len(results) == 1
 
-    def test_superseded_constraint_does_not_filter(self, workspace: Path, sample_gaps, sample_discovery):
-        llm_response = json.dumps([
-            {"scope": "intra:LIB", "description": "Pick DB", "trigger_evidence": [], "impact": "LOW", "blast_radius": "LOCAL"},
-        ])
-        mock_agent = lambda prompt: llm_response
+    def test_superseded_constraint_does_not_filter(
+        self, workspace: Path, sample_gaps, sample_discovery
+    ):
+        llm_response = json.dumps(
+            [
+                {
+                    "scope": "intra:LIB",
+                    "description": "Pick DB",
+                    "trigger_evidence": [],
+                    "impact": "LOW",
+                    "blast_radius": "LOCAL",
+                },
+            ]
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
 
         constraints = [
             ConstraintFact(
@@ -256,9 +294,17 @@ class TestHelpers:
         assert "ref-1" in prompt
 
     def test_parse_detection_output_valid(self):
-        raw = json.dumps([
-            {"scope": "system", "description": "D1", "trigger_evidence": ["e1"], "impact": "HIGH", "blast_radius": "SYSTEM"},
-        ])
+        raw = json.dumps(
+            [
+                {
+                    "scope": "system",
+                    "description": "D1",
+                    "trigger_evidence": ["e1"],
+                    "impact": "HIGH",
+                    "blast_radius": "SYSTEM",
+                },
+            ]
+        )
         results = _parse_detection_output(raw, "slice-x")
         assert len(results) == 1
         assert results[0].owner_slice_id == "slice-x"

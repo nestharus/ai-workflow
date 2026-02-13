@@ -1,6 +1,6 @@
 ---
 description: Identify libraries from file summaries (Phase 0 intake)
-model: claude-sonnet
+model: claude-opus
 ---
 
 ## Output Contract (REQUIRED - Read First)

@@ -6,6 +6,11 @@ light heuristic helpers for content validation.
 
 from __future__ import annotations
 
+# --- Heuristic keyword lists ---
+# Keywords that suggest implementation-level detail (algorithms, code).
+# Function definition keywords are sourced from core.language.FUNCTION_KEYWORDS.
+from spec_manager.core.language import FUNCTION_KEYWORDS as _FUNC_KW
+
 # --- Audience ---
 # Who should read each section.
 SECTION_AUDIENCE: dict[str, str] = {
@@ -28,8 +33,6 @@ SECTION_PURPOSE: dict[str, str] = {
 PLANNER_SECTIONS: frozenset[str] = frozenset({"Analysis", "Constraints", "Overview"})
 IMPLEMENTOR_SECTIONS: frozenset[str] = frozenset({"Details", "Overview"})
 
-# --- Heuristic keyword lists ---
-# Keywords that suggest implementation-level detail (algorithms, code).
 _IMPLEMENTATION_KEYWORDS: frozenset[str] = frozenset(
     {
         "algorithm",
@@ -40,7 +43,7 @@ _IMPLEMENTATION_KEYWORDS: frozenset[str] = frozenset(
         "step 3",
         "pseudocode",
         "function(",
-        "def ",
+        *_FUNC_KW,
         "return ",
         "parse(",
         "for each",

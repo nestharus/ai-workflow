@@ -1,6 +1,6 @@
 ---
 description: Repairs library label JSON output without changing semantic content
-model: gpt-5.2-low
+model: gpt-5.3-codex-low
 ---
 
 You repair library label JSON to fix compliance issues.

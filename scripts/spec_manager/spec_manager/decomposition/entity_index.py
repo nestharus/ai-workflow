@@ -129,9 +129,10 @@ def check_rediscovery(
         partial_matched = set()
         for search_kw in search_keywords:
             for existing_kw in existing_keywords:
-                if search_kw in existing_kw or existing_kw in search_kw:
-                    if search_kw != existing_kw:  # Don't double-count exact matches
-                        partial_matched.add(f"{search_kw}~{existing_kw}")
+                if (
+                    search_kw in existing_kw or existing_kw in search_kw
+                ) and search_kw != existing_kw:
+                    partial_matched.add(f"{search_kw}~{existing_kw}")
 
         # Calculate confidence
         total_search = len(search_keywords)

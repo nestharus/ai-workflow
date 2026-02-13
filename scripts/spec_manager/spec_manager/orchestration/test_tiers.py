@@ -60,6 +60,9 @@ class TierResult:
         }
 
 
+_TIER0_UNSET: str = "__unset__"
+
+
 @dataclass
 class TierConfig:
     """Configuration for test tier dispatch.
@@ -69,7 +72,8 @@ class TierConfig:
     produce a passing result with a skip note.
 
     Attributes:
-        tier0_command: Smoke test command (default: ``python -m compileall``).
+        tier0_command: Smoke test command (default from language module).
+            Pass ``""`` explicitly to disable.
         tier1_command: Unit test command.
         tier2_command: Integration test command.
         tier3_command: Full regression test command.
@@ -79,7 +83,7 @@ class TierConfig:
         tier3_timeout: Timeout in seconds for tier 3.
     """
 
-    tier0_command: str = "python -m compileall -q ."
+    tier0_command: str = _TIER0_UNSET
     tier1_command: str = ""
     tier2_command: str = ""
     tier3_command: str = ""
@@ -87,6 +91,12 @@ class TierConfig:
     tier1_timeout: int = 300
     tier2_timeout: int = 600
     tier3_timeout: int = 1200
+
+    def __post_init__(self) -> None:
+        if self.tier0_command == _TIER0_UNSET:
+            from spec_manager.core.language import DEFAULT_SMOKE_COMMAND
+
+            self.tier0_command = DEFAULT_SMOKE_COMMAND
 
 
 # ------------------------------------------------------------------

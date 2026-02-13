@@ -134,13 +134,15 @@ def _collect_test_files(test_roots: list[Path]) -> list[Path]:
     Returns:
         List of test file paths.
     """
+    from spec_manager.core.language import is_source_file, is_test_file, source_rglob
+
     test_files: list[Path] = []
     for root in test_roots:
         if root.is_dir():
-            for py_file in sorted(root.rglob("*.py")):
-                if py_file.name.startswith("test_") or py_file.name.endswith("_test.py"):
+            for py_file in source_rglob(root):
+                if is_test_file(py_file.name):
                     test_files.append(py_file)
-        elif root.is_file() and root.suffix == ".py":
+        elif root.is_file() and is_source_file(root.suffix):
             test_files.append(root)
     return test_files
 

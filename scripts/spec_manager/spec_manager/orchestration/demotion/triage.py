@@ -188,11 +188,11 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 ctx.active_layer,
             )
 
-    # 4. Default to L1
+    # 4. Default: fix in current layer (don't guess target at low confidence)
     return DemotionRouting(
-        target_layer="L1",
-        reason="Default routing to L1",
-        confidence=0.5,
+        target_layer=ctx.active_layer,
+        reason="Unclassifiable failure — fix in current layer (needs manual triage)",
+        confidence=0.3,
     )
 
 

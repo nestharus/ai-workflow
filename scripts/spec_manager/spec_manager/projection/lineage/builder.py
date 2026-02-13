@@ -81,21 +81,25 @@ def scan_imports_from_directory(
     Returns:
         List of RawImportRecord entries found across all files.
     """
+    from spec_manager.core.language import source_rglob
+
     if exclude_patterns is None:
-        exclude_patterns = ["__pycache__"]
+        exclude_patterns = []
 
     records: list[RawImportRecord] = []
-    for py_file in root_dir.rglob("*.py"):
-        skip = False
-        for part in py_file.parts:
-            for pattern in exclude_patterns:
-                if fnmatch.fnmatch(part, pattern):
-                    skip = True
+    for py_file in source_rglob(root_dir):
+        # Apply any additional caller-provided exclude patterns
+        if exclude_patterns:
+            skip = False
+            for part in py_file.parts:
+                for pattern in exclude_patterns:
+                    if fnmatch.fnmatch(part, pattern):
+                        skip = True
+                        break
+                if skip:
                     break
             if skip:
-                break
-        if skip:
-            continue
+                continue
         records.extend(_scan_file_imports(py_file))
     return records
 
@@ -109,9 +113,11 @@ def scan_imports_from_files(file_paths: list[Path]) -> list[RawImportRecord]:
     Returns:
         List of RawImportRecord entries found across all files.
     """
+    from spec_manager.core.language import is_source_file
+
     records: list[RawImportRecord] = []
     for file_path in file_paths:
-        if file_path.suffix == ".py" and file_path.exists():
+        if is_source_file(file_path.suffix) and file_path.exists():
             records.extend(_scan_file_imports(file_path))
     return records
 
@@ -401,9 +407,15 @@ class LineageBuilder:
             return None
 
         # --- Check class base classes via line parsing ---
+        from spec_manager.core.language import CLASS_KEYWORDS
+
         for line in source.splitlines():
             stripped = line.strip()
-            if stripped.startswith("class ") and "(" in stripped and stripped.endswith(":"):
+            if (
+                any(stripped.startswith(kw) for kw in CLASS_KEYWORDS)
+                and "(" in stripped
+                and stripped.endswith(":")
+            ):
                 # Extract base classes from "class Foo(Base1, Base2):"
                 paren_start = stripped.index("(")
                 paren_end = stripped.rindex(")")

@@ -26,9 +26,9 @@ from spec_manager.evaluation.digests import (
     build_code_digest,
 )
 from spec_manager.evaluation.model_profile import ModelProfile
-from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
 from spec_manager.evaluation.quality import QualityReporter
 from spec_manager.evaluation.snapshot import snapshot_run
+from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -126,13 +126,7 @@ class MultiModelRunner:
         }
 
         # Write manifest
-        manifest_dir = (
-            self.workspace_root
-            / "reports"
-            / "pdd"
-            / "comparisons"
-            / comparison_id
-        )
+        manifest_dir = self.workspace_root / "reports" / "pdd" / "comparisons" / comparison_id
         manifest_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = manifest_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -178,15 +172,11 @@ class MultiModelRunner:
             run_reports.mkdir(parents=True, exist_ok=True)
 
             arch_path = run_reports / "architecture_digest.json"
-            arch_path.write_text(
-                json.dumps(arch_digest, indent=2), encoding="utf-8"
-            )
+            arch_path.write_text(json.dumps(arch_digest, indent=2), encoding="utf-8")
             entry.arch_digest_path = str(arch_path)
 
             code_path = run_reports / "code_digest.json"
-            code_path.write_text(
-                json.dumps(code_digest, indent=2), encoding="utf-8"
-            )
+            code_path.write_text(json.dumps(code_digest, indent=2), encoding="utf-8")
             entry.code_digest_path = str(code_path)
 
             # Quality scoring
@@ -198,8 +188,8 @@ class MultiModelRunner:
 
             entry.status = "completed"
 
-        except Exception as exc:
-            logger.error("Run %s failed: %s", run_id, exc)
+        except Exception:
+            logger.exception("Run %s failed", run_id)
             entry.status = "failed"
 
         entry.duration_ms = (time.time() - start) * 1000

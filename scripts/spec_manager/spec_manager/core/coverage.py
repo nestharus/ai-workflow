@@ -226,8 +226,7 @@ class CoverageTracker:
         if not parent.is_leaf:
             raise ValueError(f"Cannot split non-leaf fragment {fragment_id}")
 
-        # Sort split points and add boundaries
-        points = sorted(set([0] + split_points + [len(parent.content)]))
+        points = sorted(set([0, *split_points, len(parent.content)]))
 
         children = []
         for i in range(len(points) - 1):

@@ -74,9 +74,8 @@ class SectionExtractor:
 
         for i, line in enumerate(lines):
             id_value = self.parser.extract_id_from_header(line)
-            if id_value:
-                if not validate_ids or self.validator.is_valid(id_value):
-                    declarations.append((i, id_value))
+            if id_value and (not validate_ids or self.validator.is_valid(id_value)):
+                declarations.append((i, id_value))
 
         if not declarations:
             # No declarations found - everything is orphan content

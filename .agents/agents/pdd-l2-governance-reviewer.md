@@ -1,6 +1,6 @@
 ---
 description: L2 architecture reviewer that evaluates governance compliance, decision receipts, and evidence trail integrity
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 output_format: json
 ---
 

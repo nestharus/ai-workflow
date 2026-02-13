@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from spec_manager.refinement.evals.planner.ground_truth import (
     AtomMatch,
     GroundTruthCase,
@@ -40,7 +39,6 @@ from spec_manager.refinement.evals.planner.trace_loader import (
     load_traces_for_run,
     trace_stats,
 )
-
 
 # -----------------------------------------------------------------------
 # Helpers
@@ -234,10 +232,10 @@ class TestLoadGroundTruthJSON:
             load_ground_truth(path)
 
     def test_load_from_json_non_dict_root(self, tmp_path: Path) -> None:
-        """load_ground_truth raises ValueError when root is a list."""
+        """load_ground_truth raises TypeError when root is a list."""
         path = tmp_path / "list.json"
         path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
-        with pytest.raises(ValueError, match="must contain a mapping"):
+        with pytest.raises(TypeError, match="must contain a mapping"):
             load_ground_truth(path)
 
 
@@ -250,9 +248,7 @@ class TestLoadGroundTruthYAML:
         case_dict = _make_case_dict(capability="GAP", layer="l2")
         data = _make_gt_dict(spec_id="yaml_spec", cases=[case_dict])
         path = tmp_path / "gt.yaml"
-        path.write_text(
-            yaml.dump(data, default_flow_style=False), encoding="utf-8"
-        )
+        path.write_text(yaml.dump(data, default_flow_style=False), encoding="utf-8")
 
         gt = load_ground_truth(path)
         assert gt.meta.spec_id == "yaml_spec"
@@ -304,9 +300,7 @@ class TestSaveGroundTruth:
                     iteration=1,
                     input_fingerprint={"spec_hash": "sha256:bbb"},
                     expected={"must_include": [], "must_not_include": []},
-                    process_expectations=[
-                        ProcessExpectation(type="evidence_first", min_rate=0.8)
-                    ],
+                    process_expectations=[ProcessExpectation(type="evidence_first", min_rate=0.8)],
                     rubric=Rubric(
                         hard_gates=[RubricGate(metric="must_include_recall", threshold=0.9)],
                         soft_signals=[
@@ -449,11 +443,19 @@ class TestGroundTruthFullCase:
                     },
                 ],
                 "must_not_include": [
-                    {"id": "fn:deprecated_handler", "match": {"function_name_any_of": ["deprecated_handler"]}},
+                    {
+                        "id": "fn:deprecated_handler",
+                        "match": {"function_name_any_of": ["deprecated_handler"]},
+                    },
                 ],
                 "invariants": [
                     {"type": "schema", "rule": "l1_resolve_signal_v1"},
-                    {"type": "dedupe", "rule": "no_dup_fns", "key_fields": ["name"], "max_duplicates": 0},
+                    {
+                        "type": "dedupe",
+                        "rule": "no_dup_fns",
+                        "key_fields": ["name"],
+                        "max_duplicates": 0,
+                    },
                 ],
             },
             "process_expectations": [
@@ -608,10 +610,7 @@ def _setup_trace_on_disk(
     ]
     _write_jsonl(calls_dir / "model_calls.jsonl", model_rows)
 
-    tool_rows = [
-        {"tool_name": f"tool_{i}", "duration_ms": 50 + i}
-        for i in range(num_tool_calls)
-    ]
+    tool_rows = [{"tool_name": f"tool_{i}", "duration_ms": 50 + i} for i in range(num_tool_calls)]
     _write_jsonl(calls_dir / "tool_calls.jsonl", tool_rows)
 
     # artifacts/
@@ -824,11 +823,25 @@ class TestFilterTraces:
     def sample_entries(self) -> list[TraceEntry]:
         """Create a diverse set of trace entries for filtering tests."""
         return [
-            TraceEntry(trace_id="t1", run_id="run-A", slice_id="LIB-01", layer="l1", capability="PLAN"),
-            TraceEntry(trace_id="t2", run_id="run-A", slice_id="LIB-02", layer="l1", capability="GAP"),
-            TraceEntry(trace_id="t3", run_id="run-B", slice_id="COMP-01", layer="l2", capability="PLAN"),
-            TraceEntry(trace_id="t4", run_id="run-B", slice_id="FILE-01", layer="l3", capability="UNDER_SPEC"),
-            TraceEntry(trace_id="t5", run_id="run-A", slice_id="LIB-01", layer="l1", capability="PLAN"),
+            TraceEntry(
+                trace_id="t1", run_id="run-A", slice_id="LIB-01", layer="l1", capability="PLAN"
+            ),
+            TraceEntry(
+                trace_id="t2", run_id="run-A", slice_id="LIB-02", layer="l1", capability="GAP"
+            ),
+            TraceEntry(
+                trace_id="t3", run_id="run-B", slice_id="COMP-01", layer="l2", capability="PLAN"
+            ),
+            TraceEntry(
+                trace_id="t4",
+                run_id="run-B",
+                slice_id="FILE-01",
+                layer="l3",
+                capability="UNDER_SPEC",
+            ),
+            TraceEntry(
+                trace_id="t5", run_id="run-A", slice_id="LIB-01", layer="l1", capability="PLAN"
+            ),
         ]
 
     def test_filter_by_run_id(self, sample_entries: list[TraceEntry]) -> None:
@@ -891,15 +904,18 @@ class TestLoadTracesForRun:
         """load_traces_for_run reads index, filters, and loads traces."""
         # Set up two traces on disk
         _setup_trace_on_disk(
-            tmp_path, "t-a1",
+            tmp_path,
+            "t-a1",
             decision_key="l1:PLAN:LIB-01:0:aaaa",
         )
         _setup_trace_on_disk(
-            tmp_path, "t-a2",
+            tmp_path,
+            "t-a2",
             decision_key="l1:GAP:LIB-02:0:bbbb",
         )
         _setup_trace_on_disk(
-            tmp_path, "t-b1",
+            tmp_path,
+            "t-b1",
             decision_key="l2:PLAN:COMP-01:0:cccc",
         )
 
@@ -1034,9 +1050,9 @@ class TestTraceStats:
 
         # Totals
         assert stats["model_calls_total"] == 5  # 1+3+0+1
-        assert stats["tool_calls_total"] == 3   # 0+1+2+0
-        assert stats["error_count"] == 2         # ERROR + TIMEOUT
-        assert stats["overridden_count"] == 2    # t3 + t4
+        assert stats["tool_calls_total"] == 3  # 0+1+2+0
+        assert stats["error_count"] == 2  # ERROR + TIMEOUT
+        assert stats["overridden_count"] == 2  # t3 + t4
 
     def test_trace_stats_empty_decision_key(self) -> None:
         """trace_stats handles traces with empty decision_key gracefully."""
@@ -1055,13 +1071,15 @@ class TestTraceStats:
 
     def test_trace_stats_all_keys_present(self) -> None:
         """trace_stats returns all expected keys even for a single trace."""
-        stats = trace_stats([
-            LoadedTrace(
-                trace_id="t1",
-                decision_key="l1:PLAN:X:0:hash",
-                status="OK",
-            ),
-        ])
+        stats = trace_stats(
+            [
+                LoadedTrace(
+                    trace_id="t1",
+                    decision_key="l1:PLAN:X:0:hash",
+                    status="OK",
+                ),
+            ]
+        )
         expected_keys = {
             "total_traces",
             "by_capability",

@@ -32,15 +32,17 @@ class AdjacencyAnalysisConfig:
 
 
 def _collect_python_files(dirs: list[Path]) -> list[Path]:
-    """Collect all .py files from the given directories."""
+    """Collect all source files from the given directories."""
+    from spec_manager.core.language import is_source_file, source_rglob
+
     files: list[Path] = []
     for directory in dirs:
         if not directory.exists():
             continue
-        if directory.is_file() and directory.suffix == ".py":
+        if directory.is_file() and is_source_file(directory.suffix):
             files.append(directory)
         elif directory.is_dir():
-            files.extend(sorted(directory.rglob("*.py")))
+            files.extend(source_rglob(directory))
     return files
 
 

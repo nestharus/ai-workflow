@@ -1,6 +1,6 @@
 ---
 description: Evaluates code quality across 5 dimensions for sampled files
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 output_format: json
 ---
 

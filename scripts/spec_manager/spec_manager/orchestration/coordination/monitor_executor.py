@@ -70,6 +70,8 @@ class ConditionChecker:
         For now this is a simple filesystem scan; a future version can
         use ``git show {ref}:{file}`` to check at a specific ref.
         """
+        from spec_manager.core.language import source_rglob
+
         if not cond.symbol_fqn:
             return False
         root = self._workspace_root
@@ -79,7 +81,7 @@ class ConditionChecker:
                 if p.is_file() and fnmatch.fnmatch(str(p.relative_to(root)), cond.file_glob):
                     matched_files.append(p)
         else:
-            matched_files = [p for p in root.rglob("*.py") if p.is_file()]
+            matched_files = [p for p in source_rglob(root) if p.is_file()]
 
         for f in matched_files:
             try:

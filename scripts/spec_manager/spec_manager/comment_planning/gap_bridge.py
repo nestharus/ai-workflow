@@ -9,9 +9,6 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from spec_manager.core.code_analysis import analyze_source
-from spec_manager.core.gap import Gap, GapEvidence, GapType
-from spec_manager.core.gaps import Severity
 from spec_manager.comment_planning.models import (
     AdjacentDetail,
     CodeFile,
@@ -19,6 +16,9 @@ from spec_manager.comment_planning.models import (
     FunctionInfo,
     PseudocodeComment,
 )
+from spec_manager.core.code_analysis import analyze_source
+from spec_manager.core.gap import Gap, GapEvidence, GapType
+from spec_manager.core.gaps import Severity
 
 
 def scan_for_gaps(code_files: list[CodeFile]) -> list[Gap]:

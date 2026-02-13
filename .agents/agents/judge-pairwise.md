@@ -1,6 +1,6 @@
 ---
 description: Performs blinded A/B comparison of two pipeline outputs
-model: gpt-5.2-xhigh
+model: gpt-5.3-codex-xhigh
 output_format: json
 ---
 

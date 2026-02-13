@@ -78,10 +78,12 @@ class ComplianceGateResult:
 
 
 def _collect_py_files(directory: Path) -> list[Path]:
-    """Collect all .py files under a directory, excluding __init__.py."""
+    """Collect all source files under a directory, excluding package markers."""
+    from spec_manager.core.language import source_rglob_no_markers
+
     if not directory.exists():
         return []
-    return [f for f in sorted(directory.rglob("*.py")) if f.name != "__init__.py"]
+    return source_rglob_no_markers(directory)
 
 
 def _gate_result_to_tuple(result: GateCheckResult) -> tuple[bool, list[str]]:

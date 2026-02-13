@@ -8,7 +8,7 @@ CyclicDependencyError immediately.
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -66,19 +66,13 @@ class WaitGraph:
         """Add a wait edge.  Raises CyclicDependencyError if it creates a cycle."""
         # Would adding waiting->provider create a path provider->...->waiting?
         if edge.waiting_slice == edge.provider_slice:
-            raise CyclicDependencyError(
-                [edge.waiting_slice, edge.provider_slice]
-            )
+            raise CyclicDependencyError([edge.waiting_slice, edge.provider_slice])
 
         # BFS from provider_slice in the existing graph to see if we can reach waiting_slice
         if self._can_reach(edge.provider_slice, edge.waiting_slice):
-            cycle = self._find_cycle_path(
-                edge.provider_slice, edge.waiting_slice
-            )
+            cycle = self._find_cycle_path(edge.provider_slice, edge.waiting_slice)
             # cycle is provider -> ... -> waiting; prepend waiting and append provider
-            raise CyclicDependencyError(
-                [edge.waiting_slice] + cycle + [edge.waiting_slice]
-            )
+            raise CyclicDependencyError([edge.waiting_slice, *cycle, edge.waiting_slice])
 
         self._edges.append(edge)
         self._adj[edge.waiting_slice].add(edge.provider_slice)
@@ -113,7 +107,7 @@ class WaitGraph:
             visited.add(node)
             for neighbor in self._adj.get(node, set()):
                 if neighbor not in visited:
-                    queue.append(path + [neighbor])
+                    queue.append([*path, neighbor])
         return [start, target]  # fallback
 
     def remove_edge(self, signal_id: str) -> None:
@@ -126,9 +120,7 @@ class WaitGraph:
 
     def remove_edges_for_slice(self, slice_id: str) -> None:
         """Remove all edges where *slice_id* is the waiting slice."""
-        self._edges = [
-            e for e in self._edges if e.waiting_slice != slice_id
-        ]
+        self._edges = [e for e in self._edges if e.waiting_slice != slice_id]
         self._rebuild_adj()
 
     def _rebuild_adj(self) -> None:
@@ -158,10 +150,7 @@ class WaitGraph:
             color[node] = BLACK
             return False
 
-        for n in all_nodes:
-            if color[n] == WHITE and _dfs(n):
-                return True
-        return False
+        return any(color[n] == WHITE and _dfs(n) for n in all_nodes)
 
     def get_cycle(self) -> list[str] | None:
         """Return one cycle path or None."""

@@ -5,22 +5,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from spec_manager.refinement.evals.judges.arch_quality import ArchitectureQualityJudge
 from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
-from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
 from spec_manager.refinement.evals.judges.pairwise import PairwiseArchJudge, PairwiseCodeJudge
+from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
 from spec_manager.schemas.eval_arch_judge import ArchJudgeOutput
 from spec_manager.schemas.eval_code_judge import CodeJudgeOutput
-from spec_manager.schemas.eval_spec_fidelity_judge import SpecFidelityOutput
 from spec_manager.schemas.eval_pairwise_judge import PairwiseOutput
-
+from spec_manager.schemas.eval_spec_fidelity_judge import SpecFidelityOutput
 
 SAMPLE_ARCH_DIGEST = {
     "run_id": "test-1",
     "topology": {
         "components": [
-            {"id": "svc.auth", "type": "service", "summary": "Auth service", "depends_on": ["svc.db"]},
+            {
+                "id": "svc.auth",
+                "type": "service",
+                "summary": "Auth service",
+                "depends_on": ["svc.db"],
+            },
             {"id": "svc.db", "type": "service", "summary": "Database", "depends_on": []},
         ],
         "edges": [{"from": "svc.auth", "to": "svc.db", "kind": "import"}],
@@ -46,38 +49,71 @@ SAMPLE_CODE_DIGEST = {
     "ci": {"final_pass": True, "first_pass": False},
 }
 
-VALID_ARCH_RESPONSE = json.dumps({
-    "scores": {"cohesion": 4, "coupling": 3, "completeness": 5, "consistency": 4, "clarity": 3, "extensibility": 4},
-    "overall": 4,
-    "strengths": ["Good separation of concerns"],
-    "risks": [{"severity": "MINOR", "component_id": "svc.auth", "evidence": "High coupling"}],
-    "tradeoffs_noted": ["Simple over complex"],
-})
+VALID_ARCH_RESPONSE = json.dumps(
+    {
+        "scores": {
+            "cohesion": 4,
+            "coupling": 3,
+            "completeness": 5,
+            "consistency": 4,
+            "clarity": 3,
+            "extensibility": 4,
+        },
+        "overall": 4,
+        "strengths": ["Good separation of concerns"],
+        "risks": [{"severity": "MINOR", "component_id": "svc.auth", "evidence": "High coupling"}],
+        "tradeoffs_noted": ["Simple over complex"],
+    }
+)
 
-VALID_CODE_RESPONSE = json.dumps({
-    "files": [
-        {"path": "auth.py", "scores": {"readability": 4, "maintainability": 3, "error_handling": 4, "consistency": 4, "contract_clarity": 3}, "overall": 4, "notes": [], "risks": []},
-    ],
-    "overall": 4,
-    "systemic_risks": [],
-})
+VALID_CODE_RESPONSE = json.dumps(
+    {
+        "files": [
+            {
+                "path": "auth.py",
+                "scores": {
+                    "readability": 4,
+                    "maintainability": 3,
+                    "error_handling": 4,
+                    "consistency": 4,
+                    "contract_clarity": 3,
+                },
+                "overall": 4,
+                "notes": [],
+                "risks": [],
+            },
+        ],
+        "overall": 4,
+        "systemic_risks": [],
+    }
+)
 
-VALID_SPEC_RESPONSE = json.dumps({
-    "coverage_estimate": 0.85,
-    "requirements": [{"requirement": "Auth must support OAuth", "status": "implemented", "evidence": "auth.py"}],
-    "missing": ["Rate limiting"],
-    "hallucinated": [],
-})
+VALID_SPEC_RESPONSE = json.dumps(
+    {
+        "coverage_estimate": 0.85,
+        "requirements": [
+            {
+                "requirement": "Auth must support OAuth",
+                "status": "implemented",
+                "evidence": "auth.py",
+            }
+        ],
+        "missing": ["Rate limiting"],
+        "hallucinated": [],
+    }
+)
 
-VALID_PAIRWISE_RESPONSE = json.dumps({
-    "winner": "A",
-    "scores": {
-        "A": {"architecture": 4, "code": 4, "spec_fidelity": 4, "risk_profile": 3},
-        "B": {"architecture": 3, "code": 3, "spec_fidelity": 3, "risk_profile": 4},
-    },
-    "key_differences": ["A has better coupling"],
-    "risks": [],
-})
+VALID_PAIRWISE_RESPONSE = json.dumps(
+    {
+        "winner": "A",
+        "scores": {
+            "A": {"architecture": 4, "code": 4, "spec_fidelity": 4, "risk_profile": 3},
+            "B": {"architecture": 3, "code": 3, "spec_fidelity": 3, "risk_profile": 4},
+        },
+        "key_differences": ["A has better coupling"],
+        "risks": [],
+    }
+)
 
 # All judge modules delegate to JudgeClient which imports run_agent into client.py.
 _PATCH_TARGET = "spec_manager.refinement.evals.judges.client.run_agent"
@@ -106,7 +142,9 @@ class TestArchitectureQualityJudge:
     def test_with_empty_digest(self, mock_agent, tmp_path):
         mock_agent.return_value = VALID_ARCH_RESPONSE
         judge = ArchitectureQualityJudge(workspace=tmp_path)
-        result = judge.evaluate({"topology": {"components": [], "edges": []}, "coverage": {}, "l2_review": {}})
+        result = judge.evaluate(
+            {"topology": {"components": [], "edges": []}, "coverage": {}, "l2_review": {}}
+        )
         assert isinstance(result, ArchJudgeOutput)
 
 
@@ -145,7 +183,9 @@ class TestCodeQualityJudge:
     def test_empty_digest(self, mock_agent, tmp_path):
         mock_agent.return_value = VALID_CODE_RESPONSE
         judge = CodeQualityJudge(workspace=tmp_path)
-        result = judge.evaluate({"codebase": {"files": [], "totals": {"files": 0, "loc": 0}}, "l3_review": {}, "ci": {}})
+        result = judge.evaluate(
+            {"codebase": {"files": [], "totals": {"files": 0, "loc": 0}}, "l3_review": {}, "ci": {}}
+        )
         assert isinstance(result, CodeJudgeOutput)
 
 

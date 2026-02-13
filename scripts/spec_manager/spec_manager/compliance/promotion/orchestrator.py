@@ -457,19 +457,21 @@ class LayerPromotionGate:
         return ProvenanceRegistry()
 
     def _resolve_files(self, roots: list[str]) -> list[Path]:
-        """Resolve directory roots to Python file lists.
+        """Resolve directory roots to source file lists.
 
         Args:
             roots: Directory paths relative to project root.
 
         Returns:
-            List of .py files found in the directories.
+            List of source files found in the directories.
         """
+        from spec_manager.core.language import source_rglob
+
         files: list[Path] = []
         for root in roots:
             root_path = self._project_root / root
             if root_path.exists():
-                files.extend(sorted(root_path.rglob("*.py")))
+                files.extend(source_rglob(root_path))
         return files
 
     @staticmethod

@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,15 +109,18 @@ class CollapseEngine:
                 warnings=warnings,
             )
 
-        py_files = sorted(source_dir.rglob("*.py"))
+        from spec_manager.core.language import (
+            FUNCTION_KEYWORDS,
+            is_package_marker,
+            source_rglob,
+        )
+
+        py_files = source_rglob(source_dir)
         if not py_files:
-            warnings.append(f"No Python files found in: {source_dir}")
+            warnings.append(f"No source files found in: {source_dir}")
 
         for py_file in py_files:
-            if py_file.name == "__init__.py":
-                continue
-            # Skip __pycache__ directories
-            if "__pycache__" in str(py_file):
+            if is_package_marker(py_file.name):
                 continue
 
             try:
@@ -137,7 +139,11 @@ class CollapseEngine:
             if (
                 not analysis.functions
                 and source.strip()
-                and re.search(r"^\s*def\s+", source, re.MULTILINE)
+                and any(
+                    line.lstrip().startswith(kw)
+                    for line in source.splitlines()
+                    for kw in FUNCTION_KEYWORDS
+                )
             ):
                 warnings.append(f"Syntax error in {py_file}: no functions parsed")
                 continue
@@ -192,14 +198,12 @@ class CollapseEngine:
         Returns:
             AtomKind if the function is an atom, None if architectural.
         """
+        from spec_manager.core.language import is_dunder
+
         func_name = func_info.name.lower()
 
         # Skip private/dunder methods (structural filter, not semantic)
-        if (
-            func_name.startswith("__")
-            and func_name.endswith("__")
-            and func_name not in ("__init__",)
-        ):
+        if is_dunder(func_name) and func_name not in ("__init__",):
             return None
 
         body_source = self._get_body_source(func_info, source_lines)

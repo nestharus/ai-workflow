@@ -63,7 +63,7 @@ class TestAssignTradeoffPositions:
         positions = proposer.assign_tradeoff_positions(decision_point)
         for pos in positions:
             assert len(pos) > 0
-            for axis, priority in pos.items():
+            for _axis, priority in pos.items():
                 assert priority in ("prioritize", "sacrifice")
 
     def test_positions_are_distinct(self, workspace: Path, decision_point):
@@ -107,7 +107,8 @@ class TestStubProposer:
     def test_stub_has_trace(self, workspace: Path, decision_point, scope_packet):
         proposer = ProposerOrchestrator(workspace, k=1)
         candidates = proposer.run_proposers(decision_point, scope_packet)
-        assert len(candidates[0].trace) == 1
+        trace_len = len(candidates[0].trace) if candidates else 0
+        assert trace_len == 1
         assert "DEC-001" in candidates[0].trace[0]
 
 
@@ -118,17 +119,21 @@ class TestStubProposer:
 
 class TestLLMProposer:
     def test_run_proposers_with_llm(self, workspace: Path, decision_point, scope_packet):
-        llm_response = json.dumps({
-            "approach": "event-driven",
-            "details": "Use message queue for decoupling",
-            "constraints_introduced": {
-                "software": {"async-io": "Must use async"},
-                "non_software": {},
-            },
-            "decision_requirements": [],
-            "assumptions": ["Message broker available"],
-        })
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            {
+                "approach": "event-driven",
+                "details": "Use message queue for decoupling",
+                "constraints_introduced": {
+                    "software": {"async-io": "Must use async"},
+                    "non_software": {},
+                },
+                "decision_requirements": [],
+                "assumptions": ["Message broker available"],
+            }
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
 
         proposer = ProposerOrchestrator(workspace, k=2, run_agent=mock_agent)
         candidates = proposer.run_proposers(decision_point, scope_packet)
@@ -139,21 +144,28 @@ class TestLLMProposer:
             assert cand.constraints_introduced["software"]["async-io"] == "Must use async"
 
     def test_llm_returns_garbage(self, workspace: Path, decision_point, scope_packet):
-        mock_agent = lambda prompt: "not valid json"
+        def mock_agent(prompt: str) -> str:
+            return "not valid json"
+
         proposer = ProposerOrchestrator(workspace, k=1, run_agent=mock_agent)
         candidates = proposer.run_proposers(decision_point, scope_packet)
         assert len(candidates) == 1
         assert candidates[0].proposal.get("approach") == "parse_error"
 
     def test_custom_tradeoff_positions(self, workspace: Path, decision_point, scope_packet):
-        llm_response = json.dumps({
-            "approach": "monolith",
-            "details": "Single process",
-            "constraints_introduced": {"software": {}, "non_software": {}},
-            "decision_requirements": [],
-            "assumptions": [],
-        })
-        mock_agent = lambda prompt: llm_response
+        llm_response = json.dumps(
+            {
+                "approach": "monolith",
+                "details": "Single process",
+                "constraints_introduced": {"software": {}, "non_software": {}},
+                "decision_requirements": [],
+                "assumptions": [],
+            }
+        )
+
+        def mock_agent(prompt: str) -> str:
+            return llm_response
+
         proposer = ProposerOrchestrator(workspace, k=3, run_agent=mock_agent)
         custom_positions = [
             {"speed": "prioritize", "quality": "sacrifice"},

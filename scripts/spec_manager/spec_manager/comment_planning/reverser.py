@@ -11,9 +11,6 @@ import logging
 import re
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
-from spec_manager.core.code_analysis import analyze_source
 from spec_manager.comment_planning.models import (
     CodeFile,
     CommentKind,
@@ -21,6 +18,9 @@ from spec_manager.comment_planning.models import (
     PseudocodeComment,
     ReversePlan,
 )
+from spec_manager.core.code_analysis import analyze_source
+
+logger = logging.getLogger(__name__)
 
 _REVERSE_MARKER = "[reverse-translated]"
 
@@ -105,8 +105,10 @@ def reverse_translate_from_source(
         )
         comment_texts = []
 
+    from spec_manager.core.language import INDENT_SIZE
+
     # Build PseudocodeComment objects
-    body_indent = func.indent_level + 4
+    body_indent = func.indent_level + INDENT_SIZE
     generated_comments: list[PseudocodeComment] = []
     for i, text in enumerate(comment_texts):
         generated_comments.append(
@@ -159,11 +161,13 @@ def apply_reverse_plan_to_lines(plan: ReversePlan, lines: list[str]) -> str:
     Returns:
         Modified file content as string.
     """
+    from spec_manager.core.language import COMMENT_PREFIX
+
     # Build replacement lines from generated comments
     replacement_lines: list[str] = []
     for comment in plan.generated_comments:
         indent = " " * comment.indent_level
-        replacement_lines.append(f"{indent}# {comment.text}\n")
+        replacement_lines.append(f"{indent}{COMMENT_PREFIX}{comment.text}\n")
 
     # We need at least a pass statement to keep the function valid
     if replacement_lines:

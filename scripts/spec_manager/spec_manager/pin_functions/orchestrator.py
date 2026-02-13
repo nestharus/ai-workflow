@@ -338,11 +338,14 @@ class PinFunctionOrchestrator:
         recursive: bool = True,
     ) -> list[_AtomCandidate]:
         """Extract atom candidates from all source files in a directory."""
+        from spec_manager.core.language import SOURCE_GLOBS, SOURCE_RGLOBS
+
         candidates: list[_AtomCandidate] = []
-        pattern = "**/*.py" if recursive else "*.py"
-        for py_file in sorted(dir_path.glob(pattern)):
-            if py_file.is_file():
-                candidates.extend(self._extract_from_file(py_file, dir_path))
+        patterns = SOURCE_RGLOBS if recursive else SOURCE_GLOBS
+        for pattern in patterns:
+            for py_file in sorted(dir_path.glob(pattern)):
+                if py_file.is_file():
+                    candidates.extend(self._extract_from_file(py_file, dir_path))
         return candidates
 
     def _extract_from_file(
@@ -432,7 +435,9 @@ class PinFunctionOrchestrator:
         Private functions (``_``-prefixed) are excluded.
         Public functions outside convention directories use heuristic rules.
         """
-        if func_name.startswith("_"):
+        from spec_manager.core.language import PRIVATE_PREFIX
+
+        if func_name.startswith(PRIVATE_PREFIX):
             return None
         if is_convention:
             return "convention"

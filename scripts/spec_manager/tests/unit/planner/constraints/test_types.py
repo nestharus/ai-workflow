@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from spec_manager.planner.constraints.types import (
     ConflictReport,
     ConstraintContext,
@@ -16,7 +15,6 @@ from spec_manager.planner.constraints.types import (
     ImpactClassification,
     ProblemFrame,
 )
-
 
 # ===================================================================
 # ConstraintFact
@@ -289,11 +287,13 @@ class TestConstraintContext:
         assert ctx.unverified == []
 
     def test_nested_types_are_correct(self):
-        ctx = ConstraintContext.from_dict({
-            "authoritative": [{"constraint_id": "C1"}],
-            "decisions": [{"constraint_id": "C2"}],
-            "unverified": [{"hypothesis_id": "H1"}],
-        })
+        ctx = ConstraintContext.from_dict(
+            {
+                "authoritative": [{"constraint_id": "C1"}],
+                "decisions": [{"constraint_id": "C2"}],
+                "unverified": [{"hypothesis_id": "H1"}],
+            }
+        )
         assert isinstance(ctx.authoritative[0], ConstraintFact)
         assert isinstance(ctx.decisions[0], ConstraintFact)
         assert isinstance(ctx.unverified[0], ConstraintHypothesis)

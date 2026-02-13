@@ -1,6 +1,6 @@
 ---
 description: Plans implementation order for spec IDs based on content analysis
-model: opus
+model: claude-opus
 ---
 
 Analyze spec IDs and create an implementation plan.
