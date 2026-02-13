@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LibraryDiscoveryOutput",
+  "type": "object",
+  "required": [
+    "libraries",
+    "unit_labels"
+  ],
+  "properties": {
+    "libraries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "lib_id",
+          "name",
+          "charter"
+        ],
+        "properties": {
+          "lib_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "charter": {
+            "type": "string"
+          },
+          "charter_evidence_atom_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stability_key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "unit_labels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "unit_id",
+          "confidence"
+        ],
+        "properties": {
+          "unit_id": {
+            "type": "string"
+          },
+          "primary_lib_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secondary_lib_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_atom_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

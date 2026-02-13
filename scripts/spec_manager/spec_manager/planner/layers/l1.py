@@ -41,12 +41,14 @@ class L1Planner:
         integration_tool: Callable[..., Any] | None = None,
         evidence_tool: Callable[..., Any] | None = None,
         constraints_tool: Any = None,
+        constraints_store_adapter: Any = None,
     ) -> None:
         self.layer: Literal["l1"] = "l1"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
         self._evidence_tool = evidence_tool
         self._constraints_tool = constraints_tool
+        self._constraints_store_adapter = constraints_store_adapter
 
     # ------------------------------------------------------------------
     # Protocol methods
@@ -133,7 +135,14 @@ class L1Planner:
                     }
                 )
 
-        return {"intentions": intentions}
+        plan: dict[str, Any] = {"intentions": intentions}
+
+        if self._constraints_store_adapter is not None:
+            decision_requirements = _extract_decision_requirements(gaps)
+            if decision_requirements:
+                plan["decision_requirements"] = decision_requirements
+
+        return plan
 
     def resolve_under_spec(
         self,
@@ -570,6 +579,36 @@ def _create_work_item_from_spec(
         "owner_slice_id": getattr(ctx, "slice_id", ""),
         "status": "NEW",
     }
+
+
+_SENSITIVE_KEYWORDS: dict[str, str] = {
+    "external": "Which external dependency should be used and why?",
+    "dependency": "Which external dependency should be used and why?",
+    "security": "What security approach should be adopted?",
+    "auth": "What authentication/authorization strategy should be used?",
+    "payment": "Which payment provider should be integrated?",
+    "encryption": "What encryption strategy should be used?",
+    "credential": "How should credentials be managed?",
+}
+
+
+def _extract_decision_requirements(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract decision requirements from gaps with sensitive dimensions."""
+    requirements: list[dict[str, Any]] = []
+    seen_questions: set[str] = set()
+    for gap in gaps:
+        description = (gap.get("description", "") or "").lower()
+        for keyword, question in _SENSITIVE_KEYWORDS.items():
+            if keyword in description and question not in seen_questions:
+                seen_questions.add(question)
+                requirements.append(
+                    {
+                        "question": question,
+                        "trigger": keyword,
+                        "gap_target": gap.get("target", ""),
+                    }
+                )
+    return requirements
 
 
 def _build_expansion(

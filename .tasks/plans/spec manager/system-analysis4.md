@@ -474,8 +474,9 @@ flowchart TB
 | No stub functions | `compliance/promotion/algorithmic_gates.py` | Scans for `pass`, `...`, `NotImplementedError`.
 |  No stubs allowed. |
 | All tests pass | `compliance/promotion/algorithmic_gates.py` | pytest verification. All tests must pass. |
-| Call graph connected | `compliance/promotion/algorithmic_gates.py` | All functions reachable from entry
-|  points. No orphaned code. |
+| Call graph connected | `compliance/promotion/algorithmic_gates.py` | Adaptive call-edge extraction using AST +
+  agent-prompt parsers + JIT-created text parser strategies, plus configured
+  `entry_points` roots. |
 | Store monogamy | `compliance/promotion/algorithmic_gates.py` | Each data store accessed by exactly
 |  one component. No shared mutable state. |
 
@@ -710,6 +711,18 @@ flowchart TB
     WG --> SB_WAIT
     SB_WAIT --> SB_WAKE
 ```
+
+### 6.4 Execution surfaces and entrypoints
+
+| Surface | Entrypoint |
+|--------|------------|
+| Primary lifecycle | `PddLifecycle.run_loop` |
+| Pipeline mode | `PddOrchestrator.run` (`mode='pipeline'`) |
+| Agent / CLI paths | `spec_manager.agents`, CLI entry scripts |
+
+Call-graph gating is adaptive and provenance-aware (AST + agent prompt parser alignment and
+  JIT parser strategy creation), with `entry_points` in CALL_GRAPH_CONNECTED gate
+  params marking externally-invoked roots that are valid despite missing direct edges.
 
 ---
 
@@ -1000,7 +1013,8 @@ flowchart LR
 |  script → evidence store → web research |
 | IntegrationTool | `file_paths` | `IntegrationGraph(nodes, edges)` + `RiskAssessment` | SourceAnalysisCache
 |  → BFS blast radius |
-| EvidenceTool | `query` | `EvidenceSearchResult(hits)` | TF-IDF over hollowed specs |
+| EvidenceTool | `query` | `EvidenceSearchResult(hits)` | TF-IDF keyword + entity scoring
+  over indexed hollowed spec paragraphs |
 | ConstraintsTool | `slice_id` | `ConstraintsSnapshot` | Read-only constraint store access |
 
 ### 12.6 Research Pipeline

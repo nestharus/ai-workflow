@@ -11,8 +11,16 @@ Public API:
     GateId: Identifiers for each promotion gate check
     GateMode: How a gate failure is treated
     GateSpec: Configuration for a single gate check
+    StrategyRegistry: Injectable registry for call-graph strategies
+    CallGraphBuildResult: Aggregated call graph extraction results
+    CallGraphEdge: One extracted call edge with provenance
 """
 
+from spec_manager.compliance.promotion.call_graph import (
+    CallGraphBuildResult,
+    CallGraphEdge,
+    StrategyRegistry,
+)
 from spec_manager.compliance.promotion.config import (
     GateId,
     GateMode,
@@ -26,6 +34,8 @@ from spec_manager.compliance.promotion.result import (
 )
 
 __all__ = [
+    "CallGraphBuildResult",
+    "CallGraphEdge",
     "GateCheckResult",
     "GateId",
     "GateMode",
@@ -33,4 +43,5 @@ __all__ = [
     "LayerPromotionGate",
     "PromotionGateConfig",
     "PromotionReport",
+    "StrategyRegistry",
 ]

@@ -275,7 +275,13 @@ class UnderSpecManager:
         if self._planner is not None:
             return self._resolve_via_planner(slice_id, events, layer=layer)
 
-        return self._resolve_via_coordinator(events)
+        logger.warning(
+            "Planner unavailable for under-spec resolution (slice=%s, layer=%s); "
+            "using legacy ResearchCoordinator fallback",
+            slice_id,
+            layer,
+        )
+        return self._resolve_via_coordinator(slice_id, events)
 
     def _resolve_via_planner(
         self,
@@ -312,7 +318,7 @@ class UnderSpecManager:
                                 constraint_id=event.event_id,
                                 question=event.question,
                                 answer=value,
-                                source="research",
+                                source="planner",
                                 confidence=0.7,
                                 validated=False,
                             )
@@ -332,6 +338,7 @@ class UnderSpecManager:
 
     def _resolve_via_coordinator(
         self,
+        slice_id: str,
         events: list[UnderSpecEvent],
     ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
         """Resolve via ResearchCoordinator (legacy fallback)."""
@@ -366,16 +373,34 @@ class UnderSpecManager:
                             constraint_id=event.event_id,
                             question=event.question,
                             answer=response.response_text,
-                            source="research",
+                            source="research_coordinator",
                             confidence=0.7,
                             validated=False,
+                            trace=[
+                                "under_spec_resolution_mode=legacy_coordinator_fallback",
+                                f"slice_id={slice_id}",
+                            ],
                         )
                     )
+                    logger.info(
+                        "Under-spec fallback resolved event=%s for slice=%s via legacy coordinator",
+                        event.event_id,
+                        slice_id,
+                    )
                 else:
+                    logger.debug(
+                        "Under-spec fallback did not resolve event=%s for slice=%s",
+                        event.event_id,
+                        slice_id,
+                    )
                     blocked.append(event)
 
         except Exception as exc:
-            logger.warning("Auto resolution failed: %s", exc)
+            logger.warning(
+                "Auto resolution failed for legacy coordinator fallback (slice=%s): %s",
+                slice_id,
+                exc,
+            )
             blocked = list(events)
 
         return constraints, blocked

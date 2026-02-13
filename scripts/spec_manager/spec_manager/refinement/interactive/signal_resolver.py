@@ -94,6 +94,8 @@ class PlannerSignalResolver:
             evidence_tool=evidence_tool,
         )
         self._research_tool = research_tool
+        self._research_dimension = "web" if use_research else "local"
+        self._use_research = use_research
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:
         from spec_manager.planner.api import PlanningContext
@@ -110,12 +112,27 @@ class PlannerSignalResolver:
         if not question:
             question = getattr(signal, "encountered_text", str(signal))
 
-        result = self._research_tool.research(ResearchQuery(question=question))
+        result = self._research_tool.research(
+            ResearchQuery(
+                question=question,
+                context=getattr(signal, "source_text", "")
+                if hasattr(signal, "source_text")
+                else "",
+                dimension=self._research_dimension,
+            )
+        )
         if result.has_answer:
+            finding_source = result.findings[0].source if result.findings else "unknown"
+            source = {
+                "steering": "research_steering",
+                "evidence_store": "research_evidence",
+                "web_research": "research_web",
+                "external": "research_external",
+            }.get(finding_source, f"research_{finding_source}")
             return self._to_steering_response(
                 signal,
                 result.synthesis,
-                source=f"research:{result.findings[0].source if result.findings else 'unknown'}",
+                source=source,
             )
 
         return None

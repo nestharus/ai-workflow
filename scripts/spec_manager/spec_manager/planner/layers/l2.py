@@ -58,6 +58,8 @@ def _discover_arch_files(workspace_root: str) -> list[str]:
 
     Uses simple glob expansion; no language-specific parsing.
     """
+    if not workspace_root:
+        return []
     root = Path(workspace_root)
     if not root.is_dir():
         return []

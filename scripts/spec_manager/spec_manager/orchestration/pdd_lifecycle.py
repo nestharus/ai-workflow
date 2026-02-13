@@ -304,7 +304,10 @@ class PddLifecycle:
         )
 
         # C02: Validate L1 completion before L2 starts
-        l1_slices = l1_result.get("slices", [])
+        l1_slices_data = l1_result.get("slices", {})
+        l1_slices = (
+            l1_slices_data.get("slices", []) if isinstance(l1_slices_data, dict) else l1_slices_data
+        )
         incomplete = [s for s in l1_slices if s.get("status") not in ("COMPLETE", "PROMOTED")]
         if incomplete:
             incomplete_ids = [s.get("slice_id", "?") for s in incomplete]

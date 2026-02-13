@@ -136,7 +136,7 @@ class ResearchCoordinator:
                 return SteeringResponse(
                     ambiguity_id=ambiguity.ambiguity_id,
                     response_text=best.description,
-                    source="research",
+                    source="research_tradeoff",
                 )
         except Exception as exc:
             logger.warning("Tradeoff analysis failed for %s: %s", ambiguity.ambiguity_id, exc)
@@ -236,7 +236,7 @@ Return JSON with:
                 return SteeringResponse(
                     ambiguity_id=ambiguity.ambiguity_id,
                     response_text=data.get("decision", decision_json),
-                    source="research",
+                    source="research_web",
                 )
         except (ValueError, TypeError):
             pass
@@ -244,5 +244,5 @@ Return JSON with:
         return SteeringResponse(
             ambiguity_id=ambiguity.ambiguity_id,
             response_text=decision_json,
-            source="research",
+            source="research_web",
         )

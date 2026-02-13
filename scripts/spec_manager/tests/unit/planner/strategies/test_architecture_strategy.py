@@ -244,7 +244,7 @@ class TestArchitectureStrategyWorkItems:
         store = WorkItemStore(tmp_path / "coordination")
 
         # Create strategy with work item store
-        _ = ArchitecturePlannerStrategy(
+        strategy = ArchitecturePlannerStrategy(
             workspace_root=tmp_path,
             work_item_store=store,
         )

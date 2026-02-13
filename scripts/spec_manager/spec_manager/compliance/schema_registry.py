@@ -25,15 +25,8 @@ from typing import Any, ClassVar
 
 _logger = logging.getLogger(__name__)
 
-# Default schema directory relative to this file
-# Path: scripts/spec_manager/spec_manager/compliance/schema_registry.py
-# parents[0] = compliance/
-# parents[1] = spec_manager/spec_manager/
-# parents[2] = spec_manager/
-# parents[3] = scripts/
-# parents[4] = ai-workflow/ (project root)
-# Design templates: .tasks/plans/spec manager/design/templates/
-_DEFAULT_SCHEMA_DIR = Path(__file__).parents[4] / ".tasks/plans/spec manager/design/templates"
+# Default schema directory: sibling 'schemas/' folder next to this file.
+_DEFAULT_SCHEMA_DIR = Path(__file__).parent / "schemas"
 
 
 class SchemaRegistry:

@@ -10,16 +10,19 @@ Implements the five algorithmic layer cleanliness gates:
 
 from __future__ import annotations
 
-import re
 import subprocess
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from spec_manager.branches.gap_detection import scan_comments, scan_stubs
+from spec_manager.compliance.promotion.call_graph import (
+    CallGraphEdge,
+    StrategyRegistry,
+    build_call_graph,
+)
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
-from spec_manager.core.code_analysis import analyze_source
 from spec_manager.projection.lineage.builder import scan_imports_from_files
 
 if TYPE_CHECKING:
@@ -226,6 +229,7 @@ def check_call_graph_connected(
     project_root: Path,
     gate_spec: GateSpec,
     analyzed: list[AnalyzedFile] | None = None,
+    registry: StrategyRegistry | None = None,
 ) -> GateCheckResult:
     """Gate: Call graph has no orphaned algorithms.
 
@@ -237,6 +241,8 @@ def check_call_graph_connected(
     gate_spec.params:
         - min_component_size (int, default 2): Minimum component size to flag.
         - ignore_patterns (list[str]): Function name patterns to exclude.
+        - entry_points (list[str]): Function names or dotted paths treated as external
+          execution roots when extraction misses dynamic dispatch.
 
     Args:
         algorithmic_files: Python files to analyze.
@@ -250,8 +256,19 @@ def check_call_graph_connected(
     start = time.monotonic()
     min_component_size = gate_spec.params.get("min_component_size", 2)
     ignore_patterns: list[str] = gate_spec.params.get("ignore_patterns", [])
-    findings = _build_call_graph_fallback(
-        algorithmic_files, min_component_size, ignore_patterns, analyzed=analyzed
+    entry_points: list[str] = gate_spec.params.get("entry_points", [])
+    graph_result = build_call_graph(
+        algorithmic_files=algorithmic_files,
+        project_root=project_root,
+        analyzed=analyzed,
+        registry=registry,
+    )
+    findings = _find_disconnected_components(
+        nodes=graph_result.nodes,
+        edges=graph_result.edges,
+        ignore_patterns=ignore_patterns,
+        entry_points=entry_points,
+        min_component_size=min_component_size,
     )
 
     passed = len(findings) == 0
@@ -272,82 +289,27 @@ def check_call_graph_connected(
     )
 
 
-def _build_call_graph_fallback(
-    algorithmic_files: list[Path],
-    min_component_size: int,
-    ignore_patterns: list[str],
-    analyzed: list[AnalyzedFile] | None = None,
+def _find_disconnected_components(
+    nodes: set[str],
+    edges: list[CallGraphEdge],
+    ignore_patterns: list[str] | None,
+    entry_points: list[str] | None = None,
+    min_component_size: int = 2,
 ) -> list[dict[str, Any]]:
-    """Call graph analysis using analyze_source() and regex-based call extraction.
+    """Find disconnected components from extracted graph data.
 
-    Uses analyze_source() for function definitions and regex on pre-loaded
-    content for approximate call detection, then finds disconnected components
-    via union-find.
-
-    When *analyzed* is provided, skips file I/O entirely.
+    Args:
+        nodes: Known function nodes from graph extraction.
+        edges: Call edges to evaluate for connectivity.
+        ignore_patterns: Optional name substrings excluded from findings.
+        entry_points: Optional external roots.
+        min_component_size: Minimum filtered component size to flag.
     """
-    # Collect all defined functions and their calls
-    func_defs: dict[str, str] = {}  # func_name -> file_path
-    func_calls: dict[str, set[str]] = {}  # caller -> {callees}
-
-    if analyzed is not None:
-        for af in analyzed:
-            lines = af.content.splitlines()
-            for func_info in af.analysis.functions:
-                func_name = func_info.name
-                func_defs[func_name] = af.path
-
-                body_start = func_info.body_start_line
-                body_end = func_info.end_line
-                if body_start > 0 and body_end > 0 and body_end <= len(lines):
-                    body_lines = lines[body_start - 1 : body_end]
-                    body_text = "\n".join(body_lines)
-                elif func_info.start_line > 0 and func_info.end_line > 0:
-                    body_lines = lines[func_info.start_line - 1 : func_info.end_line]
-                    body_text = "\n".join(body_lines)
-                else:
-                    body_text = ""
-
-                raw_calls = set(re.findall(r"\b(\w+)\s*\(", body_text))
-                func_calls[func_name] = raw_calls
-    else:
-        for file_path in algorithmic_files:
-            try:
-                source = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-
-            analysis = analyze_source(source, str(file_path))
-            lines = source.splitlines()
-
-            for func_info in analysis.functions:
-                func_name = func_info.name
-                func_defs[func_name] = str(file_path)
-
-                body_start = func_info.body_start_line
-                body_end = func_info.end_line
-                if body_start > 0 and body_end > 0 and body_end <= len(lines):
-                    body_lines = lines[body_start - 1 : body_end]
-                    body_text = "\n".join(body_lines)
-                elif func_info.start_line > 0 and func_info.end_line > 0:
-                    body_lines = lines[func_info.start_line - 1 : func_info.end_line]
-                    body_text = "\n".join(body_lines)
-                else:
-                    body_text = ""
-
-                raw_calls = set(re.findall(r"\b(\w+)\s*\(", body_text))
-                func_calls[func_name] = raw_calls
-
-    # Build adjacency and find connected components via union-find
-    all_funcs = set(func_defs.keys())
-    if not all_funcs:
+    if not nodes:
         return []
+    normalized_ignore_patterns = ignore_patterns or []
 
-    # Filter calls to only known function names
-    for caller in func_calls:
-        func_calls[caller] = func_calls[caller] & all_funcs
-
-    parent: dict[str, str] = {f: f for f in all_funcs}
+    parent: dict[str, str] = {f: f for f in nodes}
 
     def find(x: str) -> str:
         while parent[x] != x:
@@ -356,18 +318,18 @@ def _build_call_graph_fallback(
         return x
 
     def union(a: str, b: str) -> None:
+        if a not in parent or b not in parent:
+            return
         ra, rb = find(a), find(b)
         if ra != rb:
             parent[ra] = rb
 
-    for caller, callees in func_calls.items():
-        for callee in callees:
-            if callee in all_funcs:
-                union(caller, callee)
+    for edge in edges:
+        union(edge.caller, edge.callee)
 
     # Group by root
     components: dict[str, list[str]] = {}
-    for func in all_funcs:
+    for func in nodes:
         root = find(func)
         components.setdefault(root, []).append(func)
 
@@ -376,10 +338,32 @@ def _build_call_graph_fallback(
         return []
 
     findings: list[dict[str, Any]] = []
-    # Sort components by size descending, skip the largest (main component)
+    normalized_entry_points = {
+        item.strip() for item in (entry_points or []) if isinstance(item, str) and item.strip()
+    }
+    protected_roots: set[str] = set()
+    for func_name in nodes:
+        short_name = func_name.rsplit(".", 1)[-1]
+        if func_name in normalized_entry_points or short_name in normalized_entry_points:
+            protected_roots.add(find(func_name))
+        for declared in normalized_entry_points:
+            if declared.endswith(".*") and func_name.startswith(declared[:-2]):
+                protected_roots.add(find(func_name))
+
+    # Legacy fallback when no entry points are declared.
+    if not protected_roots and components:
+        largest = sorted(components.values(), key=len, reverse=True)[0]
+        protected_roots.add(find(largest[0]))
+
+    # Sort components by size descending for deterministic findings.
     sorted_components = sorted(components.values(), key=len, reverse=True)
-    for component in sorted_components[1:]:
-        filtered = [name for name in component if not any(pat in name for pat in ignore_patterns)]
+    for component in sorted_components:
+        component_root = find(component[0])
+        if component_root in protected_roots:
+            continue
+        filtered = [
+            name for name in component if not any(pat in name for pat in normalized_ignore_patterns)
+        ]
         if len(filtered) >= min_component_size:
             findings.append(
                 {

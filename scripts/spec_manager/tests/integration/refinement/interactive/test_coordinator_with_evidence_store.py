@@ -67,7 +67,7 @@ def test_coordinator_falls_through_to_web_search(tmp_path: Path):
         response = coordinator.research(ambiguity, tmp_path)
 
     assert response is not None
-    assert response.source == "research"  # from web search, not evidence store
+    assert response.source == "research_web"
     # run_agent should have been called (3 times: signal, search, synthesis)
     assert mock_agent.call_count == 3
 
@@ -85,5 +85,5 @@ def test_coordinator_without_evidence_index(tmp_path: Path):
         response = coordinator.research(ambiguity, tmp_path)
 
     assert response is not None
-    assert response.source == "research"
+    assert response.source == "research_web"
     assert mock_agent.call_count == 3
