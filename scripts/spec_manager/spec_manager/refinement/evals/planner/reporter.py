@@ -260,7 +260,10 @@ class PlannerReporter:
 
         # Planner review (FAIL/WARN/NEEDS_REVIEW decisions with trace paths)
         review_path = self._reports_dir / "planner_review.md"
-        review_path.write_text(self._render_review(self._last_verdicts), encoding="utf-8")
+        review_path.write_text(
+            self._render_review(self._last_verdicts, self._trace_paths_by_id(traces)),
+            encoding="utf-8",
+        )
 
         logger.info(
             "Planner scorecard written: json=%s md=%s decisions=%s eval=%s review=%s",
@@ -304,8 +307,12 @@ class PlannerReporter:
         missing: list[str] = []
         for t in traces:
             tid = getattr(t, "trace_id", "")
-            has_request = bool(getattr(t, "request", None))
-            has_decision = bool(getattr(t, "decision", None))
+            has_request = bool(getattr(t, "request_exists", False))
+            has_decision = bool(getattr(t, "decision_exists", False))
+            if not has_request:
+                has_request = bool(getattr(t, "request", None))
+            if not has_decision:
+                has_decision = bool(getattr(t, "decision", None))
             if not has_request or not has_decision:
                 missing.append(str(tid))
 
@@ -864,6 +871,22 @@ class PlannerReporter:
                 by_id[trace_id] = verdict
         return by_id
 
+    def _trace_paths_by_id(self, traces: list[Any]) -> dict[str, str]:
+        by_id: dict[str, str] = {}
+        for trace in traces:
+            trace_id = str(getattr(trace, "trace_id", "") or "")
+            if not trace_id:
+                continue
+            request_path = str(getattr(trace, "request_path", "") or "")
+            if request_path:
+                trace_path = Path(request_path).parent
+                with contextlib.suppress(ValueError):
+                    trace_path = trace_path.resolve().relative_to(self._workspace.resolve())
+                by_id[trace_id] = str(trace_path)
+                continue
+            by_id[trace_id] = str(Path("analysis") / "planner_traces" / trace_id)
+        return by_id
+
     @classmethod
     def _eval_row(cls, *, trace: Any, verdict_by_trace_id: dict[str, Any]) -> dict[str, Any]:
         trace_id = str(getattr(trace, "trace_id", "") or "")
@@ -956,7 +979,7 @@ class PlannerReporter:
         return "\n".join(lines)
 
     @staticmethod
-    def _render_review(verdicts: list[Any]) -> str:
+    def _render_review(verdicts: list[Any], trace_paths: dict[str, str] | None = None) -> str:
         """Render planner_review.md listing FAIL/WARN/NEEDS_REVIEW decisions.
 
         Sections:
@@ -979,6 +1002,9 @@ class PlannerReporter:
                 lines.append(f"- **{dk}** ({cap}): {detail}")
                 if tid:
                     lines.append(f"  - trace: `{tid}`")
+                    trace_path = (trace_paths or {}).get(str(tid), "")
+                    if trace_path:
+                        lines.append(f"  - path: `{trace_path}`")
         else:
             lines.append("None.")
         lines.append("")
@@ -996,6 +1022,9 @@ class PlannerReporter:
                 lines.append(f"- **{dk}** ({cap}): {', '.join(str(w) for w in warnings)}")
                 if tid:
                     lines.append(f"  - trace: `{tid}`")
+                    trace_path = (trace_paths or {}).get(str(tid), "")
+                    if trace_path:
+                        lines.append(f"  - path: `{trace_path}`")
         else:
             lines.append("None.")
         lines.append("")
@@ -1014,6 +1043,9 @@ class PlannerReporter:
                 lines.append(f"- **{dk}** ({cap}): score={score:.2f} -- {detail}")
                 if tid:
                     lines.append(f"  - trace: `{tid}`")
+                    trace_path = (trace_paths or {}).get(str(tid), "")
+                    if trace_path:
+                        lines.append(f"  - path: `{trace_path}`")
         else:
             lines.append("None.")
         lines.append("")

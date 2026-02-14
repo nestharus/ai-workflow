@@ -44,6 +44,7 @@ class TraceEntry:
         timestamp: ISO-8601 timestamp of the trace.
         run_id: Pipeline run identifier.
         model_id: Model used for the decision.
+        planner_version: Planner implementation version.
         slice_id: Slice (library/component/file) identifier.
         layer: Layer tag (``l1``, ``l2``, ``l3``).
         capability: Planner capability name (e.g. ``PLAN``).
@@ -58,6 +59,7 @@ class TraceEntry:
     timestamp: str = ""
     run_id: str = ""
     model_id: str = ""
+    planner_version: str = ""
     slice_id: str = ""
     layer: str = ""
     capability: str = ""
@@ -88,12 +90,17 @@ class LoadedTrace:
     decision_key: str = ""
     request: dict[str, Any] = field(default_factory=dict)
     decision: dict[str, Any] = field(default_factory=dict)
+    request_path: str = ""
+    decision_path: str = ""
+    request_exists: bool = False
+    decision_exists: bool = False
     model_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
     replay: dict[str, Any] = field(default_factory=dict)
     status: str = ""
     overridden: bool = False
+    planner_version: str = ""
 
 
 # ------------------------------------------------------------------
@@ -189,6 +196,7 @@ def load_index(workspace_root: Path) -> list[TraceEntry]:
                     timestamp=row.get("timestamp", ""),
                     run_id=row.get("run_id", ""),
                     model_id=row.get("model_id", ""),
+                    planner_version=row.get("planner_version", ""),
                     slice_id=row.get("slice_id", ""),
                     layer=row.get("layer", ""),
                     capability=row.get("capability", ""),
@@ -228,6 +236,8 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
     request = _read_json(tdir / "request.json")
     decision = _read_json(tdir / "decision.json")
     replay = _read_json(tdir / "replay.json")
+    request_path = tdir / "request.json"
+    decision_path = tdir / "decision.json"
 
     # Call logs
     calls_dir = tdir / "calls"
@@ -248,12 +258,17 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
         decision_key=decision.get("decision_key", ""),
         request=request,
         decision=decision,
+        request_path=str(request_path),
+        decision_path=str(decision_path),
+        request_exists=request_path.exists(),
+        decision_exists=decision_path.exists(),
         model_calls=model_calls,
         tool_calls=tool_calls,
         artifacts=artifacts,
         replay=replay,
         status=decision.get("status", ""),
         overridden=bool(decision.get("overridden", False)),
+        planner_version=str(request.get("planner_version", "") or ""),
     )
 
 

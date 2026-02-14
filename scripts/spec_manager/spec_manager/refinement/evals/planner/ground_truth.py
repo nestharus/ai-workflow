@@ -23,11 +23,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 _logger = logging.getLogger(__name__)
+_DECISION_KEY_RE = re.compile(
+    r"^(?P<layer>[^:]+):(?P<capability>[^:]+):(?P<slice_id>[^:]+):"
+    r"(?P<iteration>\d+):(?P<hash>[0-9a-f]{4,64})$"
+)
+_ALLOWED_CAPABILITIES = frozenset(
+    {"RESOLVE_SIGNAL", "GAP", "PLAN", "UNDER_SPEC", "INTEGRATION_ANALYSIS"}
+)
+_ALLOWED_LAYERS = frozenset({"l1", "l2", "l3", "any"})
 
 try:
     import yaml
@@ -307,6 +316,83 @@ def _serialize(gt: PlannerGroundTruth) -> dict[str, Any]:
     return asdict(gt)
 
 
+def _validate_ground_truth(gt: PlannerGroundTruth) -> None:
+    """Validate semantic constraints for loaded planner ground truth."""
+    errors: list[str] = []
+    seen_keys: set[str] = set()
+
+    for idx, case in enumerate(gt.cases):
+        label = f"cases[{idx}]"
+        decision_key = str(case.decision_key or "")
+        if not decision_key:
+            errors.append(f"{label}: decision_key is required")
+            continue
+
+        if decision_key in seen_keys:
+            errors.append(f"{label}: duplicate decision_key {decision_key!r}")
+            continue
+        seen_keys.add(decision_key)
+
+        match = _DECISION_KEY_RE.match(decision_key)
+        if match is None:
+            errors.append(
+                f"{label}: decision_key must match "
+                "{layer}:{capability}:{slice_id}:{iteration}:{input_hash[:8]}"
+            )
+            continue
+
+        key_layer = str(match.group("layer"))
+        key_capability = str(match.group("capability"))
+        key_slice = str(match.group("slice_id"))
+        key_iteration = int(match.group("iteration"))
+
+        if not case.capability:
+            errors.append(f"{label}: capability is required")
+        elif case.capability not in _ALLOWED_CAPABILITIES:
+            errors.append(
+                f"{label}: capability {case.capability!r} is invalid "
+                f"(allowed={sorted(_ALLOWED_CAPABILITIES)})"
+            )
+        elif case.capability != key_capability:
+            _logger.debug(
+                "%s capability mismatch: field=%r key=%r",
+                label,
+                case.capability,
+                key_capability,
+            )
+
+        if not case.layer:
+            errors.append(f"{label}: layer is required")
+        elif case.layer not in _ALLOWED_LAYERS:
+            errors.append(
+                f"{label}: layer {case.layer!r} is invalid (allowed={sorted(_ALLOWED_LAYERS)})"
+            )
+        elif case.layer != key_layer:
+            _logger.debug("%s layer mismatch: field=%r key=%r", label, case.layer, key_layer)
+
+        if not case.slice_id:
+            errors.append(f"{label}: slice_id is required")
+        elif case.slice_id != key_slice:
+            _logger.debug("%s slice_id mismatch: field=%r key=%r", label, case.slice_id, key_slice)
+
+        if case.iteration < 0:
+            errors.append(f"{label}: iteration must be >= 0")
+        elif case.iteration != key_iteration:
+            _logger.debug(
+                "%s iteration mismatch: field=%r key=%r",
+                label,
+                case.iteration,
+                key_iteration,
+            )
+
+        if not isinstance(case.expected, dict):
+            errors.append(f"{label}: expected must be a mapping")
+
+    if errors:
+        formatted = "\n".join(f"- {err}" for err in errors)
+        raise ValueError(f"Planner ground truth validation failed:\n{formatted}")
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -338,7 +424,9 @@ def load_ground_truth(path: Path) -> PlannerGroundTruth:
 
     meta = _parse_meta(raw.get("meta"))
     cases = [_parse_case(c) for c in raw.get("cases", [])]
-    return PlannerGroundTruth(meta=meta, cases=cases)
+    gt = PlannerGroundTruth(meta=meta, cases=cases)
+    _validate_ground_truth(gt)
+    return gt
 
 
 def save_ground_truth(gt: PlannerGroundTruth, path: Path) -> None:

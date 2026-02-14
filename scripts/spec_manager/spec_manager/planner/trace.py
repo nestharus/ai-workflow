@@ -41,6 +41,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _TRACE_REL = Path("analysis") / "planner_traces"
+_DEFAULT_CAPABILITY_INPUT_FIELDS: dict[str, list[str]] = {
+    "RESOLVE_SIGNAL": ["signal"],
+    "GAP": ["gaps"],
+    "PLAN": ["gaps"],
+    "UNDER_SPEC": ["events"],
+    "INTEGRATION_ANALYSIS": ["topology"],
+    "TRIAGE_SIGNAL": ["signal"],
+}
 
 
 def content_hash(data: str) -> str:
@@ -51,6 +59,27 @@ def content_hash(data: str) -> str:
 def canonical_json(obj: Any) -> str:
     """Deterministic JSON for hashing (sorted keys, no whitespace)."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def identity_inputs_subset(
+    capability: str,
+    inputs: dict[str, Any],
+    capability_input_fields: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    """Return capability-scoped inputs used for decision identity."""
+    field_map = capability_input_fields or _DEFAULT_CAPABILITY_INPUT_FIELDS
+    keys = field_map.get(capability, sorted(inputs.keys()))
+    return {k: inputs.get(k) for k in keys if k in inputs}
+
+
+def compute_input_hash(
+    capability: str,
+    inputs: dict[str, Any],
+    capability_input_fields: dict[str, list[str]] | None = None,
+) -> str:
+    """Compute normalized full SHA-256 hash for identity input subset."""
+    subset = identity_inputs_subset(capability, inputs, capability_input_fields)
+    return hashlib.sha256(canonical_json(subset).encode("utf-8")).hexdigest()
 
 
 def compute_decision_key(
@@ -68,20 +97,8 @@ def compute_decision_key(
     *capability_input_fields* maps capability names to the input dict keys
     that matter for identity.  If not provided, a default mapping is used.
     """
-    _default_fields: dict[str, list[str]] = {
-        "RESOLVE_SIGNAL": ["signal"],
-        "GAP": ["gaps"],
-        "PLAN": ["gaps"],
-        "UNDER_SPEC": ["events"],
-        "INTEGRATION_ANALYSIS": ["topology"],
-    }
-    field_map = capability_input_fields or _default_fields
-    keys = field_map.get(capability, sorted(inputs.keys()))
-
-    subset = {k: inputs.get(k) for k in keys if k in inputs}
-    input_hash = hashlib.sha256(canonical_json(subset).encode("utf-8")).hexdigest()[:8]
-
-    return f"{layer}:{capability}:{slice_id}:{iteration}:{input_hash}"
+    input_hash = compute_input_hash(capability, inputs, capability_input_fields)
+    return f"{layer}:{capability}:{slice_id}:{iteration}:{input_hash[:8]}"
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -114,6 +131,11 @@ class ModelCallRecord:
     duration_ms: float = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    model_params: dict[str, Any] = field(default_factory=dict)
+    prompt_text: str = ""
+    response_text: str = ""
+    prompt_ref: str = ""
+    response_ref: str = ""
     timestamp: str = ""
 
     def __post_init__(self) -> None:
@@ -129,6 +151,9 @@ class ToolCallRecord:
     inputs_hash: str = ""
     output_summary: str = ""
     duration_ms: float = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tool_params: dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
 
     def __post_init__(self) -> None:
@@ -170,6 +195,7 @@ class PlannerTrace:
     decision_key: str = ""
     run_id: str = ""
     model_id: str = ""
+    planner_version: str = ""
     layer: str = ""
     capability: str = ""
     slice_id: str = ""
@@ -203,6 +229,7 @@ class PlannerTrace:
             "decision_key": self.decision_key,
             "run_id": self.run_id,
             "model_id": self.model_id,
+            "planner_version": self.planner_version,
             "layer": self.layer,
             "capability": self.capability,
             "slice_id": self.slice_id,
@@ -222,6 +249,7 @@ class PlannerTrace:
             "timestamp": datetime.now(UTC).isoformat(),
             "run_id": self.run_id,
             "model_id": self.model_id,
+            "planner_version": self.planner_version,
             "slice_id": self.slice_id,
             "layer": self.layer,
             "capability": self.capability,
@@ -244,7 +272,23 @@ class PlannerTrace:
         trace_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. request.json
-        _write_json(trace_dir / "request.json", self.request_snapshot)
+        request_payload = dict(self.request_snapshot)
+        if self.capability:
+            request_payload["capability"] = self.capability
+        if self.layer:
+            request_payload["layer"] = self.layer
+        if self.run_id:
+            request_payload["run_id"] = self.run_id
+        if self.slice_id:
+            request_payload["slice_id"] = self.slice_id
+        if self.model_id:
+            request_payload["model_id"] = self.model_id
+        if self.planner_version:
+            request_payload["planner_version"] = self.planner_version
+        if self.decision_key:
+            request_payload["decision_key"] = self.decision_key
+        self.request_snapshot = request_payload
+        _write_json(trace_dir / "request.json", request_payload)
 
         # 2. decision.json
         decision_payload = asdict(self.decision) if self.decision else {}
@@ -258,10 +302,29 @@ class PlannerTrace:
         # 3. calls/model_calls.jsonl
         model_calls_path = trace_dir / "calls" / "model_calls.jsonl"
         model_calls_path.parent.mkdir(parents=True, exist_ok=True)
+        content_dir = model_calls_path.parent / "content"
+        content_dir.mkdir(parents=True, exist_ok=True)
         # Overwrite (not append) so persist is idempotent
         model_calls_path.write_text("", encoding="utf-8")
         for mc in self.model_calls:
-            _append_jsonl(model_calls_path, asdict(mc))
+            row = asdict(mc)
+            prompt_text = str(row.pop("prompt_text", "") or "")
+            response_text = str(row.pop("response_text", "") or "")
+            if prompt_text:
+                prompt_hash = str(row.get("prompt_hash", "") or content_hash(prompt_text))
+                row["prompt_hash"] = prompt_hash
+                row["prompt_ref"] = f"calls/content/{prompt_hash}.txt"
+                prompt_path = content_dir / f"{prompt_hash}.txt"
+                if not prompt_path.exists():
+                    prompt_path.write_text(prompt_text, encoding="utf-8")
+            if response_text:
+                response_hash = str(row.get("output_hash", "") or content_hash(response_text))
+                row["output_hash"] = response_hash
+                row["response_ref"] = f"calls/content/{response_hash}.txt"
+                response_path = content_dir / f"{response_hash}.txt"
+                if not response_path.exists():
+                    response_path.write_text(response_text, encoding="utf-8")
+            _append_jsonl(model_calls_path, row)
 
         # 4. calls/tool_calls.jsonl
         tool_calls_path = trace_dir / "calls" / "tool_calls.jsonl"
@@ -296,6 +359,7 @@ class PlannerTrace:
         decision_key: str = "",
         run_id: str = "",
         model_id: str = "",
+        planner_version: str = "",
         layer: str = "",
         capability: str = "",
         slice_id: str = "",
@@ -307,6 +371,7 @@ class PlannerTrace:
             decision_key=decision_key,
             run_id=run_id,
             model_id=model_id,
+            planner_version=planner_version,
             layer=layer,
             capability=capability,
             slice_id=slice_id,

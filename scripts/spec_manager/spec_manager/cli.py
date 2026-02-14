@@ -1111,6 +1111,34 @@ def cmd_branches_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_planner(args: argparse.Namespace) -> int:
+    """Handle top-level planner trace commands."""
+    from spec_manager.refinement.evals.cli import (
+        cmd_planner_diff,
+        cmd_planner_list,
+        cmd_planner_replay,
+        cmd_planner_show,
+        cmd_planner_summarize,
+    )
+
+    if args.planner_surface_command != "trace":
+        print(f"Unknown planner command: {args.planner_surface_command}", file=sys.stderr)
+        return 2
+
+    commands = {
+        "list": cmd_planner_list,
+        "show": cmd_planner_show,
+        "replay": cmd_planner_replay,
+        "diff": cmd_planner_diff,
+        "summarize-run": cmd_planner_summarize,
+    }
+    handler = commands.get(args.planner_trace_command)
+    if handler is None:
+        print(f"Unknown planner trace command: {args.planner_trace_command}", file=sys.stderr)
+        return 2
+    return handler(args)
+
+
 def main() -> int:
     """Main entry point for the spec manager CLI.
 
@@ -1463,6 +1491,61 @@ def main() -> int:
 
     setup_eval_parser(subparsers)
 
+    # planner - trace tooling surface (parallel to eval planner ...)
+    p_planner_surface = subparsers.add_parser(
+        "planner",
+        help="Planner operational tooling",
+    )
+    planner_surface_sub = p_planner_surface.add_subparsers(
+        dest="planner_surface_command",
+        required=True,
+    )
+    p_trace = planner_surface_sub.add_parser("trace", help="Planner trace commands")
+    planner_trace_sub = p_trace.add_subparsers(dest="planner_trace_command", required=True)
+
+    p_trace_list = planner_trace_sub.add_parser("list", help="List planner traces")
+    p_trace_list.add_argument("--run-id", default="", help="Filter by run ID")
+    p_trace_list.add_argument("--slice", default="", help="Filter by slice ID")
+    p_trace_list.add_argument("--capability", default="", help="Filter by capability")
+    p_trace_list.add_argument("--layer", default="", help="Filter by layer")
+    p_trace_list.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    p_trace_show = planner_trace_sub.add_parser("show", help="Show a specific trace")
+    p_trace_show.add_argument("trace_id", help="Trace ID to show")
+    p_trace_show.add_argument("--calls", action="store_true", help="Include model/tool calls")
+    p_trace_show.add_argument("--artifacts", action="store_true", help="Include artifacts")
+    p_trace_show.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    p_trace_replay = planner_trace_sub.add_parser("replay", help="Replay a planner decision")
+    p_trace_replay.add_argument("trace_id", help="Trace ID to replay")
+    p_trace_replay.add_argument(
+        "--override",
+        help="Path to override YAML/JSON (mapping with optional inputs/outputs keys)",
+    )
+    p_trace_replay.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    p_trace_diff = planner_trace_sub.add_parser("diff", help="Diff two traces")
+    p_trace_diff.add_argument("trace_a", help="First trace ID")
+    p_trace_diff.add_argument("trace_b", help="Second trace ID")
+    p_trace_diff.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    p_trace_summary = planner_trace_sub.add_parser(
+        "summarize-run",
+        help="Summarize traces for a run",
+    )
+    p_trace_summary.add_argument("--run-id", required=True, help="Run ID to summarize")
+    p_trace_summary.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
     # plan-v2 - algorithmic planning subcommand group
     from spec_manager.comment_planning.algo_cli import setup_plan_v2_parser
 
@@ -1502,6 +1585,10 @@ def main() -> int:
         from spec_manager.refinement.evals.cli import handle_eval_command
 
         return handle_eval_command(args)
+
+    # Handle planner trace tooling
+    if args.command == "planner":
+        return cmd_planner(args)
 
     # Handle pin sub-group
     if args.command == "pin":

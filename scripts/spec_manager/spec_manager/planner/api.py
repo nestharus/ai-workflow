@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from typing import Any, Literal
 from spec_manager.planner.router import CapabilityRouter, LayerRouter
 
 logger = logging.getLogger(__name__)
+PLANNER_VERSION = "1"
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -198,8 +200,13 @@ class Planner:
         """
         from spec_manager.planner.trace import (
             DecisionRecord,
+            ModelCallRecord,
             PlannerTrace,
+            ToolCallRecord,
+            canonical_json,
             compute_decision_key,
+            compute_input_hash,
+            content_hash,
         )
 
         trace_id = _new_trace_id()
@@ -213,13 +220,21 @@ class Planner:
             iteration=ctx.iteration,
             inputs=req.inputs,
         )
+        input_hash = compute_input_hash(req.capability, req.inputs)
 
         trace = PlannerTrace.start(
             trace_id,
-            _request_snapshot(req),
+            _request_snapshot(
+                req,
+                input_hash=input_hash,
+                decision_key=decision_key,
+                model_id=self._model_id,
+                planner_version=PLANNER_VERSION,
+            ),
             decision_key=decision_key,
             run_id=ctx.run_id,
             model_id=self._model_id,
+            planner_version=PLANNER_VERSION,
             layer=str(layer),
             capability=req.capability,
             slice_id=ctx.slice_id,
@@ -252,7 +267,9 @@ class Planner:
 
         try:
             planner = self._layer_router.select(layer)
+            route_start = time.perf_counter()
             result = self._capability_router.route(planner, req)
+            duration_ms = (time.perf_counter() - route_start) * 1000.0
             result.trace_id = trace_id
             trace.status = result.status
             trace.set_decision(
@@ -261,6 +278,35 @@ class Planner:
                 )
             )
             trace.add_artifact("outputs", result.outputs)
+            usage_tokens = _extract_tokens(result.outputs)
+            trace.record_model_call(
+                ModelCallRecord(
+                    agent_name=f"{str(layer).lower()}:{req.capability}",
+                    model=self._model_id,
+                    duration_ms=duration_ms,
+                    tokens_in=usage_tokens[0],
+                    tokens_out=usage_tokens[1],
+                    model_params={
+                        "mode": self._mode,
+                        "capability": req.capability,
+                        "layer": str(layer),
+                        "planner_version": PLANNER_VERSION,
+                    },
+                    prompt_text=canonical_json(req.inputs),
+                    response_text=canonical_json(result.outputs),
+                )
+            )
+            trace.record_tool_call(
+                ToolCallRecord(
+                    tool_name=f"planner.route.{str(req.capability).lower()}",
+                    inputs_hash=content_hash(canonical_json(req.inputs)),
+                    output_summary=result.status,
+                    duration_ms=duration_ms,
+                    tokens_in=usage_tokens[0],
+                    tokens_out=usage_tokens[1],
+                    tool_params={"layer": str(layer)},
+                )
+            )
             self._persist_trace(trace)
             return result
         except Exception as exc:
@@ -280,11 +326,8 @@ class Planner:
             return result
 
     def _persist_trace(self, trace: Any) -> None:
-        """Best-effort trace persistence — never raise."""
-        try:
-            trace.persist(self._workspace_root)
-        except Exception:
-            logger.debug("Failed to persist trace %s", trace.trace_id, exc_info=True)
+        """Persist trace artifacts; failure is a hard planner error."""
+        trace.persist(self._workspace_root)
         try:
             self._persist_planner_state(trace)
         except Exception:
@@ -414,7 +457,14 @@ def _new_trace_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-def _request_snapshot(req: PlanningRequest) -> dict[str, Any]:
+def _request_snapshot(
+    req: PlanningRequest,
+    *,
+    input_hash: str = "",
+    decision_key: str = "",
+    model_id: str = "",
+    planner_version: str = "",
+) -> dict[str, Any]:
     """Build a JSON-safe snapshot of the request for trace storage."""
     ctx = req.context
     return {
@@ -429,6 +479,10 @@ def _request_snapshot(req: PlanningRequest) -> dict[str, Any]:
         "metadata": _safe_deepcopy(ctx.metadata),
         "inputs": _safe_deepcopy(req.inputs),
         "inputs_keys": sorted(req.inputs.keys()),
+        "input_hash": input_hash,
+        "decision_key": decision_key,
+        "model_id": model_id,
+        "planner_version": planner_version,
         "constraints_hint": _safe_deepcopy(req.constraints_hint),
         "has_constraints_hint": req.constraints_hint is not None,
     }
@@ -440,3 +494,23 @@ def _safe_deepcopy(value: Any) -> Any:
         return copy.deepcopy(value)
     except Exception:
         return value
+
+
+def _extract_tokens(outputs: dict[str, Any]) -> tuple[int, int]:
+    """Best-effort extraction of token usage metadata from planner outputs."""
+    if not isinstance(outputs, dict):
+        return 0, 0
+    usage = outputs.get("usage")
+    if not isinstance(usage, dict):
+        return 0, 0
+    raw_in = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+    raw_out = usage.get("output_tokens", usage.get("completion_tokens", 0))
+    try:
+        tokens_in = int(raw_in or 0)
+    except (TypeError, ValueError):
+        tokens_in = 0
+    try:
+        tokens_out = int(raw_out or 0)
+    except (TypeError, ValueError):
+        tokens_out = 0
+    return max(tokens_in, 0), max(tokens_out, 0)
