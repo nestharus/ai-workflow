@@ -61,12 +61,14 @@ class GroundTruthMeta:
             ``chaotic_treasury_expanded``).
         gt_version: Schema version for this ground-truth format.
         created_at: ISO-8601 date string when the file was authored.
+        phase0_gt_ref: Fixture filename/path for the linked Phase-0 GT.
         notes: Free-form description or changelog.
     """
 
     spec_id: str = ""
     gt_version: int = 1
     created_at: str = ""
+    phase0_gt_ref: str = ""
     notes: str = ""
 
 
@@ -284,6 +286,7 @@ def _parse_meta(raw: dict[str, Any] | None) -> GroundTruthMeta:
         spec_id=raw.get("spec_id", ""),
         gt_version=int(raw.get("gt_version", 1)),
         created_at=raw.get("created_at", ""),
+        phase0_gt_ref=raw.get("phase0_gt_ref", ""),
         notes=raw.get("notes", ""),
     )
 
