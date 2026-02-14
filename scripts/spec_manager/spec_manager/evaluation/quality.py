@@ -119,59 +119,249 @@ class ArchitectureQualityScorer:
 
         metrics: list[QualityMetric] = []
 
-        # Graph health
+        component_ids = [
+            str(component.get("id", "")) for component in components if component.get("id")
+        ]
+        fan_out: dict[str, int] = {component_id: 0 for component_id in component_ids}
+        fan_in: dict[str, int] = {component_id: 0 for component_id in component_ids}
+        for edge in edges:
+            src = str(edge.get("from", ""))
+            dst = str(edge.get("to", ""))
+            if src:
+                fan_out[src] = fan_out.get(src, 0) + 1
+                fan_in.setdefault(src, fan_in.get(src, 0))
+            if dst:
+                fan_in[dst] = fan_in.get(dst, 0) + 1
+                fan_out.setdefault(dst, fan_out.get(dst, 0))
+
+        node_ids = sorted(set(component_ids) | set(fan_in.keys()) | set(fan_out.keys()))
+        max_fan_out = max((fan_out.get(component_id, 0) for component_id in node_ids), default=0)
+        max_fan_in = max((fan_in.get(component_id, 0) for component_id in node_ids), default=0)
+        avg_fan_out = sum(fan_out.get(component_id, 0) for component_id in node_ids) / max(
+            1, len(node_ids)
+        )
+        avg_fan_in = sum(fan_in.get(component_id, 0) for component_id in node_ids) / max(
+            1, len(node_ids)
+        )
+        degree_values = [
+            fan_in.get(component_id, 0) + fan_out.get(component_id, 0) for component_id in node_ids
+        ]
+        degree_concentration = self._gini(degree_values)
+
         edge_density = e / max(1, n * (n - 1)) if n > 1 else 0.0
-        has_cycles = self._detect_cycles(components, edges)
-        graph_health = 0.5 * _clamp01(1 - edge_density * 5) + 0.5 * (1.0 if not has_cycles else 0.3)
+        cycles_present, cycles_count, scc_count = self._cycle_stats(node_ids, edges)
+        cycles_score = 1.0 if not cycles_present else 0.3
+        density_score = _clamp01(1 - edge_density / 0.35)
+        graph_health = 0.6 * density_score + 0.4 * cycles_score
+
+        orphan_components = [
+            component_id
+            for component_id in component_ids
+            if fan_in.get(component_id, 0) == 0 and fan_out.get(component_id, 0) == 0
+        ]
+        bottlenecks = [
+            component_id
+            for component_id, count in sorted(
+                fan_in.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:3]
+            if count > 0
+        ]
+        hub_threshold = max(3, int(len(node_ids) * 0.25))
+        utility_hubs = []
+        for component in components:
+            component_id = str(component.get("id", ""))
+            if not component_id or fan_in.get(component_id, 0) < hub_threshold:
+                continue
+            responsibilities = component.get("responsibilities", [])
+            responsibilities_count = (
+                len(responsibilities) if isinstance(responsibilities, list) else 0
+            )
+            if responsibilities_count <= 1:
+                utility_hubs.append(component_id)
+        utility_hub_ratio = len(utility_hubs) / max(1, n)
+
+        fan_out_score = _clamp01(1 - (max_fan_out - 3) / 10)
+        fan_in_score = _clamp01(1 - (max_fan_in - 5) / 10)
+        coupling_risk = (
+            _clamp01((max_fan_out - 3) / 10)
+            + _clamp01(edge_density / 0.35)
+            + _clamp01(degree_concentration)
+        ) / 3.0
+        coupling_score = _clamp01(1 - coupling_risk)
+
+        # Diagnostic mechanical sub-metrics
+        metrics.append(
+            QualityMetric(
+                name="arch.components_count",
+                raw=float(n),
+                score=1.0,
+                status="PASS",
+                detail=f"components={n}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="arch.edges_count",
+                raw=float(e),
+                score=1.0,
+                status="PASS",
+                detail=f"edges={e}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="arch.edge_density",
+                raw=edge_density,
+                score=density_score,
+                status=_threshold_status(density_score),
+                detail=f"edges={e}, nodes={n}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="arch.cycles",
+                raw=float(cycles_count),
+                score=cycles_score,
+                status=_threshold_status(cycles_score),
+                detail=f"present={cycles_present}, cycles={cycles_count}, scc={scc_count}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="arch.fan_out_max",
+                raw=float(max_fan_out),
+                score=fan_out_score,
+                status=_threshold_status(fan_out_score),
+                detail=f"max_fan_out={max_fan_out}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="arch.fan_in_max",
+                raw=float(max_fan_in),
+                score=fan_in_score,
+                status=_threshold_status(fan_in_score),
+                detail=f"max_fan_in={max_fan_in}",
+            )
+        )
+        avg_fan_out_score = _clamp01(1 - (avg_fan_out - 2) / 8)
+        metrics.append(
+            QualityMetric(
+                name="arch.fan_out_avg",
+                raw=avg_fan_out,
+                score=avg_fan_out_score,
+                status=_threshold_status(avg_fan_out_score),
+                detail=f"avg_fan_out={avg_fan_out:.2f}",
+            )
+        )
+        avg_fan_in_score = _clamp01(1 - (avg_fan_in - 2) / 8)
+        metrics.append(
+            QualityMetric(
+                name="arch.fan_in_avg",
+                raw=avg_fan_in,
+                score=avg_fan_in_score,
+                status=_threshold_status(avg_fan_in_score),
+                detail=f"avg_fan_in={avg_fan_in:.2f}",
+            )
+        )
+        concentration_score = _clamp01(1 - degree_concentration)
+        metrics.append(
+            QualityMetric(
+                name="arch.degree_concentration",
+                raw=degree_concentration,
+                score=concentration_score,
+                status=_threshold_status(concentration_score),
+                detail=f"gini={degree_concentration:.3f}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="arch.bottlenecks",
+                raw=float(len(bottlenecks)),
+                score=_clamp01(1 - len(bottlenecks) / 3),
+                status="WARN" if bottlenecks else "PASS",
+                detail=f"top_fan_in={','.join(bottlenecks) if bottlenecks else 'none'}",
+            )
+        )
+        orphan_ratio = len(orphan_components) / max(1, n)
+        orphan_score = _clamp01(1 - orphan_ratio)
+        metrics.append(
+            QualityMetric(
+                name="arch.orphan_components",
+                raw=float(len(orphan_components)),
+                score=orphan_score,
+                status=_threshold_status(orphan_score),
+                detail=(
+                    f"orphans={','.join(orphan_components[:5]) if orphan_components else 'none'}"
+                ),
+            )
+        )
+        utility_hub_score = _clamp01(1 - utility_hub_ratio * 2)
+        metrics.append(
+            QualityMetric(
+                name="arch.utility_hub_ratio",
+                raw=utility_hub_ratio,
+                score=utility_hub_score,
+                status=_threshold_status(utility_hub_score),
+                detail=f"hubs={','.join(utility_hubs) if utility_hubs else 'none'}",
+            )
+        )
+
+        # Core composite category: graph health
         metrics.append(
             QualityMetric(
                 name="arch.graph_health",
                 raw=graph_health,
                 score=graph_health,
                 status=_threshold_status(graph_health),
-                detail=f"density={edge_density:.3f}, cycles={has_cycles}",
+                detail=f"density={edge_density:.3f}, cycles={cycles_count}, scc={scc_count}",
             )
         )
 
-        # Coupling
-        fan_outs = {c.get("id", ""): len(c.get("depends_on", [])) for c in components}
-        max_fan_out = max(fan_outs.values()) if fan_outs else 0
-        fan_out_score = _clamp01(1 - (max_fan_out - 3) / 10)
-
-        fan_ins: dict[str, int] = {}
-        for c in components:
-            for dep in c.get("depends_on", []):
-                fan_ins[dep] = fan_ins.get(dep, 0) + 1
-        max_fan_in = max(fan_ins.values()) if fan_ins else 0
-        fan_in_score = _clamp01(1 - (max_fan_in - 5) / 10)
-
-        coupling_score = 0.5 * fan_out_score + 0.5 * fan_in_score
+        # Core composite category: coupling
         metrics.append(
             QualityMetric(
                 name="arch.coupling",
                 raw=coupling_score,
                 score=coupling_score,
                 status=_threshold_status(coupling_score),
-                detail=f"max_fan_out={max_fan_out}, max_fan_in={max_fan_in}",
+                detail=(
+                    f"max_fan_out={max_fan_out}, max_fan_in={max_fan_in}, "
+                    f"density={edge_density:.3f}, concentration={degree_concentration:.3f}"
+                ),
             )
         )
 
-        # Completeness proxy
+        # Core composite category: completeness
         req_total = coverage.get("requirements_total", 0)
         req_mapped = coverage.get("requirements_mapped", 0)
         mapping_rate = req_mapped / max(1, req_total)
         completeness = mapping_rate if req_total > 0 else 1.0  # Assume complete if no reqs
         metrics.append(
             QualityMetric(
+                name="arch.requirement_mapping_rate",
+                raw=mapping_rate,
+                score=mapping_rate,
+                status=_threshold_status(mapping_rate),
+                detail=f"mapped={req_mapped}/{req_total}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
                 name="arch.completeness",
                 raw=completeness,
                 score=completeness,
                 status=_threshold_status(completeness),
-                detail=f"mapped={req_mapped}/{req_total}",
+                detail=(
+                    f"mapped={req_mapped}/{req_total}, "
+                    f"unmapped={len(coverage.get('unmapped_requirements', []))}"
+                ),
             )
         )
 
-        # L2 finding severity
+        # Core composite category: L2 finding severity
         blockers = l2_findings.get("BLOCKER", 0)
         majors = l2_findings.get("MAJOR", 0)
         minors = l2_findings.get("MINOR", 0)
@@ -199,35 +389,90 @@ class ArchitectureQualityScorer:
             + 0.25 * by_name.get("arch.l2_severity", 0.0)
         )
 
-    def _detect_cycles(self, components: list[dict], edges: list[dict]) -> bool:
-        """Simple DFS cycle detection."""
-        adj: dict[str, list[str]] = {}
-        for e in edges:
-            src = e.get("from", "")
-            dst = e.get("to", "")
-            if src not in adj:
-                adj[src] = []
-            adj[src].append(dst)
+    def _cycle_stats(
+        self,
+        nodes: list[str],
+        edges: list[dict[str, Any]],
+    ) -> tuple[bool, int, int]:
+        """Return cycle presence, cycle count, and SCC count."""
+        sccs = self._strongly_connected_components(nodes, edges)
+        cyclic_scc_count = sum(1 for component in sccs if len(component) > 1)
+        self_loops = sum(
+            1
+            for edge in edges
+            if str(edge.get("from", "")) and str(edge.get("from", "")) == str(edge.get("to", ""))
+        )
+        cycles_count = cyclic_scc_count + self_loops
+        return cycles_count > 0, cycles_count, len(sccs)
 
-        visited: set[str] = set()
-        in_stack: set[str] = set()
+    def _strongly_connected_components(
+        self,
+        nodes: list[str],
+        edges: list[dict[str, Any]],
+    ) -> list[list[str]]:
+        """Tarjan SCC for directed graph."""
+        adjacency: dict[str, list[str]] = {node: [] for node in nodes}
+        for edge in edges:
+            src = str(edge.get("from", ""))
+            dst = str(edge.get("to", ""))
+            if not src or not dst:
+                continue
+            adjacency.setdefault(src, [])
+            adjacency.setdefault(dst, [])
+            adjacency[src].append(dst)
 
-        def dfs(node: str) -> bool:
-            visited.add(node)
-            in_stack.add(node)
-            for neighbor in adj.get(node, []):
-                if neighbor in in_stack:
-                    return True
-                if neighbor not in visited and dfs(neighbor):
-                    return True
-            in_stack.discard(node)
-            return False
+        index = 0
+        index_map: dict[str, int] = {}
+        low_link: dict[str, int] = {}
+        stack: list[str] = []
+        on_stack: set[str] = set()
+        components: list[list[str]] = []
 
-        for c in components:
-            cid = c.get("id", "")
-            if cid not in visited and dfs(cid):
-                return True
-        return False
+        def strongconnect(node: str) -> None:
+            nonlocal index
+            index_map[node] = index
+            low_link[node] = index
+            index += 1
+            stack.append(node)
+            on_stack.add(node)
+
+            for neighbor in adjacency.get(node, []):
+                if neighbor not in index_map:
+                    strongconnect(neighbor)
+                    low_link[node] = min(low_link[node], low_link[neighbor])
+                elif neighbor in on_stack:
+                    low_link[node] = min(low_link[node], index_map[neighbor])
+
+            if low_link[node] == index_map[node]:
+                component: list[str] = []
+                while stack:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                components.append(component)
+
+        for node in adjacency:
+            if node not in index_map:
+                strongconnect(node)
+
+        return components
+
+    @staticmethod
+    def _gini(values: list[int]) -> float:
+        """Compute Gini coefficient for non-negative integer values."""
+        if not values:
+            return 0.0
+        total = sum(values)
+        if total <= 0:
+            return 0.0
+        n = len(values)
+        abs_diff_sum = 0
+        for left in values:
+            for right in values:
+                abs_diff_sum += abs(left - right)
+        return abs_diff_sum / (2 * n * n * (total / n))
 
 
 class CodeQualityScorer:
@@ -399,7 +644,7 @@ class QualityReporter:
         arch_metrics = arch_scorer.compute(arch_digest)
         arch_mechanical = arch_scorer.mechanical_score(arch_metrics)
 
-        arch_judge_score = 0.5  # default middle
+        arch_judge_score: float | None = None
         architecture_judge_dimensions: list[str] = []
         architecture_risks: list[dict[str, Any] | str] = []
         if arch_judge_output:
@@ -413,7 +658,10 @@ class QualityReporter:
             if isinstance(risks, list):
                 architecture_risks = [risk for risk in risks if risk]
 
-        arch_quality = 0.35 * arch_mechanical + 0.65 * arch_judge_score
+        if arch_judge_score is None:
+            arch_quality = arch_mechanical
+        else:
+            arch_quality = 0.35 * arch_mechanical + 0.65 * arch_judge_score
 
         # Check for critical risks
         arch_has_critical = False
@@ -427,13 +675,17 @@ class QualityReporter:
                     arch_has_major = True
 
         arch_status = _quality_status(arch_quality, arch_has_critical, arch_has_major)
+        if arch_judge_score is None and arch_status == "PASS":
+            arch_status = "WARN"
+
+        judge_detail = "missing" if arch_judge_score is None else f"{arch_judge_score:.3f}"
         arch_metrics.append(
             QualityMetric(
                 name="arch.quality_score",
                 raw=arch_quality,
                 score=arch_quality,
                 status=arch_status,
-                detail=f"mechanical={arch_mechanical:.3f}, judge={arch_judge_score:.3f}",
+                detail=f"mechanical={arch_mechanical:.3f}, judge={judge_detail}",
             )
         )
 

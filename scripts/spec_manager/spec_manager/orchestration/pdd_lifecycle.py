@@ -437,6 +437,10 @@ class PddLifecycle:
                     build_code_digest,
                 )
                 from spec_manager.evaluation.quality import QualityReporter
+                from spec_manager.refinement.evals.judges.arch_quality import (
+                    ArchitectureQualityJudge,
+                )
+                from spec_manager.refinement.evals.judges.cache import JudgeCache
 
                 arch_digest = build_architecture_digest(
                     self.manager.structure.root, self.manager.run_id
@@ -452,10 +456,26 @@ class PddLifecycle:
                     json.dumps(code_digest, indent=2), encoding="utf-8"
                 )
 
+                arch_judge_output = None
+                judge_model_id = self._resolve_model_id_for_role("judge")
+                producer_model_id = self._resolve_model_id_for_role("refinement")
+                try:
+                    arch_judge = ArchitectureQualityJudge(
+                        workspace=self.manager.structure.root,
+                        cache=JudgeCache(self.manager.structure.root / "analysis" / "judge_cache"),
+                        model_id=judge_model_id,
+                        producer_model_id=producer_model_id,
+                        allow_self_judge=judge_model_id == producer_model_id,
+                    )
+                    arch_judge_output = arch_judge.evaluate(arch_digest).model_dump()
+                except Exception as judge_exc:
+                    logger.warning("Architecture judge failed: %s", judge_exc, exc_info=True)
+
                 quality_reporter = QualityReporter(self.manager.structure.root, self.manager.run_id)
                 quality_scorecard = quality_reporter.compute(
                     arch_digest,
                     code_digest,
+                    arch_judge_output=arch_judge_output,
                     pipeline_scorecard=scorecard,
                 )
                 quality_reporter.write(quality_scorecard)

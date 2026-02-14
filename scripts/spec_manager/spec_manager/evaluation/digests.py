@@ -36,7 +36,6 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
     run_reports = workspace_root / "reports" / "pdd" / run_id
     manifest_path = run_reports / "component_manifest.json"
     proposals_path = run_reports / "architecture_proposals.json"
-    findings_path = run_reports / "code_quality_report.json"
 
     # Load run-scoped component manifest (strict: no global fallback).
     manifest_data = _load_json(manifest_path)
@@ -55,22 +54,32 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
             "Run-scoped architecture proposals missing or unreadable: %s", proposals_path
         )
 
-    # Load run-scoped L2 findings.
-    findings_data = _load_json(findings_path)
-    l2_findings = findings_data if isinstance(findings_data, dict) else {}
-    if not l2_findings:
-        logger.warning("Run-scoped quality report missing or unreadable: %s", findings_path)
-    l2_severity = _count_severity(l2_findings.get("findings", []))
+    # Load run-scoped L2 architecture findings from architecture proposals.
+    issues = proposals.get("issues", [])
+    l2_issues = issues if isinstance(issues, list) else []
+    l2_severity = _count_severity(l2_issues)
 
     # Load spec summary if available
     spec_summary_path = workspace_root / ".pdd_runs" / run_id / "spec_summary.json"
-    spec_summary = _load_json(spec_summary_path) or {}
+    spec_summary_data = _load_json(spec_summary_path)
+    spec_summary = spec_summary_data if isinstance(spec_summary_data, dict) else {}
+    if not spec_summary_data:
+        logger.warning("Run-scoped spec summary missing or unreadable: %s", spec_summary_path)
+    spec_requirements = _normalize_requirement_items(
+        spec_summary.get("top_requirements", spec_summary.get("requirements", []))
+    )
+    if not spec_requirements:
+        spec_requirements = _normalize_requirement_items(
+            spec_summary.get("unmapped_requirements", [])
+        )
 
     return {
         "run_id": run_id,
         "spec": {
             "spec_id": spec_summary.get("spec_id", ""),
             "spec_hash": spec_summary.get("spec_hash", ""),
+            "summary": _extract_spec_summary_text(spec_summary),
+            "requirements": spec_requirements,
         },
         "pipeline": {
             "git_sha": "",
@@ -91,6 +100,7 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
         "notes": {
             "architecture_proposals_path": str(proposals_path),
             "architecture_candidates": len(proposals.get("candidates", [])),
+            "architecture_issues": len(l2_issues),
             "component_manifest_path": str(manifest_path),
         },
     }
@@ -207,11 +217,46 @@ def _build_topology(components: list[dict]) -> dict[str, Any]:
 def _count_severity(findings: list[dict]) -> dict[str, int]:
     """Count findings by severity level."""
     counts: dict[str, int] = {"BLOCKER": 0, "MAJOR": 0, "MINOR": 0}
-    for f in findings:
-        sev = f.get("severity", "MINOR").upper()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        sev = finding.get("severity", "MINOR").upper()
         if sev in counts:
             counts[sev] += 1
     return counts
+
+
+def _extract_spec_summary_text(spec_summary: dict[str, Any]) -> str:
+    """Extract a concise summary text from a spec summary artifact."""
+    for key in ("summary", "spec_summary", "description", "overview"):
+        value = spec_summary.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _normalize_requirement_items(requirements: Any, *, limit: int = 25) -> list[str]:
+    """Normalize requirement entries (strings/dicts) into concise text items."""
+    if not isinstance(requirements, list):
+        return []
+
+    normalized: list[str] = []
+    for requirement in requirements:
+        text = ""
+        if isinstance(requirement, str):
+            text = requirement.strip()
+        elif isinstance(requirement, dict):
+            for key in ("requirement", "text", "description", "summary", "title"):
+                value = requirement.get(key)
+                if isinstance(value, str) and value.strip():
+                    text = value.strip()
+                    break
+        if text:
+            normalized.append(text)
+        if len(normalized) >= limit:
+            break
+
+    return normalized
 
 
 def _top_files_by_findings(findings: list[dict], k: int = 5) -> list[dict]:
