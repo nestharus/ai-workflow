@@ -32,7 +32,7 @@ Usage::
         workspace_root=Path("."),
         run_id="abc",
     )
-    scorecard = reporter.compute(run_results)
+    scorecard = reporter.compute()
     reporter.write(scorecard)
 """
 
@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -84,6 +83,42 @@ class Scorecard:
         }
 
 
+@dataclass
+class SliceArtifact:
+    """Normalized latest evidence snapshot for one slice."""
+
+    slice_id: str
+    layer: str
+    status: str
+    iterations: int
+    remaining_gaps: int
+    initial_gaps: int
+    demotion_count: int
+    gate_passed: bool
+    first_attempt_pass: bool
+    promoted_pins: int
+    consumed_pins: int
+    changed_loc: int
+    total_loc: int
+    behavior_change_findings: int
+    bundle_path: str
+
+
+@dataclass
+class ArtifactSnapshot:
+    """Artifact snapshot loaded from run-scoped evidence."""
+
+    l1_slices: list[SliceArtifact] = field(default_factory=list)
+    l2_slices: list[SliceArtifact] = field(default_factory=list)
+    l3_slices: list[SliceArtifact] = field(default_factory=list)
+    ci_receipts: list[dict[str, Any]] = field(default_factory=list)
+    approvals: list[dict[str, Any]] = field(default_factory=list)
+    demotion_count: int = 0
+    alignment: dict[str, Any] = field(default_factory=dict)
+    manifest_components: int = 0
+    implemented_components: int = 0
+
+
 class RunReporter:
     """Aggregates evidence and computes scorecard."""
 
@@ -93,14 +128,11 @@ class RunReporter:
         self._run_dir = workspace_root / ".pdd_runs" / run_id
         self._reports_dir = workspace_root / "reports" / "pdd" / run_id
 
-    def compute(
-        self,
-        run_results: dict[str, Any],
-        quality_scorecard: dict[str, Any] | None = None,
-    ) -> Scorecard:
-        """Compute scorecard from run results and stored artifacts."""
-        hard_gates = self._compute_hard_gates(run_results)
-        soft_signals = self._compute_soft_signals(run_results)
+    def compute(self, *, quality_scorecard: dict[str, Any] | None = None) -> Scorecard:
+        """Compute scorecard from persisted run-scoped artifacts."""
+        artifacts = self._collect_artifacts()
+        hard_gates = self._compute_hard_gates(artifacts)
+        soft_signals = self._compute_soft_signals(artifacts)
         quality_payload = quality_scorecard or self._load_quality_scorecard()
         if quality_payload:
             soft_signals.extend(self._promote_quality_signals(quality_payload))
@@ -123,6 +155,203 @@ class RunReporter:
             overall_pass=overall_pass,
             summary=" ".join(summary_parts),
         )
+
+    def _collect_artifacts(self) -> ArtifactSnapshot:
+        """Load evidence bundles, CI receipts, approvals, and demotion ledger."""
+        histories = self._load_slice_histories()
+        latest_slices: list[SliceArtifact] = []
+        for slice_id, bundles in histories.items():
+            latest_slices.append(self._slice_artifact_from_history(slice_id, bundles))
+
+        l1_slices = [s for s in latest_slices if s.layer == "l1"]
+        l2_slices = [s for s in latest_slices if s.layer == "l2"]
+        l3_slices = [s for s in latest_slices if s.layer == "l3"]
+
+        manifest_components = self._load_manifest_components_count()
+        implemented_components = sum(1 for s in l2_slices if s.status == "COMPLETE")
+
+        return ArtifactSnapshot(
+            l1_slices=l1_slices,
+            l2_slices=l2_slices,
+            l3_slices=l3_slices,
+            ci_receipts=self._load_ci_receipts(),
+            approvals=self._load_approval_artifacts(),
+            demotion_count=self._load_demotion_count(),
+            alignment=self._load_alignment_report(),
+            manifest_components=manifest_components,
+            implemented_components=implemented_components,
+        )
+
+    def _load_slice_histories(self) -> dict[str, list[tuple[int, dict[str, Any], Path]]]:
+        """Return all bundle.json snapshots grouped by slice and sorted by iteration."""
+        run_slices_dir = self._run_dir / "slices"
+        if not run_slices_dir.exists():
+            return {}
+
+        histories: dict[str, list[tuple[int, dict[str, Any], Path]]] = {}
+        for bundle_path in sorted(run_slices_dir.glob("*/iter_*/bundle.json")):
+            try:
+                payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                logger.warning("Skipping unreadable bundle: %s", bundle_path, exc_info=True)
+                continue
+            slice_id = bundle_path.parent.parent.name
+            iteration = self._iter_from_dir(bundle_path.parent.name)
+            histories.setdefault(slice_id, []).append((iteration, payload, bundle_path))
+
+        for entries in histories.values():
+            entries.sort(key=lambda item: item[0])
+        return histories
+
+    @staticmethod
+    def _iter_from_dir(iter_dir_name: str) -> int:
+        if iter_dir_name.startswith("iter_"):
+            try:
+                return int(iter_dir_name.split("_", 1)[1])
+            except ValueError:
+                return 0
+        return 0
+
+    @staticmethod
+    def _slice_layer(slice_id: str) -> str:
+        if slice_id.startswith("arch-"):
+            return "l2"
+        if slice_id.startswith("cq-"):
+            return "l3"
+        return "l1"
+
+    @staticmethod
+    def _bundle_passed_gates(bundle: dict[str, Any]) -> bool:
+        gates = (bundle.get("gates") or {}).get("gates") or []
+        if not gates:
+            return str(bundle.get("status", "")) == "COMPLETE"
+        return all(bool(g.get("passed", True)) for g in gates if isinstance(g, dict))
+
+    def _slice_artifact_from_history(
+        self,
+        slice_id: str,
+        bundles: list[tuple[int, dict[str, Any], Path]],
+    ) -> SliceArtifact:
+        """Build normalized per-slice metrics from bundle history."""
+        first_iter, first_bundle, _ = bundles[0]
+        latest_iter, latest_bundle, latest_path = bundles[-1]
+
+        latest_gaps = (latest_bundle.get("gaps") or {}).get("open_gaps") or []
+        first_gaps = (first_bundle.get("gaps") or {}).get("open_gaps") or []
+        demotions = (latest_bundle.get("demotions") or {}).get("emitted") or []
+        pin_proposals = (latest_bundle.get("implementation") or {}).get("pin_proposals") or []
+        changed_files = (latest_bundle.get("diff") or {}).get("changed_files") or []
+        manifest_files = (latest_bundle.get("manifest") or {}).get("files") or []
+        status = str(latest_bundle.get("status", ""))
+        behavior_change_findings = sum(
+            1
+            for gap in latest_gaps
+            if isinstance(gap, dict) and gap.get("required_change_type") == "behavior_change"
+        )
+        first_attempt_pass = (
+            first_iter == 1
+            and str(first_bundle.get("status", "")) == "COMPLETE"
+            and self._bundle_passed_gates(first_bundle)
+        )
+
+        return SliceArtifact(
+            slice_id=slice_id,
+            layer=self._slice_layer(slice_id),
+            status=status,
+            iterations=max(1, int(latest_bundle.get("iteration", latest_iter) or latest_iter or 1)),
+            remaining_gaps=len(latest_gaps),
+            initial_gaps=len(first_gaps),
+            demotion_count=len(demotions),
+            gate_passed=self._bundle_passed_gates(latest_bundle),
+            first_attempt_pass=first_attempt_pass,
+            promoted_pins=len(pin_proposals),
+            consumed_pins=len(pin_proposals) if status == "COMPLETE" else 0,
+            changed_loc=len(changed_files),
+            total_loc=max(1, len(manifest_files)),
+            behavior_change_findings=behavior_change_findings,
+            bundle_path=str(latest_path),
+        )
+
+    def _load_ci_receipts(self) -> list[dict[str, Any]]:
+        """Load all run-scoped CI batch receipts."""
+        receipts: list[dict[str, Any]] = []
+        ci_dir = self._run_dir / "ci"
+        if not ci_dir.exists():
+            return receipts
+
+        for receipt_path in sorted(ci_dir.glob("*/batches/*.json")):
+            try:
+                payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                logger.warning("Skipping unreadable CI receipt: %s", receipt_path, exc_info=True)
+                continue
+            if isinstance(payload, dict):
+                payload["_path"] = str(receipt_path)
+                receipts.append(payload)
+        return receipts
+
+    def _load_approval_artifacts(self) -> list[dict[str, Any]]:
+        """Load all approval decision artifacts for this run."""
+        approvals: list[dict[str, Any]] = []
+        approvals_root = self._run_dir / "approvals"
+        if not approvals_root.exists():
+            return approvals
+
+        for decision_path in sorted(approvals_root.glob("**/decision.json")):
+            try:
+                payload = json.loads(decision_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                logger.warning(
+                    "Skipping unreadable approval decision: %s",
+                    decision_path,
+                    exc_info=True,
+                )
+                continue
+            if isinstance(payload, dict):
+                payload["_path"] = str(decision_path)
+                approvals.append(payload)
+        return approvals
+
+    def _load_demotion_count(self) -> int:
+        """Count demotion tickets from authoritative ledger."""
+        ledger_path = self._run_dir / "demotions" / "ledger.jsonl"
+        if not ledger_path.exists():
+            return 0
+        count = 0
+        try:
+            for line in ledger_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                json.loads(line)
+                count += 1
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to parse demotion ledger at %s", ledger_path, exc_info=True)
+        return count
+
+    def _load_alignment_report(self) -> dict[str, Any]:
+        """Load POWER alignment report from run-scoped reports directory."""
+        path = self._reports_dir / "alignment_report.json"
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to parse alignment report at %s", path, exc_info=True)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _load_manifest_components_count(self) -> int:
+        """Load component count from run-scoped component manifest."""
+        path = self._reports_dir / "component_manifest.json"
+        if not path.exists():
+            return 0
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to parse component manifest at %s", path, exc_info=True)
+            return 0
+        components = payload.get("components", []) if isinstance(payload, dict) else []
+        return len(components) if isinstance(components, list) else 0
 
     def _load_quality_scorecard(self) -> dict[str, Any] | None:
         """Load run-scoped quality scorecard when available."""
@@ -200,7 +429,7 @@ class RunReporter:
             return None
 
     def write(self, scorecard: Scorecard) -> tuple[Path, Path]:
-        """Write scores.json and scorecard.md."""
+        """Write scores.json and final_report.md."""
         self._reports_dir.mkdir(parents=True, exist_ok=True)
 
         # Machine-readable
@@ -208,23 +437,18 @@ class RunReporter:
         scores_path.write_text(json.dumps(scorecard.to_dict(), indent=2), encoding="utf-8")
 
         # Human-readable
-        md_path = self._reports_dir / "scorecard.md"
+        md_path = self._reports_dir / "final_report.md"
         md_path.write_text(self._render_markdown(scorecard), encoding="utf-8")
 
         return scores_path, md_path
 
-    def _compute_hard_gates(self, run_results: dict[str, Any]) -> list[ScorecardMetric]:
-        """Compute hard gate metrics from run results."""
+    def _compute_hard_gates(self, artifacts: ArtifactSnapshot) -> list[ScorecardMetric]:
+        """Compute hard gate metrics from persisted artifacts."""
         gates: list[ScorecardMetric] = []
+        all_slices = artifacts.l1_slices + artifacts.l2_slices + artifacts.l3_slices
 
         # 1. gates.final_pass: all required promotion gates pass
-        all_slices_passed = True
-        for layer_key in ("l1", "l2", "l3"):
-            layer_result = run_results.get(layer_key, {})
-            slices = layer_result.get("slices", {}).get("slices", [])
-            for s in slices:
-                if s.get("status") not in ("COMPLETE",):
-                    all_slices_passed = False
+        all_slices_passed = all(s.status == "COMPLETE" and s.gate_passed for s in all_slices)
         gates.append(
             ScorecardMetric(
                 name="gates.final_pass",
@@ -232,14 +456,16 @@ class RunReporter:
                 score=1.0 if all_slices_passed else 0.0,
                 status="PASS" if all_slices_passed else "FAIL",
                 hard_gate=True,
+                evidence_refs=[s.bundle_path for s in all_slices[:20]],
             )
         )
 
         # 2. ci.final_pass: no CI failures at end
-        ci_passed = not any(
-            run_results.get(f"{layer_key}_result", {}).get("readiness_blocked")
-            for layer_key in ("l1_l2_transition", "l2_l3_transition")
-        )
+        if artifacts.ci_receipts:
+            ci_passed = all(bool(r.get("main_updated")) for r in artifacts.ci_receipts)
+        else:
+            # No explicit CI receipts: rely on complete passing slices.
+            ci_passed = all_slices_passed
         gates.append(
             ScorecardMetric(
                 name="ci.final_pass",
@@ -247,11 +473,17 @@ class RunReporter:
                 score=1.0 if ci_passed else 0.0,
                 status="PASS" if ci_passed else "FAIL",
                 hard_gate=True,
+                evidence_refs=[
+                    str(r.get("_path", "")) for r in artifacts.ci_receipts[:20] if r.get("_path")
+                ],
             )
         )
 
         # 3. governance.no_fail: no governance FAIL findings
-        governance_ok = True  # Will be set by governance enhancements
+        if artifacts.approvals:
+            governance_ok = all(bool(a.get("approved")) for a in artifacts.approvals)
+        else:
+            governance_ok = True
         gates.append(
             ScorecardMetric(
                 name="governance.no_fail",
@@ -259,15 +491,16 @@ class RunReporter:
                 score=1.0 if governance_ok else 0.0,
                 status="PASS" if governance_ok else "FAIL",
                 hard_gate=True,
+                evidence_refs=[
+                    str(a.get("_path", "")) for a in artifacts.approvals[:20] if a.get("_path")
+                ],
             )
         )
 
         # 4. alignment.no_high: no HIGH-severity POWER findings
-        alignment_ok = True
-        for layer_key in ("l1",):
-            alignment = run_results.get(layer_key, {}).get("alignment", {})
-            if alignment.get("drift_findings", 0) > 0:
-                alignment_ok = False
+        drift_findings = int(artifacts.alignment.get("drift_findings", 0) or 0)
+        reward_findings = int(artifacts.alignment.get("reward_hacking_findings", 0) or 0)
+        alignment_ok = (drift_findings + reward_findings) == 0
         gates.append(
             ScorecardMetric(
                 name="alignment.no_high",
@@ -275,16 +508,14 @@ class RunReporter:
                 score=1.0 if alignment_ok else 0.0,
                 status="PASS" if alignment_ok else "FAIL",
                 hard_gate=True,
+                evidence_refs=[str(self._reports_dir / "alignment_report.json")],
             )
         )
 
         # 5. l3.no_behavior_change: L3 didn't introduce behavior changes
-        l3_ok = True
-        l3_result = run_results.get("l3", {})
-        l3_slices = l3_result.get("slices", {}).get("slices", [])
-        for s in l3_slices:
-            if s.get("status") == "STAGNATED":
-                l3_ok = False
+        l3_ok = all(
+            s.status == "COMPLETE" and s.behavior_change_findings == 0 for s in artifacts.l3_slices
+        )
         gates.append(
             ScorecardMetric(
                 name="l3.no_behavior_change",
@@ -292,13 +523,14 @@ class RunReporter:
                 score=1.0 if l3_ok else 0.0,
                 status="PASS" if l3_ok else "FAIL",
                 hard_gate=True,
+                evidence_refs=[s.bundle_path for s in artifacts.l3_slices[:20]],
             )
         )
 
         return gates
 
-    def _compute_soft_signals(self, run_results: dict[str, Any]) -> list[ScorecardMetric]:
-        """Compute 11 soft signal metrics from run results.
+    def _compute_soft_signals(self, artifacts: ArtifactSnapshot) -> list[ScorecardMetric]:
+        """Compute 11 soft signal metrics from persisted artifacts.
 
         Signals computed (exact names from E2E pipeline spec):
           l1.gap_closure, l1.gate_first_attempt_rate,
@@ -312,30 +544,23 @@ class RunReporter:
         # ------------------------------------------------------------------
         # Gather per-layer slice lists
         # ------------------------------------------------------------------
-        l1_slices = run_results.get("l1", {}).get("slices", {}).get("slices", [])
-        l2_slices = run_results.get("l2", {}).get("slices", {}).get("slices", [])
-        l3_slices = run_results.get("l3", {}).get("slices", {}).get("slices", [])
+        l1_slices = artifacts.l1_slices
+        l2_slices = artifacts.l2_slices
+        l3_slices = artifacts.l3_slices
         all_slices = l1_slices + l2_slices + l3_slices
 
         total_slices = len(all_slices)
         safe_total = max(total_slices, 1)
 
         # Aggregate stats across all layers
-        total_iterations = sum(s.get("iterations", 0) for s in all_slices)
-        total_demotions = sum(s.get("demotion_count", 0) for s in all_slices)
-        stagnated_count = sum(1 for s in all_slices if s.get("status") == "STAGNATED")
-
-        # Also count from demotion ledger if it exists (authoritative source)
-        ledger_demotions = 0
-        ledger_path = self._run_dir / "demotions" / "ledger.jsonl"
-        if ledger_path.exists():
-            with suppress(Exception):
-                for line in ledger_path.read_text(encoding="utf-8").strip().split("\n"):
-                    if line:
-                        json.loads(line)  # validate
-                        ledger_demotions += 1
-        # Use the larger of slice-aggregated or ledger count
-        total_demotions = max(total_demotions, ledger_demotions)
+        total_iterations = sum(s.iterations for s in all_slices)
+        slice_demotions = sum(s.demotion_count for s in all_slices)
+        total_demotions = max(slice_demotions, artifacts.demotion_count)
+        stagnated_count = sum(
+            1
+            for s in all_slices
+            if s.status in {"STAGNATED", "FAILED", "BLOCKED"} or s.remaining_gaps > 0
+        )
 
         # ------------------------------------------------------------------
         # 1. l1.gap_closure — 1 - (final_open_gaps / initial_open_gaps)
@@ -344,14 +569,9 @@ class RunReporter:
         initial_gaps = 0
         final_gaps = 0
         for s in l1_slices:
-            # initial_open_gaps: use remaining_gaps + completed iterations as proxy
-            # if slice has explicit initial_gaps field use it, else estimate from
-            # remaining_gaps: complete slices had gaps that are now 0
-            s_initial = s.get("initial_gaps", s.get("remaining_gaps", 0))
-            s_final = s.get("remaining_gaps", 0)
-            if s.get("status") == "COMPLETE":
-                # Complete slice closed all gaps; initial >= 1 if it ran
-                s_initial = max(s_initial, max(s.get("iterations", 1), 1))
+            s_initial = s.initial_gaps
+            s_final = s.remaining_gaps
+            if s.status == "COMPLETE":
                 s_final = 0
             initial_gaps += s_initial
             final_gaps += s_final
@@ -377,13 +597,10 @@ class RunReporter:
         # ------------------------------------------------------------------
         # 2. l1.gate_first_attempt_rate — slices passing all gates on first
         #    promote attempt / total L1 slices.
-        #    Proxy: iterations == 1 means passed on first try.
         #    PASS >= 0.6, WARN >= 0.4, FAIL < 0.4
         # ------------------------------------------------------------------
         l1_total = max(len(l1_slices), 1)
-        l1_first_attempt = sum(
-            1 for s in l1_slices if s.get("status") == "COMPLETE" and s.get("iterations", 0) == 1
-        )
+        l1_first_attempt = sum(1 for s in l1_slices if s.first_attempt_pass)
         l1_first_rate = l1_first_attempt / l1_total
 
         if l1_first_rate >= 0.6:
@@ -410,8 +627,8 @@ class RunReporter:
         total_promoted_pins = 0
         total_consumed_pins = 0
         for s in l2_slices:
-            promoted = s.get("promoted_pins", 0)
-            consumed = s.get("consumed_pins", 0)
+            promoted = s.promoted_pins
+            consumed = s.consumed_pins
             total_promoted_pins += promoted
             total_consumed_pins += consumed
 
@@ -438,9 +655,8 @@ class RunReporter:
         #    PASS = 1.0, WARN >= 0.98, FAIL < 0.98
         #    Extract from L2 results if manifest data exists, else default 1.0.
         # ------------------------------------------------------------------
-        l2_result = run_results.get("l2", {})
-        manifest_components = l2_result.get("manifest_components", 0)
-        implemented_components = l2_result.get("implemented_components", 0)
+        manifest_components = artifacts.manifest_components
+        implemented_components = artifacts.implemented_components
 
         if manifest_components > 0:
             comp_coverage = implemented_components / manifest_components
@@ -466,13 +682,10 @@ class RunReporter:
 
         # ------------------------------------------------------------------
         # 5. l2.gate_first_attempt_rate — first-attempt pass / L2 slices
-        #    Proxy: iterations == 1 for completed slices.
         #    PASS >= 0.5, WARN >= 0.3, FAIL < 0.3
         # ------------------------------------------------------------------
         l2_total = max(len(l2_slices), 1)
-        l2_first_attempt = sum(
-            1 for s in l2_slices if s.get("status") == "COMPLETE" and s.get("iterations", 0) == 1
-        )
+        l2_first_attempt = sum(1 for s in l2_slices if s.first_attempt_pass)
         l2_first_rate = l2_first_attempt / l2_total
 
         if l2_first_rate >= 0.5:
@@ -494,13 +707,10 @@ class RunReporter:
         # ------------------------------------------------------------------
         # 6. l3.reviewer_first_pass_rate — files passing all reviewers on
         #    first review / total L3 files.
-        #    Proxy: L3 slices with iterations == 1.
         #    PASS >= 0.4, WARN >= 0.2, FAIL < 0.2
         # ------------------------------------------------------------------
         l3_total = max(len(l3_slices), 1)
-        l3_first_pass = sum(
-            1 for s in l3_slices if s.get("status") == "COMPLETE" and s.get("iterations", 0) == 1
-        )
+        l3_first_pass = sum(1 for s in l3_slices if s.first_attempt_pass)
         l3_first_rate = l3_first_pass / l3_total
 
         if l3_first_rate >= 0.4:
@@ -527,8 +737,8 @@ class RunReporter:
         total_changed_loc = 0
         total_loc = 0
         for s in l3_slices:
-            total_changed_loc += s.get("changed_loc", 0)
-            total_loc += s.get("total_loc", 0)
+            total_changed_loc += s.changed_loc
+            total_loc += s.total_loc
 
         churn_raw = total_changed_loc / total_loc if total_loc > 0 else 0.0
 
@@ -600,23 +810,28 @@ class RunReporter:
         # ------------------------------------------------------------------
         # 10. pipeline.ci_first_pass_rate — successful dirty->clean on first
         #     attempt / total promotions.
-        #     Look at ci_ticks in layer results for first-pass success ratio.
         #     PASS >= 0.8, WARN >= 0.6, FAIL < 0.6
         # ------------------------------------------------------------------
         ci_total = 0
         ci_first_pass = 0
-        for layer_key in ("l1", "l2", "l3"):
-            layer_result = run_results.get(layer_key, {})
-            ci_data = layer_result.get("ci_ticks", {})
-            ci_total += ci_data.get("total", 0)
-            ci_first_pass += ci_data.get("first_pass", 0)
+        if artifacts.ci_receipts:
+            first_seen: dict[tuple[str, str], bool] = {}
+            for receipt in artifacts.ci_receipts:
+                layer = str(receipt.get("layer", ""))
+                slice_id = str(receipt.get("slice_id", ""))
+                key = (layer, slice_id)
+                if key in first_seen:
+                    continue
+                first_seen[key] = bool(receipt.get("main_updated"))
+            ci_total = len(first_seen)
+            ci_first_pass = sum(1 for ok in first_seen.values() if ok)
 
         if ci_total > 0:
             ci_rate = ci_first_pass / ci_total
         else:
             # No CI data — use completion rate as proxy: completed slices
             # that finished in 1 iteration are assumed to have clean CI
-            completed = sum(1 for s in all_slices if s.get("status") == "COMPLETE")
+            completed = sum(1 for s in all_slices if s.status == "COMPLETE")
             ci_rate = completed / safe_total if total_slices > 0 else 1.0
 
         if ci_rate >= 0.8:

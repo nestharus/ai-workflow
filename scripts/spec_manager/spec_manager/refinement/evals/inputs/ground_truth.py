@@ -22,6 +22,11 @@ class PhaseGroundTruth:
         expected_elements: List of element IDs expected to be created.
         expected_decisions: List of decision descriptions expected.
         expected_tasks: List of task descriptions expected.
+        hard_invariants: Hard constraints that must hold for any valid output.
+        expected_atoms: Output atoms expected to appear (order-insensitive).
+        forbidden_atoms: Output atoms that must not appear.
+        allowed_variants: Alternative acceptable atom sets; any single set may satisfy.
+        process_expectations: Optional process/tooling expectations.
         custom_expectations: Additional phase-specific expectations.
     """
 
@@ -34,6 +39,11 @@ class PhaseGroundTruth:
     expected_tasks: list[str] = field(default_factory=list)
     custom_expectations: dict[str, Any] = field(default_factory=dict)
     expected_ambiguities: list[str] = field(default_factory=list)
+    hard_invariants: list[str] = field(default_factory=list)
+    expected_atoms: list[str] = field(default_factory=list)
+    forbidden_atoms: list[str] = field(default_factory=list)
+    allowed_variants: list[list[str]] = field(default_factory=list)
+    process_expectations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -47,6 +57,11 @@ class PhaseGroundTruth:
             "expected_tasks": self.expected_tasks,
             "custom_expectations": self.custom_expectations,
             "expected_ambiguities": self.expected_ambiguities,
+            "hard_invariants": self.hard_invariants,
+            "expected_atoms": self.expected_atoms,
+            "forbidden_atoms": self.forbidden_atoms,
+            "allowed_variants": self.allowed_variants,
+            "process_expectations": self.process_expectations,
         }
 
     @classmethod
@@ -62,6 +77,15 @@ class PhaseGroundTruth:
             expected_tasks=data.get("expected_tasks", []),
             custom_expectations=data.get("custom_expectations", {}),
             expected_ambiguities=data.get("expected_ambiguities", []),
+            hard_invariants=data.get("hard_invariants", []),
+            expected_atoms=data.get("expected_atoms", []),
+            forbidden_atoms=data.get("forbidden_atoms", []),
+            allowed_variants=[
+                [str(atom) for atom in variant]
+                for variant in data.get("allowed_variants", [])
+                if isinstance(variant, list)
+            ],
+            process_expectations=data.get("process_expectations", []),
         )
 
     def get_all_expected_items(self, item_type: str) -> list[str]:
@@ -75,8 +99,34 @@ class PhaseGroundTruth:
             "decisions": self.expected_decisions,
             "tasks": self.expected_tasks,
             "ambiguities": self.expected_ambiguities,
+            "hard_invariants": self.hard_invariants,
+            "expected_atoms": self.expected_atoms,
+            "forbidden_atoms": self.forbidden_atoms,
+            "process_expectations": self.process_expectations,
         }
         return mapping.get(item_type, [])
+
+    def has_constraint_ground_truth(self) -> bool:
+        """Return True when this phase defines constraint-based expectations."""
+        return bool(
+            self.hard_invariants
+            or self.expected_atoms
+            or self.forbidden_atoms
+            or self.allowed_variants
+            or self.process_expectations
+        )
+
+    def get_constraint_expected_items(self) -> list[str]:
+        """Flatten positive constraint atoms for simulation and extraction helpers."""
+        flattened_variants: list[str] = []
+        for variant in self.allowed_variants:
+            flattened_variants.extend(variant)
+        return [
+            *self.hard_invariants,
+            *self.expected_atoms,
+            *flattened_variants,
+            *self.process_expectations,
+        ]
 
 
 @dataclass

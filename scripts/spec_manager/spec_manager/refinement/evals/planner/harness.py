@@ -502,7 +502,7 @@ class PlannerEvalHarness:
                 from spec_manager.evaluation.scoring import RunReporter
 
                 run_reporter = RunReporter(workspace, run_id)
-                run_scorecard = run_reporter.compute(run_results)
+                run_scorecard = run_reporter.compute()
                 run_reporter.write(run_scorecard)
                 result.pipeline_scorecard = run_scorecard
                 reporter_status["run"] = "computed"

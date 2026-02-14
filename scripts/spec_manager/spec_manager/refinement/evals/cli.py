@@ -571,7 +571,6 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
 
     # eval orchestration scoring
     p_orch_scoring = orch_sub.add_parser("scoring", help="Run scoring on results")
-    p_orch_scoring.add_argument("--results-file", required=True, help="Path to results JSON file")
     p_orch_scoring.add_argument("--run-id", default="orchestration-qa")
 
     # eval orchestration report
@@ -1692,22 +1691,19 @@ def cmd_orchestration_transition(args: argparse.Namespace) -> int:
 
 def cmd_orchestration_scoring(args: argparse.Namespace) -> int:
     """Run scoring on orchestration results."""
-    import json
-
     from spec_manager.refinement.evals.phase_evals.orchestration import (
         run_scoring,
         setup_orchestration_workspace,
     )
 
     manager, _ws = setup_orchestration_workspace(run_id=args.run_id)
-    results_data = json.loads(Path(args.results_file).read_text(encoding="utf-8"))
-    scorecard = run_scoring(manager=manager, run_results=results_data)
+    scorecard = run_scoring(manager=manager)
     print("Scorecard:")
     print(f"  Hard gates passed: {scorecard['hard_gates_passed']}/{scorecard['hard_gates_total']}")
     print(f"  Overall: {'PASS' if scorecard['overall_pass'] else 'FAIL'}")
     print(f"  Summary: {scorecard['summary']}")
     print(f"  Scores: {scorecard['scores_path']}")
-    print(f"  Markdown: {scorecard['scorecard_md_path']}")
+    print(f"  Final report: {scorecard['final_report_path']}")
     return 0
 
 

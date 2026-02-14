@@ -419,7 +419,7 @@ class PddLifecycle:
             workspace_root=self.manager.workspace_path,
             run_id=self.manager.run_id,
         )
-        scorecard = reporter.compute(results)
+        scorecard = reporter.compute()
         reporter.write(scorecard)
         results["scorecard"] = scorecard.to_dict()
 

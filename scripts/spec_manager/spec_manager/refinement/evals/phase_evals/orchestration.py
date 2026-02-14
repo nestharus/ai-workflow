@@ -223,7 +223,6 @@ def run_lifecycle_transition(
 
 def run_scoring(
     manager: WorkspaceManager,
-    run_results: dict[str, Any],
 ) -> dict[str, Any]:
     """Compute scorecard using RunReporter (5 hard gates, 11 soft signals).
 
@@ -237,13 +236,13 @@ def run_scoring(
         run_id=manager.run_id,
     )
 
-    scorecard = reporter.compute(run_results)
+    scorecard = reporter.compute()
     scores_path, md_path = reporter.write(scorecard)
 
     return {
         "scorecard": scorecard.to_dict(),
         "scores_path": str(scores_path),
-        "scorecard_md_path": str(md_path),
+        "final_report_path": str(md_path),
         "overall_pass": scorecard.overall_pass,
         "hard_gates_passed": sum(1 for g in scorecard.hard_gates if g.status != "FAIL"),
         "hard_gates_total": len(scorecard.hard_gates),
@@ -269,7 +268,7 @@ def run_final_report(
         workspace_root=manager.workspace_path,
         run_id=manager.run_id,
     )
-    scorecard = reporter.compute(run_results)
+    scorecard = reporter.compute()
 
     gen = FinalReportGenerator(
         workspace_root=manager.workspace_path,

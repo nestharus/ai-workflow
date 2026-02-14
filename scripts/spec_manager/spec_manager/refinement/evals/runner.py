@@ -542,7 +542,7 @@ class EvalRunner:
 
         # Phase execution with convergence tracking
         actual_items: list[str] = []
-        score = self._score_items(expected_items, [], phase=phase)
+        score = self._score_items(expected_items, [], phase=phase, ground_truth=ground_truth)
 
         # Real workflows run once per phase (the workflow itself handles any
         # internal iteration).  The eval iteration loop only makes sense for
@@ -560,7 +560,12 @@ class EvalRunner:
                 actual_items = self._simulate_extraction(state, phase, iteration)
 
             # Score this iteration
-            score = self._score_items(expected_items, actual_items, phase=phase)
+            score = self._score_items(
+                expected_items,
+                actual_items,
+                phase=phase,
+                ground_truth=ground_truth,
+            )
 
             # Track convergence
             convergence_ratio = score.recall
@@ -575,7 +580,7 @@ class EvalRunner:
             logger.log_iteration(
                 phase=phase,
                 iteration=iteration,
-                gaps_open=len(expected_items) - score.matched_count,
+                gaps_open=score.expected_count - score.matched_count,
                 content_hash=content_hash,
                 duration_ms=iter_duration,
                 convergence_ratio=convergence_ratio,
@@ -819,8 +824,12 @@ class EvalRunner:
         actual: list[str],
         *,
         phase: str = "",
+        ground_truth: PhaseGroundTruth | None = None,
     ) -> DetailScore:
         """Score expected vs actual using judge or fuzzy matching."""
+        if self._phase_uses_constraint_scoring(phase, ground_truth):
+            return self._score_constraint_satisfaction(ground_truth, actual)
+
         if self.config.use_judge:
             from spec_manager.refinement.evals.judge_scorer import (
                 score_detail_capture_with_judge,
@@ -839,6 +848,100 @@ class EvalRunner:
             actual,
             fuzzy_threshold=self.config.fuzzy_match_threshold,
         )
+
+    @staticmethod
+    def _phase_uses_constraint_scoring(
+        phase: str,
+        ground_truth: PhaseGroundTruth | None,
+    ) -> bool:
+        """Return True when phase scoring should use constraint satisfaction."""
+        if ground_truth is None or not ground_truth.has_constraint_ground_truth():
+            return False
+        return phase in {"architecture", "interfaces", "tasks"}
+
+    def _score_constraint_satisfaction(
+        self,
+        ground_truth: PhaseGroundTruth | None,
+        actual: list[str],
+    ) -> DetailScore:
+        """Score L2/L3 phases by evaluating constraint satisfaction."""
+        if ground_truth is None:
+            return DetailScore(
+                matched_count=0,
+                expected_count=0,
+                actual_count=0,
+                recall=1.0,
+                precision=1.0,
+            )
+
+        total_checks = 0
+        satisfied_checks = 0
+
+        for invariant in ground_truth.hard_invariants:
+            total_checks += 1
+            if self._constraint_atom_matches(invariant, actual):
+                satisfied_checks += 1
+
+        for atom in ground_truth.expected_atoms:
+            total_checks += 1
+            if self._constraint_atom_matches(atom, actual):
+                satisfied_checks += 1
+
+        for forbidden in ground_truth.forbidden_atoms:
+            total_checks += 1
+            if not self._constraint_atom_matches(forbidden, actual):
+                satisfied_checks += 1
+
+        if ground_truth.allowed_variants:
+            total_checks += 1
+            allowed_match = False
+            for variant in ground_truth.allowed_variants:
+                if variant and all(self._constraint_atom_matches(atom, actual) for atom in variant):
+                    allowed_match = True
+                    break
+            if allowed_match:
+                satisfied_checks += 1
+
+        for expectation in ground_truth.process_expectations:
+            total_checks += 1
+            if self._constraint_atom_matches(expectation, actual):
+                satisfied_checks += 1
+
+        if total_checks == 0:
+            return DetailScore(
+                matched_count=0,
+                expected_count=0,
+                actual_count=0,
+                recall=1.0,
+                precision=1.0,
+            )
+
+        satisfaction_ratio = satisfied_checks / total_checks
+        return DetailScore(
+            matched_count=satisfied_checks,
+            expected_count=total_checks,
+            actual_count=total_checks,
+            recall=satisfaction_ratio,
+            precision=satisfaction_ratio,
+        )
+
+    def _constraint_atom_matches(self, atom: str, actual: list[str]) -> bool:
+        """Return True when an expected atom is represented in actual outputs."""
+        atom_normalized = " ".join(atom.lower().split())
+        if not atom_normalized or not actual:
+            return False
+
+        normalized_actual = [" ".join(item.lower().split()) for item in actual if item]
+        for item in normalized_actual:
+            if atom_normalized in item or item in atom_normalized:
+                return True
+
+        fuzzy_score = score_detail_capture(
+            [atom],
+            actual,
+            fuzzy_threshold=self.config.fuzzy_match_threshold,
+        )
+        return fuzzy_score.matched_count > 0
 
     def _get_expected_items_for_phase(
         self,
@@ -873,11 +976,23 @@ class EvalRunner:
             # Requirements and elements for spec building
             return ground_truth.expected_requirements + ground_truth.expected_elements
         elif phase == "tasks":
-            return ground_truth.expected_tasks
+            if ground_truth.expected_tasks:
+                return ground_truth.expected_tasks
+            if ground_truth.has_constraint_ground_truth():
+                return ground_truth.get_constraint_expected_items()
+            return []
         elif phase == "architecture":
-            return ground_truth.expected_decisions
+            if ground_truth.expected_decisions:
+                return ground_truth.expected_decisions
+            if ground_truth.has_constraint_ground_truth():
+                return ground_truth.get_constraint_expected_items()
+            return []
         elif phase == "interfaces":
-            return ground_truth.expected_elements
+            if ground_truth.expected_elements:
+                return ground_truth.expected_elements
+            if ground_truth.has_constraint_ground_truth():
+                return ground_truth.get_constraint_expected_items()
+            return []
         else:
             # Default to requirements for unknown phases
             return ground_truth.expected_requirements
