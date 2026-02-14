@@ -3,16 +3,14 @@
 Given failure evidence (gate violations, test failures, review findings),
 determines which layer is responsible for the fix.
 
-Classification policy (priority order):
-1. required_change_type (from Finding schema) — most precise
-2. category — broad classification
-3. gate name — for gate failures
-4. source — fallback
+Classification policy follows SEC-026 two-stage routing:
+1. behavior_change (or forced logic-affecting tags) → L1
+2. architecture/cross-component/topology scope → L2
+3. otherwise fix in current layer (no demotion)
 
-Layer legality rules:
-- L3 cannot change behavior or architecture → demote
-- L2 cannot add business logic → demote to L1
-- L1 handles all logic/spec changes
+Forced demotions:
+- INLINE_LOGIC_AT_ARCH → L1
+- Diff-impact logic-affecting → L1
 """
 
 from __future__ import annotations
@@ -57,26 +55,21 @@ _CHANGE_TYPE_ROUTING: dict[str, Layer | None] = {
     "refactor_only": None,  # fix-in-layer, no demotion
 }
 
-# Category → target layer mapping
-_CATEGORY_ROUTING: dict[str, Layer] = {
-    "STYLE": "L3",
-    "MAINTAINABILITY": "L3",
-    "QUALITY": "L3",
-    "LOGIC": "L1",
-    "CORRECTNESS": "L1",
-    "LOGIC_BUG": "L1",
-    "SPEC": "L1",
-    "UNDER_SPEC": "L1",
+# Category → target layer mapping (minimal SEC-026 triage)
+_CATEGORY_ROUTING: dict[str, Layer | None] = {
+    "LOGIC_AFFECTING": "L1",
     "INLINE_LOGIC_AT_ARCH": "L1",
     "ARCH": "L2",
     "ARCHITECTURE": "L2",
+    "CROSS_COMPONENT": "L2",
+    "TOPOLOGY": "L2",
     "PROJECTION": "L2",
-    "DRIFT": "L1",  # default; scope-based override may route to L2
+    "DRIFT": None,
     "GOVERNANCE": None,  # block in current layer, no demotion
 }
 
 # Gate → target layer mapping
-_GATE_ROUTING: dict[str, Layer] = {
+_GATE_ROUTING: dict[str, Layer | None] = {
     # L1 gates
     "NO_REMAINING_COMMENTS": "L1",
     "NO_STUB_FUNCTIONS": "L1",
@@ -95,29 +88,29 @@ _GATE_ROUTING: dict[str, Layer] = {
     "ARCH_DRIFT_PASS": "L2",
     "INTRODUCED_ALGORITHM_SPECS": "L2",
     # L3 gates
-    "ALL_QUALITY_REVIEWERS_PASS": "L3",
+    "ALL_QUALITY_REVIEWERS_PASS": None,
     "NO_LOGIC_CHANGE": "L1",
     "NO_ARCH_BOUNDARY_VIOLATIONS": "L2",
-    "DRIFT_PASS": "L1",
+    "DRIFT_PASS": None,
     "TESTS_PASS": "L1",
 }
 
 # Source → target layer fallback
-_SOURCE_ROUTING: dict[str, Layer] = {
+_SOURCE_ROUTING: dict[str, Layer | None] = {
     "ALGORITHMIC_GATE": "L1",
     "ARCH_GATE": "L2",
     "TEST_FAILURE": "L1",
     "LINEAGE": "L2",
     "REVIEW": "L3",
-    "GATE_FAILURE": "L1",
-    "VERIFY": "L1",
+    "GATE_FAILURE": None,
+    "VERIFY": None,
 }
 
 
 def triage(ctx: DemotionContext) -> DemotionRouting:
     """Classify a failure and determine the target demotion layer.
 
-    Priority: required_change_type > category > gate > source > default (L1).
+    Priority: required_change_type > category > gate > source > fix-in-place.
 
     If the determined target layer is above the active layer, route down
     to the active layer instead (because higher layers aren't editable
@@ -165,6 +158,12 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
     # 2. Try gate-based routing
     if ctx.gate:
         target = _GATE_ROUTING.get(ctx.gate)
+        if target is None and ctx.gate in _GATE_ROUTING:
+            return DemotionRouting(
+                target_layer=ctx.active_layer,
+                reason=f"Gate '{ctx.gate}' fixes in current layer",
+                confidence=0.85,
+            )
         if target:
             return _constrain_to_active(
                 DemotionRouting(
@@ -178,6 +177,12 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
     # 3. Try source-based routing
     if ctx.source:
         target = _SOURCE_ROUTING.get(ctx.source)
+        if target is None and ctx.source in _SOURCE_ROUTING:
+            return DemotionRouting(
+                target_layer=ctx.active_layer,
+                reason=f"Source '{ctx.source}' fixes in current layer",
+                confidence=0.6,
+            )
         if target:
             return _constrain_to_active(
                 DemotionRouting(
