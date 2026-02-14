@@ -52,6 +52,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -428,70 +429,93 @@ class PddLifecycle:
             _run_config.enable_quality_scoring if _run_config else self._compute_quality
         )
         _enable_snapshots = _run_config.enable_snapshots if _run_config else True
+        snapshot_needed = _enable_snapshots or _enable_quality
 
-        # Quality scoring (optional)
-        if _enable_quality:
-            try:
-                from spec_manager.evaluation.digests import (
-                    build_architecture_digest,
-                    build_code_digest,
-                )
-                from spec_manager.evaluation.quality import QualityReporter
-                from spec_manager.refinement.evals.judges.arch_quality import (
-                    ArchitectureQualityJudge,
-                )
-                from spec_manager.refinement.evals.judges.cache import JudgeCache
-
-                arch_digest = build_architecture_digest(
-                    self.manager.structure.root, self.manager.run_id
-                )
-                code_digest = build_code_digest(self.manager.structure.root, self.manager.run_id)
-
-                run_reports = self.manager.workspace_path / "reports" / "pdd" / self.manager.run_id
-                run_reports.mkdir(parents=True, exist_ok=True)
-                (run_reports / "architecture_digest.json").write_text(
-                    json.dumps(arch_digest, indent=2), encoding="utf-8"
-                )
-                (run_reports / "code_digest.json").write_text(
-                    json.dumps(code_digest, indent=2), encoding="utf-8"
-                )
-
-                arch_judge_output = None
-                judge_model_id = self._resolve_model_id_for_role("judge")
-                producer_model_id = self._resolve_model_id_for_role("refinement")
-                try:
-                    arch_judge = ArchitectureQualityJudge(
-                        workspace=self.manager.structure.root,
-                        cache=JudgeCache(self.manager.structure.root / "analysis" / "judge_cache"),
-                        model_id=judge_model_id,
-                        producer_model_id=producer_model_id,
-                        allow_self_judge=judge_model_id == producer_model_id,
-                    )
-                    arch_judge_output = arch_judge.evaluate(arch_digest).model_dump()
-                except Exception as judge_exc:
-                    logger.warning("Architecture judge failed: %s", judge_exc, exc_info=True)
-
-                quality_reporter = QualityReporter(self.manager.structure.root, self.manager.run_id)
-                quality_scorecard = quality_reporter.compute(
-                    arch_digest,
-                    code_digest,
-                    arch_judge_output=arch_judge_output,
-                    pipeline_scorecard=scorecard,
-                )
-                quality_reporter.write(quality_scorecard)
-                results["quality_scorecard"] = quality_scorecard.to_dict()
-            except Exception as exc:
-                logger.warning("Quality scoring failed: %s", exc, exc_info=True)
-                results["quality_scorecard"] = {"error": str(exc)}
-
-        # Snapshot
-        if _enable_snapshots:
+        # Snapshot (required for immutable digest-based quality scoring).
+        if snapshot_needed:
             try:
                 from spec_manager.evaluation.snapshot import snapshot_run
 
                 snapshot_run(self.manager.structure.root, self.manager.run_id)
             except Exception as exc:
                 logger.warning("Snapshot failed: %s", exc)
+
+        arch_digest: dict[str, Any] | None = None
+        code_digest: dict[str, Any] | None = None
+        producer_model_id = self._resolve_model_id_for_role("refinement")
+        git_sha = self._read_git_sha() or ""
+        try:
+            from spec_manager.evaluation.digests import (
+                build_architecture_digest,
+                build_code_digest,
+            )
+
+            arch_digest = build_architecture_digest(
+                self.manager.structure.root,
+                self.manager.run_id,
+                git_sha=git_sha,
+                producer_model_id=producer_model_id,
+            )
+            code_digest = build_code_digest(
+                self.manager.structure.root,
+                self.manager.run_id,
+                git_sha=git_sha,
+                producer_model_id=producer_model_id,
+            )
+
+            run_reports = self.manager.workspace_path / "reports" / "pdd" / self.manager.run_id
+            run_reports.mkdir(parents=True, exist_ok=True)
+            (run_reports / "architecture_digest.json").write_text(
+                json.dumps(arch_digest, indent=2), encoding="utf-8"
+            )
+            (run_reports / "code_digest.json").write_text(
+                json.dumps(code_digest, indent=2), encoding="utf-8"
+            )
+        except Exception as digest_exc:
+            logger.warning("Digest build failed: %s", digest_exc, exc_info=True)
+
+        # Quality scoring (optional)
+        if _enable_quality:
+            if arch_digest is None or code_digest is None:
+                results["quality_scorecard"] = {"error": "missing digests"}
+            else:
+                try:
+                    from spec_manager.evaluation.quality import QualityReporter
+                    from spec_manager.refinement.evals.judges.arch_quality import (
+                        ArchitectureQualityJudge,
+                    )
+                    from spec_manager.refinement.evals.judges.cache import JudgeCache
+
+                    arch_judge_output = None
+                    judge_model_id = self._resolve_model_id_for_role("judge")
+                    try:
+                        arch_judge = ArchitectureQualityJudge(
+                            workspace=self.manager.structure.root,
+                            cache=JudgeCache(
+                                self.manager.structure.root / "analysis" / "judge_cache"
+                            ),
+                            model_id=judge_model_id,
+                            producer_model_id=producer_model_id,
+                            allow_self_judge=judge_model_id == producer_model_id,
+                        )
+                        arch_judge_output = arch_judge.evaluate(arch_digest).model_dump()
+                    except Exception as judge_exc:
+                        logger.warning("Architecture judge failed: %s", judge_exc, exc_info=True)
+
+                    quality_reporter = QualityReporter(
+                        self.manager.structure.root, self.manager.run_id
+                    )
+                    quality_scorecard = quality_reporter.compute(
+                        arch_digest,
+                        code_digest,
+                        arch_judge_output=arch_judge_output,
+                        pipeline_scorecard=scorecard,
+                    )
+                    quality_reporter.write(quality_scorecard)
+                    results["quality_scorecard"] = quality_scorecard.to_dict()
+                except Exception as exc:
+                    logger.warning("Quality scoring failed: %s", exc, exc_info=True)
+                    results["quality_scorecard"] = {"error": str(exc)}
 
         # Final report
         from spec_manager.evaluation.report import FinalReportGenerator
@@ -1784,6 +1808,22 @@ class PddLifecycle:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _read_git_sha(self) -> str | None:
+        """Resolve HEAD SHA for provenance when available."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.manager.structure.root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return None
+        sha = result.stdout.strip()
+        return sha or None
 
     def _record_git_ref(self, ref_name: str) -> None:
         """Record a git ref milestone for the run.

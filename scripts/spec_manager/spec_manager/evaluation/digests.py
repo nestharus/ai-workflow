@@ -5,8 +5,12 @@ These digests serve as inputs for LLM judges and mechanical scorers.
 
 Usage::
 
-    arch_digest = build_architecture_digest(workspace_root, run_id)
-    code_digest = build_code_digest(workspace_root, run_id)
+    arch_digest = build_architecture_digest(
+        workspace_root, run_id, git_sha="<sha>", producer_model_id="<model>"
+    )
+    code_digest = build_code_digest(
+        workspace_root, run_id, git_sha="<sha>", producer_model_id="<model>"
+    )
 """
 
 from __future__ import annotations
@@ -20,7 +24,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
+def build_architecture_digest(
+    workspace_root: Path,
+    run_id: str,
+    *,
+    git_sha: str,
+    producer_model_id: str,
+) -> dict[str, Any]:
     """Build architecture digest from pipeline artifacts.
 
     Reads component manifest, L2 findings, and architecture proposals
@@ -82,11 +92,11 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
             "requirements": spec_requirements,
         },
         "pipeline": {
-            "git_sha": "",
+            "git_sha": git_sha,
             "pipeline_version": "",
         },
         "model": {
-            "producer_model_id": "",
+            "producer_model_id": producer_model_id,
         },
         "topology": topology,
         "coverage": {
@@ -106,7 +116,13 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
     }
 
 
-def build_code_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
+def build_code_digest(
+    workspace_root: Path,
+    run_id: str,
+    *,
+    git_sha: str,
+    producer_model_id: str,
+) -> dict[str, Any]:
     """Build code digest from pipeline artifacts.
 
     Reads file list from snapshot, L3 findings, and CI results
@@ -124,12 +140,14 @@ def build_code_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
     quality_report_path = run_reports / "code_quality_report.json"
 
     # Build file list from run snapshot only (no workspace/global fallback).
-    snapshot_dir = run_dir / "snapshot" / "files"
+    snapshot_dir = run_dir / "snapshots" / "final_files"
     if snapshot_dir.exists():
-        files_info = _build_file_list(snapshot_dir)
+        files_info, duplication_ratio, long_line_ratio = _build_file_inventory(snapshot_dir, run_id)
     else:
         logger.warning("Run snapshot missing for code digest: %s", snapshot_dir)
         files_info = []
+        duplication_ratio = 0.0
+        long_line_ratio = 0.0
 
     # Load run-scoped L3 / code quality findings.
     quality_data = _load_json(quality_report_path)
@@ -142,11 +160,13 @@ def build_code_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
 
     # Load CI results if available
     ci_path = run_dir / "ci" / "results.json"
-    ci_data = _load_json(ci_path) or {}
+    ci_data_raw = _load_json(ci_path)
+    ci_data = ci_data_raw if isinstance(ci_data_raw, dict) else {}
 
     # Spec info
     spec_summary_path = run_dir / "spec_summary.json"
-    spec_summary = _load_json(spec_summary_path) or {}
+    spec_summary_raw = _load_json(spec_summary_path)
+    spec_summary = spec_summary_raw if isinstance(spec_summary_raw, dict) else {}
 
     total_loc = sum(f.get("loc", 0) for f in files_info)
 
@@ -156,11 +176,15 @@ def build_code_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
             "spec_id": spec_summary.get("spec_id", ""),
             "spec_hash": spec_summary.get("spec_hash", ""),
         },
-        "pipeline": {"git_sha": ""},
-        "model": {"producer_model_id": ""},
+        "pipeline": {"git_sha": git_sha},
+        "model": {"producer_model_id": producer_model_id},
         "codebase": {
             "files": files_info,
             "totals": {"files": len(files_info), "loc": total_loc},
+            "metrics": {
+                "duplication_ratio": duplication_ratio,
+                "long_line_ratio": long_line_ratio,
+            },
         },
         "l3_review": {
             "final_findings": l3_severity,
@@ -276,27 +300,55 @@ def _top_files_by_findings(findings: list[dict], k: int = 5) -> list[dict]:
     return sorted_files[:k]
 
 
-def _build_file_list(directory: Path) -> list[dict[str, Any]]:
-    """Build file info list from a directory of files."""
+def _build_file_inventory(
+    directory: Path, run_id: str
+) -> tuple[list[dict[str, Any]], float, float]:
+    """Build code file list plus text-level mechanical metrics."""
     files: list[dict[str, Any]] = []
     if not directory.exists():
-        return files
+        return files, 0.0, 0.0
+
+    shingle_size = 5
+    shingle_counts: dict[str, int] = {}
+    total_shingles = 0
+    long_lines = 0
+    total_lines = 0
 
     for fp in sorted(directory.rglob("*")):
-        if fp.is_file() and not fp.name.startswith("."):
-            try:
-                content = fp.read_bytes()
-                loc = content.count(b"\n")
-                sha = hashlib.sha256(content).hexdigest()
-                files.append(
-                    {
-                        "path": str(fp.relative_to(directory)),
-                        "loc": loc,
-                        "sha256": sha,
-                        "role_hint": "",
-                    }
-                )
-            except OSError:
-                continue
+        if not fp.is_file() or fp.name.startswith("."):
+            continue
+        try:
+            content = fp.read_bytes()
+            text = content.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            loc = len(lines)
+            sha = hashlib.sha256(content).hexdigest()
+            rel_path = str(fp.relative_to(directory))
+            files.append(
+                {
+                    "path": rel_path,
+                    "loc": loc,
+                    "sha256": sha,
+                    "role_hint": "",
+                    "snapshot_path": f".pdd_runs/{run_id}/snapshots/final_files/{rel_path}",
+                }
+            )
 
-    return files
+            total_lines += loc
+            long_lines += sum(1 for line in lines if len(line) > 120)
+
+            normalized_lines = [line.rstrip() for line in lines]
+            if len(normalized_lines) >= shingle_size:
+                for index in range(0, len(normalized_lines) - shingle_size + 1):
+                    shingle = "\n".join(normalized_lines[index : index + shingle_size])
+                    shingle_hash = hashlib.sha256(shingle.encode("utf-8")).hexdigest()
+                    shingle_counts[shingle_hash] = shingle_counts.get(shingle_hash, 0) + 1
+                    total_shingles += 1
+        except OSError:
+            continue
+
+    duplicated_occurrences = sum(count - 1 for count in shingle_counts.values() if count > 1)
+    duplication_ratio = duplicated_occurrences / total_shingles if total_shingles > 0 else 0.0
+    long_line_ratio = long_lines / total_lines if total_lines > 0 else 0.0
+
+    return files, duplication_ratio, long_line_ratio

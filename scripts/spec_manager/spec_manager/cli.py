@@ -266,11 +266,23 @@ def cmd_quality(args: argparse.Namespace) -> int:
 
     workspace = Path.cwd()
     run_id = args.run_id
+    run_dir = workspace / ".pdd_runs" / run_id
+    snapshot_dir = run_dir / "snapshots" / "final_files"
 
     print(f"Computing quality scorecard for run: {run_id}")
 
-    arch_digest = build_architecture_digest(workspace, run_id)
-    code_digest = build_code_digest(workspace, run_id)
+    arch_digest = build_architecture_digest(
+        workspace,
+        run_id,
+        git_sha="",
+        producer_model_id="",
+    )
+    code_digest = build_code_digest(
+        workspace,
+        run_id,
+        git_sha="",
+        producer_model_id="",
+    )
     producer_model_id = (
         (arch_digest.get("model") or {}).get("producer_model_id")
         or (code_digest.get("model") or {}).get("producer_model_id")
@@ -302,11 +314,14 @@ def cmd_quality(args: argparse.Namespace) -> int:
             producer_model_id=producer_model_id,
             allow_self_judge=args.allow_self_judge,
         )
-        code_result = code_j.evaluate(code_digest)
+        code_result = code_j.evaluate(
+            code_digest,
+            snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
+        )
         code_judge = code_result.model_dump()
 
         # Spec fidelity requires spec summary
-        spec_summary_path = workspace / ".pdd_runs" / run_id / "spec_summary.json"
+        spec_summary_path = run_dir / "spec_summary.json"
         if spec_summary_path.exists():
             import json as _json
 
@@ -317,7 +332,11 @@ def cmd_quality(args: argparse.Namespace) -> int:
                 producer_model_id=producer_model_id,
                 allow_self_judge=args.allow_self_judge,
             )
-            spec_result = spec_j.evaluate(spec_summary, code_digest)
+            spec_result = spec_j.evaluate(
+                spec_summary,
+                code_digest,
+                snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
+            )
             spec_judge = spec_result.model_dump()
 
     reporter = QualityReporter(workspace, run_id)

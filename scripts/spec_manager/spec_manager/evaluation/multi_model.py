@@ -172,19 +172,30 @@ class MultiModelRunner:
                 input_folder=self.input_folder,
             )
             manager.initialize()
+            run_workspace = manager.workspace_path
 
             lifecycle = PddLifecycle(manager, mode="auto", model_profile=profile)
             run_results = lifecycle.run()
 
             # Snapshot
-            snap_path = snapshot_run(self.workspace_root, run_id)
+            snap_path = snapshot_run(run_workspace, run_id)
             entry.snapshot_manifest_path = str(snap_path)
 
             # Digests
-            arch_digest = build_architecture_digest(self.workspace_root, run_id)
-            code_digest = build_code_digest(self.workspace_root, run_id)
+            arch_digest = build_architecture_digest(
+                run_workspace,
+                run_id,
+                git_sha="",
+                producer_model_id=profile.producer_model_id,
+            )
+            code_digest = build_code_digest(
+                run_workspace,
+                run_id,
+                git_sha="",
+                producer_model_id=profile.producer_model_id,
+            )
 
-            run_reports = self.workspace_root / "reports" / "pdd" / run_id
+            run_reports = run_workspace / "reports" / "pdd" / run_id
             run_reports.mkdir(parents=True, exist_ok=True)
 
             arch_path = run_reports / "architecture_digest.json"
@@ -198,9 +209,7 @@ class MultiModelRunner:
             planner_scorecard = None
             if enable_planner_eval:
                 try:
-                    planner_eval = PlannerEvalHarness(self.workspace_root).score_existing_traces(
-                        run_id
-                    )
+                    planner_eval = PlannerEvalHarness(run_workspace).score_existing_traces(run_id)
                     planner_scorecard = planner_eval.scorecard
                     planner_path = run_reports / "planner_scorecard.json"
                     if planner_path.exists():
@@ -221,12 +230,12 @@ class MultiModelRunner:
                 spec_judge_output = None
 
                 if judge_model:
-                    run_dir = self.workspace_root / ".pdd_runs" / run_id
-                    snapshot_dir = run_dir / "snapshot" / "files"
-                    judge_cache = JudgeCache(self.workspace_root / "analysis" / "judge_cache")
+                    run_dir = run_workspace / ".pdd_runs" / run_id
+                    snapshot_dir = run_dir / "snapshots" / "final_files"
+                    judge_cache = JudgeCache(run_workspace / "analysis" / "judge_cache")
 
                     arch_judge = ArchitectureQualityJudge(
-                        workspace=self.workspace_root,
+                        workspace=run_workspace,
                         cache=judge_cache,
                         model_id=judge_model,
                         producer_model_id=profile.producer_model_id,
@@ -235,7 +244,7 @@ class MultiModelRunner:
                     arch_judge_output = arch_judge.evaluate(arch_digest).model_dump()
 
                     code_judge = CodeQualityJudge(
-                        workspace=self.workspace_root,
+                        workspace=run_workspace,
                         cache=judge_cache,
                         model_id=judge_model,
                         producer_model_id=profile.producer_model_id,
@@ -250,7 +259,7 @@ class MultiModelRunner:
                     if spec_summary_path.exists():
                         spec_summary = json.loads(spec_summary_path.read_text(encoding="utf-8"))
                         spec_judge = SpecFidelityJudge(
-                            workspace=self.workspace_root,
+                            workspace=run_workspace,
                             cache=judge_cache,
                             model_id=judge_model,
                             producer_model_id=profile.producer_model_id,
@@ -259,9 +268,10 @@ class MultiModelRunner:
                         spec_judge_output = spec_judge.evaluate(
                             spec_summary=spec_summary,
                             code_digest=code_digest,
+                            snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
                         ).model_dump()
 
-                reporter = QualityReporter(self.workspace_root, run_id)
+                reporter = QualityReporter(run_workspace, run_id)
                 scorecard = reporter.compute(
                     arch_digest,
                     code_digest,

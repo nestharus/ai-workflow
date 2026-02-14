@@ -18,5 +18,5 @@ class SpecFidelityOutput(BaseModel):
 
     coverage_estimate: float = 0.0
     requirements: list[RequirementCoverage] = Field(default_factory=list)
-    missing: list[str] = Field(default_factory=list)
-    hallucinated: list[str] = Field(default_factory=list)
+    missing_requirements: list[str] = Field(default_factory=list)
+    hallucinated_features: list[str] = Field(default_factory=list)

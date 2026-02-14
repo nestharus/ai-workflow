@@ -478,21 +478,48 @@ class ArchitectureQualityScorer:
 class CodeQualityScorer:
     """Compute mechanical code metrics from digest."""
 
-    def compute(self, digest: dict[str, Any]) -> list[QualityMetric]:
+    def compute(
+        self,
+        digest: dict[str, Any],
+        *,
+        refactor_churn: float | None = None,
+    ) -> list[QualityMetric]:
         """Compute mechanical code metrics.
 
         Returns list of QualityMetric for:
         - code.issue_density
         - code.file_size_outliers
-        - code.churn (placeholder)
+        - code.churn
+        - code.duplication_ratio
         """
         codebase = digest.get("codebase", {})
         files = codebase.get("files", [])
         totals = codebase.get("totals", {})
+        codebase_metrics = codebase.get("metrics", {})
         l3_findings = digest.get("l3_review", {}).get("final_findings", {})
 
         total_loc = totals.get("loc", 0)
+        total_files = totals.get("files", len(files))
         metrics: list[QualityMetric] = []
+
+        metrics.append(
+            QualityMetric(
+                name="code.loc_total",
+                raw=float(total_loc),
+                score=1.0,
+                status="PASS",
+                detail=f"loc={total_loc}",
+            )
+        )
+        metrics.append(
+            QualityMetric(
+                name="code.files_total",
+                raw=float(total_files),
+                score=1.0,
+                status="PASS",
+                detail=f"files={total_files}",
+            )
+        )
 
         # Issue density
         blockers = l3_findings.get("BLOCKER", 0)
@@ -538,15 +565,32 @@ class CodeQualityScorer:
             )
         )
 
-        # Churn placeholder (reuse l3.refactor_churn if available)
-        churn_score = 1.0  # Default healthy
+        churn_raw = float(refactor_churn) if isinstance(refactor_churn, int | float) else 0.0
+        churn_score = _clamp01(1 - churn_raw)
         metrics.append(
             QualityMetric(
                 name="code.churn",
-                raw=0.0,
+                raw=churn_raw,
                 score=churn_score,
-                status="PASS",
-                detail="placeholder — integrate with l3.refactor_churn",
+                status=_threshold_status(churn_score),
+                detail=f"l3.refactor_churn={churn_raw:.3f}",
+            )
+        )
+
+        duplication_ratio = (
+            float(codebase_metrics.get("duplication_ratio", 0.0))
+            if isinstance(codebase_metrics, dict)
+            else 0.0
+        )
+        duplication_ratio = _clamp01(duplication_ratio)
+        duplication_score = _clamp01(1 - duplication_ratio)
+        metrics.append(
+            QualityMetric(
+                name="code.duplication_ratio",
+                raw=duplication_ratio,
+                score=duplication_score,
+                status=_threshold_status(duplication_score),
+                detail=f"duplication_ratio={duplication_ratio:.3f}",
             )
         )
 
@@ -559,7 +603,7 @@ class CodeQualityScorer:
             0.35 * by_name.get("code.issue_density", 0.0)
             + 0.25 * by_name.get("code.churn", 0.0)
             + 0.20 * by_name.get("code.file_size_outliers", 0.0)
-            + 0.20 * 1.0  # duplication placeholder
+            + 0.20 * by_name.get("code.duplication_ratio", 0.0)
         )
 
 
@@ -580,8 +624,8 @@ class SpecFidelityScorer:
             ]
 
         coverage = judge_output.get("coverage_estimate", 0.0)
-        missing = judge_output.get("missing", [])
-        hallucinated = judge_output.get("hallucinated", [])
+        missing = judge_output.get("missing_requirements", [])
+        hallucinated = judge_output.get("hallucinated_features", [])
 
         status = _threshold_status(coverage)
         if hallucinated:
@@ -691,7 +735,11 @@ class QualityReporter:
 
         # Code
         code_scorer = CodeQualityScorer()
-        code_metrics = code_scorer.compute(code_digest)
+        refactor_churn = _metric_raw_by_name(
+            _field(pipeline_scorecard, "soft_signals"),
+            "l3.refactor_churn",
+        )
+        code_metrics = code_scorer.compute(code_digest, refactor_churn=refactor_churn)
         code_mechanical = code_scorer.mechanical_score(code_metrics)
 
         code_judge_score = 0.5  # default middle
@@ -756,7 +804,7 @@ class QualityReporter:
         spec_fidelity_score = spec_metrics[0].score if spec_metrics else 0.0
         spec_missing_items: list[str] = []
         if spec_judge_output:
-            missing = spec_judge_output.get("missing", [])
+            missing = spec_judge_output.get("missing_requirements", [])
             if isinstance(missing, list):
                 spec_missing_items = [str(item) for item in missing if item]
 
@@ -972,3 +1020,18 @@ def _metric_scores(metrics: Any) -> list[float]:
         if isinstance(raw, int | float):
             scores.append(_clamp01(float(raw)))
     return scores
+
+
+def _metric_raw_by_name(metrics: Any, metric_name: str) -> float | None:
+    """Return the raw value for a named metric from list payloads."""
+    if not isinstance(metrics, list):
+        return None
+    for metric in metrics:
+        name = _field(metric, "name")
+        if name != metric_name:
+            continue
+        raw = _field(metric, "raw")
+        if isinstance(raw, int | float):
+            return float(raw)
+        return None
+    return None

@@ -428,10 +428,6 @@ class FinalReportGenerator:
 
         missing_items = scorecard.get("spec_missing_items")
         if not isinstance(missing_items, list):
-            missing_items = scorecard.get("spec_missing")
-        if not isinstance(missing_items, list):
-            missing_items = scorecard.get("missing")
-        if not isinstance(missing_items, list):
             missing_items = []
 
         lines.extend(["", "### Missing Items", ""])

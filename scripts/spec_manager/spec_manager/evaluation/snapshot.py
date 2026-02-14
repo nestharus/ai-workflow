@@ -1,7 +1,8 @@
-"""Run snapshot — preserves produced files at pipeline completion.
+"""Run snapshot — preserves produced code at pipeline completion.
 
-Copies touched/produced files into ``.pdd_runs/{run_id}/snapshot/files/``
-and writes a manifest with SHA-256 hashes for reproducibility.
+Copies the run's produced source tree into
+``.pdd_runs/{run_id}/snapshots/final_files/`` and writes a manifest with
+SHA-256 hashes for reproducibility.
 
 Usage::
 
@@ -22,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 def snapshot_run(workspace_root: Path, run_id: str) -> Path:
-    """Snapshot produced files for the given run.
+    """Snapshot produced code files for the given run.
 
-    Copies files from ``reports/pdd/{run_id}/`` and the run directory
-    into ``.pdd_runs/{run_id}/snapshot/files/`` and writes a manifest.
+    Copies files from the run's ``spec_snapshot`` (the produced source tree)
+    into ``.pdd_runs/{run_id}/snapshots/final_files/`` and writes a manifest.
 
     Args:
         workspace_root: Root of the PDD workspace.
@@ -35,31 +36,24 @@ def snapshot_run(workspace_root: Path, run_id: str) -> Path:
         Path to the snapshot manifest.
     """
     run_dir = workspace_root / ".pdd_runs" / run_id
-    snapshot_dir = run_dir / "snapshot"
-    files_dir = snapshot_dir / "files"
+    snapshot_dir = run_dir / "snapshots"
+    files_dir = snapshot_dir / "final_files"
     files_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_entries: list[dict[str, Any]] = []
 
-    # Snapshot report artifacts
-    run_reports = workspace_root / "reports" / "pdd" / run_id
-    if run_reports.exists():
-        manifest_entries.extend(_copy_tree(run_reports, files_dir / "reports", run_reports))
-
-    # Snapshot slice evidence
-    slices_dir = run_dir / "slices"
-    if slices_dir.exists():
-        manifest_entries.extend(_copy_tree(slices_dir, files_dir / "slices", slices_dir))
-
-    # Snapshot demotions
-    demotions_dir = run_dir / "demotions"
-    if demotions_dir.exists():
-        manifest_entries.extend(_copy_tree(demotions_dir, files_dir / "demotions", demotions_dir))
+    produced_tree = workspace_root / "spec_snapshot"
+    if produced_tree.exists():
+        manifest_entries.extend(_copy_tree(produced_tree, files_dir, produced_tree))
+    else:
+        logger.warning("Produced source tree missing for snapshot: %s", produced_tree)
 
     # Write manifest
     manifest = {
         "run_id": run_id,
         "snapshot_time": time.time(),
+        "snapshot_root": f".pdd_runs/{run_id}/snapshots/final_files",
+        "source_root": str(produced_tree),
         "file_count": len(manifest_entries),
         "files": manifest_entries,
     }
@@ -94,6 +88,7 @@ def _copy_tree(src: Path, dst: Path, base: Path) -> list[dict[str, Any]]:
         entries.append(
             {
                 "path": str(rel),
+                "snapshot_path": str(rel),
                 "sha256": sha,
                 "size_bytes": fp.stat().st_size if fp.exists() else 0,
             }

@@ -528,8 +528,18 @@ class PlannerEvalHarness:
             run_reports = workspace / "reports" / "pdd" / run_id
             run_reports.mkdir(parents=True, exist_ok=True)
 
-            arch_digest = build_architecture_digest(workspace, run_id)
-            code_digest = build_code_digest(workspace, run_id)
+            arch_digest = build_architecture_digest(
+                workspace,
+                run_id,
+                git_sha="",
+                producer_model_id="",
+            )
+            code_digest = build_code_digest(
+                workspace,
+                run_id,
+                git_sha="",
+                producer_model_id="",
+            )
             (run_reports / "architecture_digest.json").write_text(
                 json.dumps(arch_digest, indent=2), encoding="utf-8"
             )
@@ -603,7 +613,7 @@ class PlannerEvalHarness:
 
         judge_cache = JudgeCache(workspace / "analysis" / "judge_cache")
         run_dir = workspace / ".pdd_runs" / run_id
-        snapshot_dir = run_dir / "snapshot" / "files"
+        snapshot_dir = run_dir / "snapshots" / "final_files"
 
         arch_judge_output = (
             ArchitectureQualityJudge(

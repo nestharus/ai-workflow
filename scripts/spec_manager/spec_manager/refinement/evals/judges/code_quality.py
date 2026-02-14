@@ -14,7 +14,7 @@ from spec_manager.schemas.eval_code_judge import CodeJudgeOutput
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "judge-code-quality"
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 
 class CodeQualityJudge:
@@ -81,12 +81,12 @@ class CodeQualityJudge:
         return result  # type: ignore[return-value]
 
     def _sample_files(self, digest: dict[str, Any]) -> list[dict]:
-        """Deterministically sample files for review.
+        """Sample files for review using deterministic stratified sampling.
 
         Strategy:
         1. Top K by LOC (K=3)
         2. Top K by findings (K=3)
-        3. Fill remaining budget with other files
+        3. Up to 2 random surprise files (seeded by run_id)
         """
         files = digest.get("codebase", {}).get("files", [])
         if not files:
@@ -109,15 +109,16 @@ class CodeQualityJudge:
                 if match:
                     selected[path] = match
 
-        # Fill remaining
-        remaining = self.sample_budget - len(selected)
-        if remaining > 0:
-            for f in files:
-                if f["path"] not in selected:
-                    selected[f["path"]] = f
-                    remaining -= 1
-                    if remaining <= 0:
-                        break
+        # Seeded random surprise sampling.
+        remaining_pool = [f for f in files if f["path"] not in selected]
+        random_slots = min(2, self.sample_budget - len(selected), len(remaining_pool))
+        if random_slots > 0:
+            run_id = str(digest.get("run_id", ""))
+            pool = sorted(
+                remaining_pool, key=lambda file_data: hash(f"{run_id}:{file_data.get('path', '')}")
+            )
+            for f in pool[:random_slots]:
+                selected[f["path"]] = f
 
         return list(selected.values())
 
@@ -179,8 +180,23 @@ class CodeQualityJudge:
             "- `files`: per-file entries with `path`, `scores`, `overall`, `notes`, and `risks`",
             "- `overall`: integer 1-5",
             "- `systemic_risks`: list of cross-cutting risks with severity and evidence",
-            "Use score dimensions: readability, maintainability, error_handling, consistency,"
-            " contract_clarity.",
+            "",
+            "Per-file rubric dimensions (score each 1-5):",
+            "- readability: naming clarity, local reasoning flow, and structural legibility",
+            "- maintainability: modular seams, separation of concerns, and duplication control",
+            (
+                "- error_handling: explicit failures, boundary checks, and"
+                " resilient edge-case handling"
+            ),
+            "- consistency: alignment with nearby project conventions and idioms",
+            "- contract_clarity: explicit API/contract behavior and assumptions",
+            "",
+            "Overall rubric dimensions (inform aggregate `overall` 1-5):",
+            "- cohesion across modules",
+            "- appropriateness of abstractions",
+            "- test strategy adequacy from test structure/coverage signals and CI summary",
+            "",
+            "Scale: 1=poor, 2=weak, 3=adequate, 4=strong, 5=excellent.",
             "Valid alternatives are acceptable; do not prescribe one coding style as mandatory.",
             "All risks and notes must cite concrete file identifiers from the digest.",
             "",

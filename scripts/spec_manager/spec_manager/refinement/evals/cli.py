@@ -1781,9 +1781,21 @@ def cmd_eval_quality(args: argparse.Namespace) -> int:
 
     workspace = Path.cwd()
     run_id = args.run_id
+    run_dir = workspace / ".pdd_runs" / run_id
+    snapshot_dir = run_dir / "snapshots" / "final_files"
 
-    arch_digest = build_architecture_digest(workspace, run_id)
-    code_digest = build_code_digest(workspace, run_id)
+    arch_digest = build_architecture_digest(
+        workspace,
+        run_id,
+        git_sha="",
+        producer_model_id="",
+    )
+    code_digest = build_code_digest(
+        workspace,
+        run_id,
+        git_sha="",
+        producer_model_id="",
+    )
 
     arch_judge = None
     code_judge = None
@@ -1818,11 +1830,14 @@ def cmd_eval_quality(args: argparse.Namespace) -> int:
                 producer_model_id=producer_model_id,
                 allow_self_judge=getattr(args, "allow_self_judge", False),
             )
-            .evaluate(code_digest)
+            .evaluate(
+                code_digest,
+                snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
+            )
             .model_dump()
         )
 
-        spec_summary_path = workspace / ".pdd_runs" / run_id / "spec_summary.json"
+        spec_summary_path = run_dir / "spec_summary.json"
         if spec_summary_path.exists():
             import json as _json
 
@@ -1834,7 +1849,11 @@ def cmd_eval_quality(args: argparse.Namespace) -> int:
                     producer_model_id=producer_model_id,
                     allow_self_judge=getattr(args, "allow_self_judge", False),
                 )
-                .evaluate(spec_summary=spec_summary, code_digest=code_digest)
+                .evaluate(
+                    spec_summary=spec_summary,
+                    code_digest=code_digest,
+                    snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
+                )
                 .model_dump()
             )
 
