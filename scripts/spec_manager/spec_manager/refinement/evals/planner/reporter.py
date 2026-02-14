@@ -64,6 +64,21 @@ class PlannerMetric:
 
 
 @dataclass
+class PlannerSliceAggregate:
+    """Per-slice planner evaluation summary."""
+
+    slice_id: str = ""
+    decisions_total: int = 0
+    decisions_evaluated: int = 0
+    decisions_passed: int = 0
+    decisions_failed: int = 0
+    pass_rate: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class PlannerScorecard:
     """Complete scorecard for a planner evaluation run.
 
@@ -72,6 +87,7 @@ class PlannerScorecard:
         model_id: Model identifier used for the planner decisions.
         hard_gates: List of hard-gate metrics (all must pass).
         soft_signals: List of soft-signal metrics (diagnostic).
+        slice_aggregates: Per-slice decision aggregates.
         overall_pass: True when every hard gate has status PASS.
         decisions_evaluated: Number of decisions that had GT verdicts.
         decisions_total: Total number of decision traces loaded.
@@ -82,6 +98,7 @@ class PlannerScorecard:
     model_id: str = ""
     hard_gates: list[PlannerMetric] = field(default_factory=list)
     soft_signals: list[PlannerMetric] = field(default_factory=list)
+    slice_aggregates: list[PlannerSliceAggregate] = field(default_factory=list)
     overall_pass: bool = True
     decisions_evaluated: int = 0
     decisions_total: int = 0
@@ -97,6 +114,7 @@ class PlannerScorecard:
             "summary": self.summary,
             "hard_gates": [m.to_dict() for m in self.hard_gates],
             "soft_signals": [m.to_dict() for m in self.soft_signals],
+            "slice_aggregates": [a.to_dict() for a in self.slice_aggregates],
         }
 
 
@@ -160,6 +178,7 @@ class PlannerReporter:
         self._last_verdicts = list(verdicts)
         hard_gates = self._compute_hard_gates(verdicts, traces)
         soft_signals = self._compute_soft_signals(verdicts, traces)
+        slice_aggregates = self._compute_slice_aggregates(verdicts, traces)
         overall_pass = all(g.status != "FAIL" for g in hard_gates)
 
         failing_gates = [g.name for g in hard_gates if g.status == "FAIL"]
@@ -190,6 +209,7 @@ class PlannerReporter:
             model_id=model_id,
             hard_gates=hard_gates,
             soft_signals=soft_signals,
+            slice_aggregates=slice_aggregates,
             overall_pass=overall_pass,
             decisions_evaluated=len(verdicts),
             decisions_total=len(traces),
@@ -219,10 +239,7 @@ class PlannerReporter:
 
         # Per-decision JSONL (verdicts only -- no scorecard-level info)
         jsonl_path = self._reports_dir / "planner_decisions.jsonl"
-        lines: list[str] = []
-        for m in scorecard.hard_gates + scorecard.soft_signals:
-            for ref in m.evidence_refs:
-                lines.append(json.dumps({"metric": m.name, "evidence": ref}))
+        lines = [json.dumps(self._verdict_to_row(v), sort_keys=True) for v in self._last_verdicts]
         jsonl_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
         # Planner review (FAIL/WARN/NEEDS_REVIEW decisions with trace paths)
@@ -270,9 +287,8 @@ class PlannerReporter:
         missing: list[str] = []
         for t in traces:
             tid = getattr(t, "trace_id", "")
-            artifacts = getattr(t, "artifacts", None) or {}
-            has_request = bool(artifacts.get("request"))
-            has_decision = bool(getattr(t, "decision", None) or artifacts.get("decision"))
+            has_request = bool(getattr(t, "request", None))
+            has_decision = bool(getattr(t, "decision", None))
             if not has_request or not has_decision:
                 missing.append(str(tid))
 
@@ -685,6 +701,46 @@ class PlannerReporter:
             detail=f"avg={avg_iter:.1f} across {len(slice_iterations)} slice(s)",
         )
 
+    def _compute_slice_aggregates(
+        self,
+        verdicts: list[Any],
+        traces: list[Any],
+    ) -> list[PlannerSliceAggregate]:
+        """Build per-slice evaluation aggregates from traces and verdicts."""
+        totals_by_slice: dict[str, int] = {}
+        for trace in traces:
+            slice_id = self._slice_id_for_record(trace)
+            totals_by_slice[slice_id] = totals_by_slice.get(slice_id, 0) + 1
+
+        evaluated_by_slice: dict[str, int] = {}
+        passed_by_slice: dict[str, int] = {}
+        for verdict in verdicts:
+            slice_id = self._slice_id_for_record(verdict)
+            evaluated_by_slice[slice_id] = evaluated_by_slice.get(slice_id, 0) + 1
+            if bool(getattr(verdict, "passed", False)):
+                passed_by_slice[slice_id] = passed_by_slice.get(slice_id, 0) + 1
+
+        slice_ids = sorted(set(totals_by_slice) | set(evaluated_by_slice))
+        aggregates: list[PlannerSliceAggregate] = []
+        for slice_id in slice_ids:
+            decisions_total = totals_by_slice.get(slice_id, 0)
+            decisions_evaluated = evaluated_by_slice.get(slice_id, 0)
+            decisions_passed = passed_by_slice.get(slice_id, 0)
+            decisions_failed = max(decisions_evaluated - decisions_passed, 0)
+            pass_rate = decisions_passed / decisions_evaluated if decisions_evaluated > 0 else 0.0
+            aggregates.append(
+                PlannerSliceAggregate(
+                    slice_id=slice_id,
+                    decisions_total=decisions_total,
+                    decisions_evaluated=decisions_evaluated,
+                    decisions_passed=decisions_passed,
+                    decisions_failed=decisions_failed,
+                    pass_rate=pass_rate,
+                )
+            )
+
+        return aggregates
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -746,6 +802,43 @@ class PlannerReporter:
             counts.append(float(mc))
         return counts
 
+    @staticmethod
+    def _slice_id_for_record(record: Any) -> str:
+        """Extract slice_id from decision_key or fallback fields."""
+        decision_key = str(getattr(record, "decision_key", "") or "")
+        if decision_key:
+            parts = decision_key.split(":")
+            if len(parts) > 2 and parts[2]:
+                return parts[2]
+
+        request = getattr(record, "request", None)
+        if isinstance(request, dict):
+            slice_id = str(request.get("slice_id", "") or "")
+            if slice_id:
+                return slice_id
+
+        return "(unknown)"
+
+    @staticmethod
+    def _verdict_to_row(verdict: Any) -> dict[str, Any]:
+        """Serialize a verdict for planner_decisions.jsonl output."""
+        raw_score = getattr(verdict, "score", 0.0)
+        try:
+            score = float(raw_score or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        return {
+            "decision_key": str(getattr(verdict, "decision_key", "") or ""),
+            "trace_id": str(getattr(verdict, "trace_id", "") or ""),
+            "capability": str(getattr(verdict, "capability", "") or ""),
+            "passed": bool(getattr(verdict, "passed", False)),
+            "score": score,
+            "detail": str(getattr(verdict, "detail", "") or ""),
+            "hard_gate_failures": list(getattr(verdict, "hard_gate_failures", []) or []),
+            "soft_signal_warnings": list(getattr(verdict, "soft_signal_warnings", []) or []),
+        }
+
     # ------------------------------------------------------------------
     # Markdown rendering
     # ------------------------------------------------------------------
@@ -784,6 +877,21 @@ class PlannerReporter:
         )
         for s in scorecard.soft_signals:
             lines.append(f"| {s.name} | {s.status} | {s.score:.2f} | {s.raw:.2f} | {s.detail} |")
+
+        lines.extend(
+            [
+                "",
+                "## Slice Aggregates",
+                "",
+                "| Slice | Evaluated | Passed | Failed | Pass Rate | Total Traces |",
+                "|-------|-----------|--------|--------|-----------|--------------|",
+            ]
+        )
+        for agg in scorecard.slice_aggregates:
+            lines.append(
+                f"| {agg.slice_id} | {agg.decisions_evaluated} | {agg.decisions_passed} | "
+                f"{agg.decisions_failed} | {agg.pass_rate:.2f} | {agg.decisions_total} |"
+            )
 
         lines.append("")
         return "\n".join(lines)

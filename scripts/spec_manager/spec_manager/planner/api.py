@@ -7,6 +7,7 @@ auto-mode decision authority.
 
 from __future__ import annotations
 
+import copy
 import logging
 import uuid
 from collections.abc import Callable
@@ -371,6 +372,17 @@ def _request_snapshot(req: PlanningRequest) -> dict[str, Any]:
         "mode": ctx.mode,
         "workspace_root": ctx.workspace_root,
         "slice_root": ctx.slice_root,
+        "metadata": _safe_deepcopy(ctx.metadata),
+        "inputs": _safe_deepcopy(req.inputs),
         "inputs_keys": sorted(req.inputs.keys()),
+        "constraints_hint": _safe_deepcopy(req.constraints_hint),
         "has_constraints_hint": req.constraints_hint is not None,
     }
+
+
+def _safe_deepcopy(value: Any) -> Any:
+    """Best-effort deep copy for trace snapshots."""
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        return value

@@ -446,7 +446,10 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     # eval planner trace replay
     p_pl_replay = planner_sub.add_parser("replay", help="Replay a planner decision")
     p_pl_replay.add_argument("trace_id", help="Trace ID to replay")
-    p_pl_replay.add_argument("--override", help="Path to override YAML/JSON")
+    p_pl_replay.add_argument(
+        "--override",
+        help="Path to override YAML/JSON (mapping with optional inputs/outputs keys)",
+    )
     p_pl_replay.add_argument(
         "--workspace", default=".", help="Workspace root (where traces are stored)"
     )

@@ -7,7 +7,7 @@ Three evaluation modes:
 * **slice** — runs ``PromotionLoop.run_slice()`` for a single
   slice/layer, then scores.
 * **replay** — re-runs a single planner decision from ``replay.json``
-  (with optional input overrides), then diffs against the original.
+  (with optional input/output overrides), then diffs against the original.
 
 Usage::
 
@@ -139,7 +139,7 @@ class PlannerEvalHarness:
         overrides: dict[str, Any] = {}
         if config.override_path and config.override_path.exists():
             try:
-                overrides = json.loads(config.override_path.read_text(encoding="utf-8"))
+                overrides = self._load_overrides(config.override_path)
             except Exception as exc:
                 result.errors.append(f"Failed to load overrides: {exc}")
 
@@ -208,8 +208,9 @@ class PlannerEvalHarness:
         verdicts = []
         if gt is not None:
             verdicts = self._evaluate_against_gt(traces, gt)
-            result.gt_cases_matched = sum(1 for v in verdicts if v.decision_key)
-            result.gt_cases_unmatched = len(gt.cases) - result.gt_cases_matched
+            matched_keys = {v.decision_key for v in verdicts if getattr(v, "decision_key", "")}
+            result.gt_cases_matched = len(matched_keys)
+            result.gt_cases_unmatched = max(len(gt.cases) - result.gt_cases_matched, 0)
 
         result.verdicts = verdicts
 
@@ -265,6 +266,12 @@ class PlannerEvalHarness:
                 continue
 
             verdict = scorer.score(trace, gt_case)
+            if not getattr(verdict, "decision_key", ""):
+                verdict.decision_key = trace.decision_key
+            if not getattr(verdict, "trace_id", ""):
+                verdict.trace_id = trace.trace_id
+            if not getattr(verdict, "capability", ""):
+                verdict.capability = gt_case.capability
             verdicts.append(verdict)
 
         return verdicts
@@ -303,9 +310,21 @@ class PlannerEvalHarness:
             PlanningRequest,
         )
 
-        req_snapshot = original.request
-        inputs = dict(req_snapshot.get("inputs", {}))
-        inputs.update(overrides.get("inputs", {}))
+        req_snapshot = original.request or {}
+        inputs = dict(req_snapshot.get("inputs", {}) or {})
+        input_overrides = overrides.get("inputs", {})
+        if input_overrides:
+            if not isinstance(input_overrides, dict):
+                raise ValueError("Override field 'inputs' must be a mapping")
+            inputs.update(input_overrides)
+
+        metadata = req_snapshot.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        constraints_hint = req_snapshot.get("constraints_hint")
+        if constraints_hint is not None and not isinstance(constraints_hint, dict):
+            constraints_hint = None
 
         ctx = PlanningContext(
             run_id=req_snapshot.get("run_id", ""),
@@ -315,6 +334,7 @@ class PlannerEvalHarness:
             mode=req_snapshot.get("mode", "auto"),
             workspace_root=req_snapshot.get("workspace_root", str(self._workspace)),
             slice_root=req_snapshot.get("slice_root", ""),
+            metadata=metadata,
         )
 
         planner = Planner(
@@ -326,14 +346,43 @@ class PlannerEvalHarness:
             capability=req_snapshot.get("capability", "PLAN"),
             context=ctx,
             inputs=inputs,
+            constraints_hint=constraints_hint,
         )
 
         result = planner.plan(req)
+        replay_outputs = dict(result.outputs)
+        output_overrides = overrides.get("outputs", {})
+        if output_overrides:
+            if not isinstance(output_overrides, dict):
+                raise ValueError("Override field 'outputs' must be a mapping")
+            replay_outputs.update(output_overrides)
         return {
             "trace_id": result.trace_id,
             "status": result.status,
-            "outputs": result.outputs,
+            "outputs": replay_outputs,
         }
+
+    @staticmethod
+    def _load_overrides(path: Path) -> dict[str, Any]:
+        """Load replay overrides from JSON or YAML."""
+        raw = path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return {}
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise ValueError("YAML override parsing requires PyYAML") from exc
+            parsed = yaml.safe_load(raw)
+
+        if parsed is None:
+            return {}
+        if not isinstance(parsed, dict):
+            raise TypeError("Override file must contain a mapping object")
+        return parsed
 
     def _diff_decisions(self, original: Any, replay: dict[str, Any]) -> Any:
         """Compare original trace decision to replay result."""
@@ -343,7 +392,8 @@ class PlannerEvalHarness:
         replay_status = replay.get("status", "")
         same_status = orig_status == replay_status
 
-        orig_outputs = original.artifacts.get("outputs", {})
+        artifacts = getattr(original, "artifacts", None) or {}
+        orig_outputs = artifacts.get("outputs", {}) or artifacts.get("override_outputs", {})
         replay_outputs = replay.get("outputs", {})
 
         # Simple structural diff
