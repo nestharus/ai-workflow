@@ -465,16 +465,42 @@ class FinalReportGenerator:
 
     def _evidence_links(self) -> str:
         """Generate evidence links section."""
-        lines = [
-            "## Evidence Links",
-            "",
-            f"- Run directory: `.pdd_runs/{self.run_id}/`",
-            f"- Evidence bundles: `.pdd_runs/{self.run_id}/slices/`",
-            f"- Demotion ledger: `.pdd_runs/{self.run_id}/demotions/ledger.jsonl`",
-            f"- CI receipts: `.pdd_runs/{self.run_id}/ci/`",
-            f"- Reports: `reports/pdd/{self.run_id}/`",
+        lines = ["## Evidence Links", ""]
+        artifacts = [
+            ("Run directory", self._run_dir),
+            ("Snapshot manifest", self._run_dir / "snapshot" / "manifest.json"),
+            ("Snapshot files", self._run_dir / "snapshot" / "files"),
+            ("Evidence bundles", self._run_dir / "slices"),
+            ("Demotion ledger", self._run_dir / "demotions" / "ledger.jsonl"),
+            ("CI receipts", self._run_dir / "ci"),
+            ("Architecture digest", self._reports_dir / "architecture_digest.json"),
+            ("Code digest", self._reports_dir / "code_digest.json"),
+            ("Pipeline scorecard", self._reports_dir / "scores.json"),
+            ("Planner scorecard", self._reports_dir / "planner_scorecard.json"),
+            ("Quality scorecard", self._reports_dir / "quality_scorecard.json"),
+            ("Reports directory", self._reports_dir),
         ]
+        for label, path in artifacts:
+            lines.append(self._artifact_link(label, path))
+        lines.extend(
+            [
+                "",
+                "All evidence references are run-scoped; no global fallback artifacts are used.",
+            ]
+        )
         return "\n".join(lines)
+
+    def _artifact_link(self, label: str, path: Path) -> str:
+        rel = self._display_path(path)
+        if path.exists():
+            return f"- {label}: `{rel}`"
+        return f"- {label}: MISSING (`{rel}`)"
+
+    def _display_path(self, path: Path) -> str:
+        try:
+            return path.resolve().relative_to(self.workspace_root.resolve()).as_posix()
+        except Exception:
+            return str(path)
 
 
 def _safe_float(value: Any, *, default: float) -> float:

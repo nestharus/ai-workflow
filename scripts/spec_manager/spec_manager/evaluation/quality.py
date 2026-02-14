@@ -64,6 +64,11 @@ class QualityScorecard:
     composite_status: str = ""
     overall_status: str = "PASS"
     summary: str = ""
+    architecture_judge_dimensions: list[str] = field(default_factory=list)
+    architecture_risks: list[dict[str, Any] | str] = field(default_factory=list)
+    code_sampled_files: list[dict[str, Any]] = field(default_factory=list)
+    code_risks: list[dict[str, Any] | str] = field(default_factory=list)
+    spec_missing_items: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +80,11 @@ class QualityScorecard:
             "composite_status": self.composite_status,
             "overall_status": self.overall_status,
             "summary": self.summary,
+            "architecture_judge_dimensions": self.architecture_judge_dimensions,
+            "architecture_risks": self.architecture_risks,
+            "code_sampled_files": self.code_sampled_files,
+            "code_risks": self.code_risks,
+            "spec_missing_items": self.spec_missing_items,
             "architecture": [m.to_dict() for m in self.architecture],
             "code": [m.to_dict() for m in self.code],
             "spec_fidelity": [m.to_dict() for m in self.spec_fidelity],
@@ -390,9 +400,18 @@ class QualityReporter:
         arch_mechanical = arch_scorer.mechanical_score(arch_metrics)
 
         arch_judge_score = 0.5  # default middle
+        architecture_judge_dimensions: list[str] = []
+        architecture_risks: list[dict[str, Any] | str] = []
         if arch_judge_output:
             overall = arch_judge_output.get("overall", 3)
             arch_judge_score = (overall - 1) / 4
+            scores = arch_judge_output.get("scores", {})
+            if isinstance(scores, dict):
+                for name in sorted(scores):
+                    architecture_judge_dimensions.append(f"{name}={scores[name]}")
+            risks = arch_judge_output.get("risks", [])
+            if isinstance(risks, list):
+                architecture_risks = [risk for risk in risks if risk]
 
         arch_quality = 0.35 * arch_mechanical + 0.65 * arch_judge_score
 
@@ -424,9 +443,37 @@ class QualityReporter:
         code_mechanical = code_scorer.mechanical_score(code_metrics)
 
         code_judge_score = 0.5  # default middle
+        code_sampled_files: list[dict[str, Any]] = []
+        code_risks: list[dict[str, Any] | str] = []
         if code_judge_output:
             overall = code_judge_output.get("overall", 3)
             code_judge_score = (overall - 1) / 4
+            sampled_entries = code_judge_output.get("files", [])
+            if isinstance(sampled_entries, list):
+                by_path = {
+                    str(file_data.get("path", "")): int(file_data.get("loc", 0) or 0)
+                    for file_data in code_digest.get("codebase", {}).get("files", [])
+                    if isinstance(file_data, dict)
+                }
+                for entry in sampled_entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    path = str(entry.get("path", ""))
+                    notes = entry.get("notes", [])
+                    note = ""
+                    if isinstance(notes, list):
+                        note = "; ".join(str(item) for item in notes if item)
+                    code_sampled_files.append(
+                        {
+                            "path": path,
+                            "loc": by_path.get(path, 0),
+                            "overall": entry.get("overall", 0),
+                            "note": note,
+                        }
+                    )
+            risks = code_judge_output.get("systemic_risks", [])
+            if isinstance(risks, list):
+                code_risks = [risk for risk in risks if risk]
 
         code_quality = 0.40 * code_mechanical + 0.60 * code_judge_score
 
@@ -455,6 +502,11 @@ class QualityReporter:
         spec_scorer = SpecFidelityScorer()
         spec_metrics = spec_scorer.compute(spec_judge_output)
         spec_fidelity_score = spec_metrics[0].score if spec_metrics else 0.0
+        spec_missing_items: list[str] = []
+        if spec_judge_output:
+            missing = spec_judge_output.get("missing", [])
+            if isinstance(missing, list):
+                spec_missing_items = [str(item) for item in missing if item]
 
         # Overall
         overall_status = "PASS"
@@ -518,6 +570,11 @@ class QualityReporter:
             composite_status=composite_status,
             overall_status=overall_status,
             summary=", ".join(summary_parts),
+            architecture_judge_dimensions=architecture_judge_dimensions,
+            architecture_risks=architecture_risks,
+            code_sampled_files=code_sampled_files,
+            code_risks=code_risks,
+            spec_missing_items=spec_missing_items,
         )
 
     def _pipeline_efficiency_from_scorecard(self, scorecard: Any | None) -> float | None:

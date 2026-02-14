@@ -58,6 +58,8 @@ class EvalResult:
     traces_evaluated: int = 0
     gt_cases_matched: int = 0
     gt_cases_unmatched: int = 0
+    pipeline_scorecard: Any = None
+    quality_scorecard: Any = None
     diagnostic_run_id: str = ""
     diagnostic_scorecard: Any = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
@@ -124,7 +126,13 @@ class PlannerEvalHarness:
 
     def score_existing_traces(self, run_id: str) -> EvalResult:
         """Score traces from an already-completed run (no pipeline execution)."""
-        return self._score_traces(run_id)
+        config = EvalConfig(
+            workspace_root=self._workspace,
+            gt_path=self._gt_path,
+            run_id=run_id,
+            mode="score",
+        )
+        return self._score_traces(run_id, config=config)
 
     # ------------------------------------------------------------------
     # Mode implementations
@@ -133,7 +141,7 @@ class PlannerEvalHarness:
     def _run_e2e(self, config: EvalConfig) -> EvalResult:
         """In-situ: run full PddLifecycle.run(), then score traces."""
         try:
-            run_id, workspace_root = self._execute_e2e_pipeline(config)
+            run_id, workspace_root, run_results = self._execute_e2e_pipeline(config)
         except Exception as exc:
             return EvalResult(run_id=config.run_id, mode="e2e", errors=[str(exc)])
 
@@ -142,6 +150,8 @@ class PlannerEvalHarness:
             workspace_root=workspace_root,
             gt_path=config.gt_path,
             mode="e2e",
+            run_results=run_results,
+            config=config,
         )
         scored.mode = "e2e"
         if config.enable_dual_eval:
@@ -162,12 +172,14 @@ class PlannerEvalHarness:
             layer_workspace_overrides=overrides,
         )
         try:
-            diag_run_id, diag_workspace = self._execute_e2e_pipeline(ideal_config)
+            diag_run_id, diag_workspace, diag_results = self._execute_e2e_pipeline(ideal_config)
             diag_scored = self._score_traces(
                 diag_run_id,
                 workspace_root=diag_workspace,
                 gt_path=ideal_config.gt_path,
                 mode="ideal_upstream",
+                run_results=diag_results,
+                config=ideal_config,
             )
         except Exception as exc:
             scored.errors.append(f"Ideal-upstream diagnostic failed: {exc}")
@@ -204,6 +216,7 @@ class PlannerEvalHarness:
             workspace_root=workspace_root,
             gt_path=config.gt_path,
             mode="slice",
+            config=config,
         )
         scored.mode = "slice"
         return scored
@@ -211,7 +224,7 @@ class PlannerEvalHarness:
     def _run_shadow(self, config: EvalConfig) -> EvalResult:
         """Run in-situ candidate pipeline, then replay each decision with an oracle."""
         try:
-            run_id, workspace_root = self._execute_e2e_pipeline(config)
+            run_id, workspace_root, run_results = self._execute_e2e_pipeline(config)
         except Exception as exc:
             return EvalResult(run_id=config.run_id, mode="shadow", errors=[str(exc)])
 
@@ -220,6 +233,8 @@ class PlannerEvalHarness:
             workspace_root=workspace_root,
             gt_path=config.gt_path,
             mode="shadow",
+            run_results=run_results,
+            config=config,
         )
         scored.mode = "shadow"
         shadow_errors = self._run_shadow_comparison(
@@ -334,7 +349,7 @@ class PlannerEvalHarness:
             return PlanningResult(status=override_status, outputs=dict(override_outputs))
 
         try:
-            cf_run_id, cf_workspace = self._execute_e2e_pipeline(
+            cf_run_id, cf_workspace, cf_results = self._execute_e2e_pipeline(
                 config,
                 planner_override_provider=override_provider,
             )
@@ -347,6 +362,8 @@ class PlannerEvalHarness:
             workspace_root=cf_workspace,
             gt_path=config.gt_path,
             mode="counterfactual",
+            run_results=cf_results,
+            config=config,
         )
         scored.mode = "counterfactual"
         scored.diagnostics["override_applied"] = override_state["applied"]
@@ -358,6 +375,7 @@ class PlannerEvalHarness:
                 workspace_root=config.workspace_root,
                 gt_path=config.gt_path,
                 mode="baseline",
+                config=config,
             )
             scored.diagnostics["counterfactual_impact"] = self._compare_downstream_impact(
                 baseline=baseline,
@@ -387,6 +405,8 @@ class PlannerEvalHarness:
         workspace_root: Path | None = None,
         gt_path: Path | None = None,
         mode: str = "score",
+        run_results: dict[str, Any] | None = None,
+        config: EvalConfig | None = None,
     ) -> EvalResult:
         """Load traces + GT, score each decision, compute scorecard."""
         from spec_manager.refinement.evals.planner.trace_loader import (
@@ -455,7 +475,174 @@ class PlannerEvalHarness:
         except Exception as exc:
             result.errors.append(f"Failed to compute scorecard: {exc}")
 
+        self._compose_reporters(
+            result=result,
+            workspace=workspace,
+            run_id=run_id,
+            run_results=run_results,
+            config=config,
+        )
         return result
+
+    def _compose_reporters(
+        self,
+        *,
+        result: EvalResult,
+        workspace: Path,
+        run_id: str,
+        run_results: dict[str, Any] | None,
+        config: EvalConfig | None,
+    ) -> None:
+        """Compose run, planner, and quality reporters for per-run integration."""
+        reporter_status = result.diagnostics.setdefault("reporters", {})
+
+        # Pipeline/run-level scorecard.
+        if run_results is not None:
+            try:
+                from spec_manager.evaluation.scoring import RunReporter
+
+                run_reporter = RunReporter(workspace, run_id)
+                run_scorecard = run_reporter.compute(run_results)
+                run_reporter.write(run_scorecard)
+                result.pipeline_scorecard = run_scorecard
+                reporter_status["run"] = "computed"
+            except Exception as exc:
+                result.errors.append(f"Failed to compute run scorecard: {exc}")
+                reporter_status["run"] = "error"
+        else:
+            existing = self._load_json(workspace / "reports" / "pdd" / run_id / "scores.json")
+            if existing is not None:
+                result.pipeline_scorecard = existing
+                reporter_status["run"] = "loaded"
+            else:
+                reporter_status["run"] = "unavailable"
+
+        # Quality scorecard (mechanical + optional judges).
+        try:
+            from spec_manager.evaluation.digests import (
+                build_architecture_digest,
+                build_code_digest,
+            )
+            from spec_manager.evaluation.quality import QualityReporter
+
+            run_reports = workspace / "reports" / "pdd" / run_id
+            run_reports.mkdir(parents=True, exist_ok=True)
+
+            arch_digest = build_architecture_digest(workspace, run_id)
+            code_digest = build_code_digest(workspace, run_id)
+            (run_reports / "architecture_digest.json").write_text(
+                json.dumps(arch_digest, indent=2), encoding="utf-8"
+            )
+            (run_reports / "code_digest.json").write_text(
+                json.dumps(code_digest, indent=2), encoding="utf-8"
+            )
+
+            arch_judge_output, code_judge_output = self._run_quality_judges(
+                workspace=workspace,
+                run_id=run_id,
+                config=config,
+                arch_digest=arch_digest,
+                code_digest=code_digest,
+                result=result,
+            )
+
+            quality_reporter = QualityReporter(workspace, run_id)
+            quality_scorecard = quality_reporter.compute(
+                arch_digest,
+                code_digest,
+                arch_judge_output=arch_judge_output,
+                code_judge_output=code_judge_output,
+                pipeline_scorecard=result.pipeline_scorecard,
+                planner_scorecard=result.scorecard,
+            )
+            quality_reporter.write(quality_scorecard)
+            result.quality_scorecard = quality_scorecard
+            reporter_status["quality"] = "computed"
+        except Exception as exc:
+            result.errors.append(f"Failed to compute quality scorecard: {exc}")
+            reporter_status["quality"] = "error"
+
+    def _run_quality_judges(
+        self,
+        *,
+        workspace: Path,
+        run_id: str,
+        config: EvalConfig | None,
+        arch_digest: dict[str, Any],
+        code_digest: dict[str, Any],
+        result: EvalResult,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Run architecture/code judges with explicit producer-vs-judge separation."""
+        producer_model_id = (
+            config.model_config.strip()
+            if config and config.model_config.strip()
+            else (
+                (arch_digest.get("model") or {}).get("producer_model_id")
+                or (code_digest.get("model") or {}).get("producer_model_id")
+                or ""
+            )
+        )
+        judge_model_id = config.shadow_model_config.strip() if config else ""
+
+        result.diagnostics["judge_models"] = {
+            "producer_model_id": producer_model_id,
+            "judge_model_id": judge_model_id,
+        }
+
+        if not judge_model_id:
+            return None, None
+        if producer_model_id and judge_model_id == producer_model_id:
+            result.errors.append(
+                f"Judge model must differ from producer model; both resolved to {judge_model_id!r}."
+            )
+            return None, None
+
+        from spec_manager.refinement.evals.judges.arch_quality import ArchitectureQualityJudge
+        from spec_manager.refinement.evals.judges.cache import JudgeCache
+        from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
+
+        judge_cache = JudgeCache(workspace / "analysis" / "judge_cache")
+        run_dir = workspace / ".pdd_runs" / run_id
+        snapshot_dir = run_dir / "snapshot" / "files"
+
+        arch_judge_output = (
+            ArchitectureQualityJudge(
+                workspace=workspace,
+                cache=judge_cache,
+                model_id=judge_model_id,
+                producer_model_id=producer_model_id,
+                allow_self_judge=False,
+            )
+            .evaluate(arch_digest)
+            .model_dump()
+        )
+
+        code_judge_output = (
+            CodeQualityJudge(
+                workspace=workspace,
+                cache=judge_cache,
+                model_id=judge_model_id,
+                producer_model_id=producer_model_id,
+                allow_self_judge=False,
+            )
+            .evaluate(
+                code_digest,
+                snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
+            )
+            .model_dump()
+        )
+
+        return arch_judge_output, code_judge_output
+
+    @staticmethod
+    def _load_json(path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def _evaluate_against_gt(self, traces: list[Any], gt: Any) -> list[Any]:
         """Score each trace against matching GT case."""
@@ -1037,21 +1224,21 @@ class PlannerEvalHarness:
         config: EvalConfig,
         *,
         planner_override_provider: Any = None,
-    ) -> tuple[str, Path]:
+    ) -> tuple[str, Path, dict[str, Any]]:
         """Execute the full lifecycle pipeline for the configured fixture."""
         from spec_manager.refinement.evals.phase_evals.orchestration import run_full_pipeline
 
         manager, workspace_root, run_id = self._prepare_fixture_workspace(config)
         layer_overrides = self._resolve_layer_workspace_overrides(config)
         logger.info("Planner eval: e2e mode run_id=%s fixture=%s", run_id, config.fixture)
-        run_full_pipeline(
+        run_results = run_full_pipeline(
             manager,
             eval_snapshot_root=workspace_root / "eval_snapshots" / run_id,
             layer_workspace_overrides=layer_overrides,
             planner_override_provider=planner_override_provider,
         )
         self._ensure_replay_snapshots(workspace_root, run_id)
-        return run_id, workspace_root
+        return run_id, workspace_root, run_results
 
     def _execute_slice(self, config: EvalConfig) -> tuple[Path, str]:
         """Execute one PromotionLoop slice for fixture-backed eval."""

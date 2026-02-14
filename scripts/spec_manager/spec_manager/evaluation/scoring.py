@@ -93,10 +93,17 @@ class RunReporter:
         self._run_dir = workspace_root / ".pdd_runs" / run_id
         self._reports_dir = workspace_root / "reports" / "pdd" / run_id
 
-    def compute(self, run_results: dict[str, Any]) -> Scorecard:
+    def compute(
+        self,
+        run_results: dict[str, Any],
+        quality_scorecard: dict[str, Any] | None = None,
+    ) -> Scorecard:
         """Compute scorecard from run results and stored artifacts."""
         hard_gates = self._compute_hard_gates(run_results)
         soft_signals = self._compute_soft_signals(run_results)
+        quality_payload = quality_scorecard or self._load_quality_scorecard()
+        if quality_payload:
+            soft_signals.extend(self._promote_quality_signals(quality_payload))
         overall_pass = all(g.status != "FAIL" for g in hard_gates)
 
         failing_gates = [g.name for g in hard_gates if g.status == "FAIL"]
@@ -116,6 +123,81 @@ class RunReporter:
             overall_pass=overall_pass,
             summary=" ".join(summary_parts),
         )
+
+    def _load_quality_scorecard(self) -> dict[str, Any] | None:
+        """Load run-scoped quality scorecard when available."""
+        path = self._reports_dir / "quality_scorecard.json"
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to read quality scorecard at %s", path, exc_info=True)
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _promote_quality_signals(self, quality: dict[str, Any]) -> list[ScorecardMetric]:
+        """Promote stable quality scorecard metrics into run-level diagnostics."""
+        promoted: list[ScorecardMetric] = []
+
+        arch_score = self._as_float(quality.get("arch_quality_score"))
+        if arch_score is not None:
+            dimensions = quality.get("architecture_judge_dimensions")
+            dim_count = len(dimensions) if isinstance(dimensions, list) else 0
+            promoted.append(
+                ScorecardMetric(
+                    name="architecture.llm_quality",
+                    raw=arch_score,
+                    score=arch_score,
+                    status=_quality_status(arch_score),
+                    detail=f"judge_dimensions={dim_count}",
+                )
+            )
+
+        code_score = self._as_float(quality.get("code_quality_score"))
+        if code_score is not None:
+            risk_count = (
+                len(quality.get("code_risks", []))
+                if isinstance(quality.get("code_risks"), list)
+                else 0
+            )
+            promoted.append(
+                ScorecardMetric(
+                    name="code.llm_quality",
+                    raw=code_score,
+                    score=code_score,
+                    status=_quality_status(code_score),
+                    detail=f"systemic_risks={risk_count}",
+                )
+            )
+
+        sampled_files = quality.get("code_sampled_files")
+        if isinstance(sampled_files, list):
+            sampled_count = len([item for item in sampled_files if isinstance(item, dict)])
+            if sampled_count >= 3:
+                sampled_status = "PASS"
+            elif sampled_count > 0:
+                sampled_status = "WARN"
+            else:
+                sampled_status = "FAIL"
+            promoted.append(
+                ScorecardMetric(
+                    name="code.sampled_file_coverage",
+                    raw=float(sampled_count),
+                    score=min(sampled_count / 8.0, 1.0),
+                    status=sampled_status,
+                    detail=f"sampled_files={sampled_count}",
+                )
+            )
+
+        return promoted
+
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def write(self, scorecard: Scorecard) -> tuple[Path, Path]:
         """Write scores.json and scorecard.md."""
@@ -608,3 +690,11 @@ class RunReporter:
 
         lines.append("")
         return "\n".join(lines)
+
+
+def _quality_status(score: float) -> str:
+    if score >= 0.80:
+        return "PASS"
+    if score >= 0.65:
+        return "WARN"
+    return "FAIL"
