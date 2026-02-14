@@ -15,6 +15,7 @@ from spec_manager.planner.api import (
     PlanningContext,
     PlanningRequest,
     PlanningResult,
+    _planner_ingest_authority_policy,
     _request_snapshot,
 )
 from spec_manager.planner.router import LayerPlanner
@@ -56,6 +57,26 @@ class _MockLayerPlanner:
     def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
         self.last_ctx = ctx
         return {"action": "NOOP", "monitors": []}
+
+
+class _HumanRequiredPlanLayerPlanner(_MockLayerPlanner):
+    """Layer planner that returns human-required under-spec events."""
+
+    def build_plan(
+        self, ctx: Any, gaps: list[dict[str, Any]], discovery: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.last_ctx = ctx
+        return {
+            "intentions": [{"from": self.layer}],
+            "under_spec_events": [
+                {
+                    "type": "decision_required",
+                    "decision_id": "DR-001",
+                    "question": "What SLA should we guarantee?",
+                    "reason": "human authority required",
+                }
+            ],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +234,242 @@ class TestPlannerConvenience:
         result = planner.resolve_under_spec(ctx, events)
         assert isinstance(result, dict)
         assert result["blocked"] is False
+
+
+# ---------------------------------------------------------------------------
+# Planner UserQuestionSignal emission
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerUserQuestionSignals:
+    def test_plan_emits_signal_via_callback_for_human_required_events(self, tmp_path: Any) -> None:
+        captured: list[Any] = []
+        planner = Planner(
+            workspace_root=tmp_path,
+            register_defaults=False,
+            on_user_question_signal=captured.append,
+        )
+        planner.register_layer_planner("l2", _HumanRequiredPlanLayerPlanner("l2"))
+
+        ctx = PlanningContext(
+            layer="l2",
+            run_id="run-callback",
+            slice_id="slice-123",
+        )
+        intentions = planner.plan_from_gaps(ctx, gaps=[{"target": "component-x"}])
+
+        assert intentions == [{"from": "l2"}]
+        assert len(captured) == 1
+        signal = captured[0]
+        assert signal["run_id"] == "run-callback"
+        assert signal["source"]["kind"] == "PLANNER"
+        assert signal["source"]["slice_id"] == "slice-123"
+        assert signal["source"]["layer"] == "l2"
+        assert signal["source"]["signal_id"] == "DR-001"
+        assert signal["question"]["text"] == "What SLA should we guarantee?"
+        assert signal["question"]["canonical_key_hint"] == "planner.decision_required.DR-001"
+        assert signal["context"]["blocking"]["severity"] == "BLOCKING"
+        assert signal["context"]["blocking"]["blocked_slices"] == ["slice-123"]
+        assert signal["payload"]["decision_id"] == "DR-001"
+
+    def test_plan_emits_signal_to_store_when_no_callback(self, tmp_path: Any) -> None:
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        planner.register_layer_planner("l2", _HumanRequiredPlanLayerPlanner("l2"))
+
+        ctx = PlanningContext(
+            layer="l2",
+            run_id="run-store",
+            slice_id="slice-456",
+        )
+        planner.plan_from_gaps(ctx, gaps=[{"target": "component-y"}])
+
+        path = tmp_path / ".pdd_runs" / "run-store" / "coordination" / "user_questions.jsonl"
+        assert path.exists()
+        signals = [
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line
+        ]
+
+        assert len(signals) == 1
+        assert signals[0]["source"]["kind"] == "PLANNER"
+        assert signals[0]["question"]["text"] == "What SLA should we guarantee?"
+
+    def test_plan_does_not_emit_for_non_human_required_events(self, tmp_path: Any) -> None:
+        class _NonHumanPlanLayerPlanner(_MockLayerPlanner):
+            def build_plan(
+                self, ctx: Any, gaps: list[dict[str, Any]], discovery: dict[str, Any]
+            ) -> dict[str, Any]:
+                self.last_ctx = ctx
+                return {
+                    "intentions": [{"from": self.layer}],
+                    "under_spec_events": [
+                        {
+                            "type": "architecture_blocked",
+                            "question": "What is the deployment topology?",
+                            "reason": "topology evidence missing",
+                        }
+                    ],
+                }
+
+        captured: list[Any] = []
+        planner = Planner(
+            workspace_root=tmp_path,
+            register_defaults=False,
+            on_user_question_signal=captured.append,
+        )
+        planner.register_layer_planner("l2", _NonHumanPlanLayerPlanner("l2"))
+
+        ctx = PlanningContext(
+            layer="l2",
+            run_id="run-noemit",
+            slice_id="slice-789",
+        )
+        planner.plan_from_gaps(ctx, gaps=[{"target": "component-z"}])
+
+        assert captured == []
+
+
+# ---------------------------------------------------------------------------
+# Planner answer ingest authority policy
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerIngestAuthorityPolicy:
+    def test_policy_user_answer_is_authoritative(self) -> None:
+        decision = _planner_ingest_authority_policy(
+            {"source": "user", "canonical_key_hint": "payments.timeout"}
+        )
+        assert decision.authoritative is True
+        assert decision.reason == "user_answer_authoritative"
+
+    def test_policy_planner_enrichment_requires_source_or_approval(self) -> None:
+        decision = _planner_ingest_authority_policy(
+            {"source": "planner_enrichment", "canonical_key_hint": "payments.timeout"}
+        )
+        assert decision.authoritative is False
+        assert decision.reason == "planner_enrichment_requires_source_or_approval"
+
+    def test_policy_planner_enrichment_becomes_authoritative_with_sources(self) -> None:
+        decision = _planner_ingest_authority_policy(
+            {
+                "source": "planner_enrichment",
+                "canonical_key_hint": "payments.timeout",
+                "sources": ["spec.md#timeouts"],
+            }
+        )
+        assert decision.authoritative is True
+        assert decision.reason == "planner_enrichment_sourced_or_approved"
+
+    def test_ingest_user_answer_applies_policy_branching(self, tmp_path: Any) -> None:
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        translation = {
+            "run_id": "run-auth",
+            "question_id": "Q-100",
+            "translation_id": "at-100",
+            "provenance": {"produced_by": "INTENT_AGENT"},
+            "extracted": {
+                "constraint_candidates": [
+                    {
+                        "canonical_key_hint": "checkout.currency",
+                        "question": "Which currency?",
+                        "answer": "USD",
+                    },
+                    {
+                        "canonical_key_hint": "checkout.timeout",
+                        "question": "Timeout?",
+                        "answer": "30s",
+                        "source": "planner_enrichment",
+                    },
+                    {
+                        "canonical_key_hint": "checkout.retry_policy",
+                        "question": "Retry policy?",
+                        "answer": "3 retries",
+                        "source": "planner_enrichment",
+                        "approved_by_user": True,
+                    },
+                ],
+            },
+        }
+
+        result = planner.ingest_user_answer(translation)
+
+        assert result.status == "OK"
+        authoritative = result.outputs["authoritative_candidates"]
+        non_authoritative = result.outputs["non_authoritative_candidates"]
+        rejected = result.outputs["rejected_candidates"]
+
+        auth_keys = {entry["candidate"]["canonical_key_hint"] for entry in authoritative}
+        non_auth_keys = {entry["candidate"]["canonical_key_hint"] for entry in non_authoritative}
+        assert auth_keys == {"checkout.currency", "checkout.retry_policy"}
+        assert non_auth_keys == {"checkout.timeout"}
+        assert rejected == []
+
+    def test_ingest_user_answer_rejects_taxonomy_domain_mismatches(self, tmp_path: Any) -> None:
+        planner = Planner(workspace_root=tmp_path, register_defaults=False)
+        translation = {
+            "run_id": "run-taxonomy",
+            "question_id": "Q-200",
+            "translation_id": "at-200",
+            "provenance": {"produced_by": "INTENT_AGENT"},
+            "extracted": {
+                "constraint_candidates": [
+                    {
+                        "canonical_key_hint": "checkout.currency",
+                        "question": "Which currency?",
+                        "answer": "USD",
+                        "dimension": "constraint",
+                    },
+                    {
+                        "canonical_key_hint": "checkout.timeout",
+                        "question": "Timeout?",
+                        "answer": "30s",
+                        "dimension": "tradeoff",
+                    },
+                ],
+                "scope_candidates": [
+                    {
+                        "scope_in": ["Checkout flow"],
+                        "scope_out": ["Legacy admin panel"],
+                        "taxonomy_hint": "scope",
+                    },
+                    {
+                        "scope_in": ["Billing reports"],
+                        "scope_out": [],
+                        "taxonomy_type": "validation",
+                    },
+                ],
+                "validation_candidates": [
+                    {
+                        "acceptance_statement": "P95 checkout latency < 200ms",
+                        "dimension": "unknown",
+                    }
+                ],
+            },
+        }
+
+        result = planner.ingest_user_answer(translation)
+
+        assert result.status == "OK"
+        authoritative = result.outputs["authoritative_candidates"]
+        rejected = result.outputs["rejected_candidates"]
+
+        assert len(authoritative) == 2
+        assert len(rejected) == 3
+        assert any(
+            entry["reason"].startswith(
+                "taxonomy_domain_mismatch:dimension:tradeoff;expected=constraint"
+            )
+            for entry in rejected
+        )
+        assert any(
+            entry["reason"].startswith(
+                "taxonomy_domain_mismatch:taxonomy_type:validation;expected=scope"
+            )
+            for entry in rejected
+        )
+        assert any(
+            entry["reason"].startswith("invalid_taxonomy_domain:dimension:unknown;allowed=")
+            for entry in rejected
+        )
 
 
 # ---------------------------------------------------------------------------

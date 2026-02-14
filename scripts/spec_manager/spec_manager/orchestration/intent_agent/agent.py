@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,7 @@ from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.orchestration.intent_agent.answer_translation import (
     AnswerTranslateStrategy,
     AnswerTranslation,
+    FollowupQuestionDraft,
     RecursionBudget,
 )
 from spec_manager.orchestration.intent_agent.quality_gate import (
@@ -47,11 +48,11 @@ from spec_manager.orchestration.intent_agent.quality_gate import (
 )
 from spec_manager.orchestration.intent_agent.queue import (
     AnswerSpec,
+    QualityGateStatus,
     QuestionBlockers,
     QuestionItem,
     QuestionOrigin,
     QuestionQueue,
-    QualityGateStatus,
     UserPrompt,
 )
 from spec_manager.orchestration.intent_agent.signals import (
@@ -76,10 +77,10 @@ from spec_manager.orchestration.intent_agent.taxonomy import (
     QuestionTaxonomy,
     classify_question,
     classify_scope,
-    normalize_constraint_dimensions,
     infer_constraint_dimensions_with_key,
-    is_vague_user_input,
     is_prohibited,
+    is_vague_user_input,
+    normalize_constraint_dimensions,
     normalize_user_facing_taxonomy,
     reframe_to_user_valid,
 )
@@ -142,15 +143,21 @@ class IntentFrameStrategy:
             payload = _extract_json_payload(raw)
             parsed = json.loads(payload)
         except Exception:
-            logger.warning("IntentFrameStrategy: failed to parse LLM response, returning current frame.")
+            logger.warning(
+                "IntentFrameStrategy: failed to parse LLM response, returning current frame."
+            )
             return current_frame
 
         # Merge parsed fields into current_frame (only override present keys).
         merged = dict(current_frame)
         for key in (
-            "current_restatement", "goals", "non_goals",
-            "scope", "success_metrics",
-            "risk_flags", "frame_assumptions",
+            "current_restatement",
+            "goals",
+            "non_goals",
+            "scope",
+            "success_metrics",
+            "risk_flags",
+            "frame_assumptions",
         ):
             if key in parsed:
                 merged[key] = parsed[key]
@@ -186,7 +193,8 @@ class ConceptMapStrategy:
             f"USER TEXT:\n{user_text}\n\n"
             "Return a JSON object with:\n"
             "{\n"
-            '  "new_terms": {"<user_term>": {"maps_to": ["<normalized>"], "confidence": 0.0-1.0}},\n'
+            '  "new_terms": {"<user_term>": {"maps_to": ["<normalized>"], "'
+            '"confidence": 0.0-1.0}},\n'
             '  "user_introduced_terms": ["<technical terms the user used>"]\n'
             "}\n"
             "Only include genuinely NEW terms not already in the concept map. "
@@ -198,7 +206,9 @@ class ConceptMapStrategy:
             payload = _extract_json_payload(raw)
             parsed = json.loads(payload)
         except Exception:
-            logger.warning("ConceptMapStrategy: failed to parse LLM response, returning current map.")
+            logger.warning(
+                "ConceptMapStrategy: failed to parse LLM response, returning current map."
+            )
             return current_map
 
         # Merge new terms into current map.
@@ -279,7 +289,9 @@ class QueueReassessStrategy:
             if isinstance(parsed, list):
                 return parsed
         except Exception:
-            logger.warning("QueueReassessStrategy: failed to parse LLM response, returning all KEEP.")
+            logger.warning(
+                "QueueReassessStrategy: failed to parse LLM response, returning all KEEP."
+            )
 
         return [
             {"question_id": q["question_id"], "action": "KEEP", "reason": "parse failure"}
@@ -346,10 +358,13 @@ class IntentAgentOrchestrator:
         for record in records:
             self._event_log.append("quality_check", record.to_dict())
 
-    def _mark_unaskable(self, question_id: str, source: str, reason: str, details: dict[str, Any] | None = None) -> None:
+    def _mark_unaskable(
+        self, question_id: str, source: str, reason: str, details: dict[str, Any] | None = None
+    ) -> None:
         if self._state is not None:
             bucket = self._state.question_queue_state.setdefault(
-                "unaskable_question_ids", [],
+                "unaskable_question_ids",
+                [],
             )
             if question_id not in bucket:
                 bucket.append(question_id)
@@ -379,11 +394,11 @@ class IntentAgentOrchestrator:
         payload.setdefault("run_id", self._state.run_id)
         payload.setdefault("session_id", self._state.session_id)
         payload.setdefault("event_id", f"ai_{uuid.uuid4().hex[:12]}")
-        payload.setdefault("created_at", datetime.now(timezone.utc).isoformat())
-        payload.setdefault("source", "PLANNER")
+        payload.setdefault("created_at", datetime.now(UTC).isoformat())
+        payload.setdefault("source", "INTENT_AGENT")
         payload.setdefault("canonical_key", payload.get("canonical_key", ""))
         if not payload["source"]:
-            payload["source"] = "PLANNER"
+            payload["source"] = "INTENT_AGENT"
         try:
             self._planner_store.write(payload)
         except Exception:
@@ -456,13 +471,17 @@ class IntentAgentOrchestrator:
 
         raw_invariants = trigger.get("alignment_invariants")
         raw_status = self._coerce_str(trigger.get("invariant_status", "HYPOTHESIS")).upper()
-        default_source = self._coerce_str(trigger.get("invariant_source", trigger.get("source", "planner")).lower())
+        default_source = self._coerce_str(
+            trigger.get("invariant_source", trigger.get("source", "planner")).lower()
+        )
         raw_trigger_invariants = raw_invariants if isinstance(raw_invariants, list) else []
         if not isinstance(raw_trigger_invariants, list):
             return
 
-        invariant_status = raw_status if raw_status in {"HYPOTHESIS", "CONFIRMED", "REJECTED"} else "HYPOTHESIS"
-        invariant_created_at = datetime.now(timezone.utc).isoformat()
+        invariant_status = (
+            raw_status if raw_status in {"HYPOTHESIS", "CONFIRMED", "REJECTED"} else "HYPOTHESIS"
+        )
+        invariant_created_at = datetime.now(UTC).isoformat()
         existing = {
             assumption.text.strip().lower(): assumption
             for assumption in self._state.problem_frame.frame_assumptions
@@ -517,10 +536,7 @@ class IntentAgentOrchestrator:
 
         if canonical_key:
             for candidate in self._queue._items.values():
-                if (
-                    candidate.status == "OPEN"
-                    and candidate.canonical_key == canonical_key
-                ):
+                if candidate.status == "OPEN" and candidate.canonical_key == canonical_key:
                     return candidate
         return None
 
@@ -534,16 +550,19 @@ class IntentAgentOrchestrator:
         if self._queue is None:
             return None
 
-        new_text = self._coerce_str(replacement.get("new_user_prompt_text"), source_item.user_prompt.text)
+        new_text = self._coerce_str(
+            replacement.get("new_user_prompt_text"), source_item.user_prompt.text
+        )
         canonical_key = self._coerce_str(
-            replacement.get("new_canonical_key"), f"{source_item.canonical_key}.replacement",
+            replacement.get("new_canonical_key"),
+            f"{source_item.canonical_key}.replacement",
         )
         question_id = self._coerce_str(replacement.get("new_question_id"), "")
 
         if not question_id:
             question_id = f"q_{uuid.uuid4().hex[:12]}"
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         system_binding = dict(source_item.system_binding or {})
         system_binding.update(
             {
@@ -631,7 +650,9 @@ class IntentAgentOrchestrator:
 
         return "SCOPE"
 
-    def _is_authorized_redefinition_update(self, update: dict[str, Any], *, update_type: str) -> bool:
+    def _is_authorized_redefinition_update(
+        self, update: dict[str, Any], *, update_type: str
+    ) -> bool:
         source = self._coerce_str(update.get("source"), "PLANNER").upper()
         if source in _REDEFINITION_UPDATE_SOURCES:
             return True
@@ -644,12 +665,15 @@ class IntentAgentOrchestrator:
             event_id,
         )
         if self._event_log is not None:
-            self._event_log.append("redefinition_update_blocked", {
-                "update_type": update_type,
-                "source": source,
-                "event_id": event_id,
-                "reason": "untrusted_source",
-            })
+            self._event_log.append(
+                "redefinition_update_blocked",
+                {
+                    "update_type": update_type,
+                    "source": source,
+                    "event_id": event_id,
+                    "reason": "untrusted_source",
+                },
+            )
         return False
 
     def _infer_constraint_dimensions_for_item(self, item: QuestionItem) -> list[str]:
@@ -685,7 +709,8 @@ class IntentAgentOrchestrator:
                 canonical_key=canonical_key,
             )
             binding["constraint_dimensions"] = normalize_constraint_dimensions(
-                normalize_constraint_dimensions(binding.get("constraint_dimensions", [])) + inferred,
+                normalize_constraint_dimensions(binding.get("constraint_dimensions", []))
+                + inferred,
             )
         else:
             binding["constraint_dimensions"] = []
@@ -723,7 +748,7 @@ class IntentAgentOrchestrator:
         item.quality_gate.status = "PASS"
         item.quality_gate.attempts = len(records)
         item.quality_gate.last_quality_record_id = records[-1].record_id if records else ""
-        item.quality_gate.last_checked_at = datetime.now(timezone.utc).isoformat()
+        item.quality_gate.last_checked_at = datetime.now(UTC).isoformat()
         item.timestamps["updated_at"] = item.quality_gate.last_checked_at
 
     def _refresh_question_queue_state(self) -> None:
@@ -755,18 +780,21 @@ class IntentAgentOrchestrator:
                     closed_constraint_ids.append(item.question_id)
                     closed_constraint_dims.update(dimensions)
 
-        self._state.question_queue_state.update({
-            "open_ids": open_ids,
-            "closed_ids": closed_ids,
-            "stale_ids": stale_ids,
-            "open_constraint_question_ids": open_constraint_ids,
-            "closed_constraint_question_ids": closed_constraint_ids,
-            "open_constraint_dimensions": sorted(open_constraint_dims),
-            "closed_constraint_dimensions": sorted(closed_constraint_dims),
-        })
+        self._state.question_queue_state.update(
+            {
+                "open_ids": open_ids,
+                "closed_ids": closed_ids,
+                "stale_ids": stale_ids,
+                "open_constraint_question_ids": open_constraint_ids,
+                "closed_constraint_question_ids": closed_constraint_ids,
+                "open_constraint_dimensions": sorted(open_constraint_dims),
+                "closed_constraint_dimensions": sorted(closed_constraint_dims),
+            }
+        )
 
         self._state.question_queue_state.setdefault(
-            "unaskable_question_ids", [],
+            "unaskable_question_ids",
+            [],
         )
         self._state.question_queue_state.setdefault(
             "skeleton_input_signature",
@@ -884,112 +912,122 @@ class IntentAgentOrchestrator:
     #   - Choose: ask highest-value question OR produce/update skeleton
     #   - "Enough to proceed" check (Section 5.7):
     #     core workflows identifiable + major constraint dimensions covered
+    def _capture_original_intent(self, text: str) -> None:
+        if self._state is None or self._state.original_intent.user_statement:
+            return
+        self._state.original_intent.user_statement = text
+        self._state.original_intent.captured_at = datetime.now(UTC).isoformat()
+
+    def _log_user_message_event(self, text: str) -> None:
+        if self._event_log is None:
+            return
+        self._event_log.append("user_message", {"text": text})
+
+    def _serialize_problem_frame(self) -> dict[str, Any]:
+        assert self._state is not None
+        pf = self._state.problem_frame
+        return {
+            "current_restatement": pf.current_restatement,
+            "goals": list(pf.goals),
+            "non_goals": list(pf.non_goals),
+            "scope": {
+                "in": list(pf.scope.get("in", [])),
+                "out": list(pf.scope.get("out", [])),
+            },
+            "success_metrics": list(pf.success_metrics),
+            "risk_flags": list(pf.risk_flags),
+        }
+
+    def _serialize_concept_map(self) -> dict[str, Any]:
+        assert self._state is not None
+        cm = self._state.concept_map
+        return {
+            "user_terms": {
+                k: {"maps_to": list(v.maps_to), "confidence": v.confidence}
+                for k, v in cm.user_terms.items()
+            },
+            "normalized_terms": dict(cm.normalized_terms),
+            "user_introduced_terms": list(cm.user_introduced_terms),
+        }
+
+    def _apply_problem_frame_update(self, text: str) -> None:
+        if self._state is None or self._intent_frame is None:
+            return
+        updated_frame = self._intent_frame.update_frame(
+            self._serialize_problem_frame(),
+            text,
+            self._serialize_concept_map(),
+            run_agent=self._run_agent,
+        )
+        if not isinstance(updated_frame, dict):
+            return
+        if "current_restatement" in updated_frame:
+            self._state.problem_frame.current_restatement = updated_frame["current_restatement"]
+        if "goals" in updated_frame:
+            self._state.problem_frame.goals = list(updated_frame["goals"])
+        if "non_goals" in updated_frame:
+            self._state.problem_frame.non_goals = list(updated_frame["non_goals"])
+        if "scope" in updated_frame and isinstance(updated_frame["scope"], dict):
+            self._state.problem_frame.scope = {
+                "in": list(updated_frame["scope"].get("in", [])),
+                "out": list(updated_frame["scope"].get("out", [])),
+            }
+        if "success_metrics" in updated_frame:
+            self._state.problem_frame.success_metrics = list(updated_frame["success_metrics"])
+        if "risk_flags" in updated_frame:
+            self._state.problem_frame.risk_flags = list(updated_frame["risk_flags"])
+
+    def _apply_concept_map_update(self, text: str) -> None:
+        if self._state is None or self._concept_map is None:
+            return
+        updated_map = self._concept_map.update_map(
+            self._serialize_concept_map(),
+            text,
+            run_agent=self._run_agent,
+        )
+        if not isinstance(updated_map, dict):
+            return
+        new_introduced = updated_map.get("user_introduced_terms", [])
+        for term in new_introduced:
+            if term not in self._state.concept_map.user_introduced_terms:
+                self._state.concept_map.user_introduced_terms.append(term)
+
+    def _handle_vague_user_input(self, text: str) -> dict[str, Any] | None:
+        if not is_vague_user_input(text):
+            return None
+        vague_item = self.handle_vague_input(text)
+        self._maybe_update_skeleton()
+        self.save_state()
+        if isinstance(vague_item, QuestionItem) and vague_item.status == "OPEN":
+            return {
+                "action": "ask",
+                "question": vague_item.to_dict(),
+                "question_id": vague_item.question_id,
+                "immediate_ask": True,
+            }
+        return None
+
+    def _finalize_user_message(self) -> None:
+        self._maybe_update_skeleton()
+        self._refresh_question_queue_state()
+        self.save_state()
+
     def handle_user_message(self, text: str) -> dict[str, Any]:
         """Handle a user message. Returns action to take (ask/skeleton/etc)."""
-        # Ensure state/queue initialized.
         self._ensure_initialized()
         assert self._state is not None
         assert self._queue is not None
 
-        # Capture original intent if not yet set.
-        if not self._state.original_intent.user_statement:
-            self._state.original_intent.user_statement = text
-            self._state.original_intent.captured_at = (
-                datetime.now(timezone.utc).isoformat()
-            )
+        self._capture_original_intent(text)
+        self._log_user_message_event(text)
+        self._apply_problem_frame_update(text)
+        self._apply_concept_map_update(text)
 
-        # Log the user message event.
-        if self._event_log is not None:
-            self._event_log.append("user_message", {"text": text})
+        vague_action = self._handle_vague_user_input(text)
+        if vague_action is not None:
+            return vague_action
 
-        # Update problem frame via strategy if available.
-        if self._intent_frame is not None:
-            frame_dict = self._state.problem_frame.__dict__ if hasattr(self._state.problem_frame, "__dict__") else {}
-            # Build a serializable frame dict.
-            pf = self._state.problem_frame
-            frame_dict = {
-                "current_restatement": pf.current_restatement,
-                "goals": list(pf.goals),
-                "non_goals": list(pf.non_goals),
-                "scope": {
-                    "in": list(pf.scope.get("in", [])),
-                    "out": list(pf.scope.get("out", [])),
-                },
-                "success_metrics": list(pf.success_metrics),
-                "risk_flags": list(pf.risk_flags),
-            }
-            concept_dict = {
-                "user_terms": {
-                    k: {"maps_to": list(v.maps_to), "confidence": v.confidence}
-                    for k, v in self._state.concept_map.user_terms.items()
-                },
-                "normalized_terms": dict(self._state.concept_map.normalized_terms),
-                "user_introduced_terms": list(self._state.concept_map.user_introduced_terms),
-            }
-            updated_frame = self._intent_frame.update_frame(
-                frame_dict, text, concept_dict, run_agent=self._run_agent,
-            )
-            # Apply updated fields back to state.
-            if isinstance(updated_frame, dict):
-                if "current_restatement" in updated_frame:
-                    self._state.problem_frame.current_restatement = updated_frame["current_restatement"]
-                if "goals" in updated_frame:
-                    self._state.problem_frame.goals = list(updated_frame["goals"])
-                if "non_goals" in updated_frame:
-                    self._state.problem_frame.non_goals = list(updated_frame["non_goals"])
-                if "scope" in updated_frame and isinstance(updated_frame["scope"], dict):
-                    self._state.problem_frame.scope = {
-                        "in": list(updated_frame["scope"].get("in", [])),
-                        "out": list(updated_frame["scope"].get("out", [])),
-                    }
-                if "success_metrics" in updated_frame:
-                    self._state.problem_frame.success_metrics = list(updated_frame["success_metrics"])
-                if "risk_flags" in updated_frame:
-                    self._state.problem_frame.risk_flags = list(updated_frame["risk_flags"])
-
-        # Update concept map via strategy if available.
-        if self._concept_map is not None:
-            cm = self._state.concept_map
-            current_map = {
-                "user_terms": {
-                    k: {"maps_to": list(v.maps_to), "confidence": v.confidence}
-                    for k, v in cm.user_terms.items()
-                },
-                "normalized_terms": dict(cm.normalized_terms),
-                "user_introduced_terms": list(cm.user_introduced_terms),
-            }
-            updated_map = self._concept_map.update_map(
-                current_map, text, run_agent=self._run_agent,
-            )
-            if isinstance(updated_map, dict):
-                # Re-apply user_introduced_terms (the most important field).
-                new_introduced = updated_map.get("user_introduced_terms", [])
-                for t in new_introduced:
-                    if t not in self._state.concept_map.user_introduced_terms:
-                        self._state.concept_map.user_introduced_terms.append(t)
-
-        # If the message is vague, immediately ask a bounded INTENT disambiguation.
-        if is_vague_user_input(text):
-            vague_item = self.handle_vague_input(text)
-            self._maybe_update_skeleton()
-            self.save_state()
-            if isinstance(vague_item, QuestionItem) and vague_item.status == "OPEN":
-                return {
-                    "action": "ask",
-                    "question": vague_item.to_dict(),
-                    "question_id": vague_item.question_id,
-                    "immediate_ask": True,
-                }
-
-        # Refresh skeleton generation on meaningful queue/frame changes.
-        self._maybe_update_skeleton()
-
-        self._refresh_question_queue_state()
-
-        # Persist state.
-        self.save_state()
-
-        # Return next action.
+        self._finalize_user_message()
         return self.next_action()
 
     # TODO [R2-3.3]: Implement ingest_signal(signal) — signal→question pipeline
@@ -1020,6 +1058,7 @@ class IntentAgentOrchestrator:
         reframed_text = question_text
         reframed_taxonomy = taxonomy
         scenario_from_reframe = ""
+        reframe_failure_reason = ""
         if is_prohibited(taxonomy):
             reframed = reframe_to_user_valid(
                 question_text,
@@ -1032,7 +1071,10 @@ class IntentAgentOrchestrator:
                 reframed_taxonomy = reframed.reframed_type
                 scenario_from_reframe = reframed.scenario
             else:
-                # Cannot reframe — use CONSTRAINT as fallback type.
+                reframe_failure_reason = (
+                    "Ambiguous prohibited request; could not reframe to a user-valid question."
+                )
+                scenario_from_reframe = f"{reframe_failure_reason} Original input: {question_text}"
                 reframed_taxonomy = QuestionTaxonomy.CONSTRAINT
 
         # 3. Draft user question via QuestionDraftStrategy.
@@ -1077,10 +1119,17 @@ class IntentAgentOrchestrator:
         # Log quality check events.
         self._log_quality_checks(records)
         if self._event_log is not None:
-            self._event_log.append("signal_ingested", {
-                "question_id": question_id,
-                "signal_id": signal.uq_id,
-            })
+            self._event_log.append(
+                "signal_ingested",
+                {
+                    "question_id": question_id,
+                    "signal_id": signal.uq_id,
+                },
+            )
+        if reframe_failure_reason:
+            # A prohibited signal that cannot be reframed is intentionally blocked
+            # from downstream consumption until classification ambiguity is resolved.
+            passed = False
 
         # 5. If PASS, dedup check and enqueue.
         if passed and final_candidate is not None:
@@ -1130,7 +1179,7 @@ class IntentAgentOrchestrator:
                     status="PASS",
                     attempts=len(records),
                     last_quality_record_id=records[-1].record_id if records else "",
-                    last_checked_at=datetime.now(timezone.utc).isoformat(),
+                    last_checked_at=datetime.now(UTC).isoformat(),
                 ),
             )
 
@@ -1179,27 +1228,39 @@ class IntentAgentOrchestrator:
                 status="UNASKABLE",
                 taxonomy_type=failed_taxonomy,
                 canonical_key=canonical_key,
-                user_prompt=UserPrompt(text=failed_text),
+                user_prompt=UserPrompt(
+                    text=failed_text,
+                    scenario=scenario_from_reframe,
+                ),
                 system_binding=system_binding,
                 quality_gate=QualityGateStatus(
                     status="FAIL",
                     attempts=len(records),
                     last_quality_record_id=records[-1].record_id if records else "",
-                    last_checked_at=datetime.now(timezone.utc).isoformat(),
+                    last_checked_at=datetime.now(UTC).isoformat(),
                 ),
             )
             logger.info(
                 "Signal %s produced UNASKABLE question %s after %d quality gate attempts.",
-                signal.uq_id, question_id, len(records),
+                signal.uq_id,
+                question_id,
+                len(records),
             )
+            failure_reason = reframe_failure_reason or (
+                records[-1].reason if records else "quality gate failed"
+            )
+            failure_details: dict[str, Any] = {
+                "signal_id": signal.uq_id,
+                "attempts": len(records),
+            }
+            if reframe_failure_reason:
+                failure_details["classification_status"] = "unclassifiable_prohibited_signal"
+                failure_details["original_question_text"] = question_text
             self._mark_unaskable(
                 question_id,
                 source="ingest_signal",
-                reason=(records[-1].reason if records else "quality gate failed"),
-                details={
-                    "signal_id": signal.uq_id,
-                    "attempts": len(records),
-                },
+                reason=failure_reason,
+                details=failure_details,
             )
 
         # 7. Update signal watermark.
@@ -1230,7 +1291,7 @@ class IntentAgentOrchestrator:
         question = self._queue.get_item(question_id)
 
         # Record raw answer provenance.
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         answer_id = f"a_{uuid.uuid4().hex[:12]}"
         provenance = AnswerProvenance(
             answer_id=answer_id,
@@ -1242,11 +1303,14 @@ class IntentAgentOrchestrator:
         save_answer(self._run_dir, provenance)
 
         if self._event_log is not None:
-            self._event_log.append("answer_recorded", {
-                "answer_id": answer_id,
-                "question_id": question_id,
-                "raw_text": raw_text,
-            })
+            self._event_log.append(
+                "answer_recorded",
+                {
+                    "answer_id": answer_id,
+                    "question_id": question_id,
+                    "raw_text": raw_text,
+                },
+            )
 
         # 2. Produce AnswerTranslation via strategy.
         if self._answer_translate is not None and question is not None:
@@ -1279,6 +1343,7 @@ class IntentAgentOrchestrator:
                 ExtractedContent,
                 UserAnswer,
             )
+
             translation = AnswerTranslation(
                 question_id=question_id,
                 user_answer=UserAnswer(
@@ -1312,9 +1377,7 @@ class IntentAgentOrchestrator:
                         planner_error = planner_error or f"planner status {planner_status}"
                 elif hasattr(ingest_result, "status"):
                     planner_status = str(getattr(ingest_result, "status", "OK")).upper()
-                    planner_trace_id = str(
-                        getattr(ingest_result, "trace_id", "")
-                    ).strip()
+                    planner_trace_id = str(getattr(ingest_result, "trace_id", "")).strip()
                     planner_error = str(getattr(ingest_result, "error", "")).strip()
                     if planner_status and planner_status not in {"OK", "NOOP"}:
                         planner_error = planner_error or f"planner status {planner_status}"
@@ -1329,10 +1392,7 @@ class IntentAgentOrchestrator:
                 planner_error = "callback exception"
             if planner_status not in {"OK", "NOOP"}:
                 planner_error = planner_error or f"planner status {planner_status}"
-            if planner_error:
-                planner_ingest_ok = False
-            else:
-                planner_ingest_ok = True
+            planner_ingest_ok = not planner_error
         else:
             # No callback — treat as unsuccessful for deterministic lifecycle.
             # Queue closure must be driven by planner_updates signals.
@@ -1344,13 +1404,16 @@ class IntentAgentOrchestrator:
             provenance.planner_ingest_trace_id = planner_trace_id
 
         if self._event_log is not None:
-            self._event_log.append("translation_produced", {
-                "translation_id": translation.translation_id,
-                "question_id": question_id,
-                "planner_status": planner_status,
-                "planner_ingest_ok": planner_ingest_ok,
-                "planner_error": planner_error,
-            })
+            self._event_log.append(
+                "translation_produced",
+                {
+                    "translation_id": translation.translation_id,
+                    "question_id": question_id,
+                    "planner_status": planner_status,
+                    "planner_ingest_ok": planner_ingest_ok,
+                    "planner_error": planner_error,
+                },
+            )
 
         # 4b. Enqueue follow-ups only when planner ingest succeeded.
         if not planner_ingest_ok:
@@ -1440,14 +1503,14 @@ class IntentAgentOrchestrator:
                         QuestionOrigin(
                             source_kind="INTENT_AGENT",
                             trace_id=translation.translation_id,
-                            created_at=datetime.now(timezone.utc).isoformat(),
+                            created_at=datetime.now(UTC).isoformat(),
                         ),
                     ],
                     quality_gate=QualityGateStatus(
                         status="PASS",
                         attempts=len(fq_records),
                         last_quality_record_id=fq_records[-1].record_id if fq_records else "",
-                        last_checked_at=datetime.now(timezone.utc).isoformat(),
+                        last_checked_at=datetime.now(UTC).isoformat(),
                     ),
                 )
                 existing = self._queue.dedup(fq_item)
@@ -1491,135 +1554,83 @@ class IntentAgentOrchestrator:
     #   3. Run LLM reassess pass for remaining ambiguous OPEN questions
     #   4. Apply actions to queue
     #   5. Update watermark
-    def handle_planner_updates(self) -> dict[str, Any]:
-        """Process new Planner updates and reassess queue."""
-        if self._state is None or self._queue is None or self._planner_store is None:
-            return {
-                "version": 1,
-                "run_id": "",
-                "session_id": "",
-                "trigger": {"kind": "USER_ANSWER_INGESTED", "ref": ""},
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "actions": [],
-            }
-
-        run_id = self._state.run_id
-        session_id = self._state.session_id
-
-        def _empty_result() -> dict[str, Any]:
-            return {
-                "version": 1,
-                "run_id": run_id,
-                "session_id": session_id,
-                "trigger": {"kind": "USER_ANSWER_INGESTED", "ref": ""},
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "actions": [],
-            }
-
-        # 1. Read new planner updates since watermark.
-        watermark = self._state.watermarks.planner_update_watermark
-        new_updates = self._planner_store.read_since(watermark)
-
-        if not new_updates:
-            return _empty_result()
-
-        valid_actions = {
-            "KEEP",
-            "ANSWERED",
-            "STALE",
-            "SUPERSEDED",
-            "REWORD",
-            "DISMISSED",
-            "REDEFINITION",
-            "REPLACE",
+    def _empty_reassessment_result(self, run_id: str, session_id: str) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "run_id": run_id,
+            "session_id": session_id,
+            "trigger": {"kind": "USER_ANSWER_INGESTED", "ref": ""},
+            "created_at": datetime.now(UTC).isoformat(),
+            "actions": [],
         }
 
-        # 2a. Update question_key_map with authoritative refs from planner updates.
-        def _coerce_ids(raw: Any) -> list[str]:
-            if raw is None:
-                return []
-            if isinstance(raw, str):
-                return [raw] if raw else []
-            if isinstance(raw, list):
-                return [str(item) for item in raw if str(item)]
+    def _coerce_update_ids(self, raw: Any) -> list[str]:
+        if raw is None:
             return []
+        if isinstance(raw, str):
+            return [raw] if raw else []
+        if isinstance(raw, list):
+            return [str(item) for item in raw if str(item)]
+        return []
 
-        question_key_map = self._state.question_key_map
-        decision_record_store: Any | None = None
-        try:
-            from spec_manager.planner.api import DecisionRecordStore
-        except Exception:
-            decision_record_store = None
-        else:
-            decision_record_store = DecisionRecordStore(self._run_dir.parent)
+    def _resolve_update_canonical_keys(
+        self,
+        update: dict[str, Any],
+        question_key_map: dict[str, Any],
+    ) -> list[str]:
+        cids = self._coerce_update_ids(update.get("constraint_ids", []))
+        if not cids:
+            cids = self._coerce_update_ids(update.get("constraint_id", ""))
 
-        def _lookup_decision_canonical_key(
-            decision_id: str, slice_id: str
-        ) -> str:
-            if not decision_id or decision_record_store is None:
-                return ""
-            candidate_slice_ids: list[str] = []
-            if slice_id:
-                candidate_slice_ids.append(slice_id)
-            if "global" not in candidate_slice_ids:
-                candidate_slice_ids.append("global")
-            for candidate_slice_id in candidate_slice_ids:
-                record = decision_record_store.get(candidate_slice_id, decision_id)
-                if record is not None and record.canonical_key:
-                    return record.canonical_key
-            return ""
+        dids = self._coerce_update_ids(update.get("decision_ids", []))
+        if not dids:
+            dids = self._coerce_update_ids(update.get("decision_id", ""))
 
-        for update in new_updates:
+        canonical_candidates_set = set(self._coerce_update_ids(update.get("canonical_key", "")))
+        if canonical_candidates_set:
+            return list(canonical_candidates_set)
+
+        canonical_update_constraint_ids = set(cids)
+        canonical_update_decision_ids = set(dids)
+        for key_ref in question_key_map.values():
+            if isinstance(key_ref, dict):
+                raw_canonical = str(key_ref.get("canonical_key", "")).strip()
+                constraint_ids = key_ref.get("planner_constraint_ids", [])
+                decision_ids = key_ref.get("planner_decision_ids", [])
+            else:
+                raw_canonical = str(getattr(key_ref, "canonical_key", "")).strip()
+                constraint_ids = getattr(key_ref, "planner_constraint_ids", [])
+                decision_ids = getattr(key_ref, "planner_decision_ids", [])
+
+            if not raw_canonical:
+                continue
+
+            ref_ids = set(self._coerce_update_ids(constraint_ids)) | set(
+                self._coerce_update_ids(decision_ids)
+            )
+            if canonical_update_constraint_ids & ref_ids or canonical_update_decision_ids & ref_ids:
+                canonical_candidates_set.add(raw_canonical)
+
+        return list(canonical_candidates_set)
+
+    def _reconcile_question_key_map(
+        self,
+        updates: list[dict[str, Any]],
+        question_key_map: dict[str, Any],
+    ) -> None:
+        for update in updates:
             if not isinstance(update, dict):
                 continue
 
-            cids = _coerce_ids(update.get("constraint_ids", []))
+            cids = self._coerce_update_ids(update.get("constraint_ids", []))
             if not cids:
-                cids = _coerce_ids(update.get("constraint_id", ""))
+                cids = self._coerce_update_ids(update.get("constraint_id", ""))
 
-            dids = _coerce_ids(update.get("decision_ids", []))
+            dids = self._coerce_update_ids(update.get("decision_ids", []))
             if not dids:
-                dids = _coerce_ids(update.get("decision_id", ""))
+                dids = self._coerce_update_ids(update.get("decision_id", ""))
 
-            canonical_candidates_set = set(_coerce_ids(update.get("canonical_key", "")))
-
-            update_slice_id = str(update.get("slice_id", "")).strip()
-            for decision_id in dids:
-                if decision_id:
-                    decision_canonical = _lookup_decision_canonical_key(
-                        decision_id,
-                        update_slice_id,
-                    )
-                    if decision_canonical:
-                        canonical_candidates_set.add(decision_canonical)
-
-            if not canonical_candidates_set:
-                canonical_candidates_set = set()
-                canonical_update_constraint_ids = set(cids)
-                canonical_update_decision_ids = set(dids)
-                for key_ref in question_key_map.values():
-                    if isinstance(key_ref, dict):
-                        raw_canonical = str(key_ref.get("canonical_key", "")).strip()
-                        constraint_ids = key_ref.get("planner_constraint_ids", [])
-                        decision_ids = key_ref.get("planner_decision_ids", [])
-                    else:
-                        raw_canonical = str(getattr(key_ref, "canonical_key", "")).strip()
-                        constraint_ids = getattr(key_ref, "planner_constraint_ids", [])
-                        decision_ids = getattr(key_ref, "planner_decision_ids", [])
-
-                    if not raw_canonical:
-                        continue
-
-                    ref_ids = (
-                        set(_coerce_ids(constraint_ids))
-                        | set(_coerce_ids(decision_ids))
-                    )
-                    if canonical_update_constraint_ids & ref_ids or canonical_update_decision_ids & ref_ids:
-                        canonical_candidates_set.add(raw_canonical)
-
-            canonical_keys = _coerce_ids(update.get("canonical_key", ""))
-            if not canonical_keys and canonical_candidates_set:
-                canonical_keys = list(canonical_candidates_set)
+            canonical_keys = self._resolve_update_canonical_keys(update, question_key_map)
             if not canonical_keys:
                 logger.warning(
                     "No canonical key resolved for planner update %s; update cannot be "
@@ -1628,33 +1639,28 @@ class IntentAgentOrchestrator:
                 )
                 continue
 
-            for ck in canonical_keys:
-                if not ck:
+            for canonical_key in canonical_keys:
+                if not canonical_key:
                     continue
-                # Update question_key_map with planner-authoritative IDs
-                if ck in self._state.question_key_map:
-                    ref = self._state.question_key_map[ck]
-                    ref.planner_constraint_ids = list(
-                        set(ref.planner_constraint_ids) | set(cids)
-                    )
-                    ref.planner_decision_ids = list(
-                        set(ref.planner_decision_ids) | set(dids)
-                    )
+                if canonical_key in question_key_map:
+                    ref = question_key_map[canonical_key]
+                    ref.planner_constraint_ids = list(set(ref.planner_constraint_ids) | set(cids))
+                    ref.planner_decision_ids = list(set(ref.planner_decision_ids) | set(dids))
                 else:
                     from spec_manager.orchestration.intent_agent.state import QuestionKeyRef
-                    self._state.question_key_map[ck] = QuestionKeyRef(
-                        canonical_key=ck,
+
+                    question_key_map[canonical_key] = QuestionKeyRef(
+                        canonical_key=canonical_key,
                         planner_constraint_ids=list(set(cids)),
                         planner_decision_ids=list(set(dids)),
                     )
 
-        all_actions: list[dict[str, Any]] = []
-
-        # 2b. Process active redefinition/ alignment events immediately before
-        # mechanical reassessment.
-        for update in new_updates:
+    def _apply_redefinition_updates(self, updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        actions: list[dict[str, Any]] = []
+        for update in updates:
             if not isinstance(update, dict):
                 continue
+
             update_type = self._coerce_redefinition_action_type(
                 self._coerce_str(update.get("type"), ""),
             )
@@ -1690,206 +1696,277 @@ class IntentAgentOrchestrator:
                 continue
 
             action = "REDEFINITION"
-            if replacement_requested:
-                if (
-                    (
-                        replacement_hint
-                        and redefined.question_id != replacement_hint
+            if replacement_requested and (
+                (replacement_hint and redefined.question_id != replacement_hint)
+                or (
+                    isinstance(replacement_payload, dict)
+                    and (
+                        self._coerce_str(replacement_payload.get("new_question_id"))
+                        or self._coerce_str(replacement_payload.get("new_canonical_key"))
                     )
-                    or (
-                        isinstance(replacement_payload, dict)
-                        and (
-                            self._coerce_str(replacement_payload.get("new_question_id"))
-                            or self._coerce_str(replacement_payload.get("new_canonical_key"))
-                        )
-                    )
-                    or (
-                        trigger_question_id
-                        and redefined.question_id != trigger_question_id
-                    )
-                ):
-                    action = "REPLACE"
+                )
+                or (trigger_question_id and redefined.question_id != trigger_question_id)
+            ):
+                action = "REPLACE"
 
-            all_actions.append({
-                "question_id": redefined.question_id,
-                "action": action,
-                "reason": self._coerce_str(
-                    update.get("reason"),
-                    f"Planner update triggered redefinition ({update_type})",
-                ),
-                "redefinition_type": update_type,
-                "event_id": self._coerce_str(update.get("event_id")),
-                "source": self._coerce_str(update.get("source", "PDD_LIFECYCLE")),
-            })
+            actions.append(
+                {
+                    "question_id": redefined.question_id,
+                    "action": action,
+                    "reason": self._coerce_str(
+                        update.get("reason"),
+                        f"Planner update triggered redefinition ({update_type})",
+                    ),
+                    "redefinition_type": update_type,
+                    "event_id": self._coerce_str(update.get("event_id")),
+                    "source": self._coerce_str(update.get("source", "PDD_LIFECYCLE")),
+                }
+            )
+        return actions
 
-        # 2c. Run queue-level mechanical pass and capture base actions.
+    def _run_mechanical_reassess_pass(
+        self,
+        updates: list[dict[str, Any]],
+        question_key_map: dict[str, Any],
+        *,
+        run_id: str,
+        session_id: str,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        assert self._queue is not None
         reassessment = self._queue.reassess(
-            new_updates,
-            self._state.question_key_map,
+            updates,
+            question_key_map,
             run_id=run_id,
             session_id=session_id,
         )
-        reassessment_actions = [
-            dict(item)
-            for item in reassessment.get("actions", [])
-            if isinstance(item, dict)
-        ]
-        all_actions.extend(reassessment_actions)
+        actions = [dict(item) for item in reassessment.get("actions", []) if isinstance(item, dict)]
+        return reassessment, actions
 
-        # 3. LLM reassess pass for remaining OPEN questions.
+    def _run_llm_reassess_pass(
+        self,
+        updates: list[dict[str, Any]],
+        valid_actions: set[str],
+    ) -> list[dict[str, Any]]:
+        if self._queue is None or self._state is None or self._queue_reassess is None:
+            return []
         remaining_open = self._queue.get_open_items()
-        if remaining_open and self._queue_reassess is not None:
-            open_dicts = [
-                {
-                    "question_id": it.question_id,
-                    "canonical_key": it.canonical_key,
-                    "text": it.user_prompt.text,
-                    "taxonomy_type": it.taxonomy_type,
-                }
-                for it in remaining_open
-            ]
-            pf = self._state.problem_frame
-            frame_dict = {
-                "current_restatement": pf.current_restatement,
-                "goals": list(pf.goals),
+        if not remaining_open:
+            return []
+
+        open_dicts = [
+            {
+                "question_id": item.question_id,
+                "canonical_key": item.canonical_key,
+                "text": item.user_prompt.text,
+                "taxonomy_type": item.taxonomy_type,
             }
-            reassess_results = self._queue_reassess.reassess(
-                open_dicts, frame_dict, new_updates,
-                run_agent=self._run_agent,
-            )
+            for item in remaining_open
+        ]
+        pf = self._state.problem_frame
+        frame_dict = {
+            "current_restatement": pf.current_restatement,
+            "goals": list(pf.goals),
+        }
+        reassess_results = self._queue_reassess.reassess(
+            open_dicts,
+            frame_dict,
+            updates,
+            run_agent=self._run_agent,
+        )
 
-            for result in reassess_results:
-                if not isinstance(result, dict):
-                    continue
-                qid = str(result.get("question_id", "")).strip()
-                if not qid:
-                    continue
-                action = str(result.get("action", "KEEP")).strip().upper()
-                if action not in valid_actions:
-                    action = "KEEP"
-                reason = str(result.get("reason", "")).strip()
-                action_record: dict[str, Any] = {
-                    "question_id": qid,
-                    "action": action,
-                    "reason": reason,
+        actions: list[dict[str, Any]] = []
+        for result in reassess_results:
+            if not isinstance(result, dict):
+                continue
+            question_id = str(result.get("question_id", "")).strip()
+            if not question_id:
+                continue
+            action = str(result.get("action", "KEEP")).strip().upper()
+            if action not in valid_actions:
+                action = "KEEP"
+            reason = str(result.get("reason", "")).strip()
+            action_record: dict[str, Any] = {
+                "question_id": question_id,
+                "action": action,
+                "reason": reason,
+            }
+
+            replacement = result.get("replacement")
+            if isinstance(replacement, dict):
+                action_record["replacement"] = {
+                    "new_question_id": str(replacement.get("new_question_id", "")),
+                    "new_canonical_key": str(replacement.get("new_canonical_key", "")),
+                    "new_user_prompt_text": str(replacement.get("new_user_prompt_text", "")),
                 }
-                replacement = result.get("replacement")
-                if isinstance(replacement, dict):
-                    action_record["replacement"] = {
-                        "new_question_id": str(replacement.get("new_question_id", "")),
-                        "new_canonical_key": str(replacement.get("new_canonical_key", "")),
-                        "new_user_prompt_text": str(replacement.get("new_user_prompt_text", "")),
-                    }
-                item = self._queue.get_item(qid)
+            item = self._queue.get_item(question_id)
 
-                if action == "KEEP":
-                    all_actions.append(action_record)
-                    continue
+            if action == "KEEP":
+                actions.append(action_record)
+                continue
 
-                if action in {"SUPERSEDED", "REPLACE"} and item is not None and item.status == "OPEN":
-                    if self._queue.set_status(item.question_id, "SUPERSEDED", reason):
-                        if (
-                            action == "REPLACE"
-                            and replacement
-                            and isinstance(replacement, dict)
-                        ):
-                            replacement_question_id = self._spawn_replacement_question(
-                                item,
-                                {
-                                    "new_question_id": self._coerce_str(
-                                        replacement.get("new_question_id"),
-                                    ),
-                                    "new_canonical_key": self._coerce_str(
-                                        replacement.get("new_canonical_key"),
-                                        item.canonical_key,
-                                    ),
-                                    "new_user_prompt_text": self._coerce_str(
-                                        replacement.get("new_user_prompt_text"),
-                                        item.user_prompt.text,
-                                    ),
-                                },
-                                reason=reason,
-                            )
-                            if replacement_question_id:
-                                action_record["replacement"] = {
-                                    "new_question_id": replacement_question_id,
-                                    "new_canonical_key": self._coerce_str(
-                                        replacement.get("new_canonical_key"),
-                                        item.canonical_key,
-                                    ),
-                                    "new_user_prompt_text": self._coerce_str(
-                                        replacement.get("new_user_prompt_text"),
-                                    ),
-                                }
-                                action_record["action"] = "REPLACE"
-                                all_actions.append(action_record)
-                                continue
-                        all_actions.append(action_record)
-                    continue
+            if action in {"SUPERSEDED", "REPLACE"} and item is not None and item.status == "OPEN":
+                if self._queue.set_status(item.question_id, "SUPERSEDED", reason):
+                    if action == "REPLACE" and replacement and isinstance(replacement, dict):
+                        replacement_question_id = self._spawn_replacement_question(
+                            item,
+                            {
+                                "new_question_id": self._coerce_str(
+                                    replacement.get("new_question_id"),
+                                ),
+                                "new_canonical_key": self._coerce_str(
+                                    replacement.get("new_canonical_key"),
+                                    item.canonical_key,
+                                ),
+                                "new_user_prompt_text": self._coerce_str(
+                                    replacement.get("new_user_prompt_text"),
+                                    item.user_prompt.text,
+                                ),
+                            },
+                            reason=reason,
+                        )
+                        if replacement_question_id:
+                            action_record["replacement"] = {
+                                "new_question_id": replacement_question_id,
+                                "new_canonical_key": self._coerce_str(
+                                    replacement.get("new_canonical_key"),
+                                    item.canonical_key,
+                                ),
+                                "new_user_prompt_text": self._coerce_str(
+                                    replacement.get("new_user_prompt_text"),
+                                ),
+                            }
+                            action_record["action"] = "REPLACE"
+                            actions.append(action_record)
+                            continue
+                    actions.append(action_record)
+                continue
 
-                if action == "REWORD":
-                    if item is not None and item.status == "OPEN" and replacement and isinstance(replacement, dict):
-                        prompt_text = str(replacement.get("new_user_prompt_text", "")).strip()
-                        if prompt_text:
-                            item.user_prompt.text = prompt_text
-                        new_canonical_key = str(replacement.get("new_canonical_key", "")).strip()
-                        if new_canonical_key:
-                            item.canonical_key = new_canonical_key
-                    all_actions.append(action_record)
-                    continue
+            if action == "REWORD":
+                if (
+                    item is not None
+                    and item.status == "OPEN"
+                    and replacement
+                    and isinstance(replacement, dict)
+                ):
+                    prompt_text = str(replacement.get("new_user_prompt_text", "")).strip()
+                    if prompt_text:
+                        item.user_prompt.text = prompt_text
+                    new_canonical_key = str(replacement.get("new_canonical_key", "")).strip()
+                    if new_canonical_key:
+                        item.canonical_key = new_canonical_key
+                actions.append(action_record)
+                continue
 
-                if action == "ANSWERED" and item is not None and item.status == "OPEN":
-                    if self._queue.mark_answered(qid, reason):
-                        all_actions.append(action_record)
-                    continue
+            if action == "ANSWERED" and item is not None and item.status == "OPEN":
+                if self._queue.mark_answered(question_id, reason):
+                    actions.append(action_record)
+                continue
 
-                if action in {"STALE", "DISMISSED"} and item is not None and item.status == "OPEN":
-                    if self._queue.set_status(qid, action, reason):
-                        all_actions.append(action_record)
-                    continue
+            if action in {"STALE", "DISMISSED"} and item is not None and item.status == "OPEN":
+                if self._queue.set_status(question_id, action, reason):
+                    actions.append(action_record)
+                continue
 
-        deduped_actions: list[dict[str, Any]] = []
+        return actions
+
+    def _dedupe_reassess_actions(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
         seen_action_keys: set[tuple[str, str]] = set()
-        for action in all_actions:
+        for action in actions:
             if not isinstance(action, dict):
                 continue
             action_key = (str(action.get("question_id", "")), str(action.get("action", "")))
             if action_key in seen_action_keys:
                 continue
             seen_action_keys.add(action_key)
-            deduped_actions.append(action)
+            deduped.append(action)
+        return deduped
 
-        reassessment["actions"] = deduped_actions
-
-        # 4. Update planner watermark to the latest update's created_at.
+    def _update_planner_watermark(self, updates: list[dict[str, Any]]) -> None:
+        if self._state is None:
+            return
         latest_ts = ""
-        for update in new_updates:
+        for update in updates:
             ts = update.get("created_at", "")
             if ts > latest_ts:
                 latest_ts = ts
         if latest_ts:
             self._state.watermarks.planner_update_watermark = latest_ts
+
+    def _persist_reassess_result(self, reassessment: dict[str, Any]) -> None:
+        reassess_dir = self._run_dir / "intent" / "reassess_results"
+        reassess_dir.mkdir(parents=True, exist_ok=True)
+        reassess_path = (
+            reassess_dir / f"reassess_{reassessment['created_at'].replace(':', '-')}.json"
+        )
+        try:
+            reassess_path.write_text(json.dumps(reassessment, indent=2), encoding="utf-8")
+        except Exception:
+            logger.debug("Failed to persist QueueReassessResult", exc_info=True)
+
+    def handle_planner_updates(self) -> dict[str, Any]:
+        """Process new Planner updates and reassess queue."""
+        if self._state is None or self._queue is None or self._planner_store is None:
+            return self._empty_reassessment_result("", "")
+
+        run_id = self._state.run_id
+        session_id = self._state.session_id
+
+        # 1. Read new planner updates since watermark.
+        watermark = self._state.watermarks.planner_update_watermark
+        raw_updates = self._planner_store.read_since(watermark)
+        if not raw_updates:
+            return self._empty_reassessment_result(run_id, session_id)
+        new_updates = [dict(update) for update in raw_updates if isinstance(update, dict)]
+        if not new_updates:
+            return self._empty_reassessment_result(run_id, session_id)
+
+        valid_actions = {
+            "KEEP",
+            "ANSWERED",
+            "STALE",
+            "SUPERSEDED",
+            "REWORD",
+            "DISMISSED",
+            "REDEFINITION",
+            "REPLACE",
+        }
+
+        question_key_map = self._state.question_key_map
+        self._reconcile_question_key_map(new_updates, question_key_map)
+
+        all_actions: list[dict[str, Any]] = []
+        all_actions.extend(self._apply_redefinition_updates(new_updates))
+
+        reassessment, mechanical_actions = self._run_mechanical_reassess_pass(
+            new_updates,
+            question_key_map,
+            run_id=run_id,
+            session_id=session_id,
+        )
+        all_actions.extend(mechanical_actions)
+
+        llm_actions = self._run_llm_reassess_pass(new_updates, valid_actions)
+        all_actions.extend(llm_actions)
+
+        reassessment["actions"] = self._dedupe_reassess_actions(all_actions)
+
+        # 4. Update planner watermark to the latest update's created_at.
+        self._update_planner_watermark(new_updates)
         self._refresh_question_queue_state()
-        # Build QueueReassessResult artifact with full schema per response2.md.
         reassessment["version"] = 1
         reassessment["run_id"] = run_id
         reassessment["session_id"] = session_id
 
-        # Persist the QueueReassessResult artifact for auditability.
-        reassess_dir = self._run_dir / "intent" / "reassess_results"
-        reassess_dir.mkdir(parents=True, exist_ok=True)
-        reassess_path = reassess_dir / f"reassess_{reassessment['created_at'].replace(':', '-')}.json"
-        try:
-            reassess_path.write_text(
-                json.dumps(reassessment, indent=2), encoding="utf-8",
-            )
-        except Exception:
-            logger.debug("Failed to persist QueueReassessResult", exc_info=True)
+        self._persist_reassess_result(reassessment)
 
         if self._event_log is not None:
-            self._event_log.append("queue_reassess", {
-                "actions": reassessment["actions"],
-            })
+            self._event_log.append(
+                "queue_reassess",
+                {
+                    "actions": reassessment["actions"],
+                },
+            )
 
         self._maybe_update_skeleton()
         return reassessment
@@ -1925,19 +2002,13 @@ class IntentAgentOrchestrator:
 
         # Immediate-ask rule: if a BLOCKING question exists and last presented
         # was INFO (or queue was empty), present the BLOCKING question immediately.
-        blocking_items = [
-            it for it in open_items
-            if it.blockers.severity == "BLOCKING"
-        ]
+        blocking_items = [it for it in open_items if it.blockers.severity == "BLOCKING"]
         if blocking_items and self._state is not None:
             last_presented_id = self._state.question_queue_state.get(
                 "last_presented_question_id", ""
             )
             last_item = self._queue.get_item(last_presented_id) if last_presented_id else None
-            last_was_info = (
-                last_item is None
-                or last_item.blockers.severity == "INFO"
-            )
+            last_was_info = last_item is None or last_item.blockers.severity == "INFO"
             if last_was_info:
                 # Preempt: present the highest-priority BLOCKING question
                 next_q = blocking_items[0]
@@ -1991,7 +2062,7 @@ class IntentAgentOrchestrator:
                     "Your input could be interpreted in different ways. "
                     "Which of the following best describes what you want to build?"
                 ),
-                scenario=f"You said: \"{text}\"",
+                scenario=f'You said: "{text}"',
                 answer_spec_kind="choice",
                 taxonomy_type="INTENT",
             )
@@ -2024,14 +2095,14 @@ class IntentAgentOrchestrator:
             origins=[
                 QuestionOrigin(
                     source_kind="INTENT_AGENT",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ),
             ],
             quality_gate=QualityGateStatus(
                 status="PASS" if passed else "FAIL",
                 attempts=len(records),
                 last_quality_record_id=records[-1].record_id if records else "",
-                last_checked_at=datetime.now(timezone.utc).isoformat(),
+                last_checked_at=datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -2208,14 +2279,11 @@ class IntentAgentOrchestrator:
         trigger_key = self._coerce_str(trigger.get("event_id"), "")
 
         if existing_item is not None:
-            if (
-                isinstance(replacement_payload, dict)
-                and (
-                    replacement_requested
-                    or self._coerce_str(replacement_payload.get("new_user_prompt_text"))
-                    or self._coerce_str(replacement_payload.get("new_canonical_key"))
-                    or self._coerce_str(replacement_payload.get("new_question_id"))
-                )
+            if isinstance(replacement_payload, dict) and (
+                replacement_requested
+                or self._coerce_str(replacement_payload.get("new_user_prompt_text"))
+                or self._coerce_str(replacement_payload.get("new_canonical_key"))
+                or self._coerce_str(replacement_payload.get("new_question_id"))
             ):
                 replacement_text = self._coerce_str(
                     replacement_payload.get("new_user_prompt_text"),
@@ -2232,7 +2300,9 @@ class IntentAgentOrchestrator:
                 replacement_question_id = self._spawn_replacement_question(
                     existing_item,
                     {
-                        "new_question_id": self._coerce_str(replacement_payload.get("new_question_id")),
+                        "new_question_id": self._coerce_str(
+                            replacement_payload.get("new_question_id")
+                        ),
                         "new_canonical_key": replacement_key,
                         "new_user_prompt_text": replacement_text,
                     },
@@ -2257,6 +2327,35 @@ class IntentAgentOrchestrator:
             if existing_item.quality_gate.status != "PASS":
                 existing_item.quality_gate.status = "PASS"
 
+            if not isinstance(existing_item.system_binding, dict):
+                existing_item.system_binding = {}
+            redefinition_history = existing_item.system_binding.get("redefinition_history")
+            if not isinstance(redefinition_history, list):
+                redefinition_history = []
+                existing_item.system_binding["redefinition_history"] = redefinition_history
+            redefinition_history.append(
+                {
+                    "recorded_at": datetime.now(UTC).isoformat(),
+                    "trigger": trigger_key,
+                    "source": source_text.lower(),
+                    "taxonomy_type": existing_item.taxonomy_type,
+                    "scope_kind": existing_item.scope_kind,
+                    "canonical_key": existing_item.canonical_key,
+                    "user_prompt_text": existing_item.user_prompt.text,
+                    "user_prompt_scenario": existing_item.user_prompt.scenario,
+                    "user_prompt_why_it_matters": existing_item.user_prompt.why_it_matters,
+                    "answer_spec_kind": existing_item.user_prompt.answer_spec.kind,
+                    "answer_spec_choices": [
+                        dict(choice) for choice in existing_item.user_prompt.answer_spec.choices
+                    ],
+                    "answer_spec_value_type": existing_item.user_prompt.answer_spec.value_type,
+                    "answer_spec_units_hint": existing_item.user_prompt.answer_spec.units_hint,
+                    "answer_spec_text_bounds": dict(
+                        existing_item.user_prompt.answer_spec.text_bounds
+                    ),
+                }
+            )
+
             existing_item.taxonomy_type = question_type
             existing_item.scope_kind = scope_kind
             existing_item.canonical_key = canonical_key
@@ -2270,20 +2369,22 @@ class IntentAgentOrchestrator:
                 choices=parsed_choices,
             )
             existing_item.blockers.severity = "BLOCKING"
-            existing_item.system_binding.update({
-                "redefinition_trigger": trigger_key,
-                "redefinition_type": trigger_type,
-                "redefinition_stage": stage_text,
-                "redefinition_source": source_text.lower(),
-                "redefinition_canonical_key": canonical_key,
-            })
+            existing_item.system_binding.update(
+                {
+                    "redefinition_trigger": trigger_key,
+                    "redefinition_type": trigger_type,
+                    "redefinition_stage": stage_text,
+                    "redefinition_source": source_text.lower(),
+                    "redefinition_canonical_key": canonical_key,
+                }
+            )
 
-            existing_item.timestamps["updated_at"] = datetime.now(timezone.utc).isoformat()
+            existing_item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
             existing_item.origins.append(
                 QuestionOrigin(
                     source_kind=source_text,
                     trace_id=source_trace,
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 )
             )
             return existing_item
@@ -2314,7 +2415,7 @@ class IntentAgentOrchestrator:
                 QuestionOrigin(
                     source_kind=source_text,
                     trace_id=source_trace,
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ),
             ],
             blockers=QuestionBlockers(
@@ -2323,7 +2424,7 @@ class IntentAgentOrchestrator:
             quality_gate=QualityGateStatus(
                 status="PASS",
                 attempts=1,
-                last_checked_at=datetime.now(timezone.utc).isoformat(),
+                last_checked_at=datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -2359,7 +2460,7 @@ class IntentAgentOrchestrator:
             item.quality_gate.attempts = len(records)
 
         # Re-open if this was an older item that had already transitioned.
-        item.timestamps["updated_at"] = datetime.now(timezone.utc).isoformat()
+        item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
         return item
 
     # TODO [R2-6.1]: Implement produce_skeleton() — skeleton generation
@@ -2442,21 +2543,28 @@ class IntentAgentOrchestrator:
             for it in open_items
         ]
         snapshot_path = render_intent_snapshot(
-            frame_dict, concept_dict, open_q_dicts, constraint_refs, output_dir,
+            frame_dict,
+            concept_dict,
+            open_q_dicts,
+            constraint_refs,
+            output_dir,
         )
         created_paths.append(snapshot_path)
 
         # 4. Update skeleton_state in session.
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self._state.skeleton_state.revision += 1
         self._state.skeleton_state.artifact_paths = [str(p) for p in created_paths]
         self._state.skeleton_state.last_generated_at = now
 
         if self._event_log is not None:
-            self._event_log.append("skeleton_updated", {
-                "revision": self._state.skeleton_state.revision,
-                "paths": [str(p) for p in created_paths],
-            })
+            self._event_log.append(
+                "skeleton_updated",
+                {
+                    "revision": self._state.skeleton_state.revision,
+                    "paths": [str(p) for p in created_paths],
+                },
+            )
 
         return created_paths
 

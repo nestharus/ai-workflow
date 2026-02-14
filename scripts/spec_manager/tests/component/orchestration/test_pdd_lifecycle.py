@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from spec_manager.orchestration import pdd_lifecycle as lifecycle_module
 from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+from spec_manager.refinement.workspace.state import Phase
 
 
 @pytest.fixture
@@ -241,6 +243,110 @@ class TestPddLifecycleRun:
         assert "cleanup" in result
 
 
+class TestSection10MigrationChecklistArtifact:
+    """Checklist artifact coverage for section-10 lifecycle integration."""
+
+    @patch.object(PddLifecycle, "_request_release_signoff")
+    @patch.object(PddLifecycle, "_run_governance_check")
+    @patch.object(PddLifecycle, "_request_l2_checkpoint")
+    @patch.object(PddLifecycle, "_run_l1_with_approval")
+    @patch.object(PddLifecycle, "_run_layer")
+    @patch.object(PddLifecycle, "_run_transition")
+    @patch.object(PddLifecycle, "_run_intake")
+    @patch.object(PddLifecycle, "qa")
+    def test_run_emits_checklist_artifact_with_canonical_shape(
+        self,
+        mock_qa: MagicMock,
+        mock_intake: MagicMock,
+        mock_transition: MagicMock,
+        mock_layer: MagicMock,
+        mock_l1_approval: MagicMock,
+        mock_l2_checkpoint: MagicMock,
+        mock_governance: MagicMock,
+        mock_release_signoff: MagicMock,
+        mock_manager: MagicMock,
+    ) -> None:
+        mock_intake.return_value = {"status": "COMPLETED"}
+        mock_l1_approval.return_value = (
+            {"layer": "l1", "slices": {}},
+            {"approved": True, "iteration": 1, "mode": "interactive"},
+        )
+        mock_transition.return_value = {"refinement": {}, "from": "l1", "to": "l2"}
+        mock_layer.return_value = {"layer": "l2", "slices": {}}
+        mock_qa.return_value = {"pass_rate": 1.0}
+        mock_l2_checkpoint.return_value = {"approved": True, "mode": "interactive"}
+        mock_governance.return_value = {"passed": True}
+        mock_release_signoff.return_value = {"approved": True, "mode": "interactive"}
+
+        lifecycle = PddLifecycle(mock_manager)
+        result = lifecycle.run()
+
+        checklist_output = result["section10_migration_checklist"]
+        checklist_path = Path(checklist_output["path"])
+        assert checklist_path.exists()
+
+        payload = json.loads(checklist_path.read_text(encoding="utf-8"))
+        assert payload["artifact"] == "section10_migration_checklist"
+        assert payload["version"] == 1
+        assert payload["section"] == "10"
+        assert payload["run_id"] == mock_manager.run_id
+        assert payload["mode"] == "interactive"
+
+        assert [item["id"] for item in payload["prechecks"]] == [
+            "checkpoint_taxonomy_coverage",
+            "checkpoint_key_set",
+            "user_question_store_path",
+            "planner_update_store_path",
+        ]
+        assert [item["checkpoint"] for item in payload["migration_order"]] == [
+            "l1_approval",
+            "l2_checkpoint",
+            "release_signoff",
+        ]
+        assert [item["taxonomy"] for item in payload["migration_order"]] == [
+            "VALIDATION",
+            "SCOPE",
+            "TRADEOFF",
+        ]
+        assert payload["rollback"][0]["id"] == "resume_from_run_state"
+        assert payload["acceptance_status"]["status"] == "COMPLETE"
+        assert checklist_output["acceptance_status"] == "COMPLETE"
+
+    @patch.object(PddLifecycle, "_run_l1_with_approval")
+    @patch.object(PddLifecycle, "_run_intake")
+    def test_run_waiting_updates_checklist_status(
+        self,
+        mock_intake: MagicMock,
+        mock_l1_approval: MagicMock,
+        mock_manager: MagicMock,
+    ) -> None:
+        mock_intake.return_value = {"status": "COMPLETED"}
+        mock_l1_approval.return_value = (
+            {"layer": "l1", "slices": {}},
+            {
+                "approved": False,
+                "mode": "interactive",
+                "status": "WAITING",
+                "checkpoint": "l1_approval",
+            },
+        )
+
+        lifecycle = PddLifecycle(mock_manager, mode="interactive")
+        result = lifecycle.run()
+
+        assert result["status"] == "WAITING"
+        assert result["waiting_reason"] == "l1_approval"
+
+        checklist_path = Path(result["section10_migration_checklist"]["path"])
+        payload = json.loads(checklist_path.read_text(encoding="utf-8"))
+        statuses = {step["checkpoint"]: step["status"] for step in payload["migration_order"]}
+        assert statuses["l1_approval"] == "WAITING"
+        assert statuses["l2_checkpoint"] == "PENDING"
+        assert statuses["release_signoff"] == "PENDING"
+        assert payload["acceptance_status"]["status"] == "IN_PROGRESS"
+        assert result["section10_migration_checklist"]["acceptance_status"] == "IN_PROGRESS"
+
+
 class TestRunLayer:
     """Test the _run_layer method."""
 
@@ -457,6 +563,125 @@ class TestDiscoverSlices:
         assert slices == []
 
 
+class TestPhase0BoundaryReentry:
+    """Test deterministic Phase 0 boundary re-entry selection."""
+
+    def test_run_intake_triggers_phase0_when_libraries_missing(
+        self,
+        mock_manager: MagicMock,
+    ) -> None:
+        """If libraries are missing, intake must deterministically run Phase 0."""
+        (mock_manager.structure.spec_snapshot_dir / "spec.md").write_text(
+            "# Spec\n\nBaseline text.",
+            encoding="utf-8",
+        )
+
+        lifecycle = PddLifecycle(mock_manager)
+        lifecycle.orchestrator.run_phase = MagicMock(return_value={"extraction": "done"})
+
+        result = lifecycle._run_intake()
+
+        lifecycle.orchestrator.run_phase.assert_called_once_with(Phase.EXTRACTION)
+        assert result["status"] == "COMPLETED"
+        assert "LIBRARIES_MISSING" in result["trigger_reasons"]
+
+        state_path = mock_manager.workspace_path / ".pdd_runs" / mock_manager.run_id / "intake"
+        saved = json.loads((state_path / "phase0_state.json").read_text(encoding="utf-8"))
+        assert saved["status"] == "COMPLETED"
+        assert "LIBRARIES_MISSING" in saved["trigger_reasons"]
+
+    def test_run_intake_skips_when_no_boundary_trigger(
+        self,
+        mock_manager: MagicMock,
+    ) -> None:
+        """If signatures and queue are unchanged, intake should skip deterministically."""
+        lib_dir = mock_manager.structure.libraries_dir / "lib-a"
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        (mock_manager.structure.spec_snapshot_dir / "spec.md").write_text(
+            "# Spec\n\nStable.",
+            encoding="utf-8",
+        )
+        system_dir = mock_manager.structure.root / "system"
+        system_dir.mkdir(parents=True, exist_ok=True)
+        intent_path = system_dir / "intent.md"
+        intent_path.write_text("# Intent\n\nStable.", encoding="utf-8")
+
+        lifecycle = PddLifecycle(mock_manager)
+        snapshot_sig = lifecycle._directory_signature(mock_manager.structure.spec_snapshot_dir)
+        intent_sig = lifecycle._content_signature(intent_path)
+        state_path = mock_manager.workspace_path / ".pdd_runs" / mock_manager.run_id / "intake"
+        state_path.mkdir(parents=True, exist_ok=True)
+        (state_path / "phase0_state.json").write_text(
+            json.dumps(
+                {
+                    "status": "COMPLETED",
+                    "snapshot_signature": snapshot_sig,
+                    "system_intent_signature": intent_sig,
+                    "trigger_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        lifecycle.orchestrator.run_phase = MagicMock(return_value={"extraction": "done"})
+        result = lifecycle._run_intake()
+
+        lifecycle.orchestrator.run_phase.assert_not_called()
+        assert result["status"] == "SKIPPED"
+        assert result["trigger_reasons"] == []
+
+        saved = json.loads((state_path / "phase0_state.json").read_text(encoding="utf-8"))
+        assert saved["status"] == "SKIPPED"
+        assert saved["trigger_reasons"] == []
+
+    def test_run_intake_triggers_phase0_on_system_intent_signature_drift(
+        self,
+        mock_manager: MagicMock,
+    ) -> None:
+        """Intent signature drift must trigger Phase 0 boundary regeneration."""
+        lib_dir = mock_manager.structure.libraries_dir / "lib-a"
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        (mock_manager.structure.spec_snapshot_dir / "spec.md").write_text(
+            "# Spec\n\nStable.",
+            encoding="utf-8",
+        )
+        system_dir = mock_manager.structure.root / "system"
+        system_dir.mkdir(parents=True, exist_ok=True)
+        intent_path = system_dir / "intent.md"
+        intent_path.write_text("# Intent\n\nOld.", encoding="utf-8")
+
+        lifecycle = PddLifecycle(mock_manager)
+        snapshot_sig = lifecycle._directory_signature(mock_manager.structure.spec_snapshot_dir)
+        previous_intent_sig = lifecycle._content_signature(intent_path)
+
+        state_path = mock_manager.workspace_path / ".pdd_runs" / mock_manager.run_id / "intake"
+        state_path.mkdir(parents=True, exist_ok=True)
+        (state_path / "phase0_state.json").write_text(
+            json.dumps(
+                {
+                    "status": "COMPLETED",
+                    "snapshot_signature": snapshot_sig,
+                    "system_intent_signature": previous_intent_sig,
+                    "trigger_reasons": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        intent_path.write_text("# Intent\n\nNew content.", encoding="utf-8")
+
+        lifecycle.orchestrator.run_phase = MagicMock(return_value={"extraction": "done"})
+        result = lifecycle._run_intake()
+
+        lifecycle.orchestrator.run_phase.assert_called_once_with(Phase.EXTRACTION)
+        assert result["status"] == "COMPLETED"
+        assert "SYSTEM_INTENT_SIGNATURE_CHANGED" in result["trigger_reasons"]
+
+        saved = json.loads((state_path / "phase0_state.json").read_text(encoding="utf-8"))
+        assert saved["status"] == "COMPLETED"
+        assert "SYSTEM_INTENT_SIGNATURE_CHANGED" in saved["trigger_reasons"]
+
+
 class TestPddLifecycleQA:
     """Test the QA eval method."""
 
@@ -570,6 +795,24 @@ class TestLibraryRefinement:
         result = lifecycle._library_refinement()
 
         assert result["lib1-test-library"]["refined"] is False
+
+    @patch("spec_manager.refinement.interactive.workflow.InteractiveWorkflow")
+    def test_library_refinement_interactive_mode_disables_prompt_helper(
+        self,
+        mock_workflow_class: MagicMock,
+        mock_manager_with_libraries: MagicMock,
+    ) -> None:
+        """Core lifecycle never enables InteractiveWorkflow prompt helper."""
+        mock_workflow = MagicMock()
+        mock_workflow.run.side_effect = ["refined 1", "refined 2"]
+        mock_workflow_class.return_value = mock_workflow
+
+        lifecycle = PddLifecycle(mock_manager_with_libraries, mode="interactive")
+        lifecycle._library_refinement()
+
+        assert mock_workflow_class.call_count == 2
+        first_call_kwargs = mock_workflow_class.call_args_list[0].kwargs
+        assert first_call_kwargs["interactive"] is False
 
     def test_library_refinement_no_libraries_dir(
         self,
@@ -932,11 +1175,11 @@ class TestL1WithApproval:
         assert approval["approved"] is True
         assert approval["mode"] == "steering"
 
-    @patch("builtins.input", return_value="a")
+    @patch("builtins.input", side_effect=AssertionError("input fallback should not be used"))
     @patch.object(PddLifecycle, "_check_alignment")
     @patch.object(PddLifecycle, "_generate_overview")
     @patch.object(PddLifecycle, "_run_layer")
-    def test_interactive_mode_approve(
+    def test_interactive_mode_returns_waiting_without_input(
         self,
         mock_layer: MagicMock,
         mock_overview: MagicMock,
@@ -944,157 +1187,126 @@ class TestL1WithApproval:
         mock_input: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
-        """Test that interactive mode with 'a' input approves."""
-        mock_layer.return_value = {"layer": "l1", "overview": {}}
+        """Interactive mode emits a lifecycle signal and returns WAITING."""
+        mock_layer.return_value = {"layer": "l1", "slices": {}}
         mock_overview.return_value = {"overview_path": "/some/path/overview.md"}
         mock_align.return_value = {}
 
         lifecycle = PddLifecycle(mock_manager, mode="interactive")
-        l1_result, approval = lifecycle._run_l1_with_approval()
+        _, approval = lifecycle._run_l1_with_approval()
 
-        assert approval["approved"] is True
+        assert approval["approved"] is False
         assert approval["mode"] == "interactive"
+        assert approval["status"] == "WAITING"
+        assert approval["checkpoint"] == "l1_approval"
+        mock_layer.assert_called_once_with("l1")
+        mock_input.assert_not_called()
 
-    @patch("builtins.input", return_value="")
-    @patch.object(PddLifecycle, "_check_alignment")
-    @patch.object(PddLifecycle, "_generate_overview")
-    @patch.object(PddLifecycle, "_run_layer")
-    def test_interactive_mode_empty_input_approves(
+        signal_path = (
+            mock_manager.workspace_path
+            / ".pdd_runs"
+            / mock_manager.run_id
+            / "coordination"
+            / "user_questions.jsonl"
+        )
+        assert signal_path.exists()
+        lines = signal_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["source"]["kind"] == "PDD_LIFECYCLE"
+        assert payload["source"]["signal_id"] == "l1_approval"
+        assert payload["question"]["taxonomy_hint"] == "VALIDATION"
+
+
+class TestInteractiveCheckpointSignals:
+    """Interactive lifecycle checkpoints use signal emission, never input()."""
+
+    def test_lifecycle_checkpoint_taxonomy_uses_canonical_categories(self) -> None:
+        assert lifecycle_module._LIFECYCLE_CHECKPOINT_TAXONOMY == {
+            "l1_approval": "VALIDATION",
+            "l2_checkpoint": "SCOPE",
+            "release_signoff": "TRADEOFF",
+        }
+        assert set(lifecycle_module._LIFECYCLE_CHECKPOINT_TAXONOMY.values()) == {
+            "VALIDATION",
+            "SCOPE",
+            "TRADEOFF",
+        }
+
+    @patch("builtins.input", side_effect=AssertionError("input fallback should not be used"))
+    def test_l2_checkpoint_emits_waiting_signal_without_input(
         self,
-        mock_layer: MagicMock,
-        mock_overview: MagicMock,
-        mock_align: MagicMock,
         mock_input: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
-        """Test that empty input (just Enter) approves."""
-        mock_layer.return_value = {"layer": "l1"}
-        mock_overview.return_value = {}
-        mock_align.return_value = {}
-
         lifecycle = PddLifecycle(mock_manager, mode="interactive")
-        l1_result, approval = lifecycle._run_l1_with_approval()
+        result = lifecycle._request_l2_checkpoint({"slices": []})
 
-        assert approval["approved"] is True
+        assert result["approved"] is False
+        assert result["status"] == "WAITING"
+        assert result["checkpoint"] == "l2_checkpoint"
+        mock_input.assert_not_called()
 
-    @patch("builtins.input", side_effect=["f", "needs more detail", "a"])
-    @patch.object(PddLifecycle, "_check_alignment")
-    @patch.object(PddLifecycle, "_generate_overview")
-    @patch.object(PddLifecycle, "_run_layer")
-    def test_interactive_mode_feedback_then_approve(
+        signal_path = (
+            mock_manager.workspace_path
+            / ".pdd_runs"
+            / mock_manager.run_id
+            / "coordination"
+            / "user_questions.jsonl"
+        )
+        lines = signal_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["source"]["signal_id"] == "l2_checkpoint"
+        assert payload["source"]["kind"] == "PDD_LIFECYCLE"
+        assert payload["question"]["taxonomy_hint"] == "SCOPE"
+
+    @patch("builtins.input", side_effect=AssertionError("input fallback should not be used"))
+    def test_release_signoff_emits_waiting_signal_without_input(
         self,
-        mock_layer: MagicMock,
-        mock_overview: MagicMock,
-        mock_align: MagicMock,
         mock_input: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
-        """Test feedback loop: feedback on first iteration, approve on second."""
-        mock_layer.return_value = {"layer": "l1"}
-        mock_overview.return_value = {}
-        mock_align.return_value = {}
-
         lifecycle = PddLifecycle(mock_manager, mode="interactive")
-        l1_result, approval = lifecycle._run_l1_with_approval()
+        result = lifecycle._request_release_signoff(
+            {
+                "scorecard": {"overall_pass": True},
+                "final_governance": {"passed": True, "error": ""},
+            }
+        )
 
-        assert mock_layer.call_count == 2
-        assert approval["approved"] is True
-        assert approval["iteration"] == 2
+        assert result["approved"] is False
+        assert result["status"] == "WAITING"
+        assert result["checkpoint"] == "release_signoff"
+        mock_input.assert_not_called()
 
-    @patch("builtins.input", side_effect=EOFError)
-    @patch.object(PddLifecycle, "_check_alignment")
-    @patch.object(PddLifecycle, "_generate_overview")
-    @patch.object(PddLifecycle, "_run_layer")
-    def test_interactive_mode_eof_approves(
+        signal_path = (
+            mock_manager.workspace_path
+            / ".pdd_runs"
+            / mock_manager.run_id
+            / "coordination"
+            / "user_questions.jsonl"
+        )
+        lines = signal_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["source"]["signal_id"] == "release_signoff"
+        assert payload["source"]["kind"] == "PDD_LIFECYCLE"
+        assert payload["question"]["taxonomy_hint"] == "TRADEOFF"
+
+    def test_emit_checkpoint_signal_rejects_unknown_checkpoint(
         self,
-        mock_layer: MagicMock,
-        mock_overview: MagicMock,
-        mock_align: MagicMock,
-        mock_input: MagicMock,
         mock_manager: MagicMock,
     ) -> None:
-        """Test that EOFError (non-interactive terminal) auto-approves."""
-        mock_layer.return_value = {"layer": "l1"}
-        mock_overview.return_value = {}
-        mock_align.return_value = {}
-
         lifecycle = PddLifecycle(mock_manager, mode="interactive")
-        l1_result, approval = lifecycle._run_l1_with_approval()
 
-        assert approval["approved"] is True
-
-    @patch("builtins.input", return_value="q")
-    @patch.object(PddLifecycle, "_check_alignment")
-    @patch.object(PddLifecycle, "_generate_overview")
-    @patch.object(PddLifecycle, "_run_layer")
-    def test_interactive_mode_quit_raises(
-        self,
-        mock_layer: MagicMock,
-        mock_overview: MagicMock,
-        mock_align: MagicMock,
-        mock_input: MagicMock,
-        mock_manager: MagicMock,
-    ) -> None:
-        """Test that 'q' input raises KeyboardInterrupt."""
-        mock_layer.return_value = {"layer": "l1"}
-        mock_overview.return_value = {}
-        mock_align.return_value = {}
-
-        lifecycle = PddLifecycle(mock_manager, mode="interactive")
-        with pytest.raises(KeyboardInterrupt):
-            lifecycle._run_l1_with_approval()
-
-    @patch(
-        "builtins.input",
-        side_effect=["f", "fix this", "f", "fix that", "f", "fix more"],
-    )
-    @patch.object(PddLifecycle, "_check_alignment")
-    @patch.object(PddLifecycle, "_generate_overview")
-    @patch.object(PddLifecycle, "_run_layer")
-    def test_max_iterations_auto_approves(
-        self,
-        mock_layer: MagicMock,
-        mock_overview: MagicMock,
-        mock_align: MagicMock,
-        mock_input: MagicMock,
-        mock_manager: MagicMock,
-    ) -> None:
-        """Test that max iterations reached leads to auto-approval."""
-        mock_layer.return_value = {"layer": "l1"}
-        mock_overview.return_value = {}
-        mock_align.return_value = {}
-
-        lifecycle = PddLifecycle(mock_manager, mode="interactive", max_approval_iterations=3)
-        l1_result, approval = lifecycle._run_l1_with_approval()
-
-        assert approval["approved"] is True
-        assert approval["auto_approved"] is True
-        assert approval["reason"] == "max_iterations_reached"
-        assert mock_layer.call_count == 3
-
-    @patch("builtins.input", side_effect=["f", "feedback text"])
-    @patch.object(PddLifecycle, "_check_alignment")
-    @patch.object(PddLifecycle, "_generate_overview")
-    @patch.object(PddLifecycle, "_run_layer")
-    def test_feedback_written_to_file(
-        self,
-        mock_layer: MagicMock,
-        mock_overview: MagicMock,
-        mock_align: MagicMock,
-        mock_input: MagicMock,
-        mock_manager: MagicMock,
-    ) -> None:
-        """Test that feedback is written to reports directory."""
-        mock_layer.return_value = {"layer": "l1"}
-        mock_overview.return_value = {}
-        mock_align.return_value = {}
-
-        lifecycle = PddLifecycle(mock_manager, mode="interactive", max_approval_iterations=1)
-        l1_result, approval = lifecycle._run_l1_with_approval()
-
-        feedback_path = mock_manager.structure.root / "reports" / "feedback_iteration_1.txt"
-        assert feedback_path.exists()
-        assert feedback_path.read_text(encoding="utf-8") == "feedback text"
+        with pytest.raises(ValueError, match="Unknown lifecycle checkpoint"):
+            lifecycle._emit_checkpoint_signal(
+                checkpoint="legacy_checkpoint",
+                layer="l1",
+                question_text="Should we proceed?",
+                canonical_key_hint="lifecycle.legacy.checkpoint",
+            )
 
 
 class TestEdgeCases:

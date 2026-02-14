@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +26,17 @@ from spec_manager.orchestration.intent_agent.taxonomy import normalize_user_faci
 logger = logging.getLogger(__name__)
 
 
-_VALID_FOLLOWUP_ANSWER_SPEC_KINDS = frozenset({
-    "choice",
-    "yes_no",
-    "value",
-    "bounded_text",
-})
+_VALID_FOLLOWUP_ANSWER_SPEC_KINDS = frozenset(
+    {
+        "choice",
+        "yes_no",
+        "value",
+        "bounded_text",
+    }
+)
+
+TRANSLATION_STATUS_SUCCEEDED = "succeeded"
+TRANSLATION_STATUS_FAILED = "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +115,8 @@ class ExtractedContent:
     tradeoff_candidates: list[TradeoffCandidate] = field(default_factory=list)
     validation_candidates: list[ValidationCandidate] = field(default_factory=list)
     followup_question_drafts: list[FollowupQuestionDraft] = field(default_factory=list)
+    followup_omissions: list[dict[str, Any]] = field(default_factory=list)
+    translation_failures: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -152,6 +159,7 @@ class AnswerTranslation:
     canonical_key_hint: str = ""
     answer_id: str = ""
     created_at: str = ""
+    translation_status: str = TRANSLATION_STATUS_SUCCEEDED
     user_answer: UserAnswer = field(default_factory=UserAnswer)
     extracted: ExtractedContent = field(default_factory=ExtractedContent)
     recursion_budget: RecursionBudget = field(default_factory=RecursionBudget)
@@ -161,7 +169,7 @@ class AnswerTranslation:
         if not self.translation_id:
             self.translation_id = f"at_{uuid.uuid4().hex[:12]}"
         if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            self.created_at = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the translation artifact to a plain dict."""
@@ -174,6 +182,7 @@ class AnswerTranslation:
             "canonical_key_hint": self.canonical_key_hint,
             "answer_id": self.answer_id,
             "created_at": self.created_at,
+            "translation_status": self.translation_status,
             "user_answer": {
                 "raw_text": self.user_answer.raw_text,
                 "selected_choice_id": self.user_answer.selected_choice_id,
@@ -224,6 +233,8 @@ class AnswerTranslation:
                     }
                     for fq in self.extracted.followup_question_drafts
                 ],
+                "followup_omissions": self.extracted.followup_omissions,
+                "translation_failures": self.extracted.translation_failures,
             },
             "recursion_budget": {
                 "max_followups": self.recursion_budget.max_followups,
@@ -238,6 +249,35 @@ class AnswerTranslation:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AnswerTranslation:
         """Reconstruct an AnswerTranslation from a plain dict."""
+        required_fields = ("translation_id", "question_id", "created_at", "extracted")
+        missing_fields = [field_name for field_name in required_fields if field_name not in d]
+        if missing_fields:
+            raise ValueError(
+                "AnswerTranslation deserialization missing required fields: "
+                + ", ".join(missing_fields),
+            )
+
+        translation_id = d["translation_id"]
+        question_id = d["question_id"]
+        created_at = d["created_at"]
+        ext_raw = d["extracted"]
+        if not isinstance(translation_id, str) or not translation_id:
+            raise ValueError(
+                "AnswerTranslation deserialization invalid required field: translation_id",
+            )
+        if not isinstance(question_id, str) or not question_id:
+            raise ValueError(
+                "AnswerTranslation deserialization invalid required field: question_id",
+            )
+        if not isinstance(created_at, str) or not created_at:
+            raise ValueError(
+                "AnswerTranslation deserialization invalid required field: created_at",
+            )
+        if not isinstance(ext_raw, dict):
+            raise TypeError(
+                "AnswerTranslation deserialization invalid required field: extracted",
+            )
+
         ua_raw = d.get("user_answer", {})
         user_answer = UserAnswer(
             raw_text=ua_raw.get("raw_text", ""),
@@ -245,11 +285,9 @@ class AnswerTranslation:
             parsed_values=ua_raw.get("parsed_values", {}),
         )
 
-        ext_raw = d.get("extracted", {})
         extracted = ExtractedContent(
             constraint_candidates=[
-                ConstraintCandidate(**c)
-                for c in ext_raw.get("constraint_candidates", [])
+                ConstraintCandidate(**c) for c in ext_raw.get("constraint_candidates", [])
             ],
             scope_candidates=[
                 ScopeCandidate(
@@ -259,12 +297,10 @@ class AnswerTranslation:
                 for s in ext_raw.get("scope_candidates", [])
             ],
             tradeoff_candidates=[
-                TradeoffCandidate(**t)
-                for t in ext_raw.get("tradeoff_candidates", [])
+                TradeoffCandidate(**t) for t in ext_raw.get("tradeoff_candidates", [])
             ],
             validation_candidates=[
-                ValidationCandidate(**v)
-                for v in ext_raw.get("validation_candidates", [])
+                ValidationCandidate(**v) for v in ext_raw.get("validation_candidates", [])
             ],
             followup_question_drafts=[
                 FollowupQuestionDraft(
@@ -281,6 +317,8 @@ class AnswerTranslation:
                 )
                 for fq in ext_raw.get("followup_question_drafts", [])
             ],
+            followup_omissions=ext_raw.get("followup_omissions", []),
+            translation_failures=ext_raw.get("translation_failures", []),
         )
 
         rb_raw = d.get("recursion_budget", {})
@@ -297,13 +335,14 @@ class AnswerTranslation:
 
         return cls(
             version=d.get("version", 1),
-            translation_id=d.get("translation_id", ""),
+            translation_id=translation_id,
             run_id=d.get("run_id", ""),
             session_id=d.get("session_id", ""),
-            question_id=d.get("question_id", ""),
+            question_id=question_id,
             canonical_key_hint=d.get("canonical_key_hint", ""),
             answer_id=d.get("answer_id", ""),
-            created_at=d.get("created_at", ""),
+            created_at=created_at,
+            translation_status=d.get("translation_status", TRANSLATION_STATUS_SUCCEEDED),
             user_answer=user_answer,
             extracted=extracted,
             recursion_budget=recursion_budget,
@@ -392,8 +431,6 @@ class AnswerTranslateStrategy:
                 recursion_budget=recursion_budget,
             )
 
-        from spec_manager.core.json_extraction import _extract_json_payload
-
         context_parts: list[str] = []
         if problem_frame:
             context_parts.append(f"Problem frame: {problem_frame}")
@@ -436,9 +473,7 @@ class AnswerTranslateStrategy:
                 'answer_spec (object with "kind" key)\n'
             )
         else:
-            prompt += (
-                "5. followup_question_drafts — MUST be empty (recursion budget exhausted)\n"
-            )
+            prompt += "5. followup_question_drafts — MUST be empty (recursion budget exhausted)\n"
 
         prompt += (
             "\nRespond with JSON:\n"
@@ -451,18 +486,36 @@ class AnswerTranslateStrategy:
             "}"
         )
 
+        import json
+
+        raw_llm_output = ""
+        extracted_payload = ""
         try:
             raw = run_agent(prompt)
-            payload = _extract_json_payload(raw)
-            import json
+            raw_llm_output = raw if isinstance(raw, str) else repr(raw)
+            payload = _extract_translation_json_payload(raw)
+            extracted_payload = payload if isinstance(payload, str) else repr(payload)
             data = json.loads(payload)
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.debug("AnswerTranslateStrategy LLM parse failed (%s)", exc)
+            extracted = ExtractedContent(
+                translation_failures=[
+                    {
+                        "reason": "llm_parse_failure",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "raw_llm_output": raw_llm_output,
+                        "json_payload": extracted_payload,
+                    }
+                ]
+            )
             return AnswerTranslation(
                 question_id=question_id,
+                canonical_key_hint=canonical_key,
                 user_answer=user_answer,
-                extracted=ExtractedContent(),
+                extracted=extracted,
                 recursion_budget=recursion_budget,
+                translation_status=TRANSLATION_STATUS_FAILED,
             )
 
         # Build extracted content from parsed data
@@ -508,13 +561,38 @@ class AnswerTranslateStrategy:
         ]
 
         raw_followups = data.get("followup_question_drafts", [])
+        followup_omissions: list[dict[str, Any]] = []
         if not isinstance(raw_followups, list):
-            raw_followups = []
-        # Enforce global recursion budget — strip all follow-ups if exhausted
-        if budget_exhausted:
+            followup_omissions.append(
+                {
+                    "reason": "invalid_followup_container",
+                    "container_type": type(raw_followups).__name__,
+                    "dropped_count": 1,
+                }
+            )
             raw_followups = []
         else:
-            raw_followups = raw_followups[:remaining_followups]
+            received_followups = len(raw_followups)
+            if budget_exhausted:
+                if received_followups > 0:
+                    followup_omissions.append(
+                        {
+                            "reason": "budget_exhausted",
+                            "dropped_count": received_followups,
+                            "remaining_budget": remaining_followups,
+                        }
+                    )
+                raw_followups = []
+            else:
+                if received_followups > remaining_followups:
+                    followup_omissions.append(
+                        {
+                            "reason": "budget_limited",
+                            "dropped_count": received_followups - remaining_followups,
+                            "remaining_budget": remaining_followups,
+                        }
+                    )
+                raw_followups = raw_followups[:remaining_followups]
 
         followup_question_drafts = [
             FollowupQuestionDraft(
@@ -536,6 +614,7 @@ class AnswerTranslateStrategy:
             tradeoff_candidates=tradeoff_candidates,
             validation_candidates=validation_candidates,
             followup_question_drafts=followup_question_drafts,
+            followup_omissions=followup_omissions,
         )
 
         # Update recursion budget with how many follow-ups we produced
@@ -580,3 +659,44 @@ def _normalize_followup_answer_spec(raw_spec: Any) -> dict[str, Any]:
             if str(k) in {"max_items", "max_chars"} and isinstance(v, int | float)
         }
     return normalized
+
+
+def _extract_translation_json_payload(output: str) -> str:
+    """Extract the first valid JSON object/array from an answer-translation output."""
+    import json
+
+    cleaned = output.strip()
+    if not cleaned:
+        return cleaned
+
+    lines = [line for line in cleaned.splitlines() if not line.startswith("[agent-exec]")]
+    cleaned = "\n".join(lines).strip()
+
+    if cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            fence_end = cleaned.find("```", first_newline + 1)
+            if fence_end != -1:
+                cleaned = cleaned[first_newline + 1 : fence_end].strip()
+
+    decoder = json.JSONDecoder()
+    first_obj = cleaned.find("{")
+    first_list = cleaned.find("[")
+    starts = [idx for idx in (first_obj, first_list) if idx != -1]
+    if not starts:
+        return cleaned
+
+    for start in sorted(starts):
+        idx = start
+        while idx < len(cleaned):
+            if cleaned[idx] not in "{[":
+                idx += 1
+                continue
+            try:
+                _, end = decoder.raw_decode(cleaned[idx:])
+            except json.JSONDecodeError:
+                idx += 1
+                continue
+            return cleaned[idx : idx + end]
+
+    return cleaned[min(starts) :]

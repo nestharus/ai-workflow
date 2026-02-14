@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timezone
 
-from spec_manager.orchestration.intent_agent.queue import QuestionItem, QuestionQueue, UserPrompt
+from spec_manager.orchestration.intent_agent.queue import (
+    QUESTION_QUEUE_SNAPSHOT_RELATIVE_PATH,
+    QuestionItem,
+    QuestionOrigin,
+    QuestionQueue,
+    UserPrompt,
+)
 from spec_manager.orchestration.intent_agent.skeleton import (
     EntityStub,
     InterfaceStub,
-    SkeletonSynthesisStrategy,
     SkeletonSpec,
+    SkeletonSynthesisStrategy,
     WorkflowStub,
     render_intent_snapshot,
     render_skeleton,
 )
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _build_sample_spec() -> SkeletonSpec:
@@ -138,8 +149,16 @@ def test_synthesis_propagates_canonical_keys_and_scenarios_from_llm_output():
         concept_map={},
         open_question_ids=["Q-1", "Q-2"],
         open_questions=[
-            {"question_id": "Q-1", "canonical_key": "auth.claims", "scenario": "Claim is submitted by user."},
-            {"question_id": "Q-2", "canonical_key": "billing.policy", "scenario": "Billing policy conflict."},
+            {
+                "question_id": "Q-1",
+                "canonical_key": "auth.claims",
+                "scenario": "Claim is submitted by user.",
+            },
+            {
+                "question_id": "Q-2",
+                "canonical_key": "billing.policy",
+                "scenario": "Billing policy conflict.",
+            },
         ],
         constraint_refs=["C-1"],
         run_agent=run_agent,
@@ -164,8 +183,16 @@ def test_render_intent_snapshot_records_canonical_key_and_scenario(tmp_path):
         problem_frame={},
         concept_map={},
         open_questions=[
-            {"question_id": "Q-1", "canonical_key": "auth.claims", "scenario": "Claim is submitted."},
-            {"question_id": "Q-2", "canonical_key": "billing.policy", "scenario": "Policy rejected."},
+            {
+                "question_id": "Q-1",
+                "canonical_key": "auth.claims",
+                "scenario": "Claim is submitted.",
+            },
+            {
+                "question_id": "Q-2",
+                "canonical_key": "billing.policy",
+                "scenario": "Policy rejected.",
+            },
         ],
         constraint_refs=["C-1"],
         output_dir=output_dir,
@@ -186,12 +213,19 @@ def test_question_queue_snapshot_path_is_analysis_intent(tmp_path):
         question_id="Q-1",
         canonical_key="auth.claims",
         user_prompt=UserPrompt(scenario="Claim is submitted by user"),
+        origins=[
+            QuestionOrigin(
+                source_kind="PLANNER",
+                trace_id="trace-q1",
+                created_at=_now_iso(),
+            ),
+        ],
     )
     item.quality_gate.status = "PASS"
     queue.enqueue(item)
 
     out_path = queue.save(tmp_path)
-    assert out_path == tmp_path / "intent" / "skeleton" / "analysis" / "intent" / "question_queue.json"
+    assert out_path == tmp_path / QUESTION_QUEUE_SNAPSHOT_RELATIVE_PATH
     assert out_path.exists()
 
     loaded = QuestionQueue.load(tmp_path)

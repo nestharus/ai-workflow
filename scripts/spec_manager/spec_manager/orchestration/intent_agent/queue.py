@@ -20,10 +20,11 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,16 @@ logger = logging.getLogger(__name__)
 def _question_queue_snapshot_dir(run_dir: Path) -> Path:
     """Return canonical path for `question_queue.json`."""
     return run_dir / "intent" / "skeleton" / "analysis" / "intent"
+
+
+def _question_queue_history_dir(run_dir: Path) -> Path:
+    """Return directory where additive queue snapshots are stored."""
+    return _question_queue_snapshot_dir(run_dir) / "history"
+
+
+_QUEUE_HISTORY_RETENTION_LIMIT = 100
+_QUEUE_HISTORY_SNAPSHOT_GLOB = "question_queue.*.json"
+_QUEUE_HISTORY_PRUNE_LOG = "question_queue.history.prune.jsonl"
 
 
 _VALID_STATUSES = frozenset({"OPEN", "ANSWERED", "STALE", "SUPERSEDED", "DISMISSED", "UNASKABLE"})
@@ -45,7 +56,12 @@ _VALID_SEVERITY = frozenset({"BLOCKING", "HIGH_RISK", "MEDIUM_RISK", "INFO"})
 _VALID_QG_STATUSES = frozenset({"PASS", "FAIL", "PENDING"})
 _VALID_ANSWER_KINDS = frozenset({"choice", "yes_no", "value", "bounded_text"})
 _VALID_TRIGGER_KINDS = frozenset(
-    {"PLANNER_CONSTRAINT_SAVED", "PLANNER_DECISION_RECORDED", "USER_ANSWER_INGESTED"},
+    {
+        "PLANNER_CONSTRAINT_SAVED",
+        "PLANNER_DECISION_RECORDED",
+        "USER_ANSWER_INGESTED",
+        "PLANNER_EVENT_UNRECOGNIZED",
+    },
 )
 _VALID_ANSWER_VALUE_TYPES = frozenset(
     {"integer", "number", "currency", "duration", "date", "string"},
@@ -55,6 +71,8 @@ _TRIGGER_BY_EVENT = {
     "constraint_saved": "PLANNER_CONSTRAINT_SAVED",
     "decision_recorded": "PLANNER_DECISION_RECORDED",
 }
+
+
 class QueueValidationError(ValueError):
     """Raised when queue payload does not satisfy strict schema rules."""
 
@@ -141,7 +159,9 @@ def _coerce_id_list(value: Any, field_name: str, *, allow_scalar: bool = False) 
         if isinstance(value, set):
             return sorted(ids)
         return ids
-    raise QueueValidationError(f"{field_name} must be a string/int or list/tuple/set of strings/ints")
+    raise QueueValidationError(
+        f"{field_name} must be a string/int or list/tuple/set of strings/ints"
+    )
 
 
 def _coerce_system_binding(value: Any) -> dict[str, Any]:
@@ -196,10 +216,12 @@ def _ensure_choice_specs(choices: Any, field_name: str) -> list[dict[str, str]]:
             {"id", "label"},
             f"{field_name}[{idx}]",
         )
-        normalized.append({
-            "id": _ensure_str(choice.get("id", ""), f"{field_name}[{idx}].id"),
-            "label": _ensure_str(choice.get("label", ""), f"{field_name}[{idx}].label"),
-        })
+        normalized.append(
+            {
+                "id": _ensure_str(choice.get("id", ""), f"{field_name}[{idx}].id"),
+                "label": _ensure_str(choice.get("label", ""), f"{field_name}[{idx}].label"),
+            }
+        )
     return normalized
 
 
@@ -213,10 +235,10 @@ class AnswerSpec:
     """Bounded answer specification for a question."""
 
     kind: str = "choice"  # choice | yes_no | value | bounded_text
-    choices: list[dict[str, str]] = field(default_factory=list)  # [{id, label}]
+    choices: list[dict[str, str]] = dataclass_field(default_factory=list)  # [{id, label}]
     value_type: str = ""  # integer | number | currency | duration | date | string
     units_hint: str = ""
-    text_bounds: dict[str, int] = field(default_factory=dict)  # {max_items, max_chars}
+    text_bounds: dict[str, int] = dataclass_field(default_factory=dict)  # {max_items, max_chars}
 
 
 @dataclass
@@ -226,21 +248,23 @@ class UserPrompt:
     text: str = ""
     scenario: str = ""
     why_it_matters: str = ""
-    answer_spec: AnswerSpec = field(default_factory=AnswerSpec)
+    answer_spec: AnswerSpec = dataclass_field(default_factory=AnswerSpec)
 
 
 @dataclass
 class QuestionOrigin:
     """Provenance for where a question came from."""
 
-    source_kind: str = ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | INTENT_AGENT | SLICE_AGENT
+    source_kind: str = (
+        ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | INTENT_AGENT | SLICE_AGENT
+    )
     trace_id: str = ""
     signal_id: str = ""
     slice_id: str = ""
     layer: str = ""
     created_at: str = ""
-    spec_refs: list[dict[str, Any]] = field(default_factory=list)
-    code_refs: list[dict[str, Any]] = field(default_factory=list)
+    spec_refs: list[dict[str, Any]] = dataclass_field(default_factory=list)
+    code_refs: list[dict[str, Any]] = dataclass_field(default_factory=list)
 
 
 @dataclass
@@ -248,9 +272,9 @@ class QuestionBlockers:
     """What this question blocks."""
 
     severity: str = "INFO"  # BLOCKING | HIGH_RISK | MEDIUM_RISK | INFO
-    blocked_slices: list[str] = field(default_factory=list)
-    blocked_layers: list[str] = field(default_factory=list)
-    blocked_steps: list[str] = field(default_factory=list)
+    blocked_slices: list[str] = dataclass_field(default_factory=list)
+    blocked_layers: list[str] = dataclass_field(default_factory=list)
+    blocked_steps: list[str] = dataclass_field(default_factory=list)
 
 
 @dataclass
@@ -276,18 +300,23 @@ class QuestionItem:
     taxonomy_type: str = "CONSTRAINT"  # INTENT | CONSTRAINT | TRADEOFF | SCOPE | VALIDATION
     scope_kind: str = "FEATURE_SPECIFIC"  # SYSTEM_WIDE | FEATURE_SPECIFIC
     canonical_key: str = ""
-    user_prompt: UserPrompt = field(default_factory=UserPrompt)
-    system_binding: dict[str, Any] = field(default_factory=dict)
-    origins: list[QuestionOrigin] = field(default_factory=list)
-    blockers: QuestionBlockers = field(default_factory=QuestionBlockers)
-    priority: dict[str, Any] = field(default_factory=lambda: {"score": 0.0, "explanation": ""})
-    quality_gate: QualityGateStatus = field(default_factory=QualityGateStatus)
-    timestamps: dict[str, str] = field(default_factory=lambda: {"created_at": "", "updated_at": ""})
+    user_prompt: UserPrompt = dataclass_field(default_factory=UserPrompt)
+    system_binding: dict[str, Any] = dataclass_field(default_factory=dict)
+    origins: list[QuestionOrigin] = dataclass_field(default_factory=list)
+    blockers: QuestionBlockers = dataclass_field(default_factory=QuestionBlockers)
+    priority: dict[str, Any] = dataclass_field(
+        default_factory=lambda: {"score": 0.0, "explanation": ""}
+    )
+    quality_gate: QualityGateStatus = dataclass_field(default_factory=QualityGateStatus)
+    last_transition_reason: str = ""
+    timestamps: dict[str, str] = dataclass_field(
+        default_factory=lambda: {"created_at": "", "updated_at": ""}
+    )
 
     def __post_init__(self) -> None:
         if not self.question_id:
             self.question_id = f"q_{uuid.uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if not self.timestamps.get("created_at"):
             self.timestamps["created_at"] = now
         if not self.timestamps.get("updated_at"):
@@ -323,11 +352,10 @@ class QuestionItem:
             {"kind", "choices", "value_type", "units_hint", "text_bounds"},
             "user_prompt.answer_spec",
         )
-        if aspec.value_type:
-            if aspec.value_type not in _VALID_ANSWER_VALUE_TYPES:
-                raise QueueValidationError(
-                    f"answer_spec.value_type {aspec.value_type!r} is not valid",
-                )
+        if aspec.value_type and aspec.value_type not in _VALID_ANSWER_VALUE_TYPES:
+            raise QueueValidationError(
+                f"answer_spec.value_type {aspec.value_type!r} is not valid",
+            )
         aspec.choices = _ensure_choice_specs(aspec.choices, "user_prompt.answer_spec.choices")
         if aspec.text_bounds:
             _ensure_no_extra_keys(
@@ -356,10 +384,21 @@ class QuestionItem:
             if not isinstance(origin, QuestionOrigin):
                 raise QueueValidationError(f"origins[{idx}] must be a QuestionOrigin")
             if origin.source_kind not in _VALID_SOURCE_KINDS:
-                raise QueueValidationError(f"origins[{idx}].source_kind {origin.source_kind!r} is invalid")
+                raise QueueValidationError(
+                    f"origins[{idx}].source_kind {origin.source_kind!r} is invalid"
+                )
             _ensure_no_extra_keys(
                 vars(origin),
-                {"source_kind", "trace_id", "signal_id", "slice_id", "layer", "created_at", "spec_refs", "code_refs"},
+                {
+                    "source_kind",
+                    "trace_id",
+                    "signal_id",
+                    "slice_id",
+                    "layer",
+                    "created_at",
+                    "spec_refs",
+                    "code_refs",
+                },
                 f"origins[{idx}]",
             )
             _ensure_str(origin.created_at, f"origins[{idx}].created_at")
@@ -368,22 +407,25 @@ class QuestionItem:
                 raise QueueValidationError(f"origins[{idx}].spec_refs must be a list")
             for r_idx, ref in enumerate(origin.spec_refs):
                 if not isinstance(ref, dict):
-                    raise QueueValidationError(
-                        f"origins[{idx}].spec_refs[{r_idx}] must be a dict"
-                    )
+                    raise QueueValidationError(f"origins[{idx}].spec_refs[{r_idx}] must be a dict")
                 _ensure_no_extra_keys(
                     ref,
                     {"spec_text", "source_file", "source_line_hint"},
                     f"origins[{idx}].spec_refs[{r_idx}]",
                 )
-                _ensure_str(ref.get("spec_text", ""), f"origins[{idx}].spec_refs[{r_idx}].spec_text")
-                _ensure_str(ref.get("source_file", ""), f"origins[{idx}].spec_refs[{r_idx}].source_file")
-                _ensure_int(ref.get("source_line_hint", 0), f"origins[{idx}].spec_refs[{r_idx}].source_line_hint")
+                _ensure_str(
+                    ref.get("spec_text", ""), f"origins[{idx}].spec_refs[{r_idx}].spec_text"
+                )
+                _ensure_str(
+                    ref.get("source_file", ""), f"origins[{idx}].spec_refs[{r_idx}].source_file"
+                )
+                _ensure_int(
+                    ref.get("source_line_hint", 0),
+                    f"origins[{idx}].spec_refs[{r_idx}].source_line_hint",
+                )
             for r_idx, ref in enumerate(origin.code_refs):
                 if not isinstance(ref, dict):
-                    raise QueueValidationError(
-                        f"origins[{idx}].code_refs[{r_idx}] must be a dict"
-                    )
+                    raise QueueValidationError(f"origins[{idx}].code_refs[{r_idx}] must be a dict")
                 _ensure_no_extra_keys(
                     ref,
                     {"file", "symbol", "line"},
@@ -412,6 +454,7 @@ class QuestionItem:
             raise QueueValidationError("priority must include score and explanation")
         _ensure_float_range(self.priority["score"], "priority.score", 0.0, 1.0)
         _ensure_str(self.priority["explanation"], "priority.explanation")
+        _ensure_str(self.last_transition_reason, "last_transition_reason")
 
         if not isinstance(self.quality_gate, QualityGateStatus):
             raise QueueValidationError("quality_gate must be a QualityGateStatus")
@@ -421,7 +464,9 @@ class QuestionItem:
             "quality_gate",
         )
         if self.quality_gate.status not in _VALID_QG_STATUSES:
-            raise QueueValidationError(f"quality_gate.status {self.quality_gate.status!r} is invalid")
+            raise QueueValidationError(
+                f"quality_gate.status {self.quality_gate.status!r} is invalid"
+            )
         attempts = _ensure_int(self.quality_gate.attempts, "quality_gate.attempts")
         if attempts < 0:
             raise QueueValidationError("quality_gate.attempts must be >= 0")
@@ -491,23 +536,35 @@ class QuestionItem:
                 "last_quality_record_id": self.quality_gate.last_quality_record_id,
                 "last_checked_at": self.quality_gate.last_checked_at,
             },
+            "last_transition_reason": self.last_transition_reason,
             "timestamps": dict(self.timestamps),
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "QuestionItem":
+    def from_dict(cls, d: dict[str, Any]) -> QuestionItem:
         if not isinstance(d, dict):
             raise QueueValidationError("question payload must be an object")
 
         required_fields = {
-            "question_id", "status", "taxonomy_type", "scope_kind", "canonical_key",
-            "user_prompt", "origins", "blockers", "priority", "quality_gate", "timestamps",
+            "question_id",
+            "status",
+            "taxonomy_type",
+            "scope_kind",
+            "canonical_key",
+            "user_prompt",
+            "origins",
+            "blockers",
+            "priority",
+            "quality_gate",
+            "timestamps",
         }
-        allowed_fields = required_fields | {"system_binding"}
+        allowed_fields = required_fields | {"system_binding", "last_transition_reason"}
         _ensure_no_extra_keys(d, allowed_fields, "question")
         missing = required_fields - set(d)
         if missing:
-            raise QueueValidationError(f"question payload missing required fields: {sorted(missing)}")
+            raise QueueValidationError(
+                f"question payload missing required fields: {sorted(missing)}"
+            )
 
         user_prompt_raw = d["user_prompt"]
         if not isinstance(user_prompt_raw, dict):
@@ -522,8 +579,11 @@ class QuestionItem:
         if not isinstance(answer_spec_raw, dict):
             raise QueueValidationError("answer_spec must be an object")
         answer_spec_required = {"kind"}
-        _ensure_no_extra_keys(answer_spec_raw, answer_spec_required | {"choices", "value_type", "units_hint", "text_bounds"},
-                            "answer_spec")
+        _ensure_no_extra_keys(
+            answer_spec_raw,
+            answer_spec_required | {"choices", "value_type", "units_hint", "text_bounds"},
+            "answer_spec",
+        )
         if "kind" not in answer_spec_raw:
             raise QueueValidationError("answer_spec missing required field kind")
         if answer_spec_raw.get("kind") not in _VALID_ANSWER_KINDS:
@@ -540,13 +600,17 @@ class QuestionItem:
             )
             for key in tb:
                 if key not in {"max_items", "max_chars"}:
-                    raise QueueValidationError(f"answer_spec.text_bounds has disallowed key {key!r}")
+                    raise QueueValidationError(
+                        f"answer_spec.text_bounds has disallowed key {key!r}"
+                    )
                 _ensure_int(tb[key], f"answer_spec.text_bounds[{key}]")
                 if tb[key] < 1:
                     raise QueueValidationError(
                         f"answer_spec.text_bounds[{key}] must be >= 1",
                     )
-            validated_text_bounds.update({key: _ensure_int(tb[key], f"answer_spec.text_bounds[{key}]") for key in tb})
+            validated_text_bounds.update(
+                {key: _ensure_int(tb[key], f"answer_spec.text_bounds[{key}]") for key in tb}
+            )
 
         answer_spec_choices = answer_spec_raw.get("choices", [])
         if not isinstance(answer_spec_choices, list):
@@ -593,7 +657,9 @@ class QuestionItem:
         required_blockers = {"severity", "blocked_slices"}
         missing_blockers = required_blockers - set(blockers_raw)
         if missing_blockers:
-            raise QueueValidationError(f"blockers missing required fields: {sorted(missing_blockers)}")
+            raise QueueValidationError(
+                f"blockers missing required fields: {sorted(missing_blockers)}"
+            )
         blockers = QuestionBlockers(
             severity=blockers_raw.get("severity", "INFO"),
             blocked_slices=blockers_raw.get("blocked_slices", []),
@@ -612,7 +678,9 @@ class QuestionItem:
         required_qg = {"status", "attempts", "last_quality_record_id", "last_checked_at"}
         missing_qg = required_qg - set(qg_raw)
         if missing_qg:
-            raise QueueValidationError(f"quality_gate missing required fields: {sorted(missing_qg)}")
+            raise QueueValidationError(
+                f"quality_gate missing required fields: {sorted(missing_qg)}"
+            )
         quality_gate = QualityGateStatus(
             status=qg_raw.get("status", "PENDING"),
             attempts=qg_raw.get("attempts", 0),
@@ -629,14 +697,25 @@ class QuestionItem:
                 raise QueueValidationError("each origin must be an object")
             _ensure_no_extra_keys(
                 origin_raw,
-                {"source_kind", "trace_id", "signal_id", "slice_id", "layer", "created_at", "spec_refs", "code_refs"},
+                {
+                    "source_kind",
+                    "trace_id",
+                    "signal_id",
+                    "slice_id",
+                    "layer",
+                    "created_at",
+                    "spec_refs",
+                    "code_refs",
+                },
                 "origin",
             )
             for required_origin in ("source_kind", "created_at"):
                 if required_origin not in origin_raw:
                     raise QueueValidationError(f"origin missing required field {required_origin!r}")
             if origin_raw["source_kind"] not in _VALID_SOURCE_KINDS:
-                raise QueueValidationError(f"origin.source_kind {origin_raw['source_kind']!r} is invalid")
+                raise QueueValidationError(
+                    f"origin.source_kind {origin_raw['source_kind']!r} is invalid"
+                )
             _ensure_iso_datetime(origin_raw.get("created_at", ""), "origin.created_at")
 
             spec_refs = origin_raw.get("spec_refs", [])
@@ -656,11 +735,20 @@ class QuestionItem:
                     {"spec_text", "source_file", "source_line_hint"},
                     "origin.spec_refs",
                 )
-                validated_spec_refs.append({
-                    "spec_text": _ensure_str(ref_raw.get("spec_text", ""), f"origin.spec_refs[{idx}].spec_text"),
-                    "source_file": _ensure_str(ref_raw.get("source_file", ""), f"origin.spec_refs[{idx}].source_file"),
-                    "source_line_hint": _ensure_int(ref_raw.get("source_line_hint", 0), f"origin.spec_refs[{idx}].source_line_hint"),
-                })
+                validated_spec_refs.append(
+                    {
+                        "spec_text": _ensure_str(
+                            ref_raw.get("spec_text", ""), f"origin.spec_refs[{idx}].spec_text"
+                        ),
+                        "source_file": _ensure_str(
+                            ref_raw.get("source_file", ""), f"origin.spec_refs[{idx}].source_file"
+                        ),
+                        "source_line_hint": _ensure_int(
+                            ref_raw.get("source_line_hint", 0),
+                            f"origin.spec_refs[{idx}].source_line_hint",
+                        ),
+                    }
+                )
 
             validated_code_refs: list[dict[str, Any]] = []
             for idx, ref_raw in enumerate(code_refs):
@@ -671,11 +759,19 @@ class QuestionItem:
                     {"file", "symbol", "line"},
                     "origin.code_refs",
                 )
-                validated_code_refs.append({
-                    "file": _ensure_str(ref_raw.get("file", ""), f"origin.code_refs[{idx}].file"),
-                    "symbol": _ensure_str(ref_raw.get("symbol", ""), f"origin.code_refs[{idx}].symbol"),
-                    "line": _ensure_int(ref_raw.get("line", 0), f"origin.code_refs[{idx}].line"),
-                })
+                validated_code_refs.append(
+                    {
+                        "file": _ensure_str(
+                            ref_raw.get("file", ""), f"origin.code_refs[{idx}].file"
+                        ),
+                        "symbol": _ensure_str(
+                            ref_raw.get("symbol", ""), f"origin.code_refs[{idx}].symbol"
+                        ),
+                        "line": _ensure_int(
+                            ref_raw.get("line", 0), f"origin.code_refs[{idx}].line"
+                        ),
+                    }
+                )
 
             origins.append(
                 QuestionOrigin(
@@ -701,7 +797,9 @@ class QuestionItem:
         required_timestamps = {"created_at", "updated_at"}
         missing_timestamps = required_timestamps - set(timestamps)
         if missing_timestamps:
-            raise QueueValidationError(f"timestamps missing required fields: {sorted(missing_timestamps)}")
+            raise QueueValidationError(
+                f"timestamps missing required fields: {sorted(missing_timestamps)}"
+            )
 
         raw_system_binding = d.get("system_binding", {})
         if raw_system_binding is None:
@@ -722,10 +820,39 @@ class QuestionItem:
             blockers=blockers,
             priority=dict(d.get("priority", {"score": 0.0, "explanation": ""})),
             quality_gate=quality_gate,
+            last_transition_reason=d.get("last_transition_reason", ""),
             timestamps=dict(timestamps),
         )
         item.validate()
         return item
+
+
+# ---------------------------------------------------------------------------
+# Reassessment projections
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReassessQuestionKeySignal:
+    """Projection of canonical-key linkage state consumed by queue reassessment."""
+
+    canonical_key: str
+    resolved_constraint_ids: tuple[str, ...] = ()
+    related_decision_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReassessPlannerSignal:
+    """Projection of planner events consumed by queue reassessment."""
+
+    event_kind: str = ""
+    event_ref: str = ""
+    affected_canonical_keys: tuple[str, ...] = ()
+    affected_constraint_ids: tuple[str, ...] = ()
+    affected_decision_ids: tuple[str, ...] = ()
+    affected_question_ids: tuple[str, ...] = ()
+    superseded_question_ids: tuple[str, ...] = ()
+    superseded_canonical_keys: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -740,28 +867,32 @@ class QuestionQueue:
     batching, staleness tracking.
     """
 
-    _severity_weight = {
+    _severity_weight: ClassVar[dict[str, float]] = {
         "BLOCKING": 0.45,
         "HIGH_RISK": 0.3,
         "MEDIUM_RISK": 0.2,
         "INFO": 0.05,
     }
-    _scope_weight = {
+    _scope_weight: ClassVar[dict[str, float]] = {
         "SYSTEM_WIDE": 0.18,
         "FEATURE_SPECIFIC": 0.08,
     }
-    _severity_tiebreak = {
+    _severity_tiebreak: ClassVar[dict[str, int]] = {
         "BLOCKING": 4,
         "HIGH_RISK": 3,
         "MEDIUM_RISK": 2,
         "INFO": 1,
     }
+    _canonical_key_batch_delimiter: ClassVar[str] = "."
 
     def __init__(self) -> None:
         self._items: dict[str, QuestionItem] = {}
+        self._reassess_drop_actions: list[dict[str, Any]] = []
 
     def _touch(self, item: QuestionItem, reason: str = "") -> None:
-        item.timestamps["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if reason:
+            item.last_transition_reason = reason
+        item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
 
     @staticmethod
     def _blocked_layer_criticality(blocked_layers: list[str]) -> float:
@@ -789,11 +920,18 @@ class QuestionQueue:
             stale_penalty = 0.22
             stale_reason = "no remaining blocked_slices"
 
-        score = 0.40 * blocker_term + 0.30 * severity_term + 0.20 * scope_term + layer_term - stale_penalty
+        score = (
+            0.40 * blocker_term
+            + 0.30 * severity_term
+            + 0.20 * scope_term
+            + layer_term
+            - stale_penalty
+        )
         score = max(0.0, min(1.0, round(score, 12)))
         explanation = (
-            "blocked_slices=%s severity=%s scope=%s planning_layer_penalty=%0.2f stale_penalty=%s"
-            % (blocker_count, item.blockers.severity, item.scope_kind, layer_term, stale_reason)
+            f"blocked_slices={blocker_count} severity={item.blockers.severity} "
+            f"scope={item.scope_kind} planning_layer_penalty={layer_term:.2f} "
+            f"stale_penalty={stale_reason}"
         )
         item.priority = {"score": score, "explanation": explanation}
         return score, explanation
@@ -826,32 +964,34 @@ class QuestionQueue:
             item.question_id,
         )
 
-    def _rank_open_items(self, run_agent: Any = None) -> list[QuestionItem]:
-        open_items = [
-            it for it in self._items.values()
-            if it.status == "OPEN"
-        ]
+    def _rank_open_items(self, run_agent: Any = None) -> tuple[list[QuestionItem], dict[str, Any]]:
+        open_items = [it for it in self._items.values() if it.status == "OPEN"]
         for item in open_items:
             self._compute_priority(item)
 
         ordered = sorted(open_items, key=self._sort_key)
+        tie_break_status: dict[str, Any] = {"mode": "deterministic", "reason": "not_attempted"}
 
         # Optional deterministic-safe LLM tie-break for top-5 only.
         if not run_agent or len(ordered) <= 1:
-            return ordered
+            return ordered, tie_break_status
 
         top_candidates = ordered[:5]
         if len(top_candidates) < 2:
-            return ordered
+            tie_break_status = {"mode": "deterministic", "reason": "insufficient_candidates"}
+            return ordered, tie_break_status
 
         if len(top_candidates) > 0:
             tie_signature = self._rank_signature(top_candidates[0])
-            tied_candidates = [item for item in top_candidates if self._rank_signature(item) == tie_signature]
+            tied_candidates = [
+                item for item in top_candidates if self._rank_signature(item) == tie_signature
+            ]
         else:
             tied_candidates = []
 
         if len(tied_candidates) < 2:
-            return ordered
+            tie_break_status = {"mode": "deterministic", "reason": "no_tie"}
+            return ordered, tie_break_status
 
         prompt_payload = {
             "items": [
@@ -866,8 +1006,10 @@ class QuestionQueue:
             ],
         }
         prompt = (
-            "Re-order these candidate questions to minimize user burden while maximizing planning progress.\n"
-            f"Return a JSON array of the question_id values in priority order only.\n{json.dumps(prompt_payload)}"
+            "Re-order these candidate questions to minimize user burden "
+            "while maximizing planning progress.\n"
+            "Return a JSON array of the question_id values in priority order "
+            f"only.\n{json.dumps(prompt_payload)}"
         )
 
         try:
@@ -893,34 +1035,152 @@ class QuestionQueue:
                     window_remainder = [
                         item for item in ordered[:5] if item.question_id not in tied_ids
                     ]
-                    return ordered_top + window_remainder + ordered[5:]
-        except Exception:  # noqa: BLE001
-            logger.debug("LLM tie-break failed for next_question ordering", exc_info=True)
+                    tie_break_status = {"mode": "llm", "reason": "applied"}
+                    return ordered_top + window_remainder + ordered[5:], tie_break_status
+            tie_break_status = {"mode": "deterministic", "reason": "llm_no_usable_ids"}
+        except Exception as exc:
+            tie_break_status = {
+                "mode": "deterministic",
+                "reason": "llm_error_fallback",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            }
+            logger.warning(
+                "LLM tie-break failed for next_question ordering; using deterministic fallback",
+                extra={"tie_break_status": tie_break_status},
+                exc_info=True,
+            )
 
-        return ordered
+        return ordered, tie_break_status
 
-    def _build_trigger(self, planner_updates: list[dict[str, Any]]) -> dict[str, str]:
+    @classmethod
+    def _batch_prefix_from_canonical(cls, canonical_key: str) -> str:
+        if not canonical_key:
+            return ""
+        delimiter = cls._canonical_key_batch_delimiter
+        if delimiter not in canonical_key:
+            return ""
+        return canonical_key.split(delimiter, 1)[0]
+
+    def _project_question_key_map(
+        self,
+        question_key_map: dict[str, ReassessQuestionKeySignal],
+    ) -> dict[str, ReassessQuestionKeySignal]:
+        projected: dict[str, ReassessQuestionKeySignal] = {}
+        for raw_canonical_key, signal in question_key_map.items():
+            canonical_key = _coerce_id(raw_canonical_key, "question_key_map.canonical_key")
+            if not isinstance(signal, ReassessQuestionKeySignal):
+                raise QueueValidationError(
+                    "question_key_map values must be ReassessQuestionKeySignal instances"
+                )
+
+            signal_key = _coerce_id(signal.canonical_key, "question_key_map.signal.canonical_key")
+            if signal_key != canonical_key:
+                raise QueueValidationError(
+                    "question_key_map key must match ReassessQuestionKeySignal.canonical_key"
+                )
+
+            projected[canonical_key] = ReassessQuestionKeySignal(
+                canonical_key=canonical_key,
+                resolved_constraint_ids=tuple(
+                    _coerce_id_list(
+                        signal.resolved_constraint_ids,
+                        "question_key_map.signal.resolved_constraint_ids",
+                    )
+                ),
+                related_decision_ids=tuple(
+                    _coerce_id_list(
+                        signal.related_decision_ids,
+                        "question_key_map.signal.related_decision_ids",
+                    )
+                ),
+            )
+
+        return projected
+
+    def _project_planner_updates(
+        self,
+        planner_updates: list[ReassessPlannerSignal],
+    ) -> list[ReassessPlannerSignal]:
+        projected: list[ReassessPlannerSignal] = []
+        for idx, update in enumerate(planner_updates):
+            if not isinstance(update, ReassessPlannerSignal):
+                raise QueueValidationError(
+                    "planner_updates entries must be ReassessPlannerSignal instances"
+                )
+
+            event_kind_raw = _ensure_str(update.event_kind, f"planner_updates[{idx}].event_kind")
+            event_kind = event_kind_raw.strip().lower()
+            event_ref = ""
+            if update.event_ref:
+                event_ref = _coerce_id(update.event_ref, f"planner_updates[{idx}].event_ref")
+
+            projected.append(
+                ReassessPlannerSignal(
+                    event_kind=event_kind,
+                    event_ref=event_ref,
+                    affected_canonical_keys=tuple(
+                        _coerce_id_list(
+                            update.affected_canonical_keys,
+                            f"planner_updates[{idx}].affected_canonical_keys",
+                        )
+                    ),
+                    affected_constraint_ids=tuple(
+                        _coerce_id_list(
+                            update.affected_constraint_ids,
+                            f"planner_updates[{idx}].affected_constraint_ids",
+                        )
+                    ),
+                    affected_decision_ids=tuple(
+                        _coerce_id_list(
+                            update.affected_decision_ids,
+                            f"planner_updates[{idx}].affected_decision_ids",
+                        )
+                    ),
+                    affected_question_ids=tuple(
+                        _coerce_id_list(
+                            update.affected_question_ids,
+                            f"planner_updates[{idx}].affected_question_ids",
+                        )
+                    ),
+                    superseded_question_ids=tuple(
+                        _coerce_id_list(
+                            update.superseded_question_ids,
+                            f"planner_updates[{idx}].superseded_question_ids",
+                        )
+                    ),
+                    superseded_canonical_keys=tuple(
+                        _coerce_id_list(
+                            update.superseded_canonical_keys,
+                            f"planner_updates[{idx}].superseded_canonical_keys",
+                        )
+                    ),
+                )
+            )
+
+        return projected
+
+    def _build_trigger(self, planner_updates: list[ReassessPlannerSignal]) -> dict[str, str]:
+        if not planner_updates:
+            return {"kind": "USER_ANSWER_INGESTED", "ref": ""}
         for update in planner_updates:
-            event_type = str(update.get("type", update.get("event_type", ""))).strip().lower()
-            trigger_kind = _TRIGGER_BY_EVENT.get(event_type)
+            trigger_kind = _TRIGGER_BY_EVENT.get(update.event_kind)
             if trigger_kind:
-                ref = (str(update.get("event_id", "")) or str(update.get("constraint_id", "")) or str(update.get("decision_id", "")) or str(update.get("trace_id", "")) or "")
-                return {"kind": trigger_kind, "ref": ref}
-        return {"kind": "USER_ANSWER_INGESTED", "ref": ""}
+                return {"kind": trigger_kind, "ref": update.event_ref}
+        ref = ""
+        for update in planner_updates:
+            ref = update.event_ref
+            if ref:
+                break
+        return {"kind": "PLANNER_EVENT_UNRECOGNIZED", "ref": ref}
 
     def _collect_redundant_keys(
         self,
-        planner_updates: list[dict[str, Any]],
-        question_key_map: dict[str, Any],
+        planner_updates: list[ReassessPlannerSignal],
+        question_key_map: dict[str, ReassessQuestionKeySignal],
     ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         canonical_reasons: dict[str, set[str]] = {}
         question_reasons: dict[str, set[str]] = {}
-
-        def _safe_ids(raw: Any, field_name: str) -> list[str]:
-            try:
-                return _coerce_id_list(raw, field_name, allow_scalar=True)
-            except QueueValidationError:
-                return []
 
         def _record_reason(bucket: dict[str, set[str]], key: str, reason: str) -> None:
             if not key:
@@ -929,69 +1189,122 @@ class QuestionQueue:
 
         planner_id_to_canonical: dict[str, set[str]] = {}
 
+        def _record_unmapped_planner_id(
+            update_index: int,
+            update: ReassessPlannerSignal,
+            field_name: str,
+            raw_id: str,
+        ) -> None:
+            self._record_reassess_drop_action(
+                source="planner_updates",
+                identifier=f"entry[{update_index}].{field_name}",
+                reason=(
+                    f"planner id {raw_id!r} from {field_name} does not map to any canonical_key"
+                ),
+                metadata={
+                    "value": raw_id,
+                    "event_kind": update.event_kind,
+                    "event_ref": update.event_ref,
+                },
+            )
+
         for canonical_key, ref in question_key_map.items():
-            try:
-                canonical_key = _coerce_id(canonical_key, "question_key_map.canonical_key")
-            except QueueValidationError:
-                continue
-            raw_ids: list[Any] = [canonical_key]
-            if isinstance(ref, dict):
-                raw_ids.extend(ref.get("planner_constraint_ids", []))
-                raw_ids.extend(ref.get("planner_decision_ids", []))
-            else:
-                raw_ids.extend(getattr(ref, "planner_constraint_ids", []))
-                raw_ids.extend(getattr(ref, "planner_decision_ids", []))
+            raw_ids = [canonical_key, *ref.resolved_constraint_ids, *ref.related_decision_ids]
             _record_reason(canonical_reasons, canonical_key, "canonical_key")
             for rid in raw_ids:
-                for mapped_id in _safe_ids(rid, "question_key_map.id"):
-                    planner_id_to_canonical.setdefault(str(mapped_id), set()).add(canonical_key)
+                planner_id_to_canonical.setdefault(rid, set()).add(canonical_key)
 
-        for update in planner_updates:
-            if not isinstance(update, dict):
-                continue
-
-            canonical_keys = set(_safe_ids(update.get("canonical_key", ""), "update.canonical_key"))
+        for update_index, update in enumerate(planner_updates):
+            canonical_keys = set(update.affected_canonical_keys)
             for canonical_key in canonical_keys:
                 _record_reason(canonical_reasons, canonical_key, "canonical_key")
 
-            for raw_id in _safe_ids(update.get("constraint_ids", []), "update.constraint_ids"):
-                for canonical_key in planner_id_to_canonical.get(raw_id, set()):
+            for raw_id in update.affected_constraint_ids:
+                mapped_keys = planner_id_to_canonical.get(raw_id, set())
+                if not mapped_keys:
+                    _record_unmapped_planner_id(
+                        update_index,
+                        update,
+                        "affected_constraint_ids",
+                        raw_id,
+                    )
+                    continue
+                for canonical_key in mapped_keys:
                     _record_reason(canonical_reasons, canonical_key, "constraint_map")
 
-            for raw_id in _safe_ids(update.get("decision_ids", []), "update.decision_ids"):
-                for canonical_key in planner_id_to_canonical.get(raw_id, set()):
+            for raw_id in update.affected_decision_ids:
+                mapped_keys = planner_id_to_canonical.get(raw_id, set())
+                if not mapped_keys:
+                    _record_unmapped_planner_id(
+                        update_index,
+                        update,
+                        "affected_decision_ids",
+                        raw_id,
+                    )
+                    continue
+                for canonical_key in mapped_keys:
                     _record_reason(canonical_reasons, canonical_key, "decision_map")
 
-            for question_id in _safe_ids(update.get("question_id", ""), "update.question_id"):
+            for question_id in update.affected_question_ids:
                 _record_reason(question_reasons, question_id, "question_id")
-                for canonical_key in planner_id_to_canonical.get(question_id, set()):
+                mapped_keys = planner_id_to_canonical.get(question_id, set())
+                if not mapped_keys and question_id not in self._items:
+                    _record_unmapped_planner_id(
+                        update_index,
+                        update,
+                        "affected_question_ids",
+                        question_id,
+                    )
+                for canonical_key in mapped_keys:
                     _record_reason(canonical_reasons, canonical_key, "question_map")
 
-            for raw_id in _safe_ids(update.get("question_ids", []), "update.question_ids"):
-                _record_reason(question_reasons, raw_id, "question_ids")
-                for canonical_key in planner_id_to_canonical.get(raw_id, set()):
+            for raw_id in update.superseded_question_ids:
+                _record_reason(question_reasons, raw_id, "superseded_question_ids")
+                mapped_keys = planner_id_to_canonical.get(raw_id, set())
+                if not mapped_keys and raw_id not in self._items:
+                    _record_unmapped_planner_id(
+                        update_index,
+                        update,
+                        "superseded_question_ids",
+                        raw_id,
+                    )
+                for canonical_key in mapped_keys:
                     _record_reason(canonical_reasons, canonical_key, "question_map")
 
-            for flag in ("obsolete", "irrelevant", "superseded"):
-                if _is_truthy(update.get(flag)):
-                    for canonical_key in canonical_keys:
-                        _record_reason(canonical_reasons, canonical_key, flag)
+            for related_key in update.superseded_canonical_keys:
+                _record_reason(canonical_reasons, related_key, "superseded_canonical_keys")
 
-            for explicit_key in ("obsolete_to", "irrelevant_to", "superseded_to"):
-                for related_key in _safe_ids(update.get(explicit_key, ""), f"update.{explicit_key}"):
-                    _record_reason(canonical_reasons, related_key, explicit_key)
-
-        canonical_reasons = {
-            key: set(values)
-            for key, values in canonical_reasons.items()
-            if key
-        }
+        canonical_reasons = {key: set(values) for key, values in canonical_reasons.items() if key}
         question_reasons = {
             question_id: set(values)
             for question_id, values in question_reasons.items()
             if question_id
         }
         return canonical_reasons, question_reasons
+
+    def _record_reassess_drop_action(
+        self,
+        *,
+        source: str,
+        identifier: str,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        action: dict[str, Any] = {
+            "question_id": "",
+            "action": "INVALID_INPUT",
+            "source": source,
+            "identifier": identifier,
+            "reason": reason,
+        }
+        if metadata:
+            action["metadata"] = metadata
+        self._reassess_drop_actions.append(action)
+
+    def _drain_reassess_drop_actions(self) -> list[dict[str, Any]]:
+        actions = list(self._reassess_drop_actions)
+        self._reassess_drop_actions.clear()
+        return actions
 
     # TODO [R2-2.1]: Implement enqueue(item) — add item after quality gate pass
     def enqueue(self, item: QuestionItem) -> None:
@@ -1004,7 +1317,7 @@ class QuestionQueue:
                 item.quality_gate.status,
             )
             return
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         item.timestamps["updated_at"] = now
         if not item.timestamps.get("created_at"):
             item.timestamps["created_at"] = now
@@ -1018,7 +1331,7 @@ class QuestionQueue:
     #     layer criticality, staleness penalty
     def next_question(self, run_agent: Any = None) -> QuestionItem | None:
         """Return the highest-priority OPEN question."""
-        open_items = self._rank_open_items(run_agent=run_agent)
+        open_items, _ = self._rank_open_items(run_agent=run_agent)
         return open_items[0] if open_items else None
 
     # TODO [R2-2.5]: Implement next_batch() → list[QuestionItem]
@@ -1031,7 +1344,7 @@ class QuestionQueue:
         if top is None:
             return []
 
-        prefix = top.canonical_key.split(".")[0] if top.canonical_key else ""
+        prefix = self._batch_prefix_from_canonical(top.canonical_key)
         if not prefix:
             return [top]
 
@@ -1043,11 +1356,13 @@ class QuestionQueue:
             "VALIDATION": {"VALIDATION"},
         }.get(top.taxonomy_type, {top.taxonomy_type})
 
+        ranked_items, _ = self._rank_open_items(run_agent=run_agent)
         peers = [
-            item for item in self._rank_open_items(run_agent=run_agent)
+            item
+            for item in ranked_items
             if item.question_id != top.question_id
             and item.scope_kind == top.scope_kind
-            and item.canonical_key.split(".")[0] == prefix
+            and self._batch_prefix_from_canonical(item.canonical_key) == prefix
             and item.taxonomy_type in compatible_types
             and item.quality_gate.status == "PASS"
         ]
@@ -1061,36 +1376,30 @@ class QuestionQueue:
 
     def reassess(
         self,
-        planner_updates: list[dict[str, Any]],
-        question_key_map: dict[str, Any],
+        planner_updates: list[ReassessPlannerSignal],
+        question_key_map: dict[str, ReassessQuestionKeySignal],
         *,
         run_id: str = "",
         session_id: str = "",
         run_agent: Any = None,
     ) -> dict[str, Any]:
-        """Reassess all OPEN questions after Planner writes."""
-        created_at = datetime.now(timezone.utc).isoformat()
+        """Reassess all OPEN questions using explicit planner/key projection contracts."""
+        created_at = datetime.now(UTC).isoformat()
+        self._reassess_drop_actions.clear()
+        projected_updates = self._project_planner_updates(planner_updates)
+        projected_question_key_map = self._project_question_key_map(question_key_map)
         stale_canonical_keys, stale_question_reasons = self._collect_redundant_keys(
-            planner_updates,
-            question_key_map,
+            projected_updates,
+            projected_question_key_map,
         )
         stale_question_ids: set[str] = set()
-
-        def _safe_ids(raw: Any, field_name: str) -> list[str]:
-            try:
-                return _coerce_id_list(raw, field_name, allow_scalar=True)
-            except QueueValidationError:
-                return []
 
         def _format_reassess_reason(
             base_reason: str,
             canonical_key: str = "",
             reasons: set[str] | None = None,
         ) -> str:
-            if reasons:
-                ordered_reasons = [reason for reason in sorted(reasons) if reason]
-            else:
-                ordered_reasons = []
+            ordered_reasons = [reason for reason in sorted(reasons) if reason] if reasons else []
             if not ordered_reasons and not canonical_key:
                 return base_reason
             parts = [base_reason]
@@ -1100,118 +1409,110 @@ class QuestionQueue:
                 parts.append("reasons=" + ",".join(ordered_reasons))
             return " | ".join(parts)
 
-        for update in planner_updates:
-            if not isinstance(update, dict):
-                continue
-            stale_question_ids.update(_safe_ids(update.get("question_ids", []), "update.question_ids"))
-            stale_question_ids.update(_safe_ids(update.get("question_id", ""), "update.question_id"))
-            for stale_field in ("obsolete_to", "irrelevant_to", "superseded_to"):
-                stale_question_ids.update(_safe_ids(update.get(stale_field, ""), f"update.{stale_field}"))
-        trigger = self._build_trigger(planner_updates)
-        actions: list[dict[str, Any]] = []
+        for update in projected_updates:
+            stale_question_ids.update(update.affected_question_ids)
+            stale_question_ids.update(update.superseded_question_ids)
+        trigger = self._build_trigger(projected_updates)
+        actions: list[dict[str, Any]] = self._drain_reassess_drop_actions()
 
         for item in sorted(self._items.values(), key=lambda item: item.question_id):
             if item.status != "OPEN":
                 continue
 
-            key_entry = question_key_map.get(item.canonical_key)
-            key_entry_getter = None
-            if isinstance(key_entry, dict):
-                key_entry_getter = key_entry.get
-            else:
-                key_entry_getter = lambda field, default="": getattr(key_entry, field, default)
-
-            planner_constraint_ids = []
-            planner_decision_ids = []
-            planner_constraint_ids = _coerce_id_list(
-                key_entry_getter("planner_constraint_ids", []),
-                "question_key_map.planner_constraint_ids",
-                allow_scalar=True,
-            )
-            planner_decision_ids = _coerce_id_list(
-                key_entry_getter("planner_decision_ids", []),
-                "question_key_map.planner_decision_ids",
-                allow_scalar=True,
-            )
+            key_entry = projected_question_key_map.get(item.canonical_key)
+            resolved_constraint_ids = list(key_entry.resolved_constraint_ids) if key_entry else []
+            related_decision_ids = list(key_entry.related_decision_ids) if key_entry else []
             canonical_reasons = stale_canonical_keys.get(item.canonical_key, set())
             direct_reasons = stale_question_reasons.get(item.question_id, set())
 
-            if planner_constraint_ids:
+            if resolved_constraint_ids:
                 reason = (
                     f"canonical_key {item.canonical_key!r} resolved by planner constraints "
-                    f"{planner_constraint_ids}"
+                    f"{resolved_constraint_ids}"
                 )
                 if self.mark_answered(item.question_id, reason):
-                    actions.append({
-                        "question_id": item.question_id,
-                        "action": "ANSWERED",
-                        "reason": _format_reassess_reason(
-                            reason,
-                            item.canonical_key,
-                            canonical_reasons,
-                        ),
-                    })
+                    actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "ANSWERED",
+                            "reason": _format_reassess_reason(
+                                reason,
+                                item.canonical_key,
+                                canonical_reasons,
+                            ),
+                        }
+                    )
                 continue
 
             if item.blockers.severity != "HIGH_RISK" and not item.blockers.blocked_slices:
                 reason = "all blockers cleared and severity is not HIGH_RISK"
                 if self.set_status(item.question_id, "STALE", reason):
-                    actions.append({
-                        "question_id": item.question_id,
-                        "action": "STALE",
-                        "reason": _format_reassess_reason(
-                            reason,
-                            item.canonical_key,
-                        ),
-                    })
+                    actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "STALE",
+                            "reason": _format_reassess_reason(
+                                reason,
+                                item.canonical_key,
+                            ),
+                        }
+                    )
                 continue
 
             if item.canonical_key in stale_canonical_keys:
                 reason = "canonical_key marked obsolete/relevant-change by planner update"
                 if self.set_status(item.question_id, "SUPERSEDED", reason):
-                    actions.append({
-                        "question_id": item.question_id,
-                        "action": "SUPERSEDED",
-                        "reason": _format_reassess_reason(
-                            reason,
-                            item.canonical_key,
-                            canonical_reasons,
-                        ),
-                    })
+                    actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "SUPERSEDED",
+                            "reason": _format_reassess_reason(
+                                reason,
+                                item.canonical_key,
+                                canonical_reasons,
+                            ),
+                        }
+                    )
                 continue
 
             if item.question_id in stale_question_reasons or item.question_id in stale_question_ids:
                 reason = "question marked obsolete/replacement-needed by planner update"
                 if self.set_status(item.question_id, "SUPERSEDED", reason):
-                    actions.append({
-                        "question_id": item.question_id,
-                        "action": "SUPERSEDED",
-                        "reason": _format_reassess_reason(
-                            reason,
-                            item.canonical_key,
-                            direct_reasons,
-                        ),
-                    })
+                    actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "SUPERSEDED",
+                            "reason": _format_reassess_reason(
+                                reason,
+                                item.canonical_key,
+                                direct_reasons,
+                            ),
+                        }
+                    )
                 continue
 
-            if planner_decision_ids:
+            if related_decision_ids:
                 reason = (
                     f"question {item.question_id} stale after planner decision(s): "
-                    f"{planner_decision_ids}"
+                    f"{related_decision_ids}"
                 )
                 if self.set_status(item.question_id, "STALE", reason):
-                    actions.append({
-                        "question_id": item.question_id,
-                        "action": "STALE",
-                        "reason": _format_reassess_reason(reason, item.canonical_key),
-                    })
+                    actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "STALE",
+                            "reason": _format_reassess_reason(reason, item.canonical_key),
+                        }
+                    )
                 continue
 
-            actions.append({
-                "question_id": item.question_id,
-                "action": "KEEP",
-                "reason": "no mechanical match",
-            })
+            actions.append(
+                {
+                    "question_id": item.question_id,
+                    "action": "KEEP",
+                    "reason": "no mechanical match",
+                }
+            )
 
         return {
             "version": 1,
@@ -1230,7 +1531,9 @@ class QuestionQueue:
         if item.status != "OPEN":
             logger.debug(
                 "Ignoring status transition for %s: %s -> %s",
-                item.question_id, item.status, new_status,
+                item.question_id,
+                item.status,
+                new_status,
             )
             return False
         item.status = new_status
@@ -1257,18 +1560,22 @@ class QuestionQueue:
                     self._merge_into(existing, new_item)
                     return existing
 
-        new_dr_ids = set(_coerce_id_list(
-            new_item.system_binding.get("decision_requirement_ids", []),
-            "system_binding.decision_requirement_ids",
-            allow_scalar=True,
-        ))
+        new_dr_ids = set(
+            _coerce_id_list(
+                new_item.system_binding.get("decision_requirement_ids", []),
+                "system_binding.decision_requirement_ids",
+                allow_scalar=True,
+            )
+        )
         if new_dr_ids:
             for existing in self._items.values():
-                existing_dr_ids = set(_coerce_id_list(
-                    existing.system_binding.get("decision_requirement_ids", []),
-                    "system_binding.decision_requirement_ids",
-                    allow_scalar=True,
-                ))
+                existing_dr_ids = set(
+                    _coerce_id_list(
+                        existing.system_binding.get("decision_requirement_ids", []),
+                        "system_binding.decision_requirement_ids",
+                        allow_scalar=True,
+                    )
+                )
                 if existing_dr_ids and new_dr_ids & existing_dr_ids:
                     self._merge_into(existing, new_item)
                     return existing
@@ -1287,7 +1594,7 @@ class QuestionQueue:
             existing_set = set(getattr(existing.blockers, attr))
             new_set = set(getattr(new_item.blockers, attr))
             setattr(existing.blockers, attr, sorted(existing_set | new_set))
-        existing.timestamps["updated_at"] = datetime.now(timezone.utc).isoformat()
+        existing.timestamps["updated_at"] = datetime.now(UTC).isoformat()
 
     # TODO [R2-2.6]: Implement mark_stale() — staleness sweep
     #   - STALE if no blocked slices + not HIGH_RISK
@@ -1301,12 +1608,12 @@ class QuestionQueue:
         """Mark stale questions and return their IDs."""
         stale_ids: list[str] = []
         ids: set[str] = set()
-        for raw_id in (question_ids or set()):
+        for raw_id in question_ids or set():
             for item_id in _coerce_id_list(raw_id, "question_ids", allow_scalar=True):
                 ids.add(item_id)
 
         keys: set[str] = set()
-        for raw_key in (canonical_keys or set()):
+        for raw_key in canonical_keys or set():
             for key in _coerce_id_list(raw_key, "canonical_keys", allow_scalar=True):
                 keys.add(key)
 
@@ -1339,7 +1646,11 @@ class QuestionQueue:
 
     def state_ids(self) -> dict[str, list[str]]:
         open_ids = [it.question_id for it in self._items.values() if it.status == "OPEN"]
-        closed_ids = [it.question_id for it in self._items.values() if it.status in {"ANSWERED", "SUPERSEDED", "DISMISSED", "UNASKABLE"}]
+        closed_ids = [
+            it.question_id
+            for it in self._items.values()
+            if it.status in {"ANSWERED", "SUPERSEDED", "DISMISSED", "UNASKABLE"}
+        ]
         stale_ids = [it.question_id for it in self._items.values() if it.status == "STALE"]
         return {
             "open_ids": sorted(open_ids),
@@ -1349,7 +1660,8 @@ class QuestionQueue:
 
     def get_open_items(self) -> list[QuestionItem]:
         """Return all OPEN items sorted by deterministic priority."""
-        return self._rank_open_items()
+        open_items, _ = self._rank_open_items()
+        return open_items
 
     def get_item(self, question_id: str) -> QuestionItem | None:
         """Get a question by ID."""
@@ -1362,17 +1674,41 @@ class QuestionQueue:
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "question_queue.json"
         data = [
-            item.to_dict() for item in sorted(self._items.values(), key=lambda item: item.question_id)
+            item.to_dict()
+            for item in sorted(self._items.values(), key=lambda item: item.question_id)
         ]
-        out_path.write_text(
-            json.dumps(data, indent=2, sort_keys=True, separators=(",", ": ")),
-            encoding="utf-8",
+        payload = json.dumps(data, indent=2, sort_keys=True, separators=(",", ": "))
+        out_path.write_text(payload, encoding="utf-8")
+
+        history_dir = _question_queue_history_dir(run_dir)
+        history_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_suffix = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        snapshot_path = (
+            history_dir / f"question_queue.{snapshot_suffix}.{uuid.uuid4().hex[:8]}.json"
         )
+        snapshot_path.write_text(payload, encoding="utf-8")
+
+        history_snapshots = sorted(history_dir.glob(_QUEUE_HISTORY_SNAPSHOT_GLOB))
+        overflow_count = len(history_snapshots) - _QUEUE_HISTORY_RETENTION_LIMIT
+        if overflow_count > 0:
+            pruned = history_snapshots[:overflow_count]
+            prune_record = {
+                "pruned_at": datetime.now(UTC).isoformat(),
+                "retention_limit": _QUEUE_HISTORY_RETENTION_LIMIT,
+                "deleted_snapshots": [path.name for path in pruned],
+            }
+            prune_log_path = history_dir / _QUEUE_HISTORY_PRUNE_LOG
+            with prune_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(prune_record, sort_keys=True))
+                handle.write("\n")
+            for stale_path in pruned:
+                stale_path.unlink(missing_ok=True)
+
         return out_path
 
     # TODO [R2-2.1]: Implement load(run_dir) classmethod
     @classmethod
-    def load(cls, run_dir: Path) -> "QuestionQueue":
+    def load(cls, run_dir: Path) -> QuestionQueue:
         """Load queue from snapshot."""
         queue = cls()
         path = _question_queue_snapshot_dir(run_dir) / "question_queue.json"
@@ -1389,9 +1725,8 @@ class QuestionQueue:
             item = QuestionItem.from_dict(item_payload)
             item.validate()
             if item.question_id in queue._items:
-                logger.warning(
-                    "QuestionQueue.load: duplicate question_id %s; keeping last snapshot copy",
-                    item.question_id,
+                raise QueueValidationError(
+                    f"question_queue.json contains duplicate question_id {item.question_id!r}"
                 )
             queue._items[item.question_id] = item
         return queue

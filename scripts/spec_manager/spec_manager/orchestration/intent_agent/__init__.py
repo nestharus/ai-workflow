@@ -19,8 +19,8 @@ Modules:
 
 from spec_manager.orchestration.intent_agent.agent import IntentAgentOrchestrator
 from spec_manager.orchestration.intent_agent.answer_translation import (
-    AnswerTranslation,
     AnswerTranslateStrategy,
+    AnswerTranslation,
 )
 from spec_manager.orchestration.intent_agent.quality_gate import (
     QualityCheckRecord,
@@ -37,8 +37,8 @@ from spec_manager.orchestration.intent_agent.taxonomy import (
 )
 
 __all__ = [
-    "AnswerTranslation",
     "AnswerTranslateStrategy",
+    "AnswerTranslation",
     "IntentAgentOrchestrator",
     "IntentSessionState",
     "QualityCheckRecord",

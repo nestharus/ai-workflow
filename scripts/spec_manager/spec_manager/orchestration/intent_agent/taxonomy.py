@@ -27,7 +27,7 @@ from __future__ import annotations
 import enum
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -54,21 +54,25 @@ class QuestionTaxonomy(str, enum.Enum):
 
 
 # Valid types that may reach the user
-USER_VALID_TYPES: frozenset[QuestionTaxonomy] = frozenset({
-    QuestionTaxonomy.INTENT,
-    QuestionTaxonomy.CONSTRAINT,
-    QuestionTaxonomy.TRADEOFF,
-    QuestionTaxonomy.SCOPE,
-    QuestionTaxonomy.VALIDATION,
-})
+USER_VALID_TYPES: frozenset[QuestionTaxonomy] = frozenset(
+    {
+        QuestionTaxonomy.INTENT,
+        QuestionTaxonomy.CONSTRAINT,
+        QuestionTaxonomy.TRADEOFF,
+        QuestionTaxonomy.SCOPE,
+        QuestionTaxonomy.VALIDATION,
+    }
+)
 
 # Internal-only types that must be reframed
-PROHIBITED_TYPES: frozenset[QuestionTaxonomy] = frozenset({
-    QuestionTaxonomy.ARCHITECTURE,
-    QuestionTaxonomy.IMPLEMENTATION,
-    QuestionTaxonomy.DESIGN_PATTERN,
-    QuestionTaxonomy.OPTIMIZATION,
-})
+PROHIBITED_TYPES: frozenset[QuestionTaxonomy] = frozenset(
+    {
+        QuestionTaxonomy.ARCHITECTURE,
+        QuestionTaxonomy.IMPLEMENTATION,
+        QuestionTaxonomy.DESIGN_PATTERN,
+        QuestionTaxonomy.OPTIMIZATION,
+    }
+)
 
 
 class QuestionScope(str, enum.Enum):
@@ -105,87 +109,103 @@ REFRAME_TARGET_MAP: dict[QuestionTaxonomy, list[QuestionTaxonomy]] = {
 
 
 _VOCAB_RE = re.compile(r"[a-z0-9_]+")
-_VAGUE_KEYWORDS = frozenset({
-    "something",
-    "thing",
-    "it",
-    "stuff",
-    "various",
-    "whatevs",
-    "whatever",
-    "somehow",
-    "some",
-    "any",
-    "many",
-    "few",
-    "sort",
-    "sort of",
-    "kind of",
-    "seems",
-    "kind",
-    "basically",
-    "generally",
-    "overall",
-    "something like",
-})
+_VAGUE_KEYWORDS = frozenset(
+    {
+        "something",
+        "thing",
+        "it",
+        "stuff",
+        "various",
+        "whatevs",
+        "whatever",
+        "somehow",
+        "some",
+        "any",
+        "many",
+        "few",
+        "sort",
+        "sort of",
+        "kind of",
+        "seems",
+        "kind",
+        "basically",
+        "generally",
+        "overall",
+        "something like",
+    }
+)
 _CONSTRAINT_DIMENSION_HINTS: dict[ConstraintDimension, frozenset[str]] = {
-    ConstraintDimension.OPERATIONAL: frozenset({
-        "latency",
-        "throughput",
-        "availability",
-        "batch",
-        "window",
-        "rto",
-        "rpo",
-        "performance",
-    }),
-    ConstraintDimension.REGULATORY: frozenset({
-        "compliance",
-        "audit",
-        "privacy",
-        "residency",
-        "gdpr",
-        "sox",
-    }),
-    ConstraintDimension.ORGANIZATIONAL: frozenset({
-        "team",
-        "ownership",
-        "support",
-        "ops",
-        "sre",
-        "people",
-        "process",
-    }),
-    ConstraintDimension.LEGAL_LICENSING: frozenset({
-        "open source",
-        "vendor",
-        "contract",
-        "license",
-        "licensing",
-        "approved",
-    }),
-    ConstraintDimension.FINANCIAL: frozenset({
-        "budget",
-        "cost",
-        "spending",
-        "price",
-        "fees",
-    }),
-    ConstraintDimension.PLATFORM: frozenset({
-        "on-prem",
-        "cloud",
-        "vendor lock-in",
-        "provider",
-        "identity",
-    }),
-    ConstraintDimension.DATA: frozenset({
-        "sensitivity",
-        "retention",
-        "volume",
-        "lineage",
-        "access",
-        "pii",
-    }),
+    ConstraintDimension.OPERATIONAL: frozenset(
+        {
+            "latency",
+            "throughput",
+            "availability",
+            "batch",
+            "window",
+            "rto",
+            "rpo",
+            "performance",
+        }
+    ),
+    ConstraintDimension.REGULATORY: frozenset(
+        {
+            "compliance",
+            "audit",
+            "privacy",
+            "residency",
+            "gdpr",
+            "sox",
+        }
+    ),
+    ConstraintDimension.ORGANIZATIONAL: frozenset(
+        {
+            "team",
+            "ownership",
+            "support",
+            "ops",
+            "sre",
+            "people",
+            "process",
+        }
+    ),
+    ConstraintDimension.LEGAL_LICENSING: frozenset(
+        {
+            "open source",
+            "vendor",
+            "contract",
+            "license",
+            "licensing",
+            "approved",
+        }
+    ),
+    ConstraintDimension.FINANCIAL: frozenset(
+        {
+            "budget",
+            "cost",
+            "spending",
+            "price",
+            "fees",
+        }
+    ),
+    ConstraintDimension.PLATFORM: frozenset(
+        {
+            "on-prem",
+            "cloud",
+            "vendor lock-in",
+            "provider",
+            "identity",
+        }
+    ),
+    ConstraintDimension.DATA: frozenset(
+        {
+            "sensitivity",
+            "retention",
+            "volume",
+            "lineage",
+            "access",
+            "pii",
+        }
+    ),
 }
 
 
@@ -266,8 +286,8 @@ def infer_constraint_dimensions_with_key(
                     or normalized_keyword in normalized_key
                     or normalized_keyword.replace("_", " ") in key_tokens
                 ):
-            matched.add(dim.value)
-            break
+                    matched.add(dim.value)
+                    break
 
     if not canonical_key:
         return normalize_constraint_dimensions(sorted(matched))
@@ -337,20 +357,16 @@ def is_vague_user_input(text: str) -> bool:
         return True
 
     lowered = normalized.lower()
-    if lower := lowered:
-        for token in _VAGUE_KEYWORDS:
-            if token in lowered:
-                return True
-
-        # Generic intent phrases that usually require one bounded disambiguation question.
-        if (
-            "what" in tokens
-            and ("app" in tokens or "system" in tokens)
-            and any(t in tokens for t in ("do", "should", "about", "about?")
-        ):
+    for token in _VAGUE_KEYWORDS:
+        if token in lowered:
             return True
 
-    return False
+    # Generic intent phrases that usually require one bounded disambiguation question.
+    return (
+        "what" in tokens
+        and ("app" in tokens or "system" in tokens)
+        and any(t in tokens for t in ("do", "should", "about", "about?"))
+    )
 
 
 def is_user_valid(taxonomy_type: QuestionTaxonomy) -> bool:
@@ -363,30 +379,88 @@ def is_prohibited(taxonomy_type: QuestionTaxonomy) -> bool:
     return taxonomy_type in PROHIBITED_TYPES
 
 
-def classify_question(
-    text: str,
-    context: dict[str, Any] | None = None,
-    *,
-    run_agent: Any = None,
-) -> QuestionTaxonomy:
-    """Classify a question into its taxonomy type.
+def _coerce_str_sequence(value: Any | None) -> list[str]:
+    """Normalize optional textual hints into a cleaned list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        normalized = value.strip()
+        return [normalized] if normalized else []
+    if isinstance(value, (list, tuple, set, frozenset)):
+        result: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                token = item.strip()
+                if token:
+                    result.append(token)
+        return result
+    return []
 
-    Uses LLM to determine which QuestionTaxonomy value best fits the
-    question *text*.  Falls back to CONSTRAINT when the LLM is
-    unavailable or returns something unparseable.
-    """
-    if run_agent is None:
-        return QuestionTaxonomy.CONSTRAINT
+
+@dataclass
+class ClassificationContext:
+    """Projected subset of signal payload data for classification prompts."""
+
+    question_text: str = ""
+    prior_classifications: list[str] = field(default_factory=list)
+    domain_hints: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any] | None) -> ClassificationContext:
+        if not isinstance(payload, dict):
+            return cls()
+        question_text_raw = payload.get("question_text")
+        return cls(
+            question_text=(question_text_raw.strip() if isinstance(question_text_raw, str) else ""),
+            prior_classifications=_coerce_str_sequence(payload.get("prior_classifications")),
+            domain_hints=_coerce_str_sequence(payload.get("domain_hints")),
+        )
+
+
+def _format_classification_context_block(context: ClassificationContext) -> str:
+    """Render just the classification-relevant hints for LLM prompts."""
+    lines: list[str] = []
+    if context.question_text:
+        lines.append(f"- Reference question: {context.question_text}")
+    if context.prior_classifications:
+        lines.append(f"- Prior classifications: {', '.join(context.prior_classifications)}")
+    if context.domain_hints:
+        lines.append(f"- Domain hints: {', '.join(context.domain_hints)}")
+    if not lines:
+        return ""
+    return "\nAdditional context to consider:\n" + "\n".join(lines) + "\n"
+
+
+@dataclass(frozen=True)
+class _AgentJsonOutcome:
+    """Typed orchestration signal for JSON-producing agent calls."""
+
+    payload: dict[str, Any] | None = None
+    error: Exception | None = None
+
+
+def _run_agent_json(prompt: str, *, run_agent: Any) -> _AgentJsonOutcome:
+    """Invoke an agent, extract JSON payload, and report success/failure."""
+    import json
 
     from spec_manager.core.json_extraction import _extract_json_payload
 
-    context_block = ""
-    if context:
-        context_block = f"\nAdditional context:\n{context}\n"
+    try:
+        raw = run_agent(prompt)
+        payload = _extract_json_payload(raw)
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            raise TypeError("Agent JSON payload must decode to an object.")
+        return _AgentJsonOutcome(payload=data)
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+        return _AgentJsonOutcome(error=exc)
 
+
+def _build_classification_prompt(text: str, context: ClassificationContext) -> str:
+    """Build taxonomy-classification instructions and policy text."""
+    context_block = _format_classification_context_block(context)
     valid_names = [t.value for t in QuestionTaxonomy if t != QuestionTaxonomy.UNKNOWN]
-
-    prompt = (
+    return (
         "Classify the following question into exactly one taxonomy type.\n\n"
         f"Question: {text}\n"
         f"{context_block}\n"
@@ -404,17 +478,82 @@ def classify_question(
         f"TYPE must be one of: {', '.join(valid_names)}"
     )
 
-    import json
 
+def _classification_prompt_from_mapping(
+    text: str,
+    context: dict[str, Any] | None,
+) -> str:
+    """Build a classification prompt from raw context mapping input."""
+    classification_context = ClassificationContext.from_mapping(context)
+    return _build_classification_prompt(text, classification_context)
+
+
+def _taxonomy_from_classification_payload(
+    payload: dict[str, Any],
+) -> QuestionTaxonomy | None:
+    """Apply taxonomy rules to a parsed classification payload."""
+    taxonomy_raw = payload.get("taxonomy_type")
+    if not isinstance(taxonomy_raw, str):
+        return None
+    normalized = taxonomy_raw.upper().strip()
+    if not normalized:
+        return None
     try:
-        raw = run_agent(prompt)
-        payload = _extract_json_payload(raw)
-        data = json.loads(payload)
-        type_str = data.get("taxonomy_type", "").upper().strip()
-        return QuestionTaxonomy(type_str)
-    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
-        logger.debug("classify_question LLM parse failed (%s), defaulting to CONSTRAINT", exc)
+        return QuestionTaxonomy(normalized)
+    except ValueError:
+        return None
+
+
+def _interpret_classification_outcome(
+    outcome: _AgentJsonOutcome,
+) -> QuestionTaxonomy | None:
+    """Interpret a JSON-agent outcome into a taxonomy classification candidate."""
+    if outcome.error is not None:
+        return None
+    return _taxonomy_from_classification_payload(outcome.payload or {})
+
+
+def _validate_classification_candidate(
+    taxonomy: QuestionTaxonomy | None,
+) -> QuestionTaxonomy | None:
+    """Validate taxonomy classification constraints."""
+    if taxonomy is None or taxonomy == QuestionTaxonomy.UNKNOWN:
+        return None
+    return taxonomy
+
+
+def classify_question(
+    text: str,
+    context: dict[str, Any] | None = None,
+    *,
+    run_agent: Any = None,
+) -> QuestionTaxonomy:
+    """Classify a question into its taxonomy type.
+
+    Uses LLM to determine which QuestionTaxonomy value best fits the
+    question *text*.  Falls back to CONSTRAINT when the LLM is
+    unavailable or returns something unparseable.
+    """
+    if run_agent is None:
         return QuestionTaxonomy.CONSTRAINT
+
+    prompt = _classification_prompt_from_mapping(text, context)
+    agent_outcome = _run_agent_json(prompt, run_agent=run_agent)
+    parsed = _interpret_classification_outcome(agent_outcome)
+    parsed = _validate_classification_candidate(parsed)
+    if parsed is None:
+        if agent_outcome.error is not None:
+            logger.debug(
+                "classify_question LLM parse failed (%s), defaulting to CONSTRAINT",
+                agent_outcome.error,
+            )
+        else:
+            logger.debug(
+                "classify_question LLM parse failed (invalid taxonomy_type), "
+                "defaulting to CONSTRAINT"
+            )
+        return QuestionTaxonomy.CONSTRAINT
+    return parsed
 
 
 @dataclass
@@ -432,6 +571,142 @@ class ReframedQuestion:
     def __post_init__(self) -> None:
         if self.choices is None:
             self.choices = []
+
+
+def _reframe_guidance_for_type(taxonomy_type: QuestionTaxonomy) -> str:
+    """Return domain-specific reframing policy for prohibited types."""
+    guidance_map = {
+        QuestionTaxonomy.ARCHITECTURE: (
+            "Reframe into a question about required behavior, timing, or visibility "
+            "constraints — not about system design."
+        ),
+        QuestionTaxonomy.IMPLEMENTATION: (
+            "Reframe into a question about compatibility, lock-in, or licensing "
+            "constraints — not about library or framework choices."
+        ),
+        QuestionTaxonomy.DESIGN_PATTERN: (
+            "Reframe into a question about change frequency, ownership, or audit "
+            "constraints — not about code structure."
+        ),
+        QuestionTaxonomy.OPTIMIZATION: (
+            "Reframe into a question about performance targets or acceptable delay "
+            "tradeoffs — not about implementation tactics."
+        ),
+    }
+    return guidance_map.get(taxonomy_type, "Reframe into a user-facing question.")
+
+
+def _build_reframe_prompt(
+    text: str,
+    taxonomy_type: QuestionTaxonomy,
+    target_types: list[QuestionTaxonomy],
+    context: ClassificationContext,
+) -> str:
+    """Build user-facing reframing instructions and constraints."""
+    target_names = [t.value for t in target_types]
+    context_block = _format_classification_context_block(context)
+    guidance = _reframe_guidance_for_type(taxonomy_type)
+    return (
+        "A question was classified as an internal-only type that cannot be shown "
+        "to users directly. Reframe it as a user-valid question.\n\n"
+        f"Original question: {text}\n"
+        f"Original type: {taxonomy_type.value}\n"
+        f"{context_block}\n"
+        f"Guidance: {guidance}\n\n"
+        f"The reframed question must be one of these types: {', '.join(target_names)}\n\n"
+        "Respond with JSON:\n"
+        "{\n"
+        '  "reframed_text": "<new question text for the user>",\n'
+        f'  "reframed_type": "<one of {", ".join(target_names)}>",\n'
+        '  "scenario": "<brief scenario explaining why this matters>",\n'
+        '  "choices": ["<choice A>", "<choice B>", ...]\n'
+        "}"
+    )
+
+
+def _reframe_prompt_from_mapping(
+    text: str,
+    taxonomy_type: QuestionTaxonomy,
+    target_types: list[QuestionTaxonomy],
+    context: dict[str, Any] | None,
+) -> str:
+    """Build a reframe prompt from raw context mapping input."""
+    classification_context = ClassificationContext.from_mapping(context)
+    return _build_reframe_prompt(
+        text,
+        taxonomy_type,
+        target_types,
+        classification_context,
+    )
+
+
+def _reframed_question_from_payload(
+    payload: dict[str, Any],
+    *,
+    original_text: str,
+    original_type: QuestionTaxonomy,
+) -> ReframedQuestion | None:
+    """Interpret reframing payload into a typed question candidate."""
+    reframed_text_raw = payload.get("reframed_text", "")
+    reframed_text = reframed_text_raw.strip() if isinstance(reframed_text_raw, str) else ""
+    if not reframed_text:
+        return None
+
+    reframed_type_raw = payload.get("reframed_type", "")
+    if isinstance(reframed_type_raw, str):
+        try:
+            reframed_type = QuestionTaxonomy(reframed_type_raw.upper().strip())
+        except ValueError:
+            reframed_type = QuestionTaxonomy.UNKNOWN
+    else:
+        reframed_type = QuestionTaxonomy.UNKNOWN
+
+    return ReframedQuestion(
+        original_text=original_text,
+        original_type=original_type,
+        reframed_text=reframed_text,
+        reframed_type=reframed_type,
+        scenario=payload.get("scenario", ""),
+        answer_spec_kind="choice",
+        choices=payload.get("choices", []),
+    )
+
+
+def _interpret_reframe_outcome(
+    outcome: _AgentJsonOutcome,
+    *,
+    original_text: str,
+    original_type: QuestionTaxonomy,
+) -> ReframedQuestion | None:
+    """Interpret a JSON-agent outcome into a reframe candidate."""
+    if outcome.error is not None:
+        return None
+    return _reframed_question_from_payload(
+        outcome.payload or {},
+        original_text=original_text,
+        original_type=original_type,
+    )
+
+
+def _validate_reframed_question_candidate(
+    question: ReframedQuestion | None,
+    *,
+    target_types: list[QuestionTaxonomy],
+) -> ReframedQuestion | None:
+    """Validate and normalize a reframe candidate against target type constraints."""
+    if question is None:
+        return None
+    if question.reframed_type in target_types:
+        return question
+    return ReframedQuestion(
+        original_text=question.original_text,
+        original_type=question.original_type,
+        reframed_text=question.reframed_text,
+        reframed_type=target_types[0],
+        scenario=question.scenario,
+        answer_spec_kind=question.answer_spec_kind,
+        choices=question.choices,
+    )
 
 
 def reframe_to_user_valid(
@@ -455,90 +730,39 @@ def reframe_to_user_valid(
         # Not a prohibited type or unknown — nothing to reframe.
         return None
 
-    from spec_manager.core.json_extraction import _extract_json_payload
-
-    target_names = [t.value for t in target_types]
-    context_block = ""
-    if context:
-        context_block = f"\nAdditional context:\n{context}\n"
-
-    # Per-type reframe guidance
-    guidance_map = {
-        QuestionTaxonomy.ARCHITECTURE: (
-            "Reframe into a question about required behavior, timing, or visibility "
-            "constraints — not about system design."
-        ),
-        QuestionTaxonomy.IMPLEMENTATION: (
-            "Reframe into a question about compatibility, lock-in, or licensing "
-            "constraints — not about library or framework choices."
-        ),
-        QuestionTaxonomy.DESIGN_PATTERN: (
-            "Reframe into a question about change frequency, ownership, or audit "
-            "constraints — not about code structure."
-        ),
-        QuestionTaxonomy.OPTIMIZATION: (
-            "Reframe into a question about performance targets or acceptable delay "
-            "tradeoffs — not about implementation tactics."
-        ),
-    }
-    guidance = guidance_map.get(taxonomy_type, "Reframe into a user-facing question.")
-
-    prompt = (
-        "A question was classified as an internal-only type that cannot be shown "
-        "to users directly. Reframe it as a user-valid question.\n\n"
-        f"Original question: {text}\n"
-        f"Original type: {taxonomy_type.value}\n"
-        f"{context_block}\n"
-        f"Guidance: {guidance}\n\n"
-        f"The reframed question must be one of these types: {', '.join(target_names)}\n\n"
-        "Respond with JSON:\n"
-        "{\n"
-        '  "reframed_text": "<new question text for the user>",\n'
-        f'  "reframed_type": "<one of {", ".join(target_names)}>",\n'
-        '  "scenario": "<brief scenario explaining why this matters>",\n'
-        '  "choices": ["<choice A>", "<choice B>", ...]\n'
-        "}"
+    prompt = _reframe_prompt_from_mapping(
+        text,
+        taxonomy_type,
+        target_types,
+        context,
     )
-
-    import json
-
-    try:
-        raw = run_agent(prompt)
-        payload = _extract_json_payload(raw)
-        data = json.loads(payload)
-
-        reframed_type_str = data.get("reframed_type", "").upper().strip()
-        try:
-            reframed_type = QuestionTaxonomy(reframed_type_str)
-        except ValueError:
-            reframed_type = target_types[0]
-
-        # Ensure the reframed type is actually one of the valid targets
-        if reframed_type not in target_types:
-            reframed_type = target_types[0]
-
-        reframed_text = data.get("reframed_text", "").strip()
-        if not reframed_text:
-            return None
-
-        return ReframedQuestion(
-            original_text=text,
-            original_type=taxonomy_type,
-            reframed_text=reframed_text,
-            reframed_type=reframed_type,
-            scenario=data.get("scenario", ""),
-            answer_spec_kind="choice",
-            choices=data.get("choices", []),
-        )
-    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
-        logger.debug("reframe_to_user_valid LLM parse failed (%s)", exc)
+    agent_outcome = _run_agent_json(prompt, run_agent=run_agent)
+    candidate = _interpret_reframe_outcome(
+        agent_outcome,
+        original_text=text,
+        original_type=taxonomy_type,
+    )
+    if candidate is None:
+        if agent_outcome.error is not None:
+            logger.debug("reframe_to_user_valid LLM parse failed (%s)", agent_outcome.error)
         return None
+    return _validate_reframed_question_candidate(candidate, target_types=target_types)
 
 
-_SYSTEM_WIDE_KEYWORDS: frozenset[str] = frozenset({
-    "system", "all", "every", "across", "global", "entire",
-    "everywhere", "whole", "overall", "universal",
-})
+_SYSTEM_WIDE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "system",
+        "all",
+        "every",
+        "across",
+        "global",
+        "entire",
+        "everywhere",
+        "whole",
+        "overall",
+        "universal",
+    }
+)
 
 
 def classify_scope(

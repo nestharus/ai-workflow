@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from spec_manager.orchestration.intent_agent.signals import (
@@ -545,6 +546,8 @@ class TestResolveInteractiveEmitsSignals:
         assert "my-slice" in signals[0].context.blocking.blocked_slices
         assert signals[0].run_id == "run-42"
 
+        # Ambiguous slice-level event is attributed to SLICE_AGENT.
+        assert signals[1].source.kind == "SLICE_AGENT"
         assert signals[1].source.trace_id == "evt-2"
         assert signals[1].question.text == "Which API?"
 
@@ -643,3 +646,118 @@ class TestResolveInteractiveEmitsSignals:
         signals = store.read_all()
         assert len(signals) == 1
         assert signals[0].question.text == "What should X do?"
+
+
+class _PlannerUnderSpecStub:
+    """Simple planner stub for UnderSpecManager auto-resolution tests."""
+
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self._outputs = outputs
+
+    def resolve_under_spec(self, ctx: Any, events: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._outputs
+
+
+class TestResolveAutoAuthorityConfidenceGate:
+    """Auto-mode gate tests for authority and confidence checks."""
+
+    def test_auto_resolves_when_authority_and_confidence_pass(self, tmp_path: Path) -> None:
+        """Auto mode resolves only when gate passes."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="auto",
+            planner=_PlannerUnderSpecStub(
+                {
+                    "blocked": False,
+                    "constraints": {
+                        "evt-pass": {
+                            "answer": "Use JSON responses for all endpoints.",
+                            "confidence": 0.93,
+                            "authority_required": "planner_ok",
+                        }
+                    },
+                }
+            ),
+        )
+        events = [
+            UnderSpecEvent(event_id="evt-pass", question="What format should API output use?")
+        ]
+
+        outcome = manager.resolve(slice_id="slice-pass", events=events, layer="l2")
+
+        assert outcome.is_blocked is False
+        assert len(outcome.resolved) == 1
+        assert outcome.resolved[0].event_id == "evt-pass"
+        assert len(outcome.constraints) == 1
+        assert outcome.constraints[0].confidence == pytest.approx(0.93)
+        assert outcome.constraints[0].authority_required == "planner_ok"
+        assert "auto_resolve_gate=passed" in outcome.constraints[0].trace
+
+    def test_auto_blocks_human_authority_even_with_high_confidence(self, tmp_path: Path) -> None:
+        """Auto mode blocks human-authority events regardless of confidence."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="auto",
+            planner=_PlannerUnderSpecStub(
+                {
+                    "blocked": False,
+                    "constraints": {
+                        "evt-human": {
+                            "answer": "Choose provider A.",
+                            "confidence": 0.95,
+                            "authority_required": "human_required",
+                        }
+                    },
+                }
+            ),
+        )
+        events = [
+            UnderSpecEvent(
+                event_id="evt-human",
+                question="Which vendor should be selected?",
+                context={"type": "decision_required", "reason": "human authority required"},
+            )
+        ]
+
+        outcome = manager.resolve(slice_id="slice-human", events=events, layer="l2")
+
+        assert outcome.is_blocked is True
+        assert outcome.resolved == []
+        assert outcome.constraints == []
+        assert len(outcome.blocked) == 1
+        gate = outcome.blocked[0].context.get("auto_resolve_gate", {})
+        assert gate.get("decision") == "blocked"
+        assert gate.get("reason") == "human_authority_required"
+        assert gate.get("authority_required") == "human_required"
+
+    def test_auto_blocks_low_confidence(self, tmp_path: Path) -> None:
+        """Auto mode blocks low-confidence constraints with gate traceability."""
+        manager = UnderSpecManager(
+            workspace_root=tmp_path,
+            mode="auto",
+            planner=_PlannerUnderSpecStub(
+                {
+                    "blocked": False,
+                    "constraints": {
+                        "evt-low": {
+                            "answer": "Use provider B for now.",
+                            "confidence": 0.41,
+                            "authority_required": "planner_ok",
+                        }
+                    },
+                }
+            ),
+        )
+        events = [UnderSpecEvent(event_id="evt-low", question="Which provider should be selected?")]
+
+        outcome = manager.resolve(slice_id="slice-low", events=events, layer="l2")
+
+        assert outcome.is_blocked is True
+        assert outcome.resolved == []
+        assert outcome.constraints == []
+        assert len(outcome.blocked) == 1
+        gate = outcome.blocked[0].context.get("auto_resolve_gate", {})
+        assert gate.get("decision") == "blocked"
+        assert gate.get("reason") == "confidence_below_threshold"
+        assert gate.get("authority_required") == "planner_ok"
+        assert gate.get("confidence") == pytest.approx(0.41)

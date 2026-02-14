@@ -40,34 +40,126 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _extract_json_payload_from_llm_output(output: str) -> str:
+    """Extract first decodable JSON object/array from an LLM output string."""
+    cleaned = output.strip()
+    if not cleaned:
+        return cleaned
+
+    lines = [line for line in cleaned.splitlines() if not line.startswith("[agent-exec]")]
+    cleaned = "\n".join(lines).strip()
+
+    if cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            fence_end = cleaned.find("```", first_newline + 1)
+            if fence_end != -1:
+                cleaned = cleaned[first_newline + 1 : fence_end].strip()
+
+    decoder = json.JSONDecoder()
+    first_obj = cleaned.find("{")
+    first_list = cleaned.find("[")
+    starts = [idx for idx in (first_obj, first_list) if idx != -1]
+    if not starts:
+        return cleaned
+
+    for start in sorted(starts):
+        idx = start
+        while idx < len(cleaned):
+            ch = cleaned[idx]
+            if ch not in "{[":
+                idx += 1
+                continue
+            try:
+                _, end = decoder.raw_decode(cleaned[idx:])
+            except json.JSONDecodeError:
+                idx += 1
+                continue
+            return cleaned[idx : idx + end]
+
+    return cleaned[min(starts) :]
+
+
 def _normalize_question_refs(
     raw_questions: Any,
     *,
     fallback: list[dict[str, str]] | None = None,
-) -> tuple[list[str], list[str], list[str]]:
-    """Normalize question references into parallel ID/key/scenario lists."""
+) -> tuple[list[str], list[str], list[str], list[dict[str, Any]]]:
+    """Normalize question refs and record every omission or deduplication."""
     normalized: list[tuple[str, str, str]] = []
+    omissions: list[dict[str, Any]] = []
+
+    def _coerce_original_value(value: Any) -> Any:
+        try:
+            json.dumps(value)
+        except TypeError:
+            return repr(value)
+        return value
 
     if isinstance(raw_questions, list):
-        for raw in raw_questions:
+        for idx, raw in enumerate(raw_questions):
             if isinstance(raw, str):
                 qid = raw.strip()
                 if qid:
                     normalized.append((qid, "", ""))
+                else:
+                    omissions.append(
+                        {
+                            "reason": "empty_after_strip",
+                            "source": "raw_questions",
+                            "index": idx,
+                            "original_value": raw,
+                        }
+                    )
                 continue
 
             if isinstance(raw, dict):
                 qid = str(raw.get("question_id", raw.get("id", ""))).strip()
                 if not qid:
+                    omissions.append(
+                        {
+                            "reason": "missing_question_id",
+                            "source": "raw_questions",
+                            "index": idx,
+                            "original_value": _coerce_original_value(raw),
+                        }
+                    )
                     continue
                 canonical_key = str(raw.get("canonical_key", "")).strip()
                 scenario = str(raw.get("scenario", "")).strip()
                 normalized.append((qid, canonical_key, scenario))
+                continue
+
+            omissions.append(
+                {
+                    "reason": "unrecognized_type",
+                    "source": "raw_questions",
+                    "index": idx,
+                    "original_value": _coerce_original_value(raw),
+                }
+            )
+    elif raw_questions is not None:
+        omissions.append(
+            {
+                "reason": "raw_questions_not_list",
+                "source": "raw_questions",
+                "index": None,
+                "original_value": _coerce_original_value(raw_questions),
+            }
+        )
 
     if not normalized and fallback:
-        for raw in fallback:
+        for idx, raw in enumerate(fallback):
             qid = str(raw.get("question_id", raw.get("id", ""))).strip()
             if not qid:
+                omissions.append(
+                    {
+                        "reason": "missing_question_id",
+                        "source": "fallback",
+                        "index": idx,
+                        "original_value": _coerce_original_value(raw),
+                    }
+                )
                 continue
             canonical_key = str(raw.get("canonical_key", "")).strip()
             scenario = str(raw.get("scenario", "")).strip()
@@ -75,14 +167,29 @@ def _normalize_question_refs(
 
     deduped: list[tuple[str, str, str]] = []
     seen_ids: set[str] = set()
-    for qid, canonical_key, scenario in normalized:
+    for idx, (qid, canonical_key, scenario) in enumerate(normalized):
         if qid in seen_ids:
+            omissions.append(
+                {
+                    "reason": "duplicate_question_id",
+                    "source": "normalized",
+                    "index": idx,
+                    "question_id": qid,
+                    "original_value": {
+                        "question_id": qid,
+                        "canonical_key": canonical_key,
+                        "scenario": scenario,
+                    },
+                }
+            )
             continue
         seen_ids.add(qid)
         deduped.append((qid, canonical_key, scenario))
 
-    question_ids, canonical_keys, scenarios = zip(*deduped) if deduped else ((), (), ())
-    return list(question_ids), list(canonical_keys), list(scenarios)
+    question_ids, canonical_keys, scenarios = (
+        zip(*deduped, strict=True) if deduped else ((), (), ())
+    )
+    return list(question_ids), list(canonical_keys), list(scenarios), omissions
 
 
 def _question_todo_lines(
@@ -152,6 +259,18 @@ class SkeletonSpec:
     interfaces: list[InterfaceStub] = field(default_factory=list)
     open_question_ids: list[str] = field(default_factory=list)
     constraint_refs: list[str] = field(default_factory=list)  # planner constraint IDs
+    question_ref_omissions: list[dict[str, Any]] = field(default_factory=list)
+
+
+class SkeletonSynthesisTransientParseError(RuntimeError):
+    """Retryable LLM parse failure after bounded attempts."""
+
+    def __init__(self, attempts: int, max_attempts: int) -> None:
+        self.attempts = attempts
+        self.max_attempts = max_attempts
+        super().__init__(
+            f"Failed to parse skeleton LLM response after {attempts}/{max_attempts} attempts"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +294,8 @@ class SkeletonSynthesisStrategy:
     structure. Does NOT decompose into libraries.
     """
 
+    MAX_PARSE_ATTEMPTS: int = 3
+
     def synthesize(
         self,
         problem_frame: dict[str, Any],
@@ -187,7 +308,9 @@ class SkeletonSynthesisStrategy:
     ) -> SkeletonSpec:
         """Produce a pre-decomposition skeleton specification."""
         constraint_refs = list(constraint_refs or [])
-        open_question_records = list(open_questions or [{"question_id": qid} for qid in open_question_ids])
+        open_question_records = list(
+            open_questions or [{"question_id": qid} for qid in open_question_ids]
+        )
 
         if run_agent is None:
             return SkeletonSpec(
@@ -196,8 +319,6 @@ class SkeletonSynthesisStrategy:
                 open_question_ids=open_question_ids,
                 constraint_refs=constraint_refs,
             )
-
-        from spec_manager.core.json_extraction import _extract_json_payload
 
         scope_raw = problem_frame.get("scope", {})
         if isinstance(scope_raw, dict):
@@ -208,13 +329,15 @@ class SkeletonSynthesisStrategy:
         def _extract_question_metadata(
             item: dict[str, Any],
             fallback: list[dict[str, str]],
-        ) -> tuple[list[str], list[str], list[str]]:
+        ) -> tuple[list[str], list[str], list[str], list[dict[str, Any]]]:
             if not isinstance(item, dict):
                 return _normalize_question_refs([], fallback=fallback)
             if "open_questions" in item:
                 return _normalize_question_refs(item.get("open_questions", []), fallback=fallback)
             if "open_question_ids" in item:
-                return _normalize_question_refs(item.get("open_question_ids", []), fallback=fallback)
+                return _normalize_question_refs(
+                    item.get("open_question_ids", []), fallback=fallback
+                )
             return _normalize_question_refs([], fallback=fallback)
 
         prompt = (
@@ -231,28 +354,92 @@ class SkeletonSynthesisStrategy:
             f"{json.dumps(constraint_refs)}\n\n"
             "Produce a JSON object with exactly three keys:\n"
             '- "workflows": list of {{"name": str, "description": str, '
-            '"open_questions": [{"question_id": str, "canonical_key": str, "scenario": str}]} \n'
+            '"open_questions": [{"question_id": str, "canonical_key": str, '
+            '"scenario": str}]}\n'
             '- "entities": list of {{"name": str, "description": str, '
-            '"fields": list of str, "open_questions": [{"question_id": str, "canonical_key": str, "scenario": str}]}}\n'
+            '"fields": list of str, "open_questions": [{"question_id": str, '
+            '"canonical_key": str, "scenario": str}]}}\n'
             '- "interfaces": list of {{"name": str, "description": str, '
             '"direction": "inbound"|"outbound"|"bidirectional", '
-            '"open_questions": [{"question_id": str, "canonical_key": str, "scenario": str}]}}\n'
+            '"open_questions": [{"question_id": str, "canonical_key": str, '
+            '"scenario": str}]}}\n'
             "Do NOT invent library boundaries. Keep stubs shallow — "
             "one level deeper than names. Output ONLY the JSON object."
         )
 
-        raw = run_agent(prompt)
-        try:
-            extracted = _extract_json_payload(raw)
-            data = json.loads(extracted)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("Failed to parse skeleton LLM response, returning empty spec")
+        data: Any = None
+        for attempt in range(1, self.MAX_PARSE_ATTEMPTS + 1):
+            raw = run_agent(prompt)
+            try:
+                extracted = _extract_json_payload_from_llm_output(raw)
+                data = json.loads(extracted)
+                break
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Failed to parse skeleton LLM response on attempt %d/%d",
+                    attempt,
+                    self.MAX_PARSE_ATTEMPTS,
+                )
+                if attempt >= self.MAX_PARSE_ATTEMPTS:
+                    raise SkeletonSynthesisTransientParseError(
+                        attempts=attempt,
+                        max_attempts=self.MAX_PARSE_ATTEMPTS,
+                    ) from exc
+        if not isinstance(data, dict):
+            logger.warning(
+                "Skeleton LLM response root is %s, expected object; returning empty spec",
+                type(data).__name__,
+            )
             return SkeletonSpec(
                 problem_frame=problem_frame,
                 concept_map=concept_map,
                 open_question_ids=open_question_ids,
                 constraint_refs=constraint_refs,
             )
+
+        expected_sections = ("workflows", "entities", "interfaces")
+        missing_sections = [section for section in expected_sections if section not in data]
+        unexpected_sections = [key for key in data if key not in expected_sections]
+        if missing_sections:
+            logger.warning(
+                "Skeleton LLM response missing sections %s; "
+                "defaulting missing sections to empty lists",
+                missing_sections,
+            )
+        if unexpected_sections:
+            logger.warning(
+                "Skeleton LLM response includes unexpected sections %s; ignoring extras",
+                unexpected_sections,
+            )
+
+        def _coerce_section(section_name: str) -> list[dict[str, Any]]:
+            raw_section = data.get(section_name, [])
+            if raw_section is None:
+                return []
+            if not isinstance(raw_section, list):
+                logger.warning(
+                    "Skeleton LLM response section %r is %s, expected list; using empty list",
+                    section_name,
+                    type(raw_section).__name__,
+                )
+                return []
+
+            normalized_items: list[dict[str, Any]] = []
+            for idx, raw_item in enumerate(raw_section):
+                if not isinstance(raw_item, dict):
+                    logger.warning(
+                        "Skeleton LLM response item %s[%d] is %s, expected object; dropping item",
+                        section_name,
+                        idx,
+                        type(raw_item).__name__,
+                    )
+                    continue
+                normalized_items.append(raw_item)
+            return normalized_items
+
+        workflow_items = _coerce_section("workflows")
+        entity_items = _coerce_section("entities")
+        interface_items = _coerce_section("interfaces")
 
         fallback_records = (
             open_question_records
@@ -261,8 +448,21 @@ class SkeletonSynthesisStrategy:
         )
 
         workflows = []
-        for w in data.get("workflows", []):
-            q_ids, canonical_keys, scenarios = _extract_question_metadata(w, fallback_records)
+        question_ref_omissions: list[dict[str, Any]] = []
+
+        for idx, w in enumerate(workflow_items):
+            q_ids, canonical_keys, scenarios, omissions = _extract_question_metadata(
+                w, fallback_records
+            )
+            question_ref_omissions.extend(
+                {
+                    "section": "workflows",
+                    "item_index": idx,
+                    "item_name": str(w.get("name", "")).strip(),
+                    **omission,
+                }
+                for omission in omissions
+            )
             workflows.append(
                 WorkflowStub(
                     name=w.get("name", ""),
@@ -274,8 +474,19 @@ class SkeletonSynthesisStrategy:
             )
 
         entities = []
-        for e in data.get("entities", []):
-            q_ids, canonical_keys, scenarios = _extract_question_metadata(e, fallback_records)
+        for idx, e in enumerate(entity_items):
+            q_ids, canonical_keys, scenarios, omissions = _extract_question_metadata(
+                e, fallback_records
+            )
+            question_ref_omissions.extend(
+                {
+                    "section": "entities",
+                    "item_index": idx,
+                    "item_name": str(e.get("name", "")).strip(),
+                    **omission,
+                }
+                for omission in omissions
+            )
             entities.append(
                 EntityStub(
                     name=e.get("name", ""),
@@ -288,8 +499,19 @@ class SkeletonSynthesisStrategy:
             )
 
         interfaces = []
-        for i in data.get("interfaces", []):
-            q_ids, canonical_keys, scenarios = _extract_question_metadata(i, fallback_records)
+        for idx, i in enumerate(interface_items):
+            q_ids, canonical_keys, scenarios, omissions = _extract_question_metadata(
+                i, fallback_records
+            )
+            question_ref_omissions.extend(
+                {
+                    "section": "interfaces",
+                    "item_index": idx,
+                    "item_name": str(i.get("name", "")).strip(),
+                    **omission,
+                }
+                for omission in omissions
+            )
             interfaces.append(
                 InterfaceStub(
                     name=i.get("name", ""),
@@ -309,6 +531,7 @@ class SkeletonSynthesisStrategy:
             interfaces=interfaces,
             open_question_ids=open_question_ids,
             constraint_refs=constraint_refs,
+            question_ref_omissions=question_ref_omissions,
         )
 
 
@@ -380,7 +603,11 @@ def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
     wf_dir.mkdir(parents=True, exist_ok=True)
     for w in spec.workflows:
         lines = [f'"""{w.description}"""', ""]
-        lines.extend(_question_todo_lines(w.name, list(w.open_question_ids), list(w.canonical_keys), list(w.scenarios)))
+        lines.extend(
+            _question_todo_lines(
+                w.name, list(w.open_question_ids), list(w.canonical_keys), list(w.scenarios)
+            )
+        )
         lines.append("")
         lines.append(f"def {w.name}():")
         lines.append("    raise NotImplementedError")
@@ -394,7 +621,14 @@ def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
     ent_dir.mkdir(parents=True, exist_ok=True)
     for e in spec.entities:
         lines = [f'"""{e.description}"""', ""]
-        lines.extend(_question_todo_lines(f"entity {e.name}", list(e.open_question_ids), list(e.canonical_keys), list(e.scenarios)))
+        lines.extend(
+            _question_todo_lines(
+                f"entity {e.name}",
+                list(e.open_question_ids),
+                list(e.canonical_keys),
+                list(e.scenarios),
+            )
+        )
         if lines and lines[-1] != "":
             lines.append("")
         lines.append(f"class {e.name}:")
@@ -451,7 +685,9 @@ def render_intent_snapshot(
     snapshot_dir = output_dir / "analysis" / "intent"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    question_ids, canonical_keys, scenarios = _normalize_question_refs(open_questions)
+    question_ids, canonical_keys, scenarios, question_ref_omissions = _normalize_question_refs(
+        open_questions
+    )
     snapshot = {
         "problem_frame": problem_frame,
         "concept_map": concept_map,
@@ -461,8 +697,11 @@ def render_intent_snapshot(
                 "canonical_key": canonical_key,
                 "scenario": scenario,
             }
-            for qid, canonical_key, scenario in zip(question_ids, canonical_keys, scenarios)
+            for qid, canonical_key, scenario in zip(
+                question_ids, canonical_keys, scenarios, strict=True
+            )
         ],
+        "open_question_ref_omissions": question_ref_omissions,
         "constraint_refs": list(constraint_refs),
     }
 
@@ -494,12 +733,8 @@ def should_produce_skeleton(
     # 3. Constraint dimension coverage (or explicit open constraint questions).
     open_constraint_ids = set(queue_state.get("open_constraint_question_ids", []) or [])
     closed_constraint_ids = set(queue_state.get("closed_constraint_question_ids", []) or [])
-    open_constraint_dimensions = set(
-        queue_state.get("open_constraint_dimensions", []) or []
-    )
-    closed_constraint_dimensions = set(
-        queue_state.get("closed_constraint_dimensions", []) or []
-    )
+    open_constraint_dimensions = set(queue_state.get("open_constraint_dimensions", []) or [])
+    closed_constraint_dimensions = set(queue_state.get("closed_constraint_dimensions", []) or [])
     has_constraint_coverage_keys = (
         "open_constraint_question_ids" in queue_state
         or "closed_constraint_question_ids" in queue_state

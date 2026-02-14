@@ -133,9 +133,15 @@ dependency).
 
 ## Don't note problems without fixing them
 
-Recording a problem and moving on means the problem contaminates all
-subsequent work. Future steps build on the flawed output, amplifying the
-error. Fix each problem when it's found, while context is fresh and the
-blast radius is small. The cost of fixing now is always less than the cost
-of fixing later, because later includes all the dependent work built on
-the error.
+Don't log a problem and leave it for someone else to deal with.
+
+## Implementation notes
+
+* `_append_planner_update` in `scripts/spec_manager/spec_manager/orchestration/intent_agent/agent.py`
+  traps planner-store write failures, logs a debug message, and returns without mutating
+  the queue, so the failure is surfaced immediately instead of propagating through later
+  passes.
+* `handle_planner_updates` wraps its `handle_redefinition(update)` call in `try/except Exception`,
+  logs a warning, and continues processing the rest of the batch. This keeps a single malformed
+  planner update from aborting the reassess pass while still surfacing the problem via logged
+  reasons.

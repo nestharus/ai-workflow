@@ -21,8 +21,10 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
+from spec_manager.refinement.formats import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,123 @@ def _normalize_taxonomy_type(value: str) -> str:
     return normalized if normalized in _VALID_TAXONOMY_TYPES else "CONSTRAINT"
 
 
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        text = _normalize_text(value)
+        if text:
+            return text
+    return ""
+
+
+def _normalize_text_list(value: Any, *, limit: int = 5) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for raw_item in value:
+        item = _normalize_text(raw_item)
+        if item:
+            items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _project_signal_context_for_prompt(
+    signal_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(signal_context, dict):
+        return {}
+
+    nested_context_raw = signal_context.get("context")
+    nested_context = nested_context_raw if isinstance(nested_context_raw, dict) else {}
+
+    domain_description = _first_non_empty(
+        signal_context.get("domain_description"),
+        signal_context.get("domain"),
+        nested_context.get("domain_description"),
+        nested_context.get("domain"),
+        signal_context.get("question"),
+        signal_context.get("vague_input"),
+        signal_context.get("text"),
+    )
+    failure_mode_context = _first_non_empty(
+        signal_context.get("failure_mode"),
+        signal_context.get("scenario"),
+        signal_context.get("reason"),
+        signal_context.get("kind"),
+        nested_context.get("failure_mode"),
+        nested_context.get("scenario"),
+        nested_context.get("reason"),
+    )
+
+    relevant_constraints = _normalize_text_list(
+        signal_context.get("constraints") or nested_context.get("constraints")
+    )
+    if not relevant_constraints:
+        constraint = _first_non_empty(
+            signal_context.get("constraint"),
+            nested_context.get("constraint"),
+        )
+        if constraint:
+            relevant_constraints = [constraint]
+
+    projected: dict[str, Any] = {}
+    if domain_description:
+        projected["domain_description"] = domain_description
+    if failure_mode_context:
+        projected["failure_mode_context"] = failure_mode_context
+    if relevant_constraints:
+        projected["relevant_constraints"] = relevant_constraints
+    return projected
+
+
+def _project_problem_frame_for_prompt(
+    problem_frame: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(problem_frame, dict):
+        return {}
+
+    projected: dict[str, Any] = {}
+    domain_description = _normalize_text(problem_frame.get("current_restatement"))
+    goals = _normalize_text_list(problem_frame.get("goals"))
+    non_goals = _normalize_text_list(problem_frame.get("non_goals"))
+    risk_flags = _normalize_text_list(problem_frame.get("risk_flags"))
+
+    scope_summary = ""
+    scope_raw = problem_frame.get("scope")
+    if isinstance(scope_raw, dict):
+        scope_in = _normalize_text_list(scope_raw.get("in"))
+        scope_out = _normalize_text_list(scope_raw.get("out"))
+        scope_parts: list[str] = []
+        if scope_in:
+            scope_parts.append(f"in: {', '.join(scope_in)}")
+        if scope_out:
+            scope_parts.append(f"out: {', '.join(scope_out)}")
+        scope_summary = "; ".join(scope_parts)
+
+    if domain_description:
+        projected["domain_description"] = domain_description
+    if goals:
+        projected["goals"] = goals
+    if non_goals:
+        projected["non_goals"] = non_goals
+    if scope_summary:
+        projected["scope_summary"] = scope_summary
+    if risk_flags:
+        projected["risk_flags"] = risk_flags
+    return projected
+
+
+def _format_prompt_projection(section_name: str, projection: dict[str, Any]) -> str:
+    if not projection:
+        return ""
+    lines = [f"\n{section_name}:\n"]
+    for key, value in projection.items():
+        rendered = ", ".join(value) if isinstance(value, list) else _normalize_text(value)
+        lines.append(f"- {key}: {rendered}\n")
+    return "".join(lines)
+
+
 def _normalize_candidate(candidate: QualityCheckCandidate) -> QualityCheckCandidate:
     return QualityCheckCandidate(
         text=_normalize_text(candidate.text),
@@ -79,13 +198,15 @@ class QualityChecks:
 
     @property
     def all_pass(self) -> bool:
-        return all([
-            self.domain_language_only,
-            self.bounded_answerability,
-            self.specific_behavior,
-            self.scenario_grounded,
-            self.single_question,
-        ])
+        return all(
+            [
+                self.domain_language_only,
+                self.bounded_answerability,
+                self.specific_behavior,
+                self.scenario_grounded,
+                self.single_question,
+            ]
+        )
 
 
 @dataclass
@@ -120,7 +241,7 @@ class QualityCheckRecord:
         if not self.record_id:
             self.record_id = f"qc_{uuid.uuid4().hex[:12]}"
         if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            self.created_at = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""
@@ -306,13 +427,12 @@ class QualityValidatorStrategy:
                 reason="LLM call failed.",
             )
 
-        # Parse LLM response into checks.
-        from spec_manager.core.json_extraction import _extract_json_payload
-
         try:
-            import json
-            payload = _extract_json_payload(raw_response)
-            parsed = json.loads(payload)
+            parsed = extract_json_from_llm_output(
+                raw_response,
+                allow_array=False,
+                location="intent_agent.quality_gate.validator",
+            )
         except Exception:
             logger.warning("Failed to parse LLM quality gate response.")
             return QualityCheckRecord(
@@ -328,8 +448,7 @@ class QualityValidatorStrategy:
             specific_behavior=bool(parsed.get("specific_behavior", False)),
             scenario_grounded=checks.scenario_grounded
             and bool(parsed.get("scenario_grounded", False)),
-            single_question=checks.single_question
-            and bool(parsed.get("single_question", False)),
+            single_question=checks.single_question and bool(parsed.get("single_question", False)),
         )
         checks.domain_language_only = parsed_checks.domain_language_only
         checks.specific_behavior = parsed_checks.specific_behavior
@@ -388,33 +507,24 @@ class QuestionRepairStrategy:
         checks = failed_record.checks
         failures: list[str] = []
         if not checks.domain_language_only:
-            failures.append(
-                "domain_language_only: uses architecture/implementation jargon"
-            )
+            failures.append("domain_language_only: uses architecture/implementation jargon")
         if not checks.bounded_answerability:
             failures.append(
                 "bounded_answerability: answer space is not bounded "
                 "(must be choice/yes_no/value/bounded_text)"
             )
         if not checks.specific_behavior:
-            failures.append(
-                "specific_behavior: too abstract, needs concrete behavior/outcome"
-            )
+            failures.append("specific_behavior: too abstract, needs concrete behavior/outcome")
         if not checks.scenario_grounded:
-            failures.append(
-                "scenario_grounded: missing scenario or failure mode"
-            )
+            failures.append("scenario_grounded: missing scenario or failure mode")
         if not checks.single_question:
-            failures.append(
-                "single_question: compound question, must ask one atomic decision"
-            )
+            failures.append("single_question: compound question, must ask one atomic decision")
 
         failures_text = "\n".join(f"  - {f}" for f in failures)
-        context_text = ""
-        if signal_context:
-            context_text = (
-                f"\nSIGNAL CONTEXT: {signal_context}\n"
-            )
+        context_text = _format_prompt_projection(
+            "SIGNAL CONTEXT (projected)",
+            _project_signal_context_for_prompt(signal_context),
+        )
 
         prompt = (
             "You are a question repair assistant. A user-facing question draft "
@@ -444,12 +554,12 @@ class QuestionRepairStrategy:
             logger.exception("LLM call failed during question repair.")
             return None
 
-        from spec_manager.core.json_extraction import _extract_json_payload
-
         try:
-            import json
-            payload = _extract_json_payload(raw_response)
-            parsed = json.loads(payload)
+            parsed = extract_json_from_llm_output(
+                raw_response,
+                allow_array=False,
+                location="intent_agent.quality_gate.repair",
+            )
         except Exception:
             logger.warning("Failed to parse LLM repair response.")
             return None
@@ -518,12 +628,14 @@ class QuestionDraftStrategy:
 
         user_terms = concept_map_user_terms or []
         user_terms_text = ", ".join(user_terms) if user_terms else "(none)"
-        context_text = ""
-        if context:
-            context_text = f"\nADDITIONAL CONTEXT: {context}\n"
-        frame_text = ""
-        if problem_frame:
-            frame_text = f"\nPROBLEM FRAME: {problem_frame}\n"
+        context_text = _format_prompt_projection(
+            "ADDITIONAL CONTEXT (projected)",
+            _project_signal_context_for_prompt(context),
+        )
+        frame_text = _format_prompt_projection(
+            "PROBLEM FRAME (projected)",
+            _project_problem_frame_for_prompt(problem_frame),
+        )
 
         prompt = (
             "You are a question drafting assistant. Convert the following "
@@ -557,12 +669,12 @@ class QuestionDraftStrategy:
                 taxonomy_type=taxonomy_hint or "CONSTRAINT",
             )
 
-        from spec_manager.core.json_extraction import _extract_json_payload
-
         try:
-            import json
-            payload = _extract_json_payload(raw_response)
-            parsed = json.loads(payload)
+            parsed = extract_json_from_llm_output(
+                raw_response,
+                allow_array=False,
+                location="intent_agent.quality_gate.draft",
+            )
         except Exception:
             logger.warning("Failed to parse LLM draft response.")
             return QualityCheckCandidate(

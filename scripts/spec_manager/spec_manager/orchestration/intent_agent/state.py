@@ -19,7 +19,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -51,9 +51,7 @@ class ProblemFrame:
     current_restatement: str = ""
     goals: list[str] = field(default_factory=list)
     non_goals: list[str] = field(default_factory=list)
-    scope: dict[str, list[str]] = field(
-        default_factory=lambda: {"in": [], "out": []}
-    )
+    scope: dict[str, list[str]] = field(default_factory=lambda: {"in": [], "out": []})
     success_metrics: list[str] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     frame_assumptions: list[FrameAssumption] = field(default_factory=list)
@@ -115,6 +113,184 @@ class Watermarks:
     planner_update_watermark: str = ""
 
 
+def _clone_shallow(value: Any) -> Any:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list):
+        return list(value)
+    return value
+
+
+@dataclass
+class ResumeProgressSummaryProjection:
+    """Typed projection for queue resume progress at the intent boundary."""
+
+    planner_watermark: str = ""
+    planner_updates_seen: int = 0
+    planner_update_types: dict[str, Any] = field(default_factory=dict)
+    slice_ids: list[str] = field(default_factory=list)
+    slice_status_counts: dict[str, Any] = field(default_factory=dict)
+    latest_planner_update_at: str = ""
+    reassess_action_counts: dict[str, Any] = field(default_factory=dict)
+    reassess_resolved_count: int = 0
+    _passthrough_fields: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = {
+            "planner_watermark": self.planner_watermark,
+            "planner_updates_seen": self.planner_updates_seen,
+            "planner_update_types": _clone_shallow(self.planner_update_types),
+            "slice_ids": _clone_shallow(self.slice_ids),
+            "slice_status_counts": _clone_shallow(self.slice_status_counts),
+            "latest_planner_update_at": self.latest_planner_update_at,
+            "reassess_action_counts": _clone_shallow(self.reassess_action_counts),
+            "reassess_resolved_count": self.reassess_resolved_count,
+        }
+        data.update({key: _clone_shallow(value) for key, value in self._passthrough_fields.items()})
+        return data
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> ResumeProgressSummaryProjection:
+        if not isinstance(raw, dict):
+            return cls()
+
+        recognized_keys = {
+            "planner_watermark",
+            "planner_updates_seen",
+            "planner_update_types",
+            "slice_ids",
+            "slice_status_counts",
+            "latest_planner_update_at",
+            "reassess_action_counts",
+            "reassess_resolved_count",
+        }
+        projection = cls(
+            planner_watermark=raw.get("planner_watermark", ""),
+            planner_updates_seen=raw.get("planner_updates_seen", 0),
+            planner_update_types=_clone_shallow(raw.get("planner_update_types", {})),
+            slice_ids=_clone_shallow(raw.get("slice_ids", [])),
+            slice_status_counts=_clone_shallow(raw.get("slice_status_counts", {})),
+            latest_planner_update_at=raw.get("latest_planner_update_at", ""),
+            reassess_action_counts=_clone_shallow(raw.get("reassess_action_counts", {})),
+            reassess_resolved_count=raw.get("reassess_resolved_count", 0),
+        )
+        projection._passthrough_fields = {
+            key: _clone_shallow(value) for key, value in raw.items() if key not in recognized_keys
+        }
+        return projection
+
+
+@dataclass
+class QuestionQueueStateProjection:
+    """Typed projection for queue state crossing orchestration boundaries."""
+
+    open_ids: list[str] = field(default_factory=list)
+    closed_ids: list[str] = field(default_factory=list)
+    stale_ids: list[str] = field(default_factory=list)
+    open_constraint_question_ids: list[str] = field(default_factory=list)
+    closed_constraint_question_ids: list[str] = field(default_factory=list)
+    open_constraint_dimensions: list[str] = field(default_factory=list)
+    closed_constraint_dimensions: list[str] = field(default_factory=list)
+    unaskable_question_ids: list[str] = field(default_factory=list)
+    skeleton_input_signature: str = ""
+    last_presented_question_id: str = ""
+    active_batch_id: str = ""
+    resume_progress_summary: ResumeProgressSummaryProjection = field(
+        default_factory=ResumeProgressSummaryProjection
+    )
+    _passthrough_fields: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = {
+            "open_ids": _clone_shallow(self.open_ids),
+            "closed_ids": _clone_shallow(self.closed_ids),
+            "stale_ids": _clone_shallow(self.stale_ids),
+            "open_constraint_question_ids": _clone_shallow(self.open_constraint_question_ids),
+            "closed_constraint_question_ids": _clone_shallow(self.closed_constraint_question_ids),
+            "open_constraint_dimensions": _clone_shallow(self.open_constraint_dimensions),
+            "closed_constraint_dimensions": _clone_shallow(self.closed_constraint_dimensions),
+            "unaskable_question_ids": _clone_shallow(self.unaskable_question_ids),
+            "skeleton_input_signature": self.skeleton_input_signature,
+            "last_presented_question_id": self.last_presented_question_id,
+            "active_batch_id": self.active_batch_id,
+            "resume_progress_summary": self.resume_progress_summary.to_dict(),
+        }
+        data.update({key: _clone_shallow(value) for key, value in self._passthrough_fields.items()})
+        return data
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> QuestionQueueStateProjection:
+        if not isinstance(raw, dict):
+            return cls()
+
+        recognized_keys = {
+            "open_ids",
+            "closed_ids",
+            "stale_ids",
+            "open_constraint_question_ids",
+            "closed_constraint_question_ids",
+            "open_constraint_dimensions",
+            "closed_constraint_dimensions",
+            "unaskable_question_ids",
+            "skeleton_input_signature",
+            "last_presented_question_id",
+            "active_batch_id",
+            "resume_progress_summary",
+        }
+        projection = cls(
+            open_ids=_clone_shallow(raw.get("open_ids", [])),
+            closed_ids=_clone_shallow(raw.get("closed_ids", [])),
+            stale_ids=_clone_shallow(raw.get("stale_ids", [])),
+            open_constraint_question_ids=_clone_shallow(
+                raw.get("open_constraint_question_ids", [])
+            ),
+            closed_constraint_question_ids=_clone_shallow(
+                raw.get("closed_constraint_question_ids", [])
+            ),
+            open_constraint_dimensions=_clone_shallow(raw.get("open_constraint_dimensions", [])),
+            closed_constraint_dimensions=_clone_shallow(
+                raw.get("closed_constraint_dimensions", [])
+            ),
+            unaskable_question_ids=_clone_shallow(raw.get("unaskable_question_ids", [])),
+            skeleton_input_signature=raw.get("skeleton_input_signature", ""),
+            last_presented_question_id=raw.get("last_presented_question_id", ""),
+            active_batch_id=raw.get("active_batch_id", ""),
+            resume_progress_summary=ResumeProgressSummaryProjection.from_dict(
+                raw.get("resume_progress_summary")
+            ),
+        )
+        projection._passthrough_fields = {
+            key: _clone_shallow(value) for key, value in raw.items() if key not in recognized_keys
+        }
+        return projection
+
+
+def _merge_unrecognized_fields(
+    sink: dict[str, Any],
+    *,
+    context: str,
+    raw: Any,
+    recognized_keys: set[str],
+) -> None:
+    if not isinstance(raw, dict):
+        return
+    unknown = {
+        key: _clone_shallow(value) for key, value in raw.items() if key not in recognized_keys
+    }
+    if not unknown:
+        return
+    existing = sink.get(context)
+    if isinstance(existing, dict):
+        existing.update(unknown)
+    else:
+        sink[context] = unknown
+    logger.warning(
+        "Captured unrecognized IntentSessionState %s field(s) as unvalidated passthrough: %s",
+        context,
+        sorted(unknown),
+    )
+
+
 @dataclass
 class IntentSessionState:
     """Complete Intent Agent session state.
@@ -130,27 +306,20 @@ class IntentSessionState:
     original_intent: OriginalIntent = field(default_factory=OriginalIntent)
     problem_frame: ProblemFrame = field(default_factory=ProblemFrame)
     concept_map: ConceptMap = field(default_factory=ConceptMap)
-    question_queue_state: dict[str, Any] = field(default_factory=lambda: {
-        "open_ids": [],
-        "closed_ids": [],
-        "stale_ids": [],
-        "open_constraint_question_ids": [],
-        "closed_constraint_question_ids": [],
-        "open_constraint_dimensions": [],
-        "closed_constraint_dimensions": [],
-        "unaskable_question_ids": [],
-        "skeleton_input_signature": "",
-        "last_presented_question_id": "",
-        "active_batch_id": "",
-    })
+    question_queue_state: QuestionQueueStateProjection = field(
+        default_factory=QuestionQueueStateProjection
+    )
     question_key_map: dict[str, QuestionKeyRef] = field(default_factory=dict)
+    # Derived from intent/answers.jsonl during load; not serialized in session_state.json.
     answer_provenance: list[AnswerProvenance] = field(default_factory=list)
     skeleton_state: SkeletonState = field(default_factory=SkeletonState)
     watermarks: Watermarks = field(default_factory=Watermarks)
+    # Unvalidated passthrough for unknown fields discovered during from_dict.
+    _unrecognized_fields: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""
-        return {
+        data = {
             "version": self.version,
             "run_id": self.run_id,
             "session_id": self.session_id,
@@ -185,14 +354,11 @@ class IntentSessionState:
                     for k, v in self.concept_map.user_terms.items()
                 },
                 "normalized_terms": {
-                    k: list(v)
-                    for k, v in self.concept_map.normalized_terms.items()
+                    k: list(v) for k, v in self.concept_map.normalized_terms.items()
                 },
-                "user_introduced_terms": list(
-                    self.concept_map.user_introduced_terms
-                ),
+                "user_introduced_terms": list(self.concept_map.user_introduced_terms),
             },
-        "question_queue_state": dict(self.question_queue_state),
+            "question_queue_state": self.question_queue_state.to_dict(),
             "question_key_map": {
                 k: {
                     "canonical_key": v.canonical_key,
@@ -201,17 +367,6 @@ class IntentSessionState:
                 }
                 for k, v in self.question_key_map.items()
             },
-            "answer_provenance": [
-                {
-                    "answer_id": ap.answer_id,
-                    "question_id": ap.question_id,
-                    "raw_text": ap.raw_text,
-                    "created_at": ap.created_at,
-                    "answer_translation_ref": ap.answer_translation_ref,
-                    "planner_ingest_trace_id": ap.planner_ingest_trace_id,
-                }
-                for ap in self.answer_provenance
-            ],
             "skeleton_state": {
                 "revision": self.skeleton_state.revision,
                 "structure_kind": self.skeleton_state.structure_kind,
@@ -223,65 +378,207 @@ class IntentSessionState:
                 "planner_update_watermark": self.watermarks.planner_update_watermark,
             },
         }
+        if self._unrecognized_fields:
+            data["_unrecognized_fields"] = {
+                key: _clone_shallow(value) for key, value in self._unrecognized_fields.items()
+            }
+        return data
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> IntentSessionState:
+    def from_dict(
+        cls,
+        d: dict[str, Any],
+        *,
+        source: str | None = None,
+    ) -> IntentSessionState:
         """Deserialize from a plain dict (e.g. parsed JSON).
 
         Validates version compatibility, required fields, and phase values.
-        Logs warnings for non-conformant artifacts but still deserializes
-        to support forward compatibility.
+        Raises ValueError for unsupported versions and unrecognized phases.
         """
+        source_suffix = f" from {source}" if source else ""
+        version, raw_phase = cls._validate_from_dict_shape(d, source_suffix=source_suffix)
+        canonical = cls._canonicalize_deprecated_from_dict_formats(
+            d,
+            source_suffix=source_suffix,
+        )
+        return cls._reconstruct_from_canonical_dict(
+            canonical,
+            version=version,
+            raw_phase=raw_phase,
+            source_suffix=source_suffix,
+        )
+
+    @staticmethod
+    def _validate_from_dict_shape(
+        d: dict[str, Any],
+        *,
+        source_suffix: str,
+    ) -> tuple[int, str]:
         # Version validation
         version = d.get("version", 1)
         if version != 1:
-            logger.warning(
-                "IntentSessionState version %d is not supported (expected 1); "
-                "deserialization may be incomplete",
-                version,
+            raise ValueError(
+                f"Unsupported IntentSessionState version {version!r} (expected 1){source_suffix}"
             )
 
-        # Required field validation
+        # Required-shape validation (authoritative fields only).
+        # Missing shape indicates a corrupted/incompatible artifact.
         _required = ("session_id", "problem_frame", "watermarks")
-        for field_name in _required:
-            if field_name not in d:
-                logger.warning(
-                    "IntentSessionState missing required field %r", field_name,
-                )
+        missing_fields = [field_name for field_name in _required if field_name not in d]
+        if missing_fields:
+            raise ValueError(
+                f"IntentSessionState missing required field(s) {missing_fields!r}{source_suffix}"
+            )
+        if not isinstance(d["session_id"], str):
+            raise TypeError(
+                "IntentSessionState field 'session_id' must be a string "
+                f"(got {type(d['session_id']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["problem_frame"], dict):
+            raise TypeError(
+                "IntentSessionState field 'problem_frame' must be an object "
+                f"(got {type(d['problem_frame']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["watermarks"], dict):
+            raise TypeError(
+                "IntentSessionState field 'watermarks' must be an object "
+                f"(got {type(d['watermarks']).__name__}){source_suffix}"
+            )
+
+        scope_raw = d["problem_frame"].get("scope", {})
+        if not isinstance(scope_raw, dict):
+            raise TypeError(
+                "IntentSessionState field 'problem_frame.scope' must be an object "
+                f"(got {type(scope_raw).__name__}){source_suffix}"
+            )
 
         # Phase validation
         _valid_phases = ("INTAKE", "EXECUTION")
         raw_phase = d.get("phase", "INTAKE")
         if raw_phase not in _valid_phases:
-            logger.warning(
-                "IntentSessionState has unrecognized phase %r; defaulting to INTAKE",
-                raw_phase,
+            raise ValueError(
+                f"Unrecognized IntentSessionState phase {raw_phase!r} "
+                f"(expected one of {_valid_phases}){source_suffix}"
             )
 
+        raw_unrecognized_fields = d.get("_unrecognized_fields")
+        if raw_unrecognized_fields is not None and not isinstance(raw_unrecognized_fields, dict):
+            raise ValueError(
+                "IntentSessionState field '_unrecognized_fields' must be an object "
+                f"(got {type(raw_unrecognized_fields).__name__}){source_suffix}"
+            )
+        return version, raw_phase
+
+    @staticmethod
+    def _canonicalize_deprecated_from_dict_formats(
+        d: dict[str, Any],
+        *,
+        source_suffix: str,
+    ) -> dict[str, Any]:
+        if "answer_provenance" in d:
+            raise ValueError(
+                "IntentSessionState contains deprecated field 'answer_provenance'; "
+                "remove this field and rely on authoritative records in "
+                f"intent/answers.jsonl before loading{source_suffix}"
+            )
+
+        canonical = dict(d)
+        canonical_problem_frame = dict(d["problem_frame"])
+        if "scope_in" in canonical_problem_frame or "scope_out" in canonical_problem_frame:
+            raise ValueError(
+                "IntentSessionState field 'problem_frame' uses deprecated "
+                "'scope_in'/'scope_out' keys; run the scope migration utility "
+                f"to write nested 'scope' before loading{source_suffix}"
+            )
+        canonical["problem_frame"] = canonical_problem_frame
+        return canonical
+
+    @classmethod
+    def _reconstruct_from_canonical_dict(
+        cls,
+        d: dict[str, Any],
+        *,
+        version: int,
+        raw_phase: str,
+        source_suffix: str,
+    ) -> IntentSessionState:
+        unrecognized_fields: dict[str, Any] = {}
+        raw_unrecognized_fields = d.get("_unrecognized_fields")
+        if isinstance(raw_unrecognized_fields, dict):
+            unrecognized_fields.update(
+                {key: _clone_shallow(value) for key, value in raw_unrecognized_fields.items()}
+            )
+
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="top_level",
+            raw=d,
+            recognized_keys={
+                "version",
+                "run_id",
+                "session_id",
+                "phase",
+                "original_intent",
+                "problem_frame",
+                "concept_map",
+                "question_queue_state",
+                "question_key_map",
+                "answer_provenance",
+                "skeleton_state",
+                "watermarks",
+                "_unrecognized_fields",
+            },
+        )
+
         oi_raw = d.get("original_intent", {})
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="original_intent",
+            raw=oi_raw,
+            recognized_keys={"user_statement", "captured_at"},
+        )
         original_intent = OriginalIntent(
             user_statement=oi_raw.get("user_statement", ""),
             captured_at=oi_raw.get("captured_at", ""),
         )
 
-        pf_raw = d.get("problem_frame", {})
-        # Support both nested scope: {in, out} and legacy flat scope_in/scope_out
+        pf_raw = d["problem_frame"]
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="problem_frame",
+            raw=pf_raw,
+            recognized_keys={
+                "current_restatement",
+                "goals",
+                "non_goals",
+                "scope",
+                "scope_in",
+                "scope_out",
+                "success_metrics",
+                "risk_flags",
+                "frame_assumptions",
+            },
+        )
         scope_raw = pf_raw.get("scope", {})
-        if isinstance(scope_raw, dict):
-            scope_dict = {
-                "in": scope_raw.get("in", []),
-                "out": scope_raw.get("out", []),
-            }
-        else:
-            # Legacy flat format fallback — emit deprecation warning
-            logger.warning(
-                "ProblemFrame uses deprecated flat scope_in/scope_out format; "
-                "migrate to nested scope: {in: [], out: []}",
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="problem_frame.scope",
+            raw=scope_raw,
+            recognized_keys={"in", "out"},
+        )
+        scope_dict = {
+            "in": scope_raw.get("in", []),
+            "out": scope_raw.get("out", []),
+        }
+        frame_assumptions_raw = pf_raw.get("frame_assumptions", [])
+        for index, frame_assumption_raw in enumerate(frame_assumptions_raw):
+            _merge_unrecognized_fields(
+                unrecognized_fields,
+                context=f"problem_frame.frame_assumptions[{index}]",
+                raw=frame_assumption_raw,
+                recognized_keys={"text", "status", "source", "created_at"},
             )
-            scope_dict = {
-                "in": pf_raw.get("scope_in", []),
-                "out": pf_raw.get("scope_out", []),
-            }
         problem_frame = ProblemFrame(
             current_restatement=pf_raw.get("current_restatement", ""),
             goals=pf_raw.get("goals", []),
@@ -296,11 +593,24 @@ class IntentSessionState:
                     source=fa.get("source", "intent_agent"),
                     created_at=fa.get("created_at", ""),
                 )
-                for fa in pf_raw.get("frame_assumptions", [])
+                for fa in frame_assumptions_raw
             ],
         )
 
         cm_raw = d.get("concept_map", {})
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="concept_map",
+            raw=cm_raw,
+            recognized_keys={"user_terms", "normalized_terms", "user_introduced_terms"},
+        )
+        for term, entry in cm_raw.get("user_terms", {}).items():
+            _merge_unrecognized_fields(
+                unrecognized_fields,
+                context=f"concept_map.user_terms.{term}",
+                raw=entry,
+                recognized_keys={"maps_to", "confidence"},
+            )
         concept_map = ConceptMap(
             user_terms={
                 k: ConceptMapEntry(
@@ -314,6 +624,17 @@ class IntentSessionState:
         )
 
         qkm_raw = d.get("question_key_map", {})
+        for question_id, question_key_ref in qkm_raw.items():
+            _merge_unrecognized_fields(
+                unrecognized_fields,
+                context=f"question_key_map.{question_id}",
+                raw=question_key_ref,
+                recognized_keys={
+                    "canonical_key",
+                    "planner_constraint_ids",
+                    "planner_decision_ids",
+                },
+            )
         question_key_map = {
             k: QuestionKeyRef(
                 canonical_key=v.get("canonical_key", ""),
@@ -323,20 +644,13 @@ class IntentSessionState:
             for k, v in qkm_raw.items()
         }
 
-        ap_raw = d.get("answer_provenance", [])
-        answer_provenance = [
-            AnswerProvenance(
-                answer_id=ap.get("answer_id", ""),
-                question_id=ap.get("question_id", ""),
-                raw_text=ap.get("raw_text", ""),
-                created_at=ap.get("created_at", ""),
-                answer_translation_ref=ap.get("answer_translation_ref", ""),
-                planner_ingest_trace_id=ap.get("planner_ingest_trace_id", ""),
-            )
-            for ap in ap_raw
-        ]
-
         ss_raw = d.get("skeleton_state", {})
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="skeleton_state",
+            raw=ss_raw,
+            recognized_keys={"revision", "structure_kind", "artifact_paths", "last_generated_at"},
+        )
         skeleton_state = SkeletonState(
             revision=ss_raw.get("revision", 0),
             structure_kind=ss_raw.get("structure_kind", "PRE_DECOMPOSITION"),
@@ -344,43 +658,34 @@ class IntentSessionState:
             last_generated_at=ss_raw.get("last_generated_at", ""),
         )
 
-        wm_raw = d.get("watermarks", {})
+        wm_raw = d["watermarks"]
+        _merge_unrecognized_fields(
+            unrecognized_fields,
+            context="watermarks",
+            raw=wm_raw,
+            recognized_keys={"user_question_signal_watermark", "planner_update_watermark"},
+        )
         watermarks = Watermarks(
-            user_question_signal_watermark=wm_raw.get(
-                "user_question_signal_watermark", ""
-            ),
-            planner_update_watermark=wm_raw.get(
-                "planner_update_watermark", ""
-            ),
+            user_question_signal_watermark=wm_raw.get("user_question_signal_watermark", ""),
+            planner_update_watermark=wm_raw.get("planner_update_watermark", ""),
         )
 
-        validated_phase = raw_phase if raw_phase in _valid_phases else "INTAKE"
+        raw_question_queue_state = d.get("question_queue_state")
 
         return cls(
-            version=d.get("version", 1),
+            version=version,
             run_id=d.get("run_id", ""),
-            session_id=d.get("session_id", ""),
-            phase=validated_phase,
+            session_id=d["session_id"],
+            phase=raw_phase,
             original_intent=original_intent,
             problem_frame=problem_frame,
             concept_map=concept_map,
-            question_queue_state=d.get("question_queue_state", {
-                "open_ids": [],
-                "closed_ids": [],
-                "stale_ids": [],
-                "open_constraint_question_ids": [],
-                "closed_constraint_question_ids": [],
-                "open_constraint_dimensions": [],
-                "closed_constraint_dimensions": [],
-                "unaskable_question_ids": [],
-                "skeleton_input_signature": "",
-                "last_presented_question_id": "",
-                "active_batch_id": "",
-            }),
+            question_queue_state=QuestionQueueStateProjection.from_dict(raw_question_queue_state),
             question_key_map=question_key_map,
-            answer_provenance=answer_provenance,
+            answer_provenance=[],
             skeleton_state=skeleton_state,
             watermarks=watermarks,
+            _unrecognized_fields=unrecognized_fields,
         )
 
     def save(self, run_dir: Path) -> Path:
@@ -401,27 +706,34 @@ class IntentSessionState:
         path = Path(run_dir) / "intent" / "session_state.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         logger.debug("Loaded IntentSessionState from %s", path)
-        return cls.from_dict(data)
+        state = cls.from_dict(data, source=str(path))
+        state.answer_provenance = load_answers(run_dir)
+        return state
 
 
 # ---------------------------------------------------------------------------
 # IntentEventLog — append-only JSONL event logger
 # ---------------------------------------------------------------------------
 
-VALID_EVENT_TYPES = frozenset({
-    "user_message",
-    "signal_received",
-    "signal_ingested",
-    "question_enqueued",
-    "question_presented",
-    "quality_check",
-    "question_unaskable",
-    "answer_recorded",
-    "translation_produced",
-    "planner_update_received",
-    "queue_reassess",
-    "skeleton_updated",
-})
+VALID_EVENT_TYPES = frozenset(
+    {
+        "user_message",
+        "signal_received",
+        "signal_ingested",
+        "user_redefinition_trigger_detected",
+        "redefinition_update_blocked",
+        "question_enqueued",
+        "question_presented",
+        "quality_check",
+        "question_unaskable",
+        "vague_input_fallback",
+        "answer_recorded",
+        "translation_produced",
+        "planner_update_received",
+        "queue_reassess",
+        "skeleton_updated",
+    }
+)
 
 
 class IntentEventLog:
@@ -451,13 +763,12 @@ class IntentEventLog:
         """Append an event and return it."""
         if event_type not in VALID_EVENT_TYPES:
             raise ValueError(
-                f"Invalid event_type {event_type!r}. "
-                f"Must be one of {sorted(VALID_EVENT_TYPES)}"
+                f"Invalid event_type {event_type!r}. Must be one of {sorted(VALID_EVENT_TYPES)}"
             )
         event: dict[str, Any] = {
             "event_id": str(uuid.uuid4()),
             "event_type": event_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": payload or {},
         }
         with self._path.open("a", encoding="utf-8") as fh:
@@ -512,20 +823,46 @@ def load_answers(run_dir: Path) -> list[AnswerProvenance]:
     path = Path(run_dir) / "intent" / "answers.jsonl"
     if not path.exists():
         return []
+    recognized_keys = {
+        "answer_id",
+        "question_id",
+        "raw_text",
+        "created_at",
+        "answer_translation_ref",
+        "planner_ingest_trace_id",
+    }
     answers: list[AnswerProvenance] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = line.strip()
         if not line:
             continue
         d = json.loads(line)
+        if not isinstance(d, dict):
+            raise TypeError(
+                f"Invalid answer record at {path}:{line_number}; "
+                f"expected object, got {type(d).__name__}"
+            )
+        dropped_fields = sorted(key for key in d if key not in recognized_keys)
+        if dropped_fields:
+            logger.warning(
+                "Dropping unmodeled answer record field(s) at %s:%s: %s",
+                path,
+                line_number,
+                dropped_fields,
+            )
+        missing_fields = sorted(key for key in recognized_keys if key not in d)
+        if missing_fields:
+            raise ValueError(
+                f"Answer record at {path}:{line_number} missing required field(s): {missing_fields}"
+            )
         answers.append(
             AnswerProvenance(
-                answer_id=d.get("answer_id", ""),
-                question_id=d.get("question_id", ""),
-                raw_text=d.get("raw_text", ""),
-                created_at=d.get("created_at", ""),
-                answer_translation_ref=d.get("answer_translation_ref", ""),
-                planner_ingest_trace_id=d.get("planner_ingest_trace_id", ""),
+                answer_id=d["answer_id"],
+                question_id=d["question_id"],
+                raw_text=d["raw_text"],
+                created_at=d["created_at"],
+                answer_translation_ref=d["answer_translation_ref"],
+                planner_ingest_trace_id=d["planner_ingest_trace_id"],
             )
         )
     return sorted(

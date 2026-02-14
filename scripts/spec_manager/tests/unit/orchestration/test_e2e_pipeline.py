@@ -1221,6 +1221,110 @@ class TestL2CheckpointAutoMode:
         assert result["approved"] is True
         assert result["mode"] == "auto"
 
+    def test_l2_checkpoint_auto_mode_blocks_on_unresolved_human_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+
+        manager = MagicMock()
+        manager.workspace_path = tmp_path
+        manager.run_id = "auto-run-blocked"
+
+        lifecycle = PddLifecycle(manager, mode="auto")
+        state_mgr = RunStateManager(workspace_root=tmp_path, run_id="auto-run-blocked")
+        state_mgr.ensure_directories()
+        lifecycle._state_mgr = state_mgr
+
+        queue_path = (
+            tmp_path
+            / ".pdd_runs"
+            / "auto-run-blocked"
+            / "intent"
+            / "skeleton"
+            / "analysis"
+            / "intent"
+            / "question_queue.json"
+        )
+        queue_path.parent.mkdir(parents=True, exist_ok=True)
+        queue_snapshot = [
+            {
+                "question_id": "q_human_l2",
+                "status": "OPEN",
+                "taxonomy_type": "CONSTRAINT",
+                "scope_kind": "FEATURE_SPECIFIC",
+                "canonical_key": "planner.authority_required.decision",
+                "user_prompt": {
+                    "text": "Who can approve this release?",
+                    "scenario": "",
+                    "why_it_matters": "",
+                    "answer_spec": {
+                        "kind": "choice",
+                        "choices": [],
+                        "units_hint": "",
+                        "text_bounds": {},
+                    },
+                },
+                "system_binding": {
+                    "type": "authority_required",
+                    "authority_required": "human_required",
+                    "reason": "Human authority required before release",
+                },
+                "origins": [
+                    {
+                        "source_kind": "PLANNER",
+                        "trace_id": "trace_human_l2",
+                        "signal_id": "uq_human_l2",
+                        "slice_id": "",
+                        "layer": "",
+                        "created_at": "2026-02-13T00:00:00+00:00",
+                        "spec_refs": [],
+                        "code_refs": [],
+                    },
+                ],
+                "blockers": {
+                    "severity": "BLOCKING",
+                    "blocked_slices": ["slice-1"],
+                    "blocked_layers": [],
+                    "blocked_steps": [],
+                },
+                "priority": {"score": 0.6, "explanation": "human decision required"},
+                "quality_gate": {
+                    "status": "PASS",
+                    "attempts": 1,
+                    "last_quality_record_id": "qg_1",
+                    "last_checked_at": "2026-02-13T00:00:00+00:00",
+                },
+                "timestamps": {
+                    "created_at": "2026-02-13T00:00:00+00:00",
+                    "updated_at": "2026-02-13T00:00:00+00:00",
+                },
+            },
+        ]
+        queue_path.write_text(json.dumps(queue_snapshot, indent=2), encoding="utf-8")
+
+        result = lifecycle._request_l2_checkpoint({"slices": []})
+
+        assert result["approved"] is False
+        assert result["status"] == "WAITING"
+        assert result["checkpoint"] == "l2_checkpoint"
+        assert result["blocked_reason"] == "unresolved_human_authority"
+        wait_trace = result["authority_wait_trace"]
+        assert wait_trace["unresolved_count"] == 1
+        unresolved = wait_trace["unresolved_questions"][0]
+        assert unresolved["question_id"] == "q_human_l2"
+        assert unresolved["reason"] == "authority_required=human_required"
+
+        decision_path = (
+            tmp_path / ".pdd_runs" / "auto-run-blocked" / "approvals" / "l2" / "decision.json"
+        )
+        assert decision_path.exists()
+        decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        assert decision["approved"] is False
+        assert decision["waiting"] is True
+        assert decision["blocked_reason"] == "unresolved_human_authority"
+        assert decision["authority_wait_trace"]["unresolved_count"] == 1
+
     def test_l2_checkpoint_steering_mode(self, tmp_path: Path) -> None:
         from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
 
@@ -1250,6 +1354,73 @@ class TestReleaseSignoffAutoMode:
         result = lifecycle._request_release_signoff({"scorecard": {"overall_pass": True}})
         assert result["approved"] is True
         assert result["mode"] == "auto"
+
+    def test_release_signoff_auto_mode_blocks_on_unresolved_human_authority_signal(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+
+        manager = MagicMock()
+        manager.workspace_path = tmp_path
+        manager.run_id = "signoff-blocked"
+
+        lifecycle = PddLifecycle(manager, mode="auto")
+        state_mgr = RunStateManager(workspace_root=tmp_path, run_id="signoff-blocked")
+        state_mgr.ensure_directories()
+        lifecycle._state_mgr = state_mgr
+
+        signal_path = (
+            tmp_path / ".pdd_runs" / "signoff-blocked" / "coordination" / "user_questions.jsonl"
+        )
+        signal_path.parent.mkdir(parents=True, exist_ok=True)
+        signal_payload = {
+            "uq_version": 1,
+            "uq_id": "uq_human_signal",
+            "run_id": "signoff-blocked",
+            "created_at": "2026-02-13T00:00:00+00:00",
+            "source": {
+                "kind": "PLANNER",
+                "trace_id": "trace_human_signal",
+                "slice_id": "slice-42",
+                "layer": "l2",
+                "signal_id": "under_spec_42",
+            },
+            "question": {
+                "text": "Who can make this product decision?",
+                "taxonomy_hint": "UNKNOWN",
+                "canonical_key_hint": "planner.decision_required.under_spec_42",
+                "answer_spec_hint": {},
+            },
+            "context": {
+                "blocking": {
+                    "severity": "BLOCKING",
+                    "blocked_slices": ["slice-42"],
+                },
+                "spec_refs": [],
+                "code_refs": [],
+            },
+            "payload": {
+                "type": "decision_required",
+                "reason": "Human authority required for this decision",
+            },
+        }
+        signal_path.write_text(
+            json.dumps(signal_payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+
+        result = lifecycle._request_release_signoff({"scorecard": {"overall_pass": True}})
+
+        assert result["approved"] is False
+        assert result["status"] == "WAITING"
+        assert result["checkpoint"] == "release_signoff"
+        assert result["blocked_reason"] == "unresolved_human_authority"
+        wait_trace = result["authority_wait_trace"]
+        assert wait_trace["unresolved_count"] == 1
+        unresolved = wait_trace["unresolved_questions"][0]
+        assert unresolved["signal_uq_id"] == "uq_human_signal"
+        assert unresolved["reason"] == "type=decision_required"
 
     def test_release_signoff_steering_mode(self, tmp_path: Path) -> None:
         from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
