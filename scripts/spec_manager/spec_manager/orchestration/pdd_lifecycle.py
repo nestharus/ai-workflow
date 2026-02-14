@@ -499,6 +499,13 @@ class PddLifecycle:
 
         # Release signoff (auto-approve in auto mode)
         results["release_signoff"] = self._request_release_signoff(results)
+
+        # Re-render final report after release signoff so L3 decision appears
+        # in the consolidated approval checkpoint section.
+        report_path, scorecard_json_path = report_gen.generate(results, scorecard)
+        results["final_report_path"] = str(report_path)
+        results["scorecard_json_path"] = str(scorecard_json_path)
+
         self._record_git_ref(f"pdd/{self.manager.run_id}/release")
 
         state_mgr.update_state(phase="done")
@@ -1017,17 +1024,19 @@ class PddLifecycle:
                 approval.get("feedback", ""),
             )
 
-        # Max iterations reached — auto-approve
-        logger.warning(
-            "Max approval iterations (%d) reached — auto-approving",
-            self.max_approval_iterations,
+        self._write_approval_artifact(
+            "l1",
+            approved=False,
+            iteration=iteration,
+            exhausted_iterations=True,
+            reason="max_iterations_reached",
         )
-        return l1_result, {
-            "approved": True,
-            "iteration": iteration,
-            "auto_approved": True,
-            "reason": "max_iterations_reached",
-        }
+        message = (
+            "L1 approval blocked: max approval iterations "
+            f"({self.max_approval_iterations}) reached without approval."
+        )
+        logger.error(message)
+        raise RuntimeError(message)
 
     def _write_approval_artifact(
         self,
@@ -1039,7 +1048,7 @@ class PddLifecycle:
         """Write an approval decision artifact using run-scoped layout.
 
         Args:
-            layer: Approval layer (e.g., "l1", "l2", "release").
+            layer: Approval layer (e.g., "l1", "l2", "l3").
             approved: Whether the checkpoint was approved.
             iteration: Iteration number (relevant for L1 loops).
             **extra: Additional metadata to include in the artifact.
@@ -1050,10 +1059,6 @@ class PddLifecycle:
         approvals_root = self._state_mgr.run_dir / "approvals"
         if layer == "l1":
             artifact_path = approvals_root / "l1" / f"iteration_{iteration}" / "decision.json"
-        elif layer == "l2":
-            artifact_path = approvals_root / "l2" / "decision.json"
-        elif layer == "release":
-            artifact_path = approvals_root / "l3" / "release_decision.json"
         else:
             artifact_path = approvals_root / layer / "decision.json"
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1198,7 +1203,7 @@ class PddLifecycle:
             Signoff result dict.
         """
         if self.mode in ("auto", "steering"):
-            self._write_approval_artifact("release", approved=True)
+            self._write_approval_artifact("l3", approved=True, checkpoint="release_signoff")
             return {"approved": True, "mode": self.mode}
 
         scorecard = results.get("scorecard", {})
@@ -1221,7 +1226,7 @@ class PddLifecycle:
             choice = "a"
 
         approved = choice != "r"
-        self._write_approval_artifact("release", approved=approved)
+        self._write_approval_artifact("l3", approved=approved, checkpoint="release_signoff")
         return {"approved": approved, "mode": "interactive"}
 
     # ------------------------------------------------------------------
@@ -1593,6 +1598,9 @@ class PddLifecycle:
             demotions_dir = run_dir / "demotions"
             if not demotions_dir.exists():
                 findings.append("Demotions directory missing")
+            findings.extend(
+                self._approval_artifact_findings(checkpoint=checkpoint, run_dir=run_dir)
+            )
 
         if check_report:
             report_path = reports_dir / "final_report.md"
@@ -1601,6 +1609,8 @@ class PddLifecycle:
             scorecard_path = reports_dir / "scorecard.json"
             if not scorecard_path.exists():
                 findings.append("Scorecard JSON missing")
+            if report_path.exists():
+                findings.extend(self._report_content_findings(report_path))
 
         passed = len(findings) == 0
         return {
@@ -1609,6 +1619,107 @@ class PddLifecycle:
             "findings": findings,
             "error": "; ".join(findings) if findings else "",
         }
+
+    def _approval_artifact_findings(self, *, checkpoint: str, run_dir: Path) -> list[str]:
+        """Validate semantic approval requirements for a checkpoint."""
+        findings: list[str] = []
+        checkpoint_key = checkpoint.lower().strip()
+        approvals_dir = run_dir / "approvals"
+
+        requires_l1 = checkpoint_key in {"transition_l1_l2", "transition_l2_l3", "final"}
+        requires_l2 = checkpoint_key in {"transition_l2_l3", "final"} and self.mode == "interactive"
+
+        if requires_l1:
+            l1_decision, l1_path = self._latest_l1_approval(approvals_dir)
+            if not l1_decision:
+                findings.append("L1 approval artifact missing")
+            else:
+                if not bool(l1_decision.get("approved")):
+                    findings.append("L1 approval artifact records unapproved decision")
+                decision_mode = str(l1_decision.get("mode", ""))
+                if decision_mode and decision_mode != self.mode:
+                    findings.append(
+                        f"L1 approval mode mismatch: expected {self.mode}, found {decision_mode}"
+                    )
+                if self.mode == "interactive" and bool(l1_decision.get("auto_approved")):
+                    findings.append("L1 interactive approval was auto-approved")
+                if not l1_path.exists():
+                    findings.append("L1 approval decision file missing")
+
+        if requires_l2:
+            l2_path = approvals_dir / "l2" / "decision.json"
+            l2_decision = self._read_json_dict(l2_path)
+            if not l2_decision:
+                findings.append("Interactive mode requires L2 checkpoint decision artifact")
+            elif not bool(l2_decision.get("approved")):
+                findings.append("L2 checkpoint decision is not approved")
+
+        return findings
+
+    def _report_content_findings(self, report_path: Path) -> list[str]:
+        """Validate that the final report contains required governance sections."""
+        findings: list[str] = []
+        try:
+            report_text = report_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return [f"Final report unreadable: {exc}"]
+
+        required_sections = (
+            "## Executive Summary",
+            "## Architecture Topology",
+            "## Scorecard",
+            "## POWER Alignment",
+            "## Approval Checkpoints",
+            "## Demotion Summary",
+            "## Known Risks / Unresolved Issues",
+            "## Evidence Links",
+        )
+        for section in required_sections:
+            if section not in report_text:
+                findings.append(f"Final report missing section: {section}")
+
+        approval_rows = (
+            "L1 Mandatory Approval",
+            "L2 Architecture Checkpoint",
+            "L3 Release Signoff",
+        )
+        for row in approval_rows:
+            if row not in report_text:
+                findings.append(f"Final report missing approval checkpoint row: {row}")
+
+        if "Detailed artifact:" not in report_text or "alignment_report.json" not in report_text:
+            findings.append("POWER alignment artifact reference missing from final report")
+
+        return findings
+
+    @staticmethod
+    def _read_json_dict(path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _latest_l1_approval(self, approvals_dir: Path) -> tuple[dict[str, Any], Path]:
+        """Return the latest L1 decision artifact payload and path."""
+        l1_root = approvals_dir / "l1"
+        candidates = sorted(
+            l1_root.glob("iteration_*/decision.json"),
+            key=self._iteration_sort_key,
+        )
+        if not candidates:
+            return {}, l1_root / "decision.json"
+        latest_path = candidates[-1]
+        return self._read_json_dict(latest_path), latest_path
+
+    @staticmethod
+    def _iteration_sort_key(path: Path) -> int:
+        try:
+            return int(path.parent.name.split("_")[-1])
+        except (TypeError, ValueError):
+            return -1
 
     # ------------------------------------------------------------------
     # CI helpers
