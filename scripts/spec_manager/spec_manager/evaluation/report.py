@@ -73,6 +73,11 @@ class FinalReportGenerator:
         sections.append(self._executive_summary(run_results, scorecard))
         sections.append(self._architecture_topology(run_results))
         sections.append(self._scorecard_section(scorecard))
+        quality_scorecard = self._load_quality_scorecard()
+        if quality_scorecard:
+            sections.append(self._architecture_quality(quality_scorecard))
+            sections.append(self._code_quality(quality_scorecard))
+            sections.append(self._spec_fidelity(quality_scorecard))
         sections.append(self._demotion_summary(run_results))
         sections.append(self._known_risks(run_results))
         sections.append(self._evidence_links())
@@ -185,6 +190,193 @@ class FinalReportGenerator:
 
         return "\n".join(lines)
 
+    def _load_quality_scorecard(self) -> dict[str, Any] | None:
+        """Load quality_scorecard.json when available."""
+        path = self._reports_dir / "quality_scorecard.json"
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to read quality scorecard at %s", path, exc_info=True)
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _architecture_quality(self, scorecard: dict[str, Any]) -> str:
+        """Render Architecture Quality section from quality scorecard."""
+        lines = ["## Architecture Quality", ""]
+        arch_score = _safe_float(scorecard.get("arch_quality_score"), default=0.0)
+        lines.append(f"**Quality Score**: {arch_score:.3f}")
+
+        metrics = self._metrics(scorecard.get("architecture"))
+        if metrics:
+            lines.extend(
+                [
+                    "",
+                    "### Mechanical Stats",
+                    "",
+                    "| Metric | Status | Score | Detail |",
+                    "|--------|--------|-------|--------|",
+                ]
+            )
+            for metric in metrics:
+                name = str(metric.get("name", ""))
+                status = str(metric.get("status", ""))
+                score = _safe_float(metric.get("score"), default=0.0)
+                detail = str(metric.get("detail", ""))
+                lines.append(f"| {name} | {status} | {score:.3f} | {detail} |")
+        else:
+            lines.append("No architecture metrics available.")
+
+        judge_dims = scorecard.get("architecture_judge_dimensions")
+        if isinstance(judge_dims, list) and judge_dims:
+            lines.extend(["", "### Judge Dimensions", ""])
+            for item in judge_dims:
+                lines.append(f"- {item}")
+        else:
+            quality_metric = next(
+                (m for m in metrics if m.get("name") == "arch.quality_score"), None
+            )
+            detail = str((quality_metric or {}).get("detail", "")).strip()
+            lines.append("")
+            if detail:
+                lines.append(f"**Judge Dimensions**: {detail}")
+            else:
+                lines.append("**Judge Dimensions**: not available in quality scorecard.")
+
+        risks = self._collect_risks(
+            explicit=scorecard.get("architecture_risks"),
+            fallback_metrics=[m for m in metrics if str(m.get("name", "")).startswith("arch.")],
+        )
+        lines.extend(["", "### Top Risks", ""])
+        if risks:
+            for risk in risks[:5]:
+                lines.append(f"- {risk}")
+        else:
+            lines.append("- No architecture risks reported.")
+
+        return "\n".join(lines)
+
+    def _code_quality(self, scorecard: dict[str, Any]) -> str:
+        """Render Code Quality section from quality scorecard."""
+        lines = ["## Code Quality", ""]
+        code_score = _safe_float(scorecard.get("code_quality_score"), default=0.0)
+        lines.append(f"**Quality Score**: {code_score:.3f}")
+
+        sampled_files = scorecard.get("code_sampled_files")
+        if isinstance(sampled_files, list) and sampled_files:
+            lines.extend(
+                [
+                    "",
+                    "### Sampled File Table",
+                    "",
+                    "| File | LOC | Note |",
+                    "|------|-----|------|",
+                ]
+            )
+            for item in sampled_files[:15]:
+                if not isinstance(item, dict):
+                    continue
+                file_path = str(item.get("path", item.get("file", "")))
+                loc = item.get("loc", "")
+                note = str(item.get("note", item.get("detail", "")))
+                lines.append(f"| {file_path} | {loc} | {note} |")
+        else:
+            lines.extend(
+                [
+                    "",
+                    "### Sampled File Table",
+                    "",
+                    "No sampled files recorded in quality scorecard.",
+                ]
+            )
+
+        metrics = self._metrics(scorecard.get("code"))
+        if metrics:
+            lines.extend(
+                [
+                    "",
+                    "### Mechanical Stats",
+                    "",
+                    "| Metric | Status | Score | Detail |",
+                    "|--------|--------|-------|--------|",
+                ]
+            )
+            for metric in metrics:
+                name = str(metric.get("name", ""))
+                status = str(metric.get("status", ""))
+                score = _safe_float(metric.get("score"), default=0.0)
+                detail = str(metric.get("detail", ""))
+                lines.append(f"| {name} | {status} | {score:.3f} | {detail} |")
+
+        risks = self._collect_risks(
+            explicit=scorecard.get("code_risks"),
+            fallback_metrics=[m for m in metrics if str(m.get("name", "")).startswith("code.")],
+        )
+        lines.extend(["", "### Top Risks", ""])
+        if risks:
+            for risk in risks[:5]:
+                lines.append(f"- {risk}")
+        else:
+            lines.append("- No code risks reported.")
+
+        return "\n".join(lines)
+
+    def _spec_fidelity(self, scorecard: dict[str, Any]) -> str:
+        """Render Spec Fidelity section from quality scorecard."""
+        lines = ["## Spec Fidelity", ""]
+        spec_score = _safe_float(scorecard.get("spec_fidelity_score"), default=0.0)
+        lines.append(f"**Coverage Estimate**: {spec_score:.3f}")
+
+        missing_items = scorecard.get("spec_missing_items")
+        if not isinstance(missing_items, list):
+            missing_items = scorecard.get("spec_missing")
+        if not isinstance(missing_items, list):
+            missing_items = scorecard.get("missing")
+        if not isinstance(missing_items, list):
+            missing_items = []
+
+        lines.extend(["", "### Missing Items", ""])
+        if missing_items:
+            for item in missing_items[:20]:
+                lines.append(f"- {item}")
+        else:
+            lines.append("- No missing-item list present in quality scorecard.")
+
+        return "\n".join(lines)
+
+    def _metrics(self, payload: Any) -> list[dict[str, Any]]:
+        """Normalize metric payload to a list of dicts."""
+        if not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, dict)]
+
+    def _collect_risks(self, explicit: Any, fallback_metrics: list[dict[str, Any]]) -> list[str]:
+        """Collect human-readable top risks from explicit or metric-derived sources."""
+        if isinstance(explicit, list) and explicit:
+            collected: list[str] = []
+            for risk in explicit:
+                if isinstance(risk, dict):
+                    severity = str(risk.get("severity", "")).upper()
+                    text = str(risk.get("risk", risk.get("title", risk.get("description", ""))))
+                    collected.append(f"{severity}: {text}" if severity else text)
+                else:
+                    collected.append(str(risk))
+            return [r for r in collected if r]
+
+        collected = []
+        for metric in fallback_metrics:
+            status = str(metric.get("status", "")).upper()
+            if status not in {"WARN", "FAIL"}:
+                continue
+            name = str(metric.get("name", ""))
+            detail = str(metric.get("detail", ""))
+            if detail:
+                collected.append(f"{status}: {name} ({detail})")
+            else:
+                collected.append(f"{status}: {name}")
+        return collected
+
     def _demotion_summary(self, run_results: dict[str, Any]) -> str:
         """Generate demotion summary from ledger."""
         lines = ["## Demotion Summary", ""]
@@ -277,3 +469,11 @@ class FinalReportGenerator:
             f"- Reports: `reports/pdd/{self.run_id}/`",
         ]
         return "\n".join(lines)
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    """Convert value to float with fallback."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

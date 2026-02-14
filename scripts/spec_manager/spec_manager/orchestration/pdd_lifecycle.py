@@ -441,8 +441,22 @@ class PddLifecycle:
                     self.manager.structure.root, self.manager.run_id
                 )
                 code_digest = build_code_digest(self.manager.structure.root, self.manager.run_id)
+
+                run_reports = self.manager.workspace_path / "reports" / "pdd" / self.manager.run_id
+                run_reports.mkdir(parents=True, exist_ok=True)
+                (run_reports / "architecture_digest.json").write_text(
+                    json.dumps(arch_digest, indent=2), encoding="utf-8"
+                )
+                (run_reports / "code_digest.json").write_text(
+                    json.dumps(code_digest, indent=2), encoding="utf-8"
+                )
+
                 quality_reporter = QualityReporter(self.manager.structure.root, self.manager.run_id)
-                quality_scorecard = quality_reporter.compute(arch_digest, code_digest)
+                quality_scorecard = quality_reporter.compute(
+                    arch_digest,
+                    code_digest,
+                    pipeline_scorecard=scorecard,
+                )
                 quality_reporter.write(quality_scorecard)
                 results["quality_scorecard"] = quality_scorecard.to_dict()
             except Exception as exc:

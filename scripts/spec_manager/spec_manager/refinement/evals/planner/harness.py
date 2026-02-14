@@ -407,8 +407,7 @@ class PlannerEvalHarness:
 
         run_entries = filter_traces(entries, run_id=run_id)
         if not run_entries:
-            # If no run_id filter, score all traces
-            run_entries = entries
+            result.errors.append(f"No planner traces found for run_id={run_id!r}.")
 
         # Load ground truth
         gt = None

@@ -33,6 +33,7 @@ from spec_manager.refinement.evals.judges.arch_quality import ArchitectureQualit
 from spec_manager.refinement.evals.judges.cache import JudgeCache
 from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
 from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
+from spec_manager.refinement.evals.planner.harness import PlannerEvalHarness
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class RunManifestEntry:
     arch_digest_path: str = ""
     code_digest_path: str = ""
     quality_scorecard_path: str = ""
+    planner_scorecard_path: str = ""
     snapshot_manifest_path: str = ""
 
 
@@ -166,7 +168,7 @@ class MultiModelRunner:
             manager.initialize()
 
             lifecycle = PddLifecycle(manager, mode="auto", model_profile=profile)
-            lifecycle.run()
+            run_results = lifecycle.run()
 
             # Snapshot
             snap_path = snapshot_run(self.workspace_root, run_id)
@@ -189,6 +191,24 @@ class MultiModelRunner:
 
             # Quality scoring
             if compute_quality:
+                planner_scorecard = None
+                try:
+                    planner_eval = PlannerEvalHarness(self.workspace_root).score_existing_traces(
+                        run_id
+                    )
+                    planner_scorecard = planner_eval.scorecard
+                    planner_path = run_reports / "planner_scorecard.json"
+                    if planner_path.exists():
+                        entry.planner_scorecard_path = str(planner_path)
+                    if planner_eval.errors:
+                        logger.warning(
+                            "Planner eval for run %s reported issues: %s",
+                            run_id,
+                            "; ".join(planner_eval.errors),
+                        )
+                except Exception:
+                    logger.exception("Planner eval failed for run %s", run_id)
+
                 arch_judge_output = None
                 code_judge_output = None
                 spec_judge_output = None
@@ -241,6 +261,8 @@ class MultiModelRunner:
                     arch_judge_output=arch_judge_output,
                     code_judge_output=code_judge_output,
                     spec_judge_output=spec_judge_output,
+                    pipeline_scorecard=(run_results or {}).get("scorecard"),
+                    planner_scorecard=planner_scorecard,
                 )
                 json_path, _ = reporter.write(scorecard)
                 entry.quality_scorecard_path = str(json_path)

@@ -363,6 +363,10 @@ class QualityReporter:
         arch_judge_output: dict[str, Any] | None = None,
         code_judge_output: dict[str, Any] | None = None,
         spec_judge_output: dict[str, Any] | None = None,
+        pipeline_scorecard: Any | None = None,
+        planner_scorecard: Any | None = None,
+        pipeline_efficiency: float | None = None,
+        planner_quality: float | None = None,
     ) -> QualityScorecard:
         """Compute quality scorecard.
 
@@ -372,6 +376,10 @@ class QualityReporter:
             arch_judge_output: Optional ArchJudgeOutput dict.
             code_judge_output: Optional CodeJudgeOutput dict.
             spec_judge_output: Optional SpecFidelityOutput dict.
+            pipeline_scorecard: Optional RunReporter scorecard object/dict.
+            planner_scorecard: Optional PlannerReporter scorecard object/dict.
+            pipeline_efficiency: Optional precomputed pipeline efficiency score [0,1].
+            planner_quality: Optional precomputed planner quality score [0,1].
 
         Returns:
             QualityScorecard with all metrics.
@@ -470,8 +478,18 @@ class QualityReporter:
             quality_overall = code_quality
 
         spec_fidelity_for_composite = spec_fidelity_score  # 0.0 if no judge
-        pipeline_efficiency = 1.0  # placeholder
-        planner_quality = 1.0  # placeholder
+        if pipeline_efficiency is None:
+            pipeline_efficiency = self._pipeline_efficiency_from_scorecard(pipeline_scorecard)
+        if pipeline_efficiency is None:
+            pipeline_efficiency = 1.0
+
+        if planner_quality is None:
+            planner_quality = self._planner_quality_from_scorecard(planner_scorecard)
+        if planner_quality is None:
+            planner_quality = 1.0
+
+        pipeline_efficiency = _clamp01(float(pipeline_efficiency))
+        planner_quality = _clamp01(float(planner_quality))
 
         composite_score = (
             0.45 * quality_overall
@@ -501,6 +519,33 @@ class QualityReporter:
             overall_status=overall_status,
             summary=", ".join(summary_parts),
         )
+
+    def _pipeline_efficiency_from_scorecard(self, scorecard: Any | None) -> float | None:
+        """Derive pipeline efficiency from RunReporter soft signals."""
+        soft_signals = _field(scorecard, "soft_signals")
+        scores = _metric_scores(soft_signals)
+        if scores:
+            return sum(scores) / len(scores)
+        return None
+
+    def _planner_quality_from_scorecard(self, scorecard: Any | None) -> float | None:
+        """Derive planner quality from planner scorecard metrics."""
+        soft_signals = _field(scorecard, "soft_signals")
+        hard_gates = _field(scorecard, "hard_gates")
+        soft_scores = _metric_scores(soft_signals)
+        hard_scores = _metric_scores(hard_gates)
+
+        if soft_scores and hard_scores:
+            return (sum(soft_scores) + sum(hard_scores)) / (len(soft_scores) + len(hard_scores))
+        if soft_scores:
+            return sum(soft_scores) / len(soft_scores)
+        if hard_scores:
+            return sum(hard_scores) / len(hard_scores)
+
+        overall_pass = _field(scorecard, "overall_pass")
+        if isinstance(overall_pass, bool):
+            return 1.0 if overall_pass else 0.0
+        return None
 
     def write(self, scorecard: QualityScorecard) -> tuple[Path, Path]:
         """Write quality scorecard as JSON and markdown.
@@ -597,3 +642,24 @@ def _quality_status(score: float, has_critical: bool, has_major: bool) -> str:
     if has_major or score < 0.80:
         return "WARN"
     return "PASS"
+
+
+def _field(obj: Any, key: str) -> Any:
+    """Read key from dict-like or attribute-like objects."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _metric_scores(metrics: Any) -> list[float]:
+    """Extract normalized metric scores from metric dicts/objects."""
+    if not isinstance(metrics, list):
+        return []
+    scores: list[float] = []
+    for metric in metrics:
+        raw = _field(metric, "score")
+        if isinstance(raw, int | float):
+            scores.append(_clamp01(float(raw)))
+    return scores
