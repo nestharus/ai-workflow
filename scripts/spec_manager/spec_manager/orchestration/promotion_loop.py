@@ -341,6 +341,9 @@ class GapExplorationStep:
 
     name = "GAP_EXPLORATION"
 
+    def __init__(self, planner: Any = None) -> None:
+        self._planner = planner
+
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Dispatch to layer-specific gap exploration."""
         if ctx.layer == "l1":
@@ -387,6 +390,78 @@ class GapExplorationStep:
     def _normalize_gap(gap: dict[str, Any]) -> dict[str, Any]:
         """Normalize prior gap evidence to span/location schema."""
         return _normalize_gap_record(gap)
+
+    def _discover_l2_topology(self, ctx: SliceContext, bundle: EvidenceBundle) -> dict[str, Any]:
+        """Resolve L2 topology via planner discovery (or local fallback)."""
+        from types import SimpleNamespace
+
+        if self._planner is not None:
+            try:
+                from spec_manager.planner.api import PlanningContext, PlanningRequest
+
+                planning_ctx = PlanningContext(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    iteration=bundle.iteration,
+                    layer="l2",
+                    mode=ctx.mode,
+                    workspace_root=ctx.workspace_root,
+                    slice_root=ctx.slice_root,
+                    metadata={
+                        "changed_files": list(bundle.diff.changed_files or []),
+                    },
+                )
+                result = self._planner.plan(
+                    PlanningRequest(
+                        capability="GAP",
+                        context=planning_ctx,
+                        inputs={},
+                    )
+                )
+                outputs = getattr(result, "outputs", {})
+                discovery = outputs.get("discovery", {}) if isinstance(outputs, dict) else {}
+                if isinstance(discovery, dict):
+                    return discovery
+            except Exception as exc:
+                logger.debug("Planner L2 discovery failed: %s", exc, exc_info=True)
+
+        try:
+            from spec_manager.planner.layers.l2 import L2Planner
+
+            fallback_ctx = SimpleNamespace(
+                workspace_root=ctx.workspace_root,
+                slice_root=ctx.slice_root,
+                metadata={"changed_files": list(bundle.diff.changed_files or [])},
+            )
+            return L2Planner().discover(fallback_ctx)
+        except Exception as exc:
+            logger.warning("L2 topology discovery fallback failed: %s", exc, exc_info=True)
+            return {
+                "nodes": [],
+                "edges": [],
+                "arch_files": [],
+                "discovery_status": "incomplete",
+                "discovery_issues": [f"L2 topology discovery failed: {exc}"],
+            }
+
+    @staticmethod
+    def _load_arch_artifacts(workspace: Path, arch_files: list[str]) -> list[dict[str, str]]:
+        """Load architecture manifest/wiring files for reviewer context."""
+        artifacts: list[dict[str, str]] = []
+        for rel_path in arch_files[:12]:
+            candidate = workspace / rel_path
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                artifacts.append(
+                    {
+                        "path": rel_path,
+                        "content": candidate.read_text(encoding="utf-8"),
+                    }
+                )
+            except OSError as exc:
+                logger.debug("Failed reading architecture file %s: %s", candidate, exc)
+        return artifacts
 
     def _explore_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L1: prefer promotion evidence; scanner is fallback only."""
@@ -452,15 +527,9 @@ class GapExplorationStep:
         return StepResult(status="OK")
 
     def _explore_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L2: architecture continuity gaps via LLM analysis.
-
-        Gaps are: unconsumed pins, missing components/files for manifest
-        targets, missing event handlers, logic-like code in architectural
-        files, manifest drift.
-        """
+        """L2: architecture continuity gaps via manifest + topology analysis."""
         import json
 
-        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.evidence import GapReportRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -477,22 +546,16 @@ class GapExplorationStep:
             )
             return StepResult(status="OK")
 
-        # Gather code summaries from slice for LLM analysis
-        code_summaries: list[str] = []
-        for py_file in source_rglob(slice_root):
-            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
-                try:
-                    content = py_file.read_text(encoding="utf-8")
-                    lines = content.split("\n")[:80]
-                    code_summaries.append(
-                        f"### {py_file.relative_to(slice_root)}\n```\n" + "\n".join(lines) + "\n```"
-                    )
-                except (OSError, UnicodeDecodeError):
-                    continue
-
-        if not code_summaries:
-            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
-            return StepResult(status="OK")
+        discovery = self._discover_l2_topology(ctx, bundle)
+        arch_files_raw = discovery.get("arch_files", [])
+        topology_nodes_raw = discovery.get("nodes", [])
+        topology_edges_raw = discovery.get("edges", [])
+        discovery_issues_raw = discovery.get("discovery_issues", [])
+        arch_files = [str(path) for path in arch_files_raw if isinstance(path, str)]
+        topology_nodes = [n for n in topology_nodes_raw if isinstance(n, dict)]
+        topology_edges = [e for e in topology_edges_raw if isinstance(e, dict)]
+        discovery_issues = [issue for issue in discovery_issues_raw if isinstance(issue, str)]
+        arch_artifacts = self._load_arch_artifacts(workspace, arch_files)
 
         # Also include any open demotion tickets targeting L2 for this run.
         open_tickets: list[str] = []
@@ -523,7 +586,59 @@ class GapExplorationStep:
         pattern_lib = PatternLibrary()
 
         all_gaps: list[dict[str, Any]] = []
-        code_section = "\n\n".join(code_summaries[:15])
+        if not arch_files:
+            all_gaps.append(
+                {
+                    "kind": "l2_manifest_missing",
+                    "file": "",
+                    "description": (
+                        "No L2 architecture manifest files were discovered "
+                        "(component_manifest/pins_registry/entrypoints/wiring)."
+                    ),
+                    "severity": "BLOCKER",
+                    "required_change_type": "wiring_only",
+                    "span": {},
+                    "location": {"file": ""},
+                }
+            )
+        if not topology_nodes and not topology_edges:
+            all_gaps.append(
+                {
+                    "kind": "l2_topology_unobserved",
+                    "file": "",
+                    "description": (
+                        "L2 topology graph is empty; pin consumption and component coverage "
+                        "cannot be evaluated."
+                    ),
+                    "severity": "BLOCKER",
+                    "required_change_type": "wiring_only",
+                    "span": {},
+                    "location": {"file": ""},
+                }
+            )
+        for issue in discovery_issues:
+            all_gaps.append(
+                {
+                    "kind": "l2_discovery_issue",
+                    "file": "",
+                    "description": issue,
+                    "severity": "BLOCKER",
+                    "required_change_type": "wiring_only",
+                    "span": {},
+                    "location": {"file": ""},
+                }
+            )
+
+        topology_payload = {
+            "discovery_status": discovery.get("discovery_status", ""),
+            "arch_files": arch_files,
+            "nodes": topology_nodes[:150],
+            "edges": topology_edges[:300],
+            "node_count": len(topology_nodes),
+            "edge_count": len(topology_edges),
+            "discovery_issues": discovery_issues,
+        }
+
         ticket_section = ""
         if open_tickets:
             ticket_section = "\n\n## OPEN DEMOTION TICKETS\n" + "\n".join(
@@ -534,10 +649,16 @@ class GapExplorationStep:
             pattern_section = pattern_lib.get_review_prompt_section(dimension)
             reviewer_prompt = (
                 f"## TASK\n"
-                f"Review this architecture slice for {dimension} issues.\n\n"
+                f"Review this L2 architecture slice for {dimension} continuity issues.\n"
+                f"Detect unconsumed pins, missing wiring/components, missing integration points, "
+                f"and architecture-boundary violations.\n\n"
                 f"{pattern_section}\n\n"
-                f"## CODE\n\n{code_section}"
+                f"## ARCHITECTURE MANIFESTS\n"
+                f"{json.dumps(arch_artifacts, indent=2)}\n\n"
+                f"## TOPOLOGY GRAPH\n"
+                f"{json.dumps(topology_payload, indent=2)}\n"
                 f"{ticket_section}\n"
+                f'Return JSON: {{"findings": [...]}}.\n'
             )
 
             try:
@@ -554,6 +675,8 @@ class GapExplorationStep:
                 data = json.loads(_extract_json_payload(cleaned))
 
                 for finding in data.get("findings", []):
+                    if not isinstance(finding, dict):
+                        continue
                     location = finding.get("location", {}) or {}
                     span = _location_span(
                         start_line=location.get("start_line"),
@@ -569,7 +692,7 @@ class GapExplorationStep:
                             "dimension": dimension,
                             "component_id": location.get("symbol", ""),
                             "file": file_path,
-                            "description": finding.get("evidence", ""),
+                            "description": finding.get("evidence", finding.get("description", "")),
                             "severity": finding.get("severity", "MINOR"),
                             "required_change_type": finding.get(
                                 "required_change_type", "wiring_only"
@@ -2773,7 +2896,7 @@ class PromotionLoop:
             for step_cls in DEFAULT_STEPS:
                 if step_cls is IntegrateStep:
                     self._steps.append(step_cls(worktree_manager=self._wm))
-                elif step_cls in (PlanStep, CoordinateStep):
+                elif step_cls in (GapExplorationStep, PlanStep, CoordinateStep):
                     self._steps.append(step_cls(planner=self._planner))
                 else:
                     self._steps.append(step_cls())
