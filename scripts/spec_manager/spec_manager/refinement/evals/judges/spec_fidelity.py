@@ -14,6 +14,7 @@ from spec_manager.schemas.eval_spec_fidelity_judge import SpecFidelityOutput
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "judge-spec-fidelity"
+PROMPT_VERSION = "v1"
 
 
 class SpecFidelityJudge:
@@ -24,14 +25,21 @@ class SpecFidelityJudge:
         workspace: Path,
         cache: JudgeCache | None = None,
         model_id: str = "",
+        producer_model_id: str = "",
+        allow_self_judge: bool = False,
+        prompt_version: str = PROMPT_VERSION,
     ) -> None:
         self.workspace = workspace
         self.cache = cache
         self.model_id = model_id
+        self.prompt_version = prompt_version
         self._client = JudgeClient(
             agent_name=AGENT_NAME,
             workspace=workspace,
             schema_cls=SpecFidelityOutput,
+            model_id=model_id,
+            producer_model_id=producer_model_id,
+            allow_self_judge=allow_self_judge,
         )
 
     def evaluate(
@@ -57,7 +65,7 @@ class SpecFidelityJudge:
             cache_key = JudgeCacheKey(
                 judge_type="spec_fidelity",
                 model_id=self.model_id,
-                prompt_version="v1",
+                prompt_version=self.prompt_version,
                 input_hash=input_hash,
             )
 
@@ -76,36 +84,51 @@ class SpecFidelityJudge:
         """Build the judge prompt."""
         requirements = spec_summary.get("requirements", [])
         files = code_digest.get("codebase", {}).get("files", [])
-
-        sections = [
-            "# Spec Fidelity Evaluation",
-            "",
-            f"## Requirements ({len(requirements)})",
-            "",
-        ]
-
-        for i, req in enumerate(requirements, 1):
+        requirement_texts: list[str] = []
+        for req in requirements:
             if isinstance(req, str):
-                sections.append(f"{i}. {req}")
+                requirement_texts.append(req)
             elif isinstance(req, dict):
-                sections.append(f"{i}. {req.get('text', req.get('requirement', str(req)))}")
+                requirement_texts.append(str(req.get("text", req.get("requirement", str(req)))))
 
-        sections.extend(
-            [
-                "",
-                f"## Produced Files ({len(files)})",
-                "",
-            ]
-        )
+        judge_input = {
+            "requirements": requirement_texts,
+            "produced_files": [
+                {"path": f.get("path", "?"), "loc": f.get("loc", 0)} for f in files[:40]
+            ],
+        }
 
-        for f in files[:20]:  # Cap to avoid prompt explosion
-            sections.append(f"- {f.get('path', '?')} ({f.get('loc', 0)} LOC)")
-
-        sections.extend(
-            [
-                "",
-                "Evaluate spec fidelity and return your assessment as JSON.",
-            ]
-        )
-
-        return "\n".join(sections)
+        lines = [
+            "## OUTPUT CONTRACT",
+            "",
+            "Assess whether produced code reflects the specification and return a JSON object"
+            " with:",
+            "- `coverage_estimate`: float 0.0-1.0",
+            "- `requirements`: list of requirement coverage objects (`requirement`, `status`,"
+            " `evidence`)",
+            "- `missing`: list of requirements not implemented",
+            "- `hallucinated`: list of implemented behavior not grounded in spec requirements",
+            "Valid alternatives are acceptable; do not enforce one prescriptive implementation"
+            " pattern."
+            "",
+            "## INPUT DATA",
+            "",
+            "```json",
+            json.dumps(judge_input, indent=2, sort_keys=True),
+            "```",
+            "",
+            "## OUTPUT FORMAT",
+            "",
+            "Return strict JSON only (no prose, no markdown):",
+            "```json",
+            "{",
+            '  "coverage_estimate": 0.0,',
+            '  "requirements": [',
+            '    {"requirement": "...", "status": "implemented", "evidence": "path/to/file.py"}',
+            "  ],",
+            '  "missing": ["..."],',
+            '  "hallucinated": ["..."]',
+            "}",
+            "```",
+        ]
+        return "\n".join(lines)

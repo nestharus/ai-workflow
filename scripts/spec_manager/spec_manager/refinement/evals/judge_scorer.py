@@ -10,9 +10,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import cast
 
-from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.agent_utils import run_agent as _unused_run_agent
 from spec_manager.core.json_extraction import _extract_json_payload
+from spec_manager.refinement.evals.judges.cache import JudgeCache, JudgeCacheKey
+from spec_manager.refinement.evals.judges.client import JudgeClient
 from spec_manager.refinement.evals.metrics import DetailScore
 from spec_manager.refinement.formats import _strip_code_fences
 from spec_manager.schemas.eval_judge import EvalJudgeOutput
@@ -20,6 +23,8 @@ from spec_manager.schemas.eval_judge import EvalJudgeOutput
 logger = logging.getLogger(__name__)
 
 JUDGE_AGENT_NAME = "chatgpt-eval-detail-judge"
+PROMPT_VERSION = "v1"
+_ = _unused_run_agent
 
 
 def _build_judge_prompt(
@@ -93,40 +98,6 @@ def _build_judge_prompt(
     return "\n".join(lines)
 
 
-def _parse_judge_output(raw: str) -> EvalJudgeOutput:
-    """Parse raw judge agent output into structured data.
-
-    Handles code-fenced responses and preamble text.
-
-    Args:
-        raw: Raw string output from the judge agent.
-
-    Returns:
-        Validated EvalJudgeOutput.
-
-    Raises:
-        ValueError: If the output cannot be parsed.
-    """
-    cleaned = _strip_code_fences(raw)
-
-    # Try direct Pydantic parse
-    try:
-        return EvalJudgeOutput.model_validate_json(cleaned)
-    except Exception:
-        logger.debug("Direct Pydantic parse failed for judge output", exc_info=True)
-
-    # Fallback: extract JSON payload
-    extracted = _extract_json_payload(cleaned)
-    try:
-        return EvalJudgeOutput.model_validate_json(extracted)
-    except Exception:
-        logger.debug("Pydantic parse of extracted JSON failed for judge output", exc_info=True)
-
-    # Final fallback: parse as dict then validate
-    data = json.loads(extracted)
-    return EvalJudgeOutput.model_validate(data)
-
-
 def _to_detail_score(
     judge_data: EvalJudgeOutput,
     expected_count: int,
@@ -156,12 +127,58 @@ def _to_detail_score(
     )
 
 
+def _parse_judge_output(raw: str) -> EvalJudgeOutput:
+    """Parse raw judge output into a validated EvalJudgeOutput."""
+    cleaned = _strip_code_fences(raw)
+
+    try:
+        return EvalJudgeOutput.model_validate_json(cleaned)
+    except Exception:
+        logger.debug("Direct Pydantic parse failed for judge output", exc_info=True)
+
+    extracted = _extract_json_payload(cleaned)
+    try:
+        return EvalJudgeOutput.model_validate_json(extracted)
+    except Exception:
+        logger.debug("Pydantic parse of extracted JSON failed for judge output", exc_info=True)
+
+    return EvalJudgeOutput.model_validate(json.loads(extracted))
+
+
+def _cache_key(
+    expected: list[str],
+    actual: list[str],
+    phase: str,
+    model_id: str,
+    prompt_version: str,
+) -> JudgeCacheKey:
+    payload = json.dumps(
+        {
+            "expected": expected,
+            "actual": actual,
+            "phase": phase,
+        },
+        sort_keys=True,
+    )
+    return JudgeCacheKey(
+        judge_type="detail_match",
+        model_id=model_id,
+        prompt_version=prompt_version,
+        input_hash=JudgeCache.compute_hash(payload),
+    )
+
+
 def score_detail_capture_with_judge(
     expected: list[str],
     actual: list[str],
     *,
     workspace: Path,
     phase: str = "",
+    model_id: str = "",
+    producer_model_id: str = "",
+    allow_self_judge: bool = False,
+    cache: JudgeCache | None = None,
+    prompt_version: str = PROMPT_VERSION,
 ) -> DetailScore:
     """Score detail capture using an LLM judge for semantic matching.
 
@@ -205,14 +222,31 @@ def score_detail_capture_with_judge(
             precision=1.0,
         )
 
-    # Build prompt and call judge agent
+    # Build prompt and call shared judge runtime
     prompt = _build_judge_prompt(expected, actual, phase=phase)
-    raw_output = run_agent(
+    judge_client = JudgeClient(
         agent_name=JUDGE_AGENT_NAME,
-        prompt=prompt,
         workspace=workspace,
+        schema_cls=EvalJudgeOutput,
+        model_id=model_id,
+        producer_model_id=producer_model_id,
+        allow_self_judge=allow_self_judge,
+    )
+    cache_obj = cache if cache is not None else JudgeCache(workspace / "analysis" / "judge_cache")
+    judge_key = _cache_key(
+        expected=expected,
+        actual=actual,
+        phase=phase,
+        model_id=model_id,
+        prompt_version=prompt_version,
+    )
+    judge_data = cast(
+        "EvalJudgeOutput",
+        judge_client.judge(
+            prompt=prompt,
+            cache=cache_obj,
+            cache_key=judge_key,
+        ),
     )
 
-    # Parse and convert
-    judge_data = _parse_judge_output(raw_output)
     return _to_detail_score(judge_data, len(expected), len(actual))

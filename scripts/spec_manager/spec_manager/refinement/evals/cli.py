@@ -587,6 +587,11 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         default="",
         help="Model ID for quality judges",
     )
+    p_quality.add_argument(
+        "--allow-self-judge",
+        action="store_true",
+        help="Allow judge model to equal producer model",
+    )
 
     # eval multi-model - multi-model comparison subcommand
     p_eval_multi_model = eval_subparsers.add_parser(
@@ -1122,8 +1127,67 @@ def cmd_eval_quality(args: argparse.Namespace) -> int:
     arch_digest = build_architecture_digest(workspace, run_id)
     code_digest = build_code_digest(workspace, run_id)
 
+    arch_judge = None
+    code_judge = None
+    spec_judge = None
+
+    if args.judges:
+        from spec_manager.refinement.evals.judges.arch_quality import ArchitectureQualityJudge
+        from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
+        from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
+
+        producer_model_id = (
+            (arch_digest.get("model") or {}).get("producer_model_id")
+            or (code_digest.get("model") or {}).get("producer_model_id")
+            or ""
+        )
+
+        arch_judge = (
+            ArchitectureQualityJudge(
+                workspace=workspace,
+                model_id=args.judge_model,
+                producer_model_id=producer_model_id,
+                allow_self_judge=getattr(args, "allow_self_judge", False),
+            )
+            .evaluate(arch_digest)
+            .model_dump()
+        )
+
+        code_judge = (
+            CodeQualityJudge(
+                workspace=workspace,
+                model_id=args.judge_model,
+                producer_model_id=producer_model_id,
+                allow_self_judge=getattr(args, "allow_self_judge", False),
+            )
+            .evaluate(code_digest)
+            .model_dump()
+        )
+
+        spec_summary_path = workspace / ".pdd_runs" / run_id / "spec_summary.json"
+        if spec_summary_path.exists():
+            import json as _json
+
+            spec_summary = _json.loads(spec_summary_path.read_text(encoding="utf-8"))
+            spec_judge = (
+                SpecFidelityJudge(
+                    workspace=workspace,
+                    model_id=args.judge_model,
+                    producer_model_id=producer_model_id,
+                    allow_self_judge=getattr(args, "allow_self_judge", False),
+                )
+                .evaluate(spec_summary=spec_summary, code_digest=code_digest)
+                .model_dump()
+            )
+
     reporter = QualityReporter(workspace, run_id)
-    scorecard = reporter.compute(arch_digest, code_digest)
+    scorecard = reporter.compute(
+        arch_digest,
+        code_digest,
+        arch_judge_output=arch_judge,
+        code_judge_output=code_judge,
+        spec_judge_output=spec_judge,
+    )
     json_path, _md_path = reporter.write(scorecard)
 
     print(f"Quality scorecard: {json_path}")

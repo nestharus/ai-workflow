@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -58,19 +59,30 @@ class JudgeCache:
     def copy_to_run(self, key: JudgeCacheKey, run_dir: Path) -> None:
         """Copy cached result to run-scoped directory for provenance.
 
-        Writes to ``run_dir/judges/{judge_type}/{input_hash}.json``.
+        Writes to ``run_dir/judges/{judge_type}/{model_id}/{prompt_version}/{input_hash}.json``.
         Silently skips if the cached entry does not exist.
         """
         src = self._key_path(key)
         if not src.exists():
             return
-        dest = run_dir / "judges" / key.judge_type / f"{key.input_hash}.json"
+        dest = run_dir / "judges" / self._relative_key_path(key)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dest))
 
     def _key_path(self, key: JudgeCacheKey) -> Path:
-        """Deterministic path: ``{cache_dir}/{judge_type}/{input_hash}.json``."""
-        return self.cache_dir / key.judge_type / f"{key.input_hash}.json"
+        """Deterministic path: ``{cache_dir}/{judge_type}/{model_id}/{prompt_version}/"""
+        """{input_hash}.json``."""
+        return self.cache_dir / self._relative_key_path(key)
+
+    def _relative_key_path(self, key: JudgeCacheKey) -> Path:
+        model_segment = self._sanitize_segment(key.model_id, fallback="default")
+        prompt_segment = self._sanitize_segment(key.prompt_version, fallback="v1")
+        return Path(key.judge_type) / model_segment / prompt_segment / f"{key.input_hash}.json"
+
+    @staticmethod
+    def _sanitize_segment(value: str, fallback: str) -> str:
+        normalized = value.strip() or fallback
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", normalized)
 
     @classmethod
     def compute_hash(cls, *parts: str) -> str:

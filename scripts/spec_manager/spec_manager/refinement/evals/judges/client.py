@@ -54,7 +54,8 @@ class JudgeClient:
         successful results are written back.
 
         If *run_dir* is provided, the cached result is also copied to
-        ``run_dir/judges/{judge_type}/{hash}.json`` for provenance.
+        ``run_dir/judges/{judge_type}/{model_id}/{prompt_version}/{hash}.json``
+        for provenance.
         """
         # Enforce judge != producer (Research Prompt 3, Section 5.2)
         if (

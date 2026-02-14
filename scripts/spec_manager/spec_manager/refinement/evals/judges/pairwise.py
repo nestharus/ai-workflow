@@ -14,6 +14,38 @@ from spec_manager.schemas.eval_pairwise_judge import PairwiseOutput
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "judge-pairwise"
+PROMPT_VERSION = "v1"
+
+_IDENTITY_KEYS = {
+    "run_id",
+    "model",
+    "pipeline",
+    "profile_name",
+    "comparison_id",
+    "timestamp",
+    "created_at",
+    "updated_at",
+    "producer_model_id",
+    "judge_model_id",
+    "notes",
+}
+
+
+def _blind_digest(value: Any) -> Any:
+    """Remove run/model metadata so pairwise prompts stay candidate-blind."""
+    if isinstance(value, dict):
+        projected: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = key.lower()
+            if lowered in _IDENTITY_KEYS:
+                continue
+            if lowered.endswith("_path"):
+                continue
+            projected[key] = _blind_digest(item)
+        return projected
+    if isinstance(value, list):
+        return [_blind_digest(item) for item in value]
+    return value
 
 
 class PairwiseArchJudge:
@@ -24,14 +56,21 @@ class PairwiseArchJudge:
         workspace: Path,
         cache: JudgeCache | None = None,
         model_id: str = "",
+        producer_model_id: str = "",
+        allow_self_judge: bool = False,
+        prompt_version: str = PROMPT_VERSION,
     ) -> None:
         self.workspace = workspace
         self.cache = cache
         self.model_id = model_id
+        self.prompt_version = prompt_version
         self._client = JudgeClient(
             agent_name=AGENT_NAME,
             workspace=workspace,
             schema_cls=PairwiseOutput,
+            model_id=model_id,
+            producer_model_id=producer_model_id,
+            allow_self_judge=allow_self_judge,
         )
 
     def compare(
@@ -48,16 +87,18 @@ class PairwiseArchJudge:
         Returns:
             Validated PairwiseOutput with winner and per-dimension scores.
         """
-        prompt = self._build_prompt(digest_a, digest_b, focus="architecture")
+        blinded_a = _blind_digest(digest_a)
+        blinded_b = _blind_digest(digest_b)
+        prompt = self._build_prompt(blinded_a, blinded_b, focus="architecture")
 
         cache_key = None
         if self.cache is not None:
-            combined = json.dumps({"a": digest_a, "b": digest_b}, sort_keys=True)
+            combined = json.dumps({"a": blinded_a, "b": blinded_b}, sort_keys=True)
             input_hash = JudgeCache.compute_hash(combined)
             cache_key = JudgeCacheKey(
                 judge_type="pairwise_arch",
                 model_id=self.model_id,
-                prompt_version="v1",
+                prompt_version=self.prompt_version,
                 input_hash=input_hash,
             )
 
@@ -74,22 +115,46 @@ class PairwiseArchJudge:
         digest_b: dict[str, Any],
         focus: str,
     ) -> str:
-        sections = [
-            f"# Pairwise {focus.title()} Comparison",
+        lines = [
+            "## OUTPUT CONTRACT",
             "",
-            "Compare the following two outputs (A and B). This is a blinded comparison.",
+            f"Compare candidate A and candidate B on {focus} quality and return a JSON object"
+            " with:",
+            "- `winner`: `A`, `B`, or `TIE`",
+            "- `scores`: dimension-by-dimension integer scores for A and B",
+            "- `key_differences`: concise differences that drove the decision",
+            "- `risks`: notable risks with severity and evidence",
+            "Valid alternatives are acceptable; do not enforce one prescriptive style.",
+            "Cite component/file identifiers from the digest in differences and risks.",
             "",
-            "## Output A",
+            "## INPUT DATA",
             "",
-            json.dumps(digest_a, indent=2),
+            "### Output A (Candidate A, blinded)",
+            "```json",
+            json.dumps(digest_a, indent=2, sort_keys=True),
+            "```",
             "",
-            "## Output B",
+            "### Output B (Candidate B, blinded)",
+            "```json",
+            json.dumps(digest_b, indent=2, sort_keys=True),
+            "```",
             "",
-            json.dumps(digest_b, indent=2),
+            "## OUTPUT FORMAT",
             "",
-            "Compare and return your assessment as JSON.",
+            "Return strict JSON only (no prose, no markdown):",
+            "```json",
+            "{",
+            '  "winner": "A",',
+            '  "scores": {',
+            '    "A": {"overall": 1},',
+            '    "B": {"overall": 1}',
+            "  },",
+            '  "key_differences": ["..."],',
+            '  "risks": [{"severity": "MAJOR", "evidence": "component_or_file_id"}]',
+            "}",
+            "```",
         ]
-        return "\n".join(sections)
+        return "\n".join(lines)
 
 
 class PairwiseCodeJudge:
@@ -100,14 +165,21 @@ class PairwiseCodeJudge:
         workspace: Path,
         cache: JudgeCache | None = None,
         model_id: str = "",
+        producer_model_id: str = "",
+        allow_self_judge: bool = False,
+        prompt_version: str = PROMPT_VERSION,
     ) -> None:
         self.workspace = workspace
         self.cache = cache
         self.model_id = model_id
+        self.prompt_version = prompt_version
         self._client = JudgeClient(
             agent_name=AGENT_NAME,
             workspace=workspace,
             schema_cls=PairwiseOutput,
+            model_id=model_id,
+            producer_model_id=producer_model_id,
+            allow_self_judge=allow_self_judge,
         )
 
     def compare(
@@ -124,16 +196,18 @@ class PairwiseCodeJudge:
         Returns:
             Validated PairwiseOutput with winner and per-dimension scores.
         """
-        prompt = self._build_prompt(digest_a, digest_b)
+        blinded_a = _blind_digest(digest_a)
+        blinded_b = _blind_digest(digest_b)
+        prompt = self._build_prompt(blinded_a, blinded_b)
 
         cache_key = None
         if self.cache is not None:
-            combined = json.dumps({"a": digest_a, "b": digest_b}, sort_keys=True)
+            combined = json.dumps({"a": blinded_a, "b": blinded_b}, sort_keys=True)
             input_hash = JudgeCache.compute_hash(combined)
             cache_key = JudgeCacheKey(
                 judge_type="pairwise_code",
                 model_id=self.model_id,
-                prompt_version="v1",
+                prompt_version=self.prompt_version,
                 input_hash=input_hash,
             )
 
@@ -149,19 +223,42 @@ class PairwiseCodeJudge:
         digest_a: dict[str, Any],
         digest_b: dict[str, Any],
     ) -> str:
-        sections = [
-            "# Pairwise Code Quality Comparison",
+        lines = [
+            "## OUTPUT CONTRACT",
             "",
-            "Compare the following two outputs (A and B). This is a blinded comparison.",
+            "Compare candidate A and candidate B on code quality and return one JSON object with:",
+            "- `winner`: `A`, `B`, or `TIE`",
+            "- `scores`: dimension-by-dimension integer scores for A and B",
+            "- `key_differences`: concise differences that drove the decision",
+            "- `risks`: notable risks with severity and evidence",
+            "Valid alternatives are acceptable; do not enforce one prescriptive style.",
+            "Cite file identifiers from the digest in differences and risks.",
             "",
-            "## Output A",
+            "## INPUT DATA",
             "",
-            json.dumps(digest_a, indent=2),
+            "### Output A (Candidate A, blinded)",
+            "```json",
+            json.dumps(digest_a, indent=2, sort_keys=True),
+            "```",
             "",
-            "## Output B",
+            "### Output B (Candidate B, blinded)",
+            "```json",
+            json.dumps(digest_b, indent=2, sort_keys=True),
+            "```",
             "",
-            json.dumps(digest_b, indent=2),
+            "## OUTPUT FORMAT",
             "",
-            "Compare and return your assessment as JSON.",
+            "Return strict JSON only (no prose, no markdown):",
+            "```json",
+            "{",
+            '  "winner": "A",',
+            '  "scores": {',
+            '    "A": {"overall": 1},',
+            '    "B": {"overall": 1}',
+            "  },",
+            '  "key_differences": ["..."],',
+            '  "risks": [{"severity": "MAJOR", "evidence": "path/to/file.py"}]',
+            "}",
+            "```",
         ]
-        return "\n".join(sections)
+        return "\n".join(lines)

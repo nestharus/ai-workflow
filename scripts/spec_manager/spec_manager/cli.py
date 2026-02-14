@@ -271,6 +271,11 @@ def cmd_quality(args: argparse.Namespace) -> int:
 
     arch_digest = build_architecture_digest(workspace, run_id)
     code_digest = build_code_digest(workspace, run_id)
+    producer_model_id = (
+        (arch_digest.get("model") or {}).get("producer_model_id")
+        or (code_digest.get("model") or {}).get("producer_model_id")
+        or ""
+    )
 
     arch_judge = None
     code_judge = None
@@ -282,11 +287,21 @@ def cmd_quality(args: argparse.Namespace) -> int:
         from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
         from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
 
-        arch_j = ArchitectureQualityJudge(workspace=workspace, model_id=args.judge_model)
+        arch_j = ArchitectureQualityJudge(
+            workspace=workspace,
+            model_id=args.judge_model,
+            producer_model_id=producer_model_id,
+            allow_self_judge=args.allow_self_judge,
+        )
         arch_result = arch_j.evaluate(arch_digest)
         arch_judge = arch_result.model_dump()
 
-        code_j = CodeQualityJudge(workspace=workspace, model_id=args.judge_model)
+        code_j = CodeQualityJudge(
+            workspace=workspace,
+            model_id=args.judge_model,
+            producer_model_id=producer_model_id,
+            allow_self_judge=args.allow_self_judge,
+        )
         code_result = code_j.evaluate(code_digest)
         code_judge = code_result.model_dump()
 
@@ -296,7 +311,12 @@ def cmd_quality(args: argparse.Namespace) -> int:
             import json as _json
 
             spec_summary = _json.loads(spec_summary_path.read_text())
-            spec_j = SpecFidelityJudge(workspace=workspace, model_id=args.judge_model)
+            spec_j = SpecFidelityJudge(
+                workspace=workspace,
+                model_id=args.judge_model,
+                producer_model_id=producer_model_id,
+                allow_self_judge=args.allow_self_judge,
+            )
             spec_result = spec_j.evaluate(spec_summary, code_digest)
             spec_judge = spec_result.model_dump()
 
@@ -1187,6 +1207,11 @@ def main() -> int:
         "--judge-model",
         default="",
         help="Model ID for quality judges",
+    )
+    p_quality.add_argument(
+        "--allow-self-judge",
+        action="store_true",
+        help="Allow judge model to equal producer model",
     )
 
     # phase - run a specific PDD phase

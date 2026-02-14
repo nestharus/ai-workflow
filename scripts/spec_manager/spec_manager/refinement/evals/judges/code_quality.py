@@ -14,6 +14,7 @@ from spec_manager.schemas.eval_code_judge import CodeJudgeOutput
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "judge-code-quality"
+PROMPT_VERSION = "v1"
 
 
 class CodeQualityJudge:
@@ -24,16 +25,23 @@ class CodeQualityJudge:
         workspace: Path,
         cache: JudgeCache | None = None,
         model_id: str = "",
+        producer_model_id: str = "",
+        allow_self_judge: bool = False,
+        prompt_version: str = PROMPT_VERSION,
         sample_budget: int = 8,
     ) -> None:
         self.workspace = workspace
         self.cache = cache
         self.model_id = model_id
+        self.prompt_version = prompt_version
         self.sample_budget = sample_budget
         self._client = JudgeClient(
             agent_name=AGENT_NAME,
             workspace=workspace,
             schema_cls=CodeJudgeOutput,
+            model_id=model_id,
+            producer_model_id=producer_model_id,
+            allow_self_judge=allow_self_judge,
         )
 
     def evaluate(
@@ -61,7 +69,7 @@ class CodeQualityJudge:
             cache_key = JudgeCacheKey(
                 judge_type="code_quality",
                 model_id=self.model_id,
-                prompt_version="v1",
+                prompt_version=self.prompt_version,
                 input_hash=input_hash,
             )
 
@@ -139,26 +147,72 @@ class CodeQualityJudge:
         """Build the judge prompt."""
         totals = digest.get("codebase", {}).get("totals", {})
         l3_findings = digest.get("l3_review", {}).get("final_findings", {})
-
-        sections = [
-            "# Code Quality Evaluation",
-            "",
-            f"Total files: {totals.get('files', 0)}, Total LOC: {totals.get('loc', 0)}",
-            f"L3 findings: BLOCKER={l3_findings.get('BLOCKER', 0)}, "
-            f"MAJOR={l3_findings.get('MAJOR', 0)}, "
-            f"MINOR={l3_findings.get('MINOR', 0)}",
-            "",
-            f"## Sampled Files ({len(sampled)})",
-            "",
-        ]
-
+        sampled_payload = []
         for f in sampled:
             path = f["path"]
-            loc = f.get("loc", 0)
-            sections.append(f"### {path} ({loc} LOC)")
-            if path in file_contents:
-                sections.append(f"```\n{file_contents[path]}\n```")
-            sections.append("")
+            sampled_payload.append(
+                {
+                    "path": path,
+                    "loc": f.get("loc", 0),
+                    "sha256": f.get("sha256", ""),
+                    "content": file_contents.get(path, ""),
+                }
+            )
 
-        sections.append("Evaluate the code quality and return your assessment as JSON.")
-        return "\n".join(sections)
+        judge_input = {
+            "codebase_totals": {
+                "files": totals.get("files", 0),
+                "loc": totals.get("loc", 0),
+            },
+            "l3_findings": {
+                "BLOCKER": l3_findings.get("BLOCKER", 0),
+                "MAJOR": l3_findings.get("MAJOR", 0),
+                "MINOR": l3_findings.get("MINOR", 0),
+            },
+            "sampled_files": sampled_payload,
+        }
+
+        lines = [
+            "## OUTPUT CONTRACT",
+            "",
+            "Evaluate code quality and return one JSON object with:",
+            "- `files`: per-file entries with `path`, `scores`, `overall`, `notes`, and `risks`",
+            "- `overall`: integer 1-5",
+            "- `systemic_risks`: list of cross-cutting risks with severity and evidence",
+            "Use score dimensions: readability, maintainability, error_handling, consistency,"
+            " contract_clarity.",
+            "Valid alternatives are acceptable; do not prescribe one coding style as mandatory.",
+            "All risks and notes must cite concrete file identifiers from the digest.",
+            "",
+            "## INPUT DATA",
+            "",
+            "```json",
+            json.dumps(judge_input, indent=2, sort_keys=True),
+            "```",
+            "",
+            "## OUTPUT FORMAT",
+            "",
+            "Return strict JSON only (no prose, no markdown):",
+            "```json",
+            "{",
+            '  "files": [',
+            "    {",
+            '      "path": "path/to/file.py",',
+            '      "scores": {',
+            '        "readability": 1,',
+            '        "maintainability": 1,',
+            '        "error_handling": 1,',
+            '        "consistency": 1,',
+            '        "contract_clarity": 1',
+            "      },",
+            '      "overall": 1,',
+            '      "notes": ["..."],',
+            '      "risks": [{"severity": "MAJOR", "evidence": "path/to/file.py"}]',
+            "    }",
+            "  ],",
+            '  "overall": 1,',
+            '  "systemic_risks": [{"severity": "MAJOR", "evidence": "path/to/file.py"}]',
+            "}",
+            "```",
+        ]
+        return "\n".join(lines)

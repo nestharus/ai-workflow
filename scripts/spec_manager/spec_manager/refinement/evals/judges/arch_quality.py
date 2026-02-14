@@ -14,6 +14,7 @@ from spec_manager.schemas.eval_arch_judge import ArchJudgeOutput
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "judge-arch-quality"
+PROMPT_VERSION = "v1"
 
 
 class ArchitectureQualityJudge:
@@ -24,14 +25,21 @@ class ArchitectureQualityJudge:
         workspace: Path,
         cache: JudgeCache | None = None,
         model_id: str = "",
+        producer_model_id: str = "",
+        allow_self_judge: bool = False,
+        prompt_version: str = PROMPT_VERSION,
     ) -> None:
         self.workspace = workspace
         self.cache = cache
         self.model_id = model_id
+        self.prompt_version = prompt_version
         self._client = JudgeClient(
             agent_name=AGENT_NAME,
             workspace=workspace,
             schema_cls=ArchJudgeOutput,
+            model_id=model_id,
+            producer_model_id=producer_model_id,
+            allow_self_judge=allow_self_judge,
         )
 
     def evaluate(self, digest: dict[str, Any]) -> ArchJudgeOutput:
@@ -51,7 +59,7 @@ class ArchitectureQualityJudge:
             cache_key = JudgeCacheKey(
                 judge_type="arch_quality",
                 model_id=self.model_id,
-                prompt_version="v1",
+                prompt_version=self.prompt_version,
                 input_hash=input_hash,
             )
 
@@ -69,43 +77,70 @@ class ArchitectureQualityJudge:
         edges = topology.get("edges", [])
         coverage = digest.get("coverage", {})
         l2_findings = digest.get("l2_review", {}).get("final_findings", {})
-
-        sections = [
-            "# Architecture Quality Evaluation",
+        judge_input = {
+            "topology_summary": {
+                "components": len(components),
+                "edges": len(edges),
+            },
+            "components": [
+                {
+                    "id": comp.get("id", "unknown"),
+                    "type": comp.get("type", "unknown"),
+                    "summary": comp.get("summary", ""),
+                    "depends_on": comp.get("depends_on", []),
+                    "public_contracts": comp.get("public_contracts", []),
+                }
+                for comp in components
+            ],
+            "coverage": {
+                "requirements_total": coverage.get("requirements_total", 0),
+                "requirements_mapped": coverage.get("requirements_mapped", 0),
+            },
+            "l2_review_findings": {
+                "BLOCKER": l2_findings.get("BLOCKER", 0),
+                "MAJOR": l2_findings.get("MAJOR", 0),
+                "MINOR": l2_findings.get("MINOR", 0),
+            },
+        }
+        lines = [
+            "## OUTPUT CONTRACT",
             "",
-            "## Topology Summary",
-            f"- Components: {len(components)}",
-            f"- Edges: {len(edges)}",
+            "Evaluate Architecture Quality and return one JSON object with:",
+            "- `scores`: integer 1-5 for cohesion, coupling, completeness, consistency, clarity,"
+            " extensibility",
+            "- `overall`: integer 1-5",
+            "- `strengths`: list of concise strengths",
+            "- `risks`: list of objects with `severity`, `component_id`, and `evidence`",
+            "- `tradeoffs_noted`: list of tradeoffs",
+            "Valid alternatives are acceptable; do not prescribe one fixed design style.",
+            "Every risk must cite component or file identifiers from the digest as evidence.",
             "",
+            "## INPUT DATA",
+            "",
+            "```json",
+            json.dumps(judge_input, indent=2, sort_keys=True),
+            "```",
+            "",
+            "## OUTPUT FORMAT",
+            "",
+            "Return strict JSON only (no prose, no markdown):",
+            "```json",
+            "{",
+            '  "scores": {',
+            '    "cohesion": 1,',
+            '    "coupling": 1,',
+            '    "completeness": 1,',
+            '    "consistency": 1,',
+            '    "clarity": 1,',
+            '    "extensibility": 1',
+            "  },",
+            '  "overall": 1,',
+            '  "strengths": ["..."],',
+            '  "risks": [',
+            '    {"severity": "MAJOR", "component_id": "component.id", "evidence": "component.id"}',
+            "  ],",
+            '  "tradeoffs_noted": ["..."]',
+            "}",
+            "```",
         ]
-
-        if components:
-            sections.append("## Components")
-            for comp in components:
-                comp_id = comp.get("id", "unknown")
-                comp_type = comp.get("type", "unknown")
-                summary = comp.get("summary", "")
-                deps = comp.get("depends_on", [])
-                sections.append(f"### {comp_id} ({comp_type})")
-                if summary:
-                    sections.append(f"{summary}")
-                if deps:
-                    sections.append(f"Depends on: {', '.join(deps)}")
-                sections.append("")
-
-        sections.extend(
-            [
-                "## Coverage",
-                f"- Requirements total: {coverage.get('requirements_total', 0)}",
-                f"- Requirements mapped: {coverage.get('requirements_mapped', 0)}",
-                "",
-                "## L2 Review Findings",
-                f"- BLOCKER: {l2_findings.get('BLOCKER', 0)}",
-                f"- MAJOR: {l2_findings.get('MAJOR', 0)}",
-                f"- MINOR: {l2_findings.get('MINOR', 0)}",
-                "",
-                "Evaluate this architecture and return your assessment as JSON.",
-            ]
-        )
-
-        return "\n".join(sections)
+        return "\n".join(lines)

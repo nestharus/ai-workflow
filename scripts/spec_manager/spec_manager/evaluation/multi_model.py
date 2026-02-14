@@ -29,6 +29,10 @@ from spec_manager.evaluation.model_profile import ModelProfile
 from spec_manager.evaluation.quality import QualityReporter
 from spec_manager.evaluation.snapshot import snapshot_run
 from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+from spec_manager.refinement.evals.judges.arch_quality import ArchitectureQualityJudge
+from spec_manager.refinement.evals.judges.cache import JudgeCache
+from spec_manager.refinement.evals.judges.code_quality import CodeQualityJudge
+from spec_manager.refinement.evals.judges.spec_fidelity import SpecFidelityJudge
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -79,6 +83,7 @@ class MultiModelRunner:
         judge_model: str = "",
         compute_quality: bool = True,
         runs_per_model: int = 1,
+        allow_self_judge: bool = False,
     ) -> dict[str, Any]:
         """Run pipeline for each profile and return comparison manifest.
 
@@ -88,6 +93,7 @@ class MultiModelRunner:
             judge_model: Model ID for quality judges.
             compute_quality: Whether to compute quality scorecards.
             runs_per_model: Number of replicates per model.
+            allow_self_judge: Allow judge model to match producer model.
 
         Returns:
             Comparison manifest dict.
@@ -113,6 +119,7 @@ class MultiModelRunner:
                     replicate=rep,
                     judge_model=judge_model,
                     compute_quality=compute_quality,
+                    allow_self_judge=allow_self_judge,
                 )
                 entries.append(entry)
 
@@ -141,6 +148,7 @@ class MultiModelRunner:
         replicate: int,
         judge_model: str,
         compute_quality: bool,
+        allow_self_judge: bool,
     ) -> RunManifestEntry:
         """Run a single pipeline instance."""
         entry = RunManifestEntry(
@@ -181,8 +189,59 @@ class MultiModelRunner:
 
             # Quality scoring
             if compute_quality:
+                arch_judge_output = None
+                code_judge_output = None
+                spec_judge_output = None
+
+                if judge_model:
+                    run_dir = self.workspace_root / ".pdd_runs" / run_id
+                    snapshot_dir = run_dir / "snapshot" / "files"
+                    judge_cache = JudgeCache(self.workspace_root / "analysis" / "judge_cache")
+
+                    arch_judge = ArchitectureQualityJudge(
+                        workspace=self.workspace_root,
+                        cache=judge_cache,
+                        model_id=judge_model,
+                        producer_model_id=profile.producer_model_id,
+                        allow_self_judge=allow_self_judge,
+                    )
+                    arch_judge_output = arch_judge.evaluate(arch_digest).model_dump()
+
+                    code_judge = CodeQualityJudge(
+                        workspace=self.workspace_root,
+                        cache=judge_cache,
+                        model_id=judge_model,
+                        producer_model_id=profile.producer_model_id,
+                        allow_self_judge=allow_self_judge,
+                    )
+                    code_judge_output = code_judge.evaluate(
+                        code_digest,
+                        snapshot_dir=snapshot_dir if snapshot_dir.exists() else None,
+                    ).model_dump()
+
+                    spec_summary_path = run_dir / "spec_summary.json"
+                    if spec_summary_path.exists():
+                        spec_summary = json.loads(spec_summary_path.read_text(encoding="utf-8"))
+                        spec_judge = SpecFidelityJudge(
+                            workspace=self.workspace_root,
+                            cache=judge_cache,
+                            model_id=judge_model,
+                            producer_model_id=profile.producer_model_id,
+                            allow_self_judge=allow_self_judge,
+                        )
+                        spec_judge_output = spec_judge.evaluate(
+                            spec_summary=spec_summary,
+                            code_digest=code_digest,
+                        ).model_dump()
+
                 reporter = QualityReporter(self.workspace_root, run_id)
-                scorecard = reporter.compute(arch_digest, code_digest)
+                scorecard = reporter.compute(
+                    arch_digest,
+                    code_digest,
+                    arch_judge_output=arch_judge_output,
+                    code_judge_output=code_judge_output,
+                    spec_judge_output=spec_judge_output,
+                )
                 json_path, _ = reporter.write(scorecard)
                 entry.quality_scorecard_path = str(json_path)
 
