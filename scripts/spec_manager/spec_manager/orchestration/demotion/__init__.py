@@ -292,12 +292,28 @@ class DemotionManager:
         ticket: DemotionTicket,
         result: dict[str, Any],
     ) -> None:
-        """Append a JSONL entry to the demotion ledger."""
+        """Append a JSONL entry and ticket artifact under the run demotions directory."""
         run_id = self.run_id or ticket.run_id
         if not run_id:
             return
         ledger_dir = self.workspace_root / ".pdd_runs" / run_id / "demotions"
         ledger_dir.mkdir(parents=True, exist_ok=True)
+        tickets_dir = ledger_dir / "tickets"
+        tickets_dir.mkdir(parents=True, exist_ok=True)
+
+        ticket_record = {
+            "ticket": ticket.to_dict(),
+            "result": {
+                "applied": result.get("applied", False),
+                "patches": result.get("patches", []),
+                "gap_evidence_added": result.get("gap_evidence_added", 0),
+            },
+        }
+        (tickets_dir / f"{ticket.ticket_id}.json").write_text(
+            json.dumps(ticket_record, indent=2),
+            encoding="utf-8",
+        )
+
         ledger_path = ledger_dir / "ledger.jsonl"
         entry = {
             "ticket_id": ticket.ticket_id,

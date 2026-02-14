@@ -853,7 +853,13 @@ class PddLifecycle:
 
         elif layer == "l2":
             # Try component manifest first (produced by architectural refinement)
-            manifest_path = self.manager.structure.root / "reports" / "component_manifest.json"
+            manifest_path = (
+                self.manager.structure.root
+                / "reports"
+                / "pdd"
+                / self.manager.run_id
+                / "component_manifest.json"
+            )
             if manifest_path.exists():
                 try:
                     data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -977,7 +983,7 @@ class PddLifecycle:
         iteration: int = 0,
         **extra: Any,
     ) -> None:
-        """Write a decision.json artifact for an approval checkpoint.
+        """Write an approval decision artifact using run-scoped layout.
 
         Args:
             layer: Approval layer (e.g., "l1", "l2", "release").
@@ -987,8 +993,18 @@ class PddLifecycle:
         """
         if not hasattr(self, "_state_mgr"):
             return
-        approvals_dir = self._state_mgr.run_dir / "approvals" / layer
-        approvals_dir.mkdir(parents=True, exist_ok=True)
+
+        approvals_root = self._state_mgr.run_dir / "approvals"
+        if layer == "l1":
+            artifact_path = approvals_root / "l1" / f"iteration_{iteration}" / "decision.json"
+        elif layer == "l2":
+            artifact_path = approvals_root / "l2" / "decision.json"
+        elif layer == "release":
+            artifact_path = approvals_root / "l3" / "release_decision.json"
+        else:
+            artifact_path = approvals_root / layer / "decision.json"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+
         decision: dict[str, Any] = {
             "layer": layer,
             "iteration": iteration,
@@ -996,9 +1012,7 @@ class PddLifecycle:
             "mode": self.mode,
         }
         decision.update(extra)
-        (approvals_dir / "decision.json").write_text(
-            json.dumps(decision, indent=2), encoding="utf-8"
-        )
+        artifact_path.write_text(json.dumps(decision, indent=2), encoding="utf-8")
 
     def _request_approval(self, result: dict[str, Any], iteration: int) -> dict[str, Any]:
         """Request human approval of the L1 output.
@@ -1011,8 +1025,18 @@ class PddLifecycle:
             Approval dict with ``approved`` bool and optional
             ``feedback`` string.
         """
+        run_reports_dir = self.manager.structure.root / "reports" / "pdd" / self.manager.run_id
+        overview_ref = (result.get("overview") or {}).get("overview_path", "")
+        alignment_ref = str(run_reports_dir / "alignment_report.json")
+
         if self.mode in ("auto", "steering"):
-            self._write_approval_artifact("l1", approved=True, iteration=iteration)
+            self._write_approval_artifact(
+                "l1",
+                approved=True,
+                iteration=iteration,
+                overview_ref=overview_ref,
+                alignment_ref=alignment_ref,
+            )
             return {"approved": True, "iteration": iteration, "mode": self.mode}
 
         # Interactive mode — prompt user
@@ -1036,7 +1060,13 @@ class PddLifecycle:
             choice = "a"
 
         if choice == "a" or choice == "":
-            self._write_approval_artifact("l1", approved=True, iteration=iteration)
+            self._write_approval_artifact(
+                "l1",
+                approved=True,
+                iteration=iteration,
+                overview_ref=overview_ref,
+                alignment_ref=alignment_ref,
+            )
             return {"approved": True, "iteration": iteration, "mode": "interactive"}
 
         if choice == "q":
@@ -1048,13 +1078,19 @@ class PddLifecycle:
         except (EOFError, KeyboardInterrupt):
             feedback = ""
 
-        # Write feedback to reports directory
-        reports_dir = self.manager.structure.root / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        feedback_path = reports_dir / f"feedback_iteration_{iteration}.txt"
+        # Write feedback to run-scoped reports directory
+        run_reports_dir.mkdir(parents=True, exist_ok=True)
+        feedback_path = run_reports_dir / f"feedback_iteration_{iteration}.txt"
         feedback_path.write_text(feedback, encoding="utf-8")
 
-        self._write_approval_artifact("l1", approved=False, iteration=iteration)
+        self._write_approval_artifact(
+            "l1",
+            approved=False,
+            iteration=iteration,
+            overview_ref=overview_ref,
+            alignment_ref=alignment_ref,
+            feedback_path=str(feedback_path),
+        )
         return {
             "approved": False,
             "iteration": iteration,
@@ -1576,7 +1612,7 @@ class PddLifecycle:
         )
 
     def _write_run_report(self, filename: str, data: dict | list | str) -> None:
-        """Write a report file to both global and run-scoped directories.
+        """Write a report file to the run-scoped reports directory.
 
         Args:
             filename: Report filename (e.g., "architecture_proposals.json").
@@ -1587,11 +1623,6 @@ class PddLifecycle:
             if isinstance(data, (dict, list))
             else data
         )
-
-        # Global path (backward compat)
-        global_dir = self.manager.structure.root / "reports"
-        global_dir.mkdir(parents=True, exist_ok=True)
-        (global_dir / filename).write_text(content, encoding="utf-8")
 
         # Run-scoped path
         run_reports_dir = self.manager.structure.root / "reports" / "pdd" / self.manager.run_id
@@ -1872,7 +1903,9 @@ class PddLifecycle:
         # Write consolidated overview
         overview_content = "# Project Overview\n\n" + "\n---\n\n".join(overview_parts)
         self._write_run_report("overview.md", overview_content)
-        overview_path = self.manager.structure.root / "reports" / "overview.md"
+        overview_path = (
+            self.manager.structure.root / "reports" / "pdd" / self.manager.run_id / "overview.md"
+        )
 
         return {
             "libraries_processed": libraries_processed,

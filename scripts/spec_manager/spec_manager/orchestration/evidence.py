@@ -106,7 +106,7 @@ class SourceIndexRef:
     """Per-file SourceAnalysis outputs from analyze_source()."""
 
     path: str = ""
-    entries: list[dict[str, str]] = field(default_factory=list)
+    entries: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

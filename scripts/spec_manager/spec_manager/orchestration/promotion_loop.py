@@ -45,7 +45,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -115,6 +116,22 @@ def _normalize_gap_record(gap: dict[str, Any]) -> dict[str, Any]:
     merged["span"] = normalized_span
     merged["location"] = {"file": file_path, **normalized_span}
     return merged
+
+
+def _now_iso() -> str:
+    """Return current UTC timestamp in ISO-8601 format."""
+    return datetime.now(UTC).isoformat()
+
+
+def _write_iteration_json(
+    bundle: EvidenceBundle, workspace_root: Path, name: str, data: Any
+) -> str:
+    """Write a JSON artifact in the current iteration directory and return filename."""
+    iteration_dir = bundle.iter_dir(workspace_root)
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    path = iteration_dir / name
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path.name
 
 
 # ------------------------------------------------------------------
@@ -236,21 +253,80 @@ class CollectBaselineStep:
                     }
                 )
 
+        workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
         manifest_hash_input = "\n".join(
             f"{f['path']}:{f.get('sha256', '')}" for f in sorted(files, key=lambda x: x["path"])
         )
         manifest_hash = _hash_text(manifest_hash_input) if files else ""
 
-        bundle.manifest = ManifestRef(files=files)
+        previous_manifest: dict[str, str] = {}
+        previous_head_commit = ""
+        if bundle.iteration > 1:
+            prev_bundle_path = (
+                workspace_root
+                / ".pdd_runs"
+                / bundle.run_id
+                / "slices"
+                / bundle.slice_id
+                / f"iter_{bundle.iteration - 1:03d}"
+                / "bundle.json"
+            )
+            if prev_bundle_path.exists():
+                try:
+                    previous_bundle = EvidenceBundle.load(prev_bundle_path)
+                    previous_manifest = {
+                        item.get("path", ""): item.get("sha256", "")
+                        for item in (previous_bundle.manifest.files or [])
+                        if item.get("path")
+                    }
+                    previous_head_commit = previous_bundle.diff.head_commit or ""
+                except Exception as exc:
+                    logger.debug(
+                        "Failed loading previous bundle baseline %s: %s", prev_bundle_path, exc
+                    )
+
+        changed_files: list[str] = []
+        for item in files:
+            path = item.get("path", "")
+            sha = item.get("sha256", "")
+            if previous_manifest.get(path) != sha:
+                changed_files.append(path)
+        if not previous_manifest:
+            changed_files = [item.get("path", "") for item in files if item.get("path")]
+
+        bundle.manifest = ManifestRef(
+            path="manifest.json",
+            files=files,
+        )
         bundle.diff = DiffRef(
-            base_commit=bundle.diff.base_commit,
+            path="diff.json",
+            base_commit=previous_head_commit or bundle.diff.base_commit,
             head_commit=manifest_hash,
-            changed_files=[f["path"] for f in files],
+            changed_files=changed_files,
             content_hash=manifest_hash,
         )
 
-        # Save bundle
-        bundle.save(Path(ctx.workspace_root))
+        _write_iteration_json(
+            bundle,
+            workspace_root,
+            "manifest.json",
+            {
+                "files": bundle.manifest.files,
+                "slice_patterns": bundle.manifest.slice_patterns,
+                "generated_files": bundle.manifest.generated_files,
+            },
+        )
+        _write_iteration_json(
+            bundle,
+            workspace_root,
+            "diff.json",
+            {
+                "base_commit": bundle.diff.base_commit,
+                "head_commit": bundle.diff.head_commit,
+                "changed_files": bundle.diff.changed_files,
+                "content_hash": bundle.diff.content_hash,
+            },
+        )
         return StepResult(status="OK")
 
 
@@ -318,12 +394,14 @@ class GapExplorationStep:
 
         reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
         if reused is not None:
-            bundle.gaps = GapReportRef(open_gaps=[self._normalize_gap(g) for g in reused])
+            bundle.gaps = GapReportRef(
+                path="gaps.json", open_gaps=[self._normalize_gap(g) for g in reused]
+            )
             return StepResult(status="OK")
 
         allow_scan_fallback = bool(ctx.config.get(_SCAN_FALLBACK_KEY, False))
         if not allow_scan_fallback:
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
         slice_root = Path(ctx.slice_root)
@@ -331,7 +409,7 @@ class GapExplorationStep:
 
         py_files = source_rglob(slice_root)
         if not py_files:
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
         try:
@@ -365,10 +443,10 @@ class GapExplorationStep:
                     }
                 )
 
-            bundle.gaps = GapReportRef(open_gaps=gaps)
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=gaps)
         except Exception as exc:
             logger.warning("L1 fallback gap exploration failed: %s", exc, exc_info=True)
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="RETRY", error=f"L1 fallback gap exploration failed: {exc}")
 
         return StepResult(status="OK")
@@ -389,12 +467,14 @@ class GapExplorationStep:
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
 
         if not slice_root or not slice_root.exists():
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
         reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
         if reused is not None:
-            bundle.gaps = GapReportRef(open_gaps=[self._normalize_gap(g) for g in reused])
+            bundle.gaps = GapReportRef(
+                path="gaps.json", open_gaps=[self._normalize_gap(g) for g in reused]
+            )
             return StepResult(status="OK")
 
         # Gather code summaries from slice for LLM analysis
@@ -411,18 +491,19 @@ class GapExplorationStep:
                     continue
 
         if not code_summaries:
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
-        # Also include any open demotion tickets targeting L2
+        # Also include any open demotion tickets targeting L2 for this run.
         open_tickets: list[str] = []
-        demotions_dir = workspace / "analysis" / "demotion"
+        demotions_dir = workspace / ".pdd_runs" / bundle.run_id / "demotions" / "tickets"
         if demotions_dir.exists():
-            for ticket_file in demotions_dir.glob("*.json"):
+            for ticket_file in sorted(demotions_dir.glob("*.json")):
                 try:
-                    data = json.loads(ticket_file.read_text(encoding="utf-8"))
-                    if data.get("target_layer") == "L2":
-                        open_tickets.append(data.get("diagnosis", ""))
+                    payload = json.loads(ticket_file.read_text(encoding="utf-8"))
+                    ticket = payload.get("ticket", payload)
+                    if ticket.get("target_layer") == "L2":
+                        open_tickets.append(ticket.get("diagnosis", ""))
                 except Exception as exc:
                     logger.debug("Failed to read ticket file %s: %s", ticket_file, exc)
                     continue
@@ -501,7 +582,7 @@ class GapExplorationStep:
             except Exception as exc:
                 logger.debug("L2 reviewer %s failed: %s", reviewer_name, exc)
 
-        bundle.gaps = GapReportRef(open_gaps=all_gaps)
+        bundle.gaps = GapReportRef(path="gaps.json", open_gaps=all_gaps)
 
         return StepResult(status="OK")
 
@@ -519,12 +600,14 @@ class GapExplorationStep:
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
 
         if not slice_root or not slice_root.exists():
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
         reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
         if reused is not None:
-            bundle.gaps = GapReportRef(open_gaps=[self._normalize_gap(g) for g in reused])
+            bundle.gaps = GapReportRef(
+                path="gaps.json", open_gaps=[self._normalize_gap(g) for g in reused]
+            )
             return StepResult(status="OK")
 
         # Gather code from slice — L3 slices are per-file (cq-{stem}),
@@ -543,7 +626,7 @@ class GapExplorationStep:
                     continue
 
         if not code_files:
-            bundle.gaps = GapReportRef(open_gaps=[])
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
         reviewers = [
@@ -628,7 +711,7 @@ class GapExplorationStep:
                 except Exception as exc:
                     logger.debug("L3 reviewer %s failed for %s: %s", reviewer, file_path, exc)
 
-        bundle.gaps = GapReportRef(open_gaps=all_gaps)
+        bundle.gaps = GapReportRef(path="gaps.json", open_gaps=all_gaps)
         return StepResult(status="OK")
 
 
@@ -662,13 +745,13 @@ class PlanStep:
         from spec_manager.orchestration.evidence import PlanRef
 
         if not bundle.gaps.open_gaps:
-            bundle.plan = PlanRef(intentions=[])
+            bundle.plan = PlanRef(path="plan.json", intentions=[])
             return StepResult(status="OK")
 
         # L1: no-op — agents implement directly from spec comments/gaps,
         # no planner-generated intentions needed.
         if ctx.layer == "l1":
-            bundle.plan = PlanRef(intentions=[])
+            bundle.plan = PlanRef(path="plan.json", intentions=[])
             return StepResult(status="OK")
 
         # Route through planner if available (L2/L3 only)
@@ -681,7 +764,7 @@ class PlanStep:
         else:
             intentions = []
 
-        bundle.plan = PlanRef(intentions=intentions)
+        bundle.plan = PlanRef(path="plan.json", intentions=intentions)
 
         # Run planning gate: check decision requirements against constraints
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
@@ -929,13 +1012,32 @@ class ImplementStep:
 
         # Update manifest/diff to prove evidence aligns with exact file text.
         bundle.manifest.files = file_hashes
+        bundle.manifest.path = "manifest.json"
         bundle.diff.changed_files = [f["path"] for f in file_hashes]
         bundle.diff.content_hash = manifest_hash
         bundle.diff.head_commit = manifest_hash
-
-        file_hash_path = iteration_dir / "file_hashes.json"
-        file_hash_path.write_text(json.dumps(file_hashes, indent=2), encoding="utf-8")
-        bundle.manifest.path = file_hash_path.name
+        bundle.diff.path = "diff.json"
+        _write_iteration_json(
+            bundle,
+            workspace,
+            "manifest.json",
+            {
+                "files": bundle.manifest.files,
+                "slice_patterns": bundle.manifest.slice_patterns,
+                "generated_files": bundle.manifest.generated_files,
+            },
+        )
+        _write_iteration_json(
+            bundle,
+            workspace,
+            "diff.json",
+            {
+                "base_commit": bundle.diff.base_commit,
+                "head_commit": bundle.diff.head_commit,
+                "changed_files": bundle.diff.changed_files,
+                "content_hash": bundle.diff.content_hash,
+            },
+        )
 
         pin_deltas = bundle.implementation.pin_proposals or []
         edge_deltas = bundle.implementation.edge_proposals or []
@@ -971,6 +1073,24 @@ class ImplementStep:
                     produced_by=self.name,
                 )
             )
+        merge_delta_payload = {
+            "operation": "merge",
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "applied_edit_count": len(bundle.implementation.applied_edits or []),
+            "pin_delta_count": len(pin_deltas),
+            "edge_delta_count": len(edge_deltas),
+            "manifest_hash": manifest_hash,
+        }
+        merge_delta_path = iteration_dir / "graph.merge.delta.json"
+        merge_delta_path.write_text(json.dumps(merge_delta_payload, indent=2), encoding="utf-8")
+        graph_deltas.append(
+            GraphDeltaRef(
+                path=merge_delta_path.name,
+                delta_type="merge",
+                produced_by=self.name,
+            )
+        )
         bundle.graph_deltas = graph_deltas
 
         pins_payload = {
@@ -1021,12 +1141,25 @@ class ImplementStep:
             gap_inventory = explicit_gaps + event_gaps
         else:
             gap_inventory = [self._normalize_gap(g) for g in bundle.gaps.open_gaps]
-        gap_path = iteration_dir / "gap_inventory.json"
+        gap_path = iteration_dir / "gaps.json"
         gap_path.write_text(json.dumps(gap_inventory, indent=2), encoding="utf-8")
         bundle.gaps.path = gap_path.name
         bundle.gaps.open_gaps = gap_inventory
 
-        receipt = {
+        impl_result = {
+            "applied_edits": bundle.implementation.applied_edits,
+            "gap_inventory": bundle.implementation.gap_inventory,
+            "pin_proposals": bundle.implementation.pin_proposals,
+            "edge_proposals": bundle.implementation.edge_proposals,
+            "under_spec_events": bundle.implementation.under_spec_events,
+            "tests_added": bundle.implementation.tests_added,
+            "patch_path": bundle.implementation.patch_path,
+        }
+        impl_result_path = iteration_dir / "impl.result.json"
+        impl_result_path.write_text(json.dumps(impl_result, indent=2), encoding="utf-8")
+        bundle.implementation.result_path = impl_result_path.name
+
+        promotion_report = {
             "transaction": "code_plus_evidence",
             "slice_id": ctx.slice_id,
             "layer": ctx.layer,
@@ -1036,9 +1169,9 @@ class ImplementStep:
             "gap_inventory": bundle.gaps.path,
             "graph_delta_count": len(bundle.graph_deltas),
         }
-        receipt_path = iteration_dir / "promotion.receipt.json"
-        receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
-        bundle.promotion.path = receipt_path.name
+        promotion_path = iteration_dir / "promotion.report.json"
+        promotion_path.write_text(json.dumps(promotion_report, indent=2), encoding="utf-8")
+        bundle.promotion.path = promotion_path.name
 
     def _implement_l1(
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
@@ -1474,7 +1607,8 @@ class AnalyzeStep:
                 run_id=ctx.run_id,
             )
 
-            entries: list[dict[str, str]] = []
+            entries: list[dict[str, Any]] = []
+            normalized_functions: dict[str, Any] = {}
             for py_file in source_rglob(slice_root):
                 if not py_file.is_file():
                     continue
@@ -1485,18 +1619,42 @@ class AnalyzeStep:
                     analysis = cache.analyze_with_cache(
                         content, str(py_file.relative_to(slice_root))
                     )
+                    analysis_functions = [asdict(fn) for fn in analysis.functions]
+                    analysis_comments = [asdict(comment) for comment in analysis.comments]
+                    relative_path = str(py_file.relative_to(slice_root))
+                    content_hash = _hash_text(content)
                     entries.append(
                         {
-                            "path": str(py_file.relative_to(slice_root)),
-                            "functions": str(len(analysis.functions)),
-                            "comments": str(len(analysis.comments)),
+                            "path": relative_path,
+                            "content_hash": content_hash,
+                            "analysis": {
+                                "functions": analysis_functions,
+                                "comments": analysis_comments,
+                            },
                         }
                     )
+                    for fn in analysis_functions:
+                        qualified_name = fn.get("qualified_name") or fn.get("name") or ""
+                        if not qualified_name:
+                            continue
+                        normalized_functions[qualified_name] = {
+                            "signature": {
+                                "name": fn.get("name", ""),
+                                "args": fn.get("args", []),
+                                "return_annotation": fn.get("return_annotation"),
+                                "is_async": fn.get("is_async", False),
+                            },
+                            "doc": fn.get("docstring", ""),
+                            "file": relative_path,
+                            "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
+                        }
                 except (OSError, UnicodeDecodeError) as exc:
                     logger.debug("Skipping %s: %s", py_file, exc)
 
             bundle.source_index.entries = entries
             bundle.source_index.path = "source_analysis.index.json"
+            if normalized_functions:
+                bundle.facts.functions.update(normalized_functions)
 
             logger.info(
                 "Analyzed %d files (cache stats: %s)",
@@ -1559,17 +1717,19 @@ class AnalyzeStep:
             data = json.loads(_extract_json_payload(cleaned))
 
             # Store in source_index for downstream consumption
-            entries = []
+            entries: list[dict[str, Any]] = []
             for comp in data.get("components", []):
                 entries.append(
                     {
                         "path": comp.get("file", ""),
+                        "content_hash": _hash_text(json.dumps(comp, sort_keys=True)),
                         "component_id": comp.get("id", ""),
                         "type": comp.get("type", ""),
+                        "analysis": comp,
                     }
                 )
             bundle.source_index.entries = entries
-            bundle.source_index.path = "architecture_graph.index.json"
+            bundle.source_index.path = "source_analysis.index.json"
 
             stats = data.get("stats", {})
             logger.info(
@@ -1590,7 +1750,7 @@ class AnalyzeStep:
         """L3: diff summary + structural metrics."""
         from spec_manager.core.language import FUNCTION_KEYWORDS, source_rglob
 
-        entries: list[dict[str, str]] = []
+        entries: list[dict[str, Any]] = []
         total_lines = 0
         total_functions = 0
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
@@ -1616,15 +1776,20 @@ class AnalyzeStep:
                 entries.append(
                     {
                         "path": str(py_file.relative_to(slice_root)),
-                        "lines": str(len(lines)),
-                        "functions": str(func_count),
+                        "content_hash": _hash_text(content),
+                        "analysis": {
+                            "metrics": {
+                                "lines": len(lines),
+                                "functions": func_count,
+                            }
+                        },
                     }
                 )
             except (OSError, UnicodeDecodeError):
                 continue
 
         bundle.source_index.entries = entries
-        bundle.source_index.path = "quality_metrics.index.json"
+        bundle.source_index.path = "source_analysis.index.json"
 
         logger.info(
             "L3 analysis: %d files, %d lines, %d functions",
@@ -1785,6 +1950,7 @@ class PromoteStep:
                 "wiring_only",
             ),
         ]
+        bundle.gates.path = "gates.report.json"
 
         if failures:
             return StepResult(
@@ -1840,6 +2006,7 @@ class PromoteStep:
                 "behavior_change",
             ),
         ]
+        bundle.gates.path = "gates.report.json"
 
         failed_gates = [g for g in bundle.gates.gates if not g["passed"]]
         if failed_gates:
@@ -1959,6 +2126,7 @@ class PromoteStep:
                 "refactor_only",
             ),
         ]
+        bundle.gates.path = "gates.report.json"
 
         failed = [gate for gate in bundle.gates.gates if not gate["passed"]]
         if failed:
@@ -2004,7 +2172,69 @@ class IntegrateStep:
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Merge grandchild → dirty, tick pipeline."""
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        def record_artifacts(
+            *,
+            merge: Any | None,
+            tick: Any | None,
+            investigator: dict[str, Any] | None = None,
+            emitted: list[DemotionTicket] | None = None,
+            error: str = "",
+            skipped: bool = False,
+        ) -> None:
+            integration_payload: dict[str, Any] = {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "skipped": skipped,
+                "merge_success": bool(getattr(merge, "success", False))
+                if merge is not None
+                else False,
+                "merge_error": getattr(merge, "error", "") if merge is not None else "",
+                "investigator": investigator or {},
+                "demotion_count": len(emitted or []),
+                "error": error,
+            }
+            if tick is not None:
+                integration_payload["pipeline"] = {
+                    "main_updated": bool(getattr(tick, "main_updated", False)),
+                    "main_sha": getattr(tick, "main_sha", None),
+                    "demotion_tickets": list(getattr(tick, "demotion_tickets", []) or []),
+                }
+            bundle.integration.path = _write_iteration_json(
+                bundle,
+                workspace,
+                "integration.report.json",
+                integration_payload,
+            )
+
+            tests_payload: dict[str, Any] = {"slice_id": ctx.slice_id, "layer": ctx.layer}
+            if tick is not None:
+                layers: list[dict[str, Any]] = []
+                for layer_name, layer_result in (getattr(tick, "layer_results", {}) or {}).items():
+                    layers.append(
+                        {
+                            "layer": layer_name,
+                            "gates_passed": bool(getattr(layer_result, "gates_passed", False)),
+                            "tests_passed": bool(getattr(layer_result, "tests_passed", False)),
+                            "error": getattr(layer_result, "error", ""),
+                            "demotion_tickets": list(
+                                getattr(layer_result, "demotion_tickets", []) or []
+                            ),
+                        }
+                    )
+                tests_payload["layers"] = layers
+            else:
+                tests_payload["note"] = "No pipeline tick result available"
+            bundle.tests.slice_path = _write_iteration_json(
+                bundle,
+                workspace,
+                "tests.slice.json",
+                tests_payload,
+            )
+
         if not self._wm:
+            record_artifacts(merge=None, tick=None, skipped=True)
             return StepResult(status="OK")
 
         # 1. Merge slice → layer dirty
@@ -2018,6 +2248,12 @@ class IntegrateStep:
                 severity="BLOCKER",
                 diagnosis=f"Merge conflict: {merge_result.error}",
             )
+            record_artifacts(
+                merge=merge_result,
+                tick=None,
+                emitted=[ticket],
+                error=merge_result.error,
+            )
             return StepResult(
                 status="RETRY",
                 emitted_tickets=[ticket],
@@ -2028,6 +2264,7 @@ class IntegrateStep:
         tick_result = self._wm.tick_pipeline(active_layer=ctx.layer)
 
         if not tick_result.demotion_tickets:
+            record_artifacts(merge=merge_result, tick=tick_result)
             return StepResult(status="OK")
 
         # 3. CI failed — try Investigator before demotion
@@ -2036,6 +2273,11 @@ class IntegrateStep:
             # Re-tick pipeline after fix
             tick_result = self._wm.tick_pipeline(active_layer=ctx.layer)
             if not tick_result.demotion_tickets:
+                record_artifacts(
+                    merge=merge_result,
+                    tick=tick_result,
+                    investigator=investigator_result,
+                )
                 return StepResult(status="OK")
 
         # 4. Investigator failed or didn't fix — emit demotion tickets
@@ -2054,12 +2296,20 @@ class IntegrateStep:
             )
 
         if tickets:
+            record_artifacts(
+                merge=merge_result,
+                tick=tick_result,
+                investigator=investigator_result,
+                emitted=tickets,
+                error=f"CI pipeline failed with {len(tickets)} demotion(s)",
+            )
             return StepResult(
                 status="RETRY",
                 emitted_tickets=tickets,
                 error=f"CI pipeline failed with {len(tickets)} demotion(s)",
             )
 
+        record_artifacts(merge=merge_result, tick=tick_result, investigator=investigator_result)
         return StepResult(status="OK")
 
     def _try_investigator(self, ctx: SliceContext, tick_result: Any) -> dict[str, Any] | None:
@@ -2258,6 +2508,7 @@ class VerifyStep:
                 iteration_dir.mkdir(parents=True, exist_ok=True)
                 notes_path = iteration_dir / "verify.notes.json"
                 notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
+                bundle.verification.path = notes_path.name
                 return StepResult(
                     status="RETRY",
                     emitted_tickets=tickets,
@@ -2319,6 +2570,7 @@ class VerifyStep:
         iteration_dir.mkdir(parents=True, exist_ok=True)
         notes_path = iteration_dir / "verify.notes.json"
         notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
+        bundle.verification.path = notes_path.name
 
         # Decide pass/fail
         has_blocker = any(f.get("severity") == "BLOCKER" for f in findings)
@@ -2474,6 +2726,7 @@ DEFAULT_STEPS: list[type] = [
     PlanStep,
     ImplementStep,
     CoordinateStep,
+    AnalyzeStep,
     PromoteStep,
     IntegrateStep,
     VerifyStep,
@@ -2525,6 +2778,301 @@ class PromotionLoop:
                 else:
                     self._steps.append(step_cls())
 
+    def _record_provenance(
+        self,
+        bundle: EvidenceBundle,
+        step_name: str,
+        result: StepResult,
+        ctx: SliceContext,
+    ) -> None:
+        """Append per-step provenance metadata."""
+        entry: dict[str, Any] = {
+            "step": step_name,
+            "status": result.status,
+            "timestamp": _now_iso(),
+            "layer": ctx.layer,
+            "slice_id": ctx.slice_id,
+            "mode": ctx.mode,
+        }
+        if result.error:
+            entry["error"] = result.error[:500]
+        if result.notes_path:
+            entry["notes_path"] = result.notes_path
+        model_ids = ctx.config.get("model_ids") if isinstance(ctx.config, dict) else None
+        if isinstance(model_ids, dict) and model_ids:
+            entry["model_ids"] = model_ids
+        bundle.provenance.entries.append(entry)
+        bundle.provenance.path = "provenance.json"
+
+    @staticmethod
+    def _refresh_facts(bundle: EvidenceBundle) -> None:
+        """Refresh normalized facts using current source index + implementation outputs."""
+        functions = dict(bundle.facts.functions or {})
+        stores = dict(bundle.facts.stores or {})
+        atoms = dict(bundle.facts.atoms or {})
+        llm_claims = list(bundle.facts.llm_claims or [])
+
+        for entry in bundle.source_index.entries or []:
+            if not isinstance(entry, dict):
+                continue
+            analysis = entry.get("analysis") or {}
+            if not isinstance(analysis, dict):
+                continue
+            file_path = entry.get("path", "")
+            for fn in analysis.get("functions", []) or []:
+                if not isinstance(fn, dict):
+                    continue
+                qualified_name = fn.get("qualified_name") or fn.get("name") or ""
+                if not qualified_name:
+                    continue
+                functions[qualified_name] = {
+                    "signature": {
+                        "name": fn.get("name", ""),
+                        "args": fn.get("args", []),
+                        "return_annotation": fn.get("return_annotation"),
+                        "is_async": fn.get("is_async", False),
+                    },
+                    "doc": fn.get("docstring", ""),
+                    "file": file_path,
+                    "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
+                }
+
+        for pin in bundle.implementation.pin_proposals or []:
+            pin_id = pin.get("pin_id") or pin.get("id") or pin.get("fqn") or ""
+            if not pin_id:
+                continue
+            atoms[pin_id] = {
+                "file": pin.get("file", ""),
+                "boundaries": pin.get("span", {}),
+                "responsibilities": pin.get("responsibilities", []),
+            }
+
+        for edge in bundle.implementation.edge_proposals or []:
+            if edge.get("signal_type") != "STORE_TOUCH":
+                continue
+            store_id = edge.get("dst") or edge.get("store_id") or ""
+            if not store_id:
+                continue
+            owner = edge.get("src", "")
+            owner_atoms = [owner] if owner else []
+            existing = stores.get(store_id, {})
+            previous = existing.get("owner_atoms", [])
+            stores[store_id] = {
+                "owner_atoms": sorted(set(previous + owner_atoms)),
+                "schema": existing.get("schema", {}),
+            }
+
+        seen_claims: set[str] = set()
+        for claim in llm_claims:
+            if isinstance(claim, dict):
+                fingerprint = json.dumps(claim, sort_keys=True)
+                seen_claims.add(fingerprint)
+        for gap in bundle.gaps.open_gaps or []:
+            if not isinstance(gap, dict):
+                continue
+            if not gap.get("reviewer") and not gap.get("dimension"):
+                continue
+            claim = {
+                "claim": gap.get("description", ""),
+                "evidence_refs": [bundle.gaps.path] if bundle.gaps.path else [],
+                "confidence": 0.7,
+                "produced_by_step": "GAP_EXPLORATION",
+            }
+            fingerprint = json.dumps(claim, sort_keys=True)
+            if fingerprint not in seen_claims:
+                seen_claims.add(fingerprint)
+                llm_claims.append(claim)
+
+        bundle.facts.functions = functions
+        bundle.facts.stores = stores
+        bundle.facts.atoms = atoms
+        bundle.facts.llm_claims = llm_claims
+        if (
+            bundle.facts.functions
+            or bundle.facts.stores
+            or bundle.facts.atoms
+            or bundle.facts.llm_claims
+            or bundle.facts.constraints_refs
+        ):
+            bundle.facts.path = "facts.json"
+
+    @staticmethod
+    def _persist_iteration_artifacts(ctx: SliceContext, bundle: EvidenceBundle) -> None:
+        """Persist step artifacts and keep bundle refs pointing to them."""
+        workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        if bundle.manifest.files:
+            bundle.manifest.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "manifest.json",
+                {
+                    "files": bundle.manifest.files,
+                    "slice_patterns": bundle.manifest.slice_patterns,
+                    "generated_files": bundle.manifest.generated_files,
+                },
+            )
+
+        if (
+            bundle.diff.base_commit
+            or bundle.diff.head_commit
+            or bundle.diff.changed_files
+            or bundle.diff.content_hash
+        ):
+            bundle.diff.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "diff.json",
+                {
+                    "base_commit": bundle.diff.base_commit,
+                    "head_commit": bundle.diff.head_commit,
+                    "changed_files": bundle.diff.changed_files,
+                    "content_hash": bundle.diff.content_hash,
+                },
+            )
+
+        if bundle.provenance.path or bundle.provenance.entries:
+            bundle.provenance.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "provenance.json",
+                {"entries": bundle.provenance.entries},
+            )
+
+        if bundle.source_index.path or bundle.source_index.entries:
+            bundle.source_index.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "source_analysis.index.json",
+                {"entries": bundle.source_index.entries},
+            )
+
+        if bundle.facts.path or (
+            bundle.facts.functions
+            or bundle.facts.stores
+            or bundle.facts.atoms
+            or bundle.facts.constraints_refs
+            or bundle.facts.llm_claims
+        ):
+            bundle.facts.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "facts.json",
+                {
+                    "functions": bundle.facts.functions,
+                    "stores": bundle.facts.stores,
+                    "atoms": bundle.facts.atoms,
+                    "constraints_refs": bundle.facts.constraints_refs,
+                    "llm_claims": bundle.facts.llm_claims,
+                },
+            )
+
+        if bundle.gaps.path or bundle.gaps.open_gaps or bundle.gaps.stagnation:
+            bundle.gaps.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "gaps.json",
+                {
+                    "open_gaps": bundle.gaps.open_gaps,
+                    "stagnation": bundle.gaps.stagnation,
+                },
+            )
+
+        if (
+            bundle.plan.path
+            or bundle.plan.intentions
+            or bundle.plan.edit_targets
+            or bundle.plan.test_plan
+            or bundle.plan.risks
+        ):
+            bundle.plan.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "plan.json",
+                {
+                    "intentions": bundle.plan.intentions,
+                    "edit_targets": bundle.plan.edit_targets,
+                    "test_plan": bundle.plan.test_plan,
+                    "risks": bundle.plan.risks,
+                },
+            )
+
+        if (
+            bundle.implementation.result_path
+            or bundle.implementation.applied_edits
+            or bundle.implementation.gap_inventory
+            or bundle.implementation.pin_proposals
+            or bundle.implementation.edge_proposals
+            or bundle.implementation.under_spec_events
+            or bundle.implementation.tests_added
+            or bundle.implementation.patch_path
+        ):
+            bundle.implementation.result_path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "impl.result.json",
+                {
+                    "patch_path": bundle.implementation.patch_path,
+                    "applied_edits": bundle.implementation.applied_edits,
+                    "gap_inventory": bundle.implementation.gap_inventory,
+                    "pin_proposals": bundle.implementation.pin_proposals,
+                    "edge_proposals": bundle.implementation.edge_proposals,
+                    "under_spec_events": bundle.implementation.under_spec_events,
+                    "tests_added": bundle.implementation.tests_added,
+                },
+            )
+
+        if bundle.under_spec.path or bundle.under_spec.decisions or bundle.under_spec.blockers:
+            bundle.under_spec.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "blockers.json",
+                {
+                    "decisions": bundle.under_spec.decisions,
+                    "blockers": bundle.under_spec.blockers,
+                },
+            )
+
+        if bundle.gates.path or bundle.gates.gates:
+            bundle.gates.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "gates.report.json",
+                {"gates": bundle.gates.gates},
+            )
+
+        if bundle.promotion.path or bundle.gates.gates:
+            bundle.promotion.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "promotion.report.json",
+                {
+                    "slice_id": bundle.slice_id,
+                    "iteration": bundle.iteration,
+                    "status": bundle.status,
+                    "gates_ref": bundle.gates.path,
+                    "graph_snapshot": bundle.graph_snapshot.path,
+                    "pins_snapshot": bundle.pins_snapshot.path,
+                },
+            )
+
+        if (
+            bundle.demotions.path
+            or bundle.demotions.emitted
+            or bundle.demotions.applied
+            or bundle.demotions.pending
+        ):
+            bundle.demotions.path = _write_iteration_json(
+                bundle,
+                workspace_root,
+                "demotions.json",
+                {
+                    "emitted": bundle.demotions.emitted,
+                    "applied": bundle.demotions.applied,
+                    "pending": bundle.demotions.pending,
+                },
+            )
+
     def run_slice(
         self,
         slice_ref: SliceRef,
@@ -2548,6 +3096,7 @@ class PromotionLoop:
             workspace_root=run_context.workspace_root,
             config=run_context.config,
         )
+        self._dm.run_id = run_context.run_id
 
         # Set dirty/clean parent paths if worktree manager available
         if self._wm:
@@ -2588,6 +3137,7 @@ class PromotionLoop:
                 run_id=run_context.run_id,
                 slice_id=slice_ref.slice_id,
                 iteration=iteration,
+                created_at=_now_iso(),
                 mode=run_context.mode,
                 workspace_root=run_context.workspace_root,
                 slice_root=slice_ref.worktree_path,
@@ -2605,7 +3155,12 @@ class PromotionLoop:
                     # Apply demotion tickets + track retries per unique failure pattern
                     seen_keys: set[tuple[str, str]] = set()
                     for ticket in result.emitted_tickets:
-                        self._dm.apply(ticket, Path(ctx.slice_root))
+                        apply_result = self._dm.apply(ticket, Path(ctx.slice_root))
+                        bundle.demotions.emitted.append(ticket.ticket_id)
+                        if apply_result.get("applied", False):
+                            bundle.demotions.applied.append(ticket.ticket_id)
+                        else:
+                            bundle.demotions.pending.append(ticket.ticket_id)
                         files_key = (
                             ",".join(sorted(ticket.failing_files)) if ticket.failing_files else ""
                         )
@@ -2624,6 +3179,9 @@ class PromotionLoop:
                                 tracker_key[0],
                                 tracker_key[1],
                             )
+                            bundle.status = "FAILED"
+                            self._persist_iteration_artifacts(ctx, bundle)
+                            bundle.save(Path(run_context.workspace_root))
                             return SliceResult(
                                 slice_id=ctx.slice_id,
                                 status="STAGNATED",
@@ -2633,6 +3191,11 @@ class PromotionLoop:
                                 error=f"Per-ticket retry budget exceeded for gate={tracker_key[1]}",
                             )
 
+                self._record_provenance(bundle, step.name, result, ctx)
+                self._refresh_facts(bundle)
+                self._persist_iteration_artifacts(ctx, bundle)
+                bundle.save(Path(run_context.workspace_root))
+
                 if result.status == "WAITING":
                     # Slice needs coordination — save bundle and return WAITING
                     waiting = True
@@ -2640,6 +3203,9 @@ class PromotionLoop:
 
                 if result.status == "BLOCKED":
                     # Slice is blocked — return with blocked status
+                    bundle.status = "BLOCKED"
+                    self._persist_iteration_artifacts(ctx, bundle)
+                    bundle.save(Path(run_context.workspace_root))
                     questions = []
                     for event in bundle.implementation.under_spec_events:
                         if q := event.get("question"):
@@ -2658,6 +3224,9 @@ class PromotionLoop:
                     break
 
                 if result.status == "FAIL":
+                    bundle.status = "FAILED"
+                    self._persist_iteration_artifacts(ctx, bundle)
+                    bundle.save(Path(run_context.workspace_root))
                     return SliceResult(
                         slice_id=ctx.slice_id,
                         status="FAILED",
@@ -2669,7 +3238,6 @@ class PromotionLoop:
             # Handle WAITING: save bundle and return to scheduler
             if waiting:
                 waiting_iterations += 1
-                bundle.save(Path(run_context.workspace_root))
                 # Collect pending signal info from bundle
                 pending = [
                     {"question": e.get("question", ""), "kind": e.get("kind", "")}
@@ -2703,6 +3271,8 @@ class PromotionLoop:
                         min(prev_window),
                         stagnation_window,
                     )
+                    bundle.status = "FAILED"
+                    self._persist_iteration_artifacts(ctx, bundle)
                     bundle.save(Path(run_context.workspace_root))
                     return SliceResult(
                         slice_id=ctx.slice_id,
@@ -2716,13 +3286,12 @@ class PromotionLoop:
                     )
 
             if retry:
-                # Save bundle at end of iteration even on retry for inspectability
-                bundle.save(Path(run_context.workspace_root))
                 continue
 
             # Check termination
             if remaining == 0:
                 bundle.status = "COMPLETE"
+                self._persist_iteration_artifacts(ctx, bundle)
                 bundle.save(Path(run_context.workspace_root))
                 return SliceResult(
                     slice_id=ctx.slice_id,
@@ -2740,6 +3309,10 @@ class PromotionLoop:
             )
 
         # Max iterations reached
+        if bundle:
+            bundle.status = "FAILED"
+            self._persist_iteration_artifacts(ctx, bundle)
+            bundle.save(Path(run_context.workspace_root))
         return SliceResult(
             slice_id=ctx.slice_id,
             status="MAX_ITERATIONS",
