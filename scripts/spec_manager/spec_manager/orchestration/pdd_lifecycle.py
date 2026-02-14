@@ -121,6 +121,7 @@ class PddLifecycle:
         max_demotions_per_layer: int = 50,
         max_pipeline_passes: int = 2,
         model_profile: Any = None,
+        planner_override_provider: Any = None,
     ) -> None:
         self.manager = manager
         self.orchestrator = PddOrchestrator(manager)
@@ -134,6 +135,7 @@ class PddLifecycle:
         self.max_demotions_per_layer = max_demotions_per_layer
         self.max_pipeline_passes = max_pipeline_passes
         self._model_profile = model_profile
+        self._planner_override_provider = planner_override_provider
         self._compute_quality = False
 
     # ------------------------------------------------------------------
@@ -229,6 +231,7 @@ class PddLifecycle:
             evidence_tool=evidence_tool,
             integration_tool=integration_tool,
             constraints_tool=constraints_tool,
+            override_provider=self._planner_override_provider,
             model_id=model_id,
         )
 

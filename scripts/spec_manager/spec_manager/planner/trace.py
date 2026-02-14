@@ -252,6 +252,7 @@ class PlannerTrace:
             decision_payload["decision_key"] = self.decision_key
         if self.status:
             decision_payload["status"] = self.status
+        decision_payload["overridden"] = bool(self.overridden)
         _write_json(trace_dir / "decision.json", decision_payload)
 
         # 3. calls/model_calls.jsonl

@@ -1,10 +1,11 @@
 """Planner eval harness.
 
-Four evaluation modes:
+Evaluation modes:
 
-* **e2e** — run ``PddLifecycle.run()`` in-situ, then score.
+* **e2e** — run full chained pipeline, score, and optionally run ideal-upstream diagnostics.
 * **slice** — run ``PromotionLoop.run_slice()`` for one slice/layer, then score.
 * **replay** — re-run one decision from persisted replay artifacts.
+* **counterfactual** — force one decision, re-run end-to-end, and measure downstream impact.
 * **shadow** — run e2e candidate planner, then replay each decision with an oracle.
 """
 
@@ -15,7 +16,7 @@ import logging
 import shutil
 import tempfile
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -31,11 +32,13 @@ class EvalConfig:
     workspace_root: Path = field(default_factory=lambda: Path("."))
     gt_path: Path | None = None
     run_id: str = ""
-    mode: str = "e2e"  # "e2e" | "slice" | "replay" | "shadow"
+    mode: str = "e2e"  # "e2e" | "slice" | "replay" | "counterfactual" | "shadow"
     fixture: str = ""
     fixture_root: Path | None = None
     model_config: str = ""
     shadow_model_config: str = ""
+    layer_workspace_overrides: dict[str, Path] = field(default_factory=dict)
+    enable_dual_eval: bool = True
     # Slice-level config
     slice_id: str = ""
     layer: str = ""
@@ -55,6 +58,9 @@ class EvalResult:
     traces_evaluated: int = 0
     gt_cases_matched: int = 0
     gt_cases_unmatched: int = 0
+    diagnostic_run_id: str = ""
+    diagnostic_scorecard: Any = None
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
@@ -106,6 +112,8 @@ class PlannerEvalHarness:
             return self._run_slice(config)
         if config.mode == "replay":
             return self._run_replay(config)
+        if config.mode == "counterfactual":
+            return self._run_counterfactual(config)
         if config.mode == "shadow":
             return self._run_shadow(config)
         return EvalResult(
@@ -136,7 +144,40 @@ class PlannerEvalHarness:
             mode="e2e",
         )
         scored.mode = "e2e"
+        if config.enable_dual_eval:
+            self._attach_ideal_upstream_diagnostic(scored=scored, config=config)
         return scored
+
+    def _attach_ideal_upstream_diagnostic(self, *, scored: EvalResult, config: EvalConfig) -> None:
+        """Run ideal-upstream diagnostic pass when layer overrides are available."""
+        overrides = self._resolve_layer_workspace_overrides(config)
+        if not overrides:
+            return
+
+        ideal_run_id = f"{scored.run_id}-ideal" if scored.run_id else ""
+        ideal_config = replace(
+            config,
+            run_id=ideal_run_id,
+            enable_dual_eval=False,
+            layer_workspace_overrides=overrides,
+        )
+        try:
+            diag_run_id, diag_workspace = self._execute_e2e_pipeline(ideal_config)
+            diag_scored = self._score_traces(
+                diag_run_id,
+                workspace_root=diag_workspace,
+                gt_path=ideal_config.gt_path,
+                mode="ideal_upstream",
+            )
+        except Exception as exc:
+            scored.errors.append(f"Ideal-upstream diagnostic failed: {exc}")
+            return
+
+        scored.diagnostic_run_id = diag_run_id
+        scored.diagnostic_scorecard = diag_scored.scorecard
+        scored.diagnostics["dual_eval"] = self._dual_eval_summary(scored, diag_scored, overrides)
+        for err in diag_scored.errors:
+            scored.errors.append(f"Ideal-upstream: {err}")
 
     def _run_slice(self, config: EvalConfig) -> EvalResult:
         """Slice-level: run one slice through PromotionLoop, then score."""
@@ -233,6 +274,107 @@ class PlannerEvalHarness:
             result.errors.append(f"Replay failed: {exc}")
 
         return result
+
+    def _run_counterfactual(self, config: EvalConfig) -> EvalResult:
+        """Force one decision and measure whether downstream failures disappear."""
+        from spec_manager.planner.api import PlanningResult
+        from spec_manager.planner.trace import compute_decision_key
+        from spec_manager.refinement.evals.planner.trace_loader import load_trace
+
+        result = EvalResult(run_id=config.run_id, mode="counterfactual")
+        if not config.replay_trace_id:
+            result.errors.append("Counterfactual mode requires --trace-id / replay_trace_id.")
+            return result
+        if not config.fixture:
+            result.errors.append("Counterfactual mode requires --fixture for full rerun.")
+            return result
+
+        try:
+            original = load_trace(config.workspace_root, config.replay_trace_id)
+        except Exception as exc:
+            result.errors.append(f"Failed to load target trace: {exc}")
+            return result
+
+        overrides: dict[str, Any] = {}
+        if config.override_path and config.override_path.exists():
+            try:
+                overrides = self._load_overrides(config.override_path)
+            except Exception as exc:
+                result.errors.append(f"Failed to load overrides: {exc}")
+                return result
+
+        override_status = str(overrides.get("status") or "OK")
+        override_outputs = overrides.get("outputs")
+        if not isinstance(override_outputs, dict):
+            result.errors.append(
+                "Counterfactual override file must include mapping field 'outputs'."
+            )
+            return result
+
+        target_key = str(getattr(original, "decision_key", "") or "")
+        if not target_key:
+            result.errors.append(
+                "Target trace has empty decision_key; cannot build counterfactual."
+            )
+            return result
+
+        override_state = {"applied": False}
+
+        def override_provider(req: Any) -> PlanningResult | None:
+            decision_key = compute_decision_key(
+                layer=str(req.context.layer),
+                capability=req.capability,
+                slice_id=req.context.slice_id,
+                iteration=req.context.iteration,
+                inputs=req.inputs,
+            )
+            if decision_key != target_key or override_state["applied"]:
+                return None
+            override_state["applied"] = True
+            return PlanningResult(status=override_status, outputs=dict(override_outputs))
+
+        try:
+            cf_run_id, cf_workspace = self._execute_e2e_pipeline(
+                config,
+                planner_override_provider=override_provider,
+            )
+        except Exception as exc:
+            result.errors.append(f"Counterfactual rerun failed: {exc}")
+            return result
+
+        scored = self._score_traces(
+            cf_run_id,
+            workspace_root=cf_workspace,
+            gt_path=config.gt_path,
+            mode="counterfactual",
+        )
+        scored.mode = "counterfactual"
+        scored.diagnostics["override_applied"] = override_state["applied"]
+
+        baseline_run_id = str(self._request_snapshot_from_trace(original).get("run_id", "") or "")
+        if baseline_run_id:
+            baseline = self._score_traces(
+                baseline_run_id,
+                workspace_root=config.workspace_root,
+                gt_path=config.gt_path,
+                mode="baseline",
+            )
+            scored.diagnostics["counterfactual_impact"] = self._compare_downstream_impact(
+                baseline=baseline,
+                counterfactual=scored,
+                baseline_workspace=config.workspace_root,
+                baseline_run_id=baseline_run_id,
+                target_trace_id=config.replay_trace_id,
+            )
+        else:
+            scored.errors.append("Could not resolve baseline run_id for counterfactual comparison.")
+
+        if not override_state["applied"]:
+            scored.errors.append(
+                "Counterfactual override did not match any decision in rerun "
+                "(decision_key mismatch)."
+            )
+        return scored
 
     # ------------------------------------------------------------------
     # Scoring
@@ -383,6 +525,134 @@ class PlannerEvalHarness:
             "PLAN": PlanScorer(),
             "UNDER_SPEC": UnderSpecScorer(),
             "INTEGRATION_ANALYSIS": IntegrationAnalysisScorer(),
+        }
+
+    @staticmethod
+    def _dual_eval_summary(
+        primary: EvalResult,
+        diagnostic: EvalResult,
+        overrides: dict[str, Path],
+    ) -> dict[str, Any]:
+        """Build compact summary for chained-real vs ideal-upstream comparisons."""
+        primary_pass = bool(primary.scorecard and primary.scorecard.overall_pass)
+        diagnostic_pass = bool(diagnostic.scorecard and diagnostic.scorecard.overall_pass)
+        return {
+            "chained_real": {
+                "run_id": primary.run_id,
+                "overall_pass": primary_pass,
+                "traces_evaluated": primary.traces_evaluated,
+                "gt_cases_matched": primary.gt_cases_matched,
+                "gt_cases_unmatched": primary.gt_cases_unmatched,
+            },
+            "ideal_upstream": {
+                "run_id": diagnostic.run_id,
+                "overall_pass": diagnostic_pass,
+                "traces_evaluated": diagnostic.traces_evaluated,
+                "gt_cases_matched": diagnostic.gt_cases_matched,
+                "gt_cases_unmatched": diagnostic.gt_cases_unmatched,
+            },
+            "workspace_overrides": {layer: str(path) for layer, path in overrides.items()},
+        }
+
+    def _resolve_layer_workspace_overrides(self, config: EvalConfig) -> dict[str, Path]:
+        """Resolve optional layer-boundary workspace overrides for ideal-upstream runs."""
+        explicit = {
+            layer.lower(): path
+            for layer, path in config.layer_workspace_overrides.items()
+            if layer and path
+        }
+        if explicit:
+            return {layer: path for layer, path in explicit.items() if path.exists()}
+
+        fixture = config.fixture.strip()
+        if not fixture:
+            return {}
+        fixtures_root = self._fixture_root(config)
+        candidates = (
+            fixtures_root / f"{fixture}_ideal_upstream",
+            fixtures_root / fixture / "ideal_upstream",
+        )
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            resolved: dict[str, Path] = {}
+            l2 = candidate / "l2_workspace"
+            l3 = candidate / "l3_workspace"
+            if l2.exists():
+                resolved["l2"] = l2
+            if l3.exists():
+                resolved["l3"] = l3
+            if resolved:
+                return resolved
+        return {}
+
+    def _compare_downstream_impact(
+        self,
+        *,
+        baseline: EvalResult,
+        counterfactual: EvalResult,
+        baseline_workspace: Path,
+        baseline_run_id: str,
+        target_trace_id: str,
+    ) -> dict[str, Any]:
+        """Compare downstream failures between baseline and counterfactual reruns."""
+        from spec_manager.refinement.evals.planner.trace_loader import (
+            filter_traces,
+            load_index,
+            load_trace,
+        )
+
+        baseline_entries = filter_traces(load_index(baseline_workspace), run_id=baseline_run_id)
+        target_index = next(
+            (
+                idx
+                for idx, entry in enumerate(baseline_entries)
+                if entry.trace_id == target_trace_id
+            ),
+            -1,
+        )
+        if target_index < 0:
+            return {
+                "error": (
+                    f"Target trace {target_trace_id} not found in baseline run {baseline_run_id}."
+                )
+            }
+
+        downstream_keys: set[str] = set()
+        for entry in baseline_entries[target_index + 1 :]:
+            try:
+                trace = load_trace(baseline_workspace, entry.trace_id)
+            except Exception as exc:
+                logger.debug(
+                    "Skipping downstream impact trace %s: %s",
+                    entry.trace_id,
+                    exc,
+                )
+                continue
+            if trace.decision_key:
+                downstream_keys.add(trace.decision_key)
+
+        baseline_failures = {
+            v.decision_key
+            for v in baseline.verdicts
+            if not getattr(v, "passed", True) and v.decision_key in downstream_keys
+        }
+        counterfactual_failures = {
+            v.decision_key
+            for v in counterfactual.verdicts
+            if not getattr(v, "passed", True) and v.decision_key in downstream_keys
+        }
+
+        resolved = sorted(baseline_failures - counterfactual_failures)
+        persistent = sorted(baseline_failures & counterfactual_failures)
+        introduced = sorted(counterfactual_failures - baseline_failures)
+        return {
+            "downstream_keys_considered": len(downstream_keys),
+            "baseline_failures": len(baseline_failures),
+            "counterfactual_failures": len(counterfactual_failures),
+            "resolved_failures": resolved,
+            "persistent_failures": persistent,
+            "introduced_failures": introduced,
         }
 
     # ------------------------------------------------------------------
@@ -763,13 +1033,24 @@ class PlannerEvalHarness:
         PddOrchestrator(manager)._install_phase0_output(phase0_output)
         return manager, manager.workspace_path, run_id
 
-    def _execute_e2e_pipeline(self, config: EvalConfig) -> tuple[str, Path]:
+    def _execute_e2e_pipeline(
+        self,
+        config: EvalConfig,
+        *,
+        planner_override_provider: Any = None,
+    ) -> tuple[str, Path]:
         """Execute the full lifecycle pipeline for the configured fixture."""
-        from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+        from spec_manager.refinement.evals.phase_evals.orchestration import run_full_pipeline
 
         manager, workspace_root, run_id = self._prepare_fixture_workspace(config)
+        layer_overrides = self._resolve_layer_workspace_overrides(config)
         logger.info("Planner eval: e2e mode run_id=%s fixture=%s", run_id, config.fixture)
-        PddLifecycle(manager, mode="auto").run()
+        run_full_pipeline(
+            manager,
+            eval_snapshot_root=workspace_root / "eval_snapshots" / run_id,
+            layer_workspace_overrides=layer_overrides,
+            planner_override_provider=planner_override_provider,
+        )
         self._ensure_replay_snapshots(workspace_root, run_id)
         return run_id, workspace_root
 

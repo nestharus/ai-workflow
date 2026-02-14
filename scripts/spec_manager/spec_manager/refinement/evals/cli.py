@@ -430,7 +430,7 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     p_planner.add_argument("--gt", default="", help="Path to planner ground truth YAML")
     p_planner.add_argument(
         "--mode",
-        choices=["e2e", "slice", "replay", "shadow"],
+        choices=["e2e", "slice", "replay", "counterfactual", "shadow"],
         default="e2e",
         help="Harness mode (default: e2e)",
     )
@@ -438,8 +438,14 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     p_planner.add_argument("--workspace", default=".", help="Workspace root for traces/replay")
     p_planner.add_argument("--slice-id", default="", help="Slice ID for mode=slice")
     p_planner.add_argument("--layer", default="", help="Layer for mode=slice (l1|l2|l3)")
-    p_planner.add_argument("--trace-id", default="", help="Trace ID for mode=replay")
-    p_planner.add_argument("--override", default="", help="Override YAML/JSON for mode=replay")
+    p_planner.add_argument(
+        "--trace-id", default="", help="Trace ID for mode=replay or mode=counterfactual"
+    )
+    p_planner.add_argument(
+        "--override",
+        default="",
+        help="Override YAML/JSON for mode=replay or mode=counterfactual",
+    )
     p_planner.add_argument("--model-config", default="", help="Candidate model ID override")
     p_planner.add_argument(
         "--shadow-model",
@@ -614,6 +620,8 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def cmd_planner_run(args: argparse.Namespace) -> int:
     """Run planner eval harness via mode-based entry point."""
+    import json
+
     from spec_manager.refinement.evals.planner.harness import EvalConfig, PlannerEvalHarness
 
     workspace = Path(args.workspace)
@@ -647,13 +655,31 @@ def cmd_planner_run(args: argparse.Namespace) -> int:
         if result.verdicts:
             verdict = result.verdicts[0]
             print(f"Replay: {'SAME' if verdict.passed else 'DIFFERENT'}")
-            print(f"Detail: {verdict.detail}")
+            print(f"Replay detail: {verdict.detail}")
+        if result.diagnostics:
+            print("\nDiagnostics:")
+            print(json.dumps(result.diagnostics, indent=2, default=str))
         if result.errors:
             print("\nErrors:")
             for err in result.errors:
                 print(f"  - {err}")
-        replay_ok = bool(result.verdicts and result.verdicts[0].passed)
-        return 0 if replay_ok and not result.errors else 1
+        mode_ok = bool(result.verdicts and result.verdicts[0].passed)
+        return 0 if mode_ok and not result.errors else 1
+
+    if args.mode == "counterfactual":
+        if result.scorecard:
+            print(f"Overall: {'PASS' if result.scorecard.overall_pass else 'FAIL'}")
+            hard_pass = sum(1 for g in result.scorecard.hard_gates if g.status == "PASS")
+            print(f"Hard gates: {hard_pass}/{len(result.scorecard.hard_gates)}")
+        if result.diagnostics:
+            print("\nDiagnostics:")
+            print(json.dumps(result.diagnostics, indent=2, default=str))
+        if result.errors:
+            print("\nErrors:")
+            for err in result.errors:
+                print(f"  - {err}")
+        mode_ok = bool(result.scorecard and result.scorecard.overall_pass and not result.errors)
+        return 0 if mode_ok else 1
 
     if result.scorecard:
         scorecard = result.scorecard
@@ -667,6 +693,13 @@ def cmd_planner_run(args: argparse.Namespace) -> int:
         print("\nErrors:")
         for err in result.errors:
             print(f"  - {err}")
+    if result.diagnostics:
+        print("\nDiagnostics:")
+        print(json.dumps(result.diagnostics, indent=2, default=str))
+    if result.diagnostic_scorecard:
+        print("\nIdeal-upstream diagnostic:")
+        print(f"Run ID: {result.diagnostic_run_id}")
+        print(f"Overall: {'PASS' if result.diagnostic_scorecard.overall_pass else 'FAIL'}")
 
     if result.scorecard is None:
         return 1 if result.errors else 0

@@ -713,6 +713,11 @@ class E2EEval:
             logger.info("=== Setup-only mode: workspace ready at %s ===", workspace_root)
             return self._capture
 
+        # Primary path: run real lifecycle orchestration end-to-end.
+        # Keep the manual step runner only for targeted layer/slice debugging.
+        if not self.target_layer and not self.target_slice:
+            return self._run_full_pipeline_capture(manager, workspace_root)
+
         # Build planner and promotion loop
         from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
 
@@ -772,6 +777,68 @@ class E2EEval:
         self._print_summary()
 
         return self._capture
+
+    def _run_full_pipeline_capture(self, manager: Any, workspace_root: Path) -> EvalCapture:
+        """Run full lifecycle via orchestration wrapper and map outputs into EvalCapture."""
+        from spec_manager.refinement.evals.phase_evals.orchestration import run_full_pipeline
+
+        logger.info("=== E2E Eval: Running full lifecycle pipeline ===")
+        run_results = run_full_pipeline(
+            manager=manager,
+            eval_snapshot_root=workspace_root / "eval_snapshots" / self.run_id,
+        )
+
+        for layer_name in ("l1", "l2", "l3"):
+            layer_capture = self._layer_capture_from_run_results(layer_name, run_results)
+            self._capture.layers.append(layer_capture)
+            layer_path = self.output_dir / f"layer_{layer_name}.json"
+            layer_path.write_text(
+                json.dumps(layer_capture.to_dict(), indent=2, default=str),
+                encoding="utf-8",
+            )
+
+        (self.output_dir / "pipeline_results.json").write_text(
+            json.dumps(run_results, indent=2, default=str),
+            encoding="utf-8",
+        )
+
+        logger.info("=== E2E Eval: Final ground truth comparison ===")
+        self._capture.ground_truth_comparison = compare_requirements_coverage(
+            workspace_root, self.ground_truth
+        )
+        self._capture.final_scoring = self._compute_final_score()
+        self._capture.completed_at = time.time()
+        (self.output_dir / "eval_capture.json").write_text(
+            json.dumps(self._capture.to_dict(), indent=2, default=str),
+            encoding="utf-8",
+        )
+        self._print_summary()
+        return self._capture
+
+    @staticmethod
+    def _layer_capture_from_run_results(layer: str, run_results: dict[str, Any]) -> LayerCapture:
+        """Build a compact ``LayerCapture`` from lifecycle result payloads."""
+        layer_data = run_results.get(layer, {}) or {}
+        capture = LayerCapture(layer=layer)
+        capture.entry_refinement = layer_data.get("entry_refinement", {})
+        capture.exit_refinement = layer_data.get("exit_refinement", {})
+        if layer == "l1":
+            capture.transition = run_results.get("l1_l2_transition", {}) or {}
+        elif layer == "l2":
+            capture.transition = run_results.get("l2_l3_transition", {}) or {}
+
+        slices_data = layer_data.get("slices", {})
+        slices = slices_data.get("slices", []) if isinstance(slices_data, dict) else []
+        for row in slices:
+            capture.slices.append(
+                SliceCapture(
+                    slice_id=str(row.get("slice_id", "")),
+                    layer=layer,
+                    iterations=int(row.get("iterations", 0) or 0),
+                    final_status=str(row.get("status", "")),
+                )
+            )
+        return capture
 
     def _run_layer(
         self,
@@ -902,6 +969,11 @@ class E2EEval:
             if sl.final_status == "COMPLETE"
         )
         total_slices = sum(len(layer.slices) for layer in self._capture.layers)
+        if total_steps == 0 and total_slices > 0:
+            # Full-lifecycle capture does not include per-step traces.
+            # Use slice-level completion as the coarse success proxy.
+            total_steps = total_slices
+            ok_steps = completed_slices
 
         return {
             "total_steps": total_steps,

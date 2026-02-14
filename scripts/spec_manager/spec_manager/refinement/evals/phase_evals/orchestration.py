@@ -22,7 +22,9 @@ Usage (step-by-step QA)::
 from __future__ import annotations
 
 import logging
+import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,33 @@ _FIXTURES = resolve_from_root(
 )
 _PDD_DIR = _FIXTURES / "chaotic_treasury_expanded_pdd"
 _P0_OUTPUT = _FIXTURES / "chaotic_treasury_expanded_phase0_output"
+
+
+def _snapshot_workspace(workspace_root: Path, destination: Path) -> None:
+    """Copy workspace state for eval reproducibility."""
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    ignore = shutil.ignore_patterns("__pycache__", ".git", "eval_snapshots")
+    shutil.copytree(workspace_root, destination, ignore=ignore)
+
+
+def _apply_workspace_override(workspace_root: Path, override_snapshot: Path) -> None:
+    """Overlay workspace with a frozen upstream snapshot for diagnostic runs."""
+    if not override_snapshot.exists():
+        raise FileNotFoundError(f"Workspace override snapshot not found: {override_snapshot}")
+
+    for source_path in sorted(override_snapshot.iterdir()):
+        if source_path.name == "eval_snapshots":
+            continue
+        target_path = workspace_root / source_path.name
+        if source_path.is_dir():
+            if target_path.exists():
+                shutil.rmtree(target_path)
+            shutil.copytree(source_path, target_path)
+        else:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
 
 
 def setup_orchestration_workspace(
@@ -257,6 +286,10 @@ def run_final_report(
 
 def run_full_pipeline(
     manager: WorkspaceManager,
+    *,
+    eval_snapshot_root: Path | None = None,
+    layer_workspace_overrides: dict[str, Path] | None = None,
+    planner_override_provider: Callable[[Any], Any] | None = None,
 ) -> dict[str, Any]:
     """Run PddLifecycle.run() — the full L1 -> L2 -> L3 pipeline.
 
@@ -268,11 +301,56 @@ def run_full_pipeline(
     """
     from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
 
-    lifecycle = PddLifecycle(manager, mode="auto")
+    snapshot_root = eval_snapshot_root or manager.workspace_path / "eval_snapshots" / manager.run_id
+    overrides = {
+        layer.lower(): Path(snapshot)
+        for layer, snapshot in (layer_workspace_overrides or {}).items()
+    }
+
+    class EvalLifecycle(PddLifecycle):
+        """Eval wrapper that adds reproducible layer snapshots and optional overrides."""
+
+        def _record_eval_snapshot(self, name: str) -> None:
+            destination = snapshot_root / name
+            _snapshot_workspace(self.manager.workspace_path, destination)
+            logger.info("Saved eval snapshot %s", destination)
+
+        def _apply_layer_override(self, layer: str) -> None:
+            override_path = overrides.get(layer.lower())
+            if override_path is None:
+                return
+            _apply_workspace_override(self.manager.workspace_path, override_path)
+            logger.info("Applied workspace override for %s from %s", layer, override_path)
+
+        def _run_transition(self, from_layer: str, to_layer: str) -> dict[str, Any]:
+            result = super()._run_transition(from_layer, to_layer)
+            if from_layer == "l1" and to_layer == "l2":
+                self._record_eval_snapshot("l1_workspace")
+            elif from_layer == "l2" and to_layer == "l3":
+                self._record_eval_snapshot("l2_workspace")
+            self._apply_layer_override(to_layer)
+            return result
+
+        def _run_layer(self, layer: str) -> dict[str, Any]:
+            result = super()._run_layer(layer)
+            if layer == "l3":
+                self._record_eval_snapshot("l3_workspace")
+            return result
+
+    lifecycle = EvalLifecycle(
+        manager,
+        mode="auto",
+        planner_override_provider=planner_override_provider,
+    )
 
     start = time.perf_counter()
     result = lifecycle.run()
     duration_ms = (time.perf_counter() - start) * 1000
 
+    result["eval_snapshots"] = {
+        "l1_workspace": str(snapshot_root / "l1_workspace"),
+        "l2_workspace": str(snapshot_root / "l2_workspace"),
+        "l3_workspace": str(snapshot_root / "l3_workspace"),
+    }
     result["duration_ms"] = duration_ms
     return result

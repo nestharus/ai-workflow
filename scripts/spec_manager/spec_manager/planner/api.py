@@ -8,10 +8,12 @@ auto-mode decision authority.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -283,6 +285,58 @@ class Planner:
             trace.persist(self._workspace_root)
         except Exception:
             logger.debug("Failed to persist trace %s", trace.trace_id, exc_info=True)
+        try:
+            self._persist_planner_state(trace)
+        except Exception:
+            logger.debug("Failed to persist planner_state for %s", trace.trace_id, exc_info=True)
+
+    def _persist_planner_state(self, trace: Any) -> None:
+        """Persist a per-layer planner decision digest for attribution/debugging."""
+        run_id = str(getattr(trace, "run_id", "") or "")
+        layer = str(getattr(trace, "layer", "") or "")
+        slice_id = str(getattr(trace, "slice_id", "") or "")
+        if not run_id or not layer or not slice_id:
+            return
+        if layer not in {"l1", "l2", "l3"}:
+            return
+
+        state_dir = self._workspace_root / "analysis" / "planner_state" / run_id / layer
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        outputs = {}
+        artifacts = getattr(trace, "artifacts", {}) or {}
+        override_outputs = artifacts.get("override_outputs")
+        if isinstance(override_outputs, dict):
+            outputs = override_outputs
+        else:
+            regular_outputs = artifacts.get("outputs")
+            if isinstance(regular_outputs, dict):
+                outputs = regular_outputs
+
+        decision_text = ""
+        decision = getattr(trace, "decision", None)
+        if decision is not None:
+            decision_text = str(getattr(decision, "decision_text", "") or "")
+
+        payload = {
+            "updated_at": datetime.now(tz=UTC).isoformat(),
+            "run_id": run_id,
+            "layer": layer,
+            "slice_id": slice_id,
+            "trace_id": str(getattr(trace, "trace_id", "") or ""),
+            "decision_key": str(getattr(trace, "decision_key", "") or ""),
+            "capability": str(getattr(trace, "capability", "") or ""),
+            "status": str(getattr(trace, "status", "") or ""),
+            "decision_text": decision_text,
+            "overridden": bool(getattr(trace, "overridden", False)),
+            "outputs": outputs,
+        }
+        safe_slice_id = slice_id.replace("/", "__").replace("\\", "__")
+        out_path = state_dir / f"{safe_slice_id}.json"
+        out_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     # ------------------------------------------------------------------
     # Convenience adapters for existing call sites
