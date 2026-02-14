@@ -11,9 +11,36 @@ Steps produce files; the bundle aggregates references to those files.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
+
+_CANONICAL_DIMENSIONS = {
+    "ARCH_BOUNDARY",
+    "PIN_COVERAGE",
+    "CLARITY",
+    "CORRECTNESS",
+    "DRIFT",
+    "GOVERNANCE",
+}
+_CANONICAL_CATEGORIES = {
+    "style",
+    "maintainability",
+    "architecture",
+    "logic",
+    "drift",
+    "governance",
+}
+_CANONICAL_SEVERITIES = {"BLOCKER", "MAJOR", "MINOR"}
+_CANONICAL_CHANGE_TYPES = {
+    "refactor_only",
+    "wiring_only",
+    "behavior_change",
+    "spec_change",
+}
 
 # ------------------------------------------------------------------
 # Canonical Finding schema (used by reviewers, gates, and VerifyStep)
@@ -30,7 +57,7 @@ class Finding:
     """
 
     dimension: str = (
-        ""  # e.g., ARCH_BOUNDARY, PIN_COVERAGE, CLARITY, CORRECTNESS, DRIFT, GOVERNANCE
+        "CLARITY"  # ARCH_BOUNDARY, PIN_COVERAGE, CLARITY, CORRECTNESS, DRIFT, GOVERNANCE
     )
     category: str = "style"  # style | maintainability | architecture | logic | drift | governance
     severity: str = "MINOR"  # BLOCKER | MAJOR | MINOR
@@ -45,6 +72,37 @@ class Finding:
     confidence: float = 0.7
     tags: list[str] = field(default_factory=list)  # optional pattern IDs
 
+    def __post_init__(self) -> None:
+        """Normalize and validate canonical finding fields without hard-failing."""
+        self.dimension = _normalize_token(self.dimension, upper=True)
+        if self.dimension and self.dimension not in _CANONICAL_DIMENSIONS:
+            logger.warning("Finding.dimension is non-canonical: %r", self.dimension)
+            self.dimension = "CLARITY"
+        if not self.dimension:
+            self.dimension = "CLARITY"
+
+        self.category = _normalize_token(self.category, upper=False)
+        if self.category not in _CANONICAL_CATEGORIES:
+            logger.warning("Finding.category is non-canonical: %r", self.category)
+            self.category = "style"
+
+        self.severity = _normalize_token(self.severity, upper=True)
+        if self.severity not in _CANONICAL_SEVERITIES:
+            logger.warning("Finding.severity is non-canonical: %r", self.severity)
+            self.severity = "MINOR"
+
+        self.required_change_type = _normalize_token(self.required_change_type, upper=False)
+        if self.required_change_type not in _CANONICAL_CHANGE_TYPES:
+            logger.warning(
+                "Finding.required_change_type is non-canonical: %r",
+                self.required_change_type,
+            )
+            self.required_change_type = "refactor_only"
+
+        self.location = _normalize_location(self.location)
+        self.tags = _normalize_tags(self.tags)
+        self.confidence = _normalize_confidence(self.confidence)
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict."""
         import dataclasses
@@ -55,7 +113,7 @@ class Finding:
     def from_dict(cls, data: dict[str, Any]) -> Finding:
         """Reconstruct from a dict."""
         return cls(
-            dimension=data.get("dimension", ""),
+            dimension=data.get("dimension", "CLARITY"),
             category=data.get("category", "style"),
             severity=data.get("severity", "MINOR"),
             location=data.get("location", {}),
@@ -365,3 +423,55 @@ def _bundle_from_dict(data: dict[str, Any]) -> EvidenceBundle:
         else:
             setattr(bundle, f.name, val)
     return bundle
+
+
+def _normalize_token(value: Any, *, upper: bool) -> str:
+    """Normalize a categorical string token."""
+    token = value.strip() if isinstance(value, str) else ""
+    return token.upper() if upper else token.lower()
+
+
+def _normalize_location(location: Any) -> dict[str, Any]:
+    """Ensure location is an object with optional canonical keys."""
+    if location is None:
+        return {}
+    if not isinstance(location, dict):
+        logger.warning("Finding.location must be an object; got %s", type(location).__name__)
+        return {}
+    if location and not location.get("file"):
+        logger.warning("Finding.location is non-empty but missing required 'file' field")
+        return {}
+    return location
+
+
+def _normalize_tags(tags: Any) -> list[str]:
+    """Normalize finding tags to a list[str]."""
+    if tags is None:
+        return []
+    if not isinstance(tags, list):
+        logger.warning("Finding.tags must be a list; got %s", type(tags).__name__)
+        return []
+    normalized: list[str] = []
+    for tag in tags:
+        if not isinstance(tag, str):
+            logger.warning("Dropping non-string finding tag: %r", tag)
+            continue
+        cleaned = tag.strip()
+        if cleaned:
+            normalized.append(cleaned)
+    return normalized
+
+
+def _normalize_confidence(confidence: Any) -> float:
+    """Clamp confidence to [0, 1] when possible."""
+    if isinstance(confidence, bool):
+        logger.warning("Finding.confidence should be numeric in [0, 1], got bool")
+        return float(confidence)
+    if isinstance(confidence, int | float):
+        value = float(confidence)
+        if value < 0.0 or value > 1.0:
+            logger.warning("Finding.confidence out of range [0, 1]: %r", confidence)
+            return min(max(value, 0.0), 1.0)
+        return value
+    logger.warning("Finding.confidence must be numeric; got %s", type(confidence).__name__)
+    return 0.0

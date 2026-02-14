@@ -58,12 +58,15 @@ class DemotionRouter:
         """
         routing = triage(ctx)
 
+        ticket_severity = (
+            "BLOCKER" if (routing.action == "block" or routing.confidence >= 0.8) else "MAJOR"
+        )
         ticket = DemotionTicket(
             run_id=self._run_id,
             source=ctx.source or "GATE_FAILURE",
             gate=ctx.gate,
             target_layer=routing.target_layer,
-            severity="BLOCKER" if routing.confidence >= 0.8 else "MAJOR",
+            severity=ticket_severity,
             failing_pins=list(ctx.failing_pins),
             failing_files=list(ctx.failing_files),
             diagnosis=routing.reason,
@@ -163,8 +166,8 @@ class DemotionRouter:
     ) -> RoutingBatch:
         """Route review findings into DemotionTickets.
 
-        Review findings include a ``category`` field that maps to layers:
-        STYLE/QUALITY → L3, LOGIC → L1, ARCH → L2, SPEC → L1.
+        Review findings are routed via canonical finding fields
+        (category/dimension/tags/required_change_type).
 
         Args:
             slice_id: Slice identifier.
@@ -183,6 +186,9 @@ class DemotionRouter:
                 source_layer=self._active_layer,
                 source="REVIEW",
                 category=category,
+                dimension=finding.get("dimension", ""),
+                tags=list(finding.get("tags", []) or []),
+                required_change_type=finding.get("required_change_type", ""),
                 failing_files=finding.get("files", []),
                 failing_pins=finding.get("pins", []),
                 evidence_paths=finding.get("evidence_paths", []),

@@ -1,16 +1,8 @@
-"""Demotion triage: classifies failures into target layers.
+"""Demotion triage: classifies failures into target layers/actions.
 
 Given failure evidence (gate violations, test failures, review findings),
-determines which layer is responsible for the fix.
-
-Classification policy follows SEC-026 two-stage routing:
-1. behavior_change (or forced logic-affecting tags) → L1
-2. architecture/cross-component/topology scope → L2
-3. otherwise fix in current layer (no demotion)
-
-Forced demotions:
-- INLINE_LOGIC_AT_ARCH → L1
-- Diff-impact logic-affecting → L1
+determine which layer is responsible for remediation, or whether progress
+must be blocked in-place.
 """
 
 from __future__ import annotations
@@ -19,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 Layer = Literal["L1", "L2", "L3"]
+RoutingAction = Literal["demote", "fix_in_layer", "block"]
 
 
 @dataclass
@@ -29,9 +22,9 @@ class DemotionContext:
     source_layer: Layer = "L1"
     source: str = ""  # TEST_FAILURE, REVIEW, ARCH_GATE, ALGORITHMIC_GATE, VERIFY, etc.
     gate: str | None = None
-    category: str = (
-        ""  # STYLE, MAINTAINABILITY, LOGIC, ARCH, SPEC, UNDER_SPEC, DRIFT, GOVERNANCE, etc.
-    )
+    category: str = ""  # style | maintainability | architecture | logic | drift | governance
+    dimension: str = ""  # ARCH_BOUNDARY | PIN_COVERAGE | CLARITY | CORRECTNESS | DRIFT | GOVERNANCE
+    tags: list[str] = field(default_factory=list)
     required_change_type: str = ""  # refactor_only, wiring_only, behavior_change, spec_change
     failing_files: list[str] = field(default_factory=list)
     failing_pins: list[str] = field(default_factory=list)
@@ -43,6 +36,7 @@ class DemotionRouting:
     """Result of triaging a failure."""
 
     target_layer: Layer = "L1"
+    action: RoutingAction = "demote"
     reason: str = ""
     confidence: float = 1.0
 
@@ -55,17 +49,14 @@ _CHANGE_TYPE_ROUTING: dict[str, Layer | None] = {
     "refactor_only": None,  # fix-in-layer, no demotion
 }
 
-# Category → target layer mapping (minimal SEC-026 triage)
+# Canonical category defaults from SEC-027.
 _CATEGORY_ROUTING: dict[str, Layer | None] = {
-    "LOGIC_AFFECTING": "L1",
-    "INLINE_LOGIC_AT_ARCH": "L1",
-    "ARCH": "L2",
-    "ARCHITECTURE": "L2",
-    "CROSS_COMPONENT": "L2",
-    "TOPOLOGY": "L2",
-    "PROJECTION": "L2",
-    "DRIFT": None,
-    "GOVERNANCE": None,  # block in current layer, no demotion
+    "style": None,
+    "maintainability": None,
+    "architecture": "L2",
+    "logic": "L2",
+    "drift": None,  # scope-sensitive; handled separately
+    "governance": None,  # block in current layer
 }
 
 # Gate → target layer mapping
@@ -106,54 +97,131 @@ _SOURCE_ROUTING: dict[str, Layer | None] = {
     "VERIFY": None,
 }
 
+_ARCH_TO_L1_TAGS = {"INLINE_LOGIC_AT_ARCH"}
+_LOGIC_TO_L1_TAGS = {"CORRECTNESS", "LOGIC_BUG"}
+_DRIFT_TO_L2_TAGS = {
+    "ARCH_DRIFT",
+    "ARCH_BOUNDARY",
+    "TOPOLOGY",
+    "CROSS_COMPONENT",
+    "PROJECTION",
+    "WIRING_ONLY",
+    "PIN_COVERAGE",
+}
+_DRIFT_TO_L1_TAGS = {
+    "BEHAVIOR_DRIFT",
+    "CORRECTNESS",
+    "LOGIC_BUG",
+    "SPEC_DRIFT",
+    "BEHAVIOR_CHANGE",
+    "SPEC_CHANGE",
+}
+_DRIFT_DIMENSION_TO_L2 = {"ARCH_BOUNDARY", "PIN_COVERAGE"}
+_DRIFT_DIMENSION_TO_L1 = {"CORRECTNESS", "DRIFT", "CLARITY"}
+
 
 def triage(ctx: DemotionContext) -> DemotionRouting:
     """Classify a failure and determine the target demotion layer.
 
-    Priority: required_change_type > category > gate > source > fix-in-place.
+    Priority: governance block > required_change_type > category > gate >
+    source > fix-in-place.
 
     If the determined target layer is above the active layer, route down
     to the active layer instead (because higher layers aren't editable
     when lower layers are active).
     """
+    category = (ctx.category or "").strip().lower()
+    dimension = (ctx.dimension or "").strip().upper()
+    tags = _normalize_tags(ctx.tags)
+    required_change_type = (ctx.required_change_type or "").strip().lower()
+
+    # Governance findings block progress in-place; this is not a demotion.
+    if category == "governance" or dimension == "GOVERNANCE":
+        return DemotionRouting(
+            target_layer=ctx.active_layer,
+            action="block",
+            reason="Governance finding requires same-layer remediation before continuing",
+            confidence=0.95,
+        )
+
     # 0. Try required_change_type routing (most precise, from Finding schema)
-    if ctx.required_change_type:
-        target = _CHANGE_TYPE_ROUTING.get(ctx.required_change_type)
-        if target is None:
-            # refactor_only or governance → fix-in-layer, no demotion needed
+    if required_change_type:
+        target = _CHANGE_TYPE_ROUTING.get(required_change_type)
+        if target is None and required_change_type in _CHANGE_TYPE_ROUTING:
             return DemotionRouting(
                 target_layer=ctx.active_layer,
-                reason=f"Change type '{ctx.required_change_type}' fixes in current layer",
+                action="fix_in_layer",
+                reason=f"Change type '{required_change_type}' fixes in current layer",
                 confidence=0.95,
+            )
+        if target is None:
+            return DemotionRouting(
+                target_layer=ctx.active_layer,
+                action="fix_in_layer",
+                reason=f"Unknown change type '{required_change_type}' — fix in current layer",
+                confidence=0.5,
             )
         return _constrain_to_active(
             DemotionRouting(
                 target_layer=target,
-                reason=f"Change type '{ctx.required_change_type}' routes to {target}",
+                action="demote",
+                reason=f"Change type '{required_change_type}' routes to {target}",
                 confidence=0.95,
             ),
             ctx.active_layer,
         )
 
     # 1. Try category-based routing
-    if ctx.category:
-        target = _CATEGORY_ROUTING.get(ctx.category.upper())
-        if target is None:
-            # GOVERNANCE → fix in current layer
-            return DemotionRouting(
-                target_layer=ctx.active_layer,
-                reason=f"Category '{ctx.category}' fixes in current layer",
-                confidence=0.9,
-            )
-        if target:
+    if category:
+        if category == "drift":
+            drift_target, drift_reason = _route_drift(tags=tags, dimension=dimension)
             return _constrain_to_active(
                 DemotionRouting(
-                    target_layer=target,
-                    reason=f"Category '{ctx.category}' routes to {target}",
+                    target_layer=drift_target,
+                    action="demote",
+                    reason=drift_reason,
+                    confidence=0.85,
+                ),
+                ctx.active_layer,
+            )
+
+        target = _CATEGORY_ROUTING.get(category)
+        if target is None and category in _CATEGORY_ROUTING:
+            return DemotionRouting(
+                target_layer=ctx.active_layer,
+                action="fix_in_layer",
+                reason=f"Category '{category}' fixes in current layer",
+                confidence=0.9,
+            )
+        if target is None:
+            return DemotionRouting(
+                target_layer=ctx.active_layer,
+                action="fix_in_layer",
+                reason=f"Unknown category '{category}' — fix in current layer",
+                confidence=0.5,
+            )
+
+        override = _tag_override_target(category=category, tags=tags)
+        if override:
+            return _constrain_to_active(
+                DemotionRouting(
+                    target_layer=override,
+                    action="demote",
+                    reason=f"Category '{category}' with tags {sorted(tags)} routes to {override}",
                     confidence=0.9,
                 ),
                 ctx.active_layer,
             )
+
+        return _constrain_to_active(
+            DemotionRouting(
+                target_layer=target,
+                action="demote",
+                reason=f"Category '{category}' routes to {target}",
+                confidence=0.85,
+            ),
+            ctx.active_layer,
+        )
 
     # 2. Try gate-based routing
     if ctx.gate:
@@ -161,6 +229,7 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
         if target is None and ctx.gate in _GATE_ROUTING:
             return DemotionRouting(
                 target_layer=ctx.active_layer,
+                action="fix_in_layer",
                 reason=f"Gate '{ctx.gate}' fixes in current layer",
                 confidence=0.85,
             )
@@ -168,6 +237,7 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
             return _constrain_to_active(
                 DemotionRouting(
                     target_layer=target,
+                    action="demote",
                     reason=f"Gate '{ctx.gate}' routes to {target}",
                     confidence=0.85,
                 ),
@@ -180,6 +250,7 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
         if target is None and ctx.source in _SOURCE_ROUTING:
             return DemotionRouting(
                 target_layer=ctx.active_layer,
+                action="fix_in_layer",
                 reason=f"Source '{ctx.source}' fixes in current layer",
                 confidence=0.6,
             )
@@ -187,6 +258,7 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
             return _constrain_to_active(
                 DemotionRouting(
                     target_layer=target,
+                    action="demote",
                     reason=f"Source '{ctx.source}' routes to {target}",
                     confidence=0.7,
                 ),
@@ -196,6 +268,7 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
     # 4. Default: fix in current layer (don't guess target at low confidence)
     return DemotionRouting(
         target_layer=ctx.active_layer,
+        action="fix_in_layer",
         reason="Unclassifiable failure — fix in current layer (needs manual triage)",
         confidence=0.3,
     )
@@ -214,6 +287,8 @@ def triage_finding(finding_dict: dict, active_layer: Layer, source_layer: Layer)
             source_layer=source_layer,
             source="VERIFY",
             category=finding_dict.get("category", ""),
+            dimension=finding_dict.get("dimension", ""),
+            tags=list(finding_dict.get("tags", []) or []),
             required_change_type=finding_dict.get("required_change_type", ""),
             failing_files=[loc["file"]] if loc.get("file") else [],
         )
@@ -235,3 +310,30 @@ def _constrain_to_active(routing: DemotionRouting, active_layer: Layer) -> Demot
         routing.confidence *= 0.8
 
     return routing
+
+
+def _normalize_tags(tags: list[str]) -> set[str]:
+    """Normalize tag strings for stable routing comparisons."""
+    return {t.strip().upper() for t in tags if isinstance(t, str) and t.strip()}
+
+
+def _tag_override_target(category: str, tags: set[str]) -> Layer | None:
+    """Return a stronger target implied by category+tag combinations."""
+    if category == "architecture" and tags.intersection(_ARCH_TO_L1_TAGS):
+        return "L1"
+    if category == "logic" and tags.intersection(_LOGIC_TO_L1_TAGS):
+        return "L1"
+    return None
+
+
+def _route_drift(*, tags: set[str], dimension: str) -> tuple[Layer, str]:
+    """Classify drift scope as architectural (L2) or behavioral (L1)."""
+    if tags.intersection(_DRIFT_TO_L2_TAGS):
+        return "L2", f"Drift finding tagged architectural scope {sorted(tags)} routes to L2"
+    if tags.intersection(_DRIFT_TO_L1_TAGS):
+        return "L1", f"Drift finding tagged behavioral scope {sorted(tags)} routes to L1"
+    if dimension in _DRIFT_DIMENSION_TO_L2:
+        return "L2", f"Drift finding with dimension '{dimension}' routes to L2"
+    if dimension in _DRIFT_DIMENSION_TO_L1:
+        return "L1", f"Drift finding with dimension '{dimension}' routes to L1"
+    return "L1", "Drift finding missing explicit scope signal; conservatively routes to L1"
