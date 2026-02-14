@@ -2914,6 +2914,7 @@ class VerifyStep:
                 emit_finding(**f)
 
         elif ctx.layer == "l2":
+            l2_evidence = self._build_l2_verification_payload(ctx, bundle, workspace)
             prompt = (
                 "## TASK\n"
                 "Verify L2 architecture post-integration:\n"
@@ -2921,6 +2922,11 @@ class VerifyStep:
                 "- Topology connectivity (no orphan components)\n"
                 "- No inlined business logic in architecture\n"
                 "- Conformance to component manifest / intended topology\n"
+                "- Governance receipts are complete and traceable for promoted wiring changes\n\n"
+                "Use only the evidence payload below. If evidence is missing for a required check, "
+                "emit a finding that identifies the missing artifact.\n\n"
+                "## EVIDENCE_PAYLOAD\n"
+                f"{json.dumps(l2_evidence, indent=2)}\n\n"
                 'Return JSON: {"findings": [...]}.\n'
             )
             data = run_agent_json("pdd-l2-verifier", prompt)
@@ -2965,6 +2971,116 @@ class VerifyStep:
             )
 
         return StepResult(status="OK", notes_path=str(notes_path))
+
+    @staticmethod
+    def _is_l2_architecture_artifact(rel_path: str) -> bool:
+        """Return True when a manifest path is likely an L2 architecture artifact."""
+        lowered = rel_path.lower()
+        tokens = (
+            "manifest",
+            "topology",
+            "wiring",
+            "entrypoint",
+            "pins",
+            "architecture",
+            "graph",
+        )
+        return any(token in lowered for token in tokens)
+
+    def _build_l2_verification_payload(
+        self, ctx: SliceContext, bundle: EvidenceBundle, workspace: Path
+    ) -> dict[str, Any]:
+        """Build concrete L2 verification evidence from the current bundle."""
+        manifest_entries = [m for m in bundle.manifest.files if isinstance(m, dict)]
+        arch_manifest_paths = [
+            str(entry.get("path", "")).strip()
+            for entry in manifest_entries
+            if isinstance(entry.get("path"), str)
+            and self._is_l2_architecture_artifact(str(entry.get("path", "")).strip())
+        ]
+
+        search_roots: list[Path] = []
+        if ctx.slice_root:
+            slice_root = Path(ctx.slice_root)
+            if slice_root.exists():
+                search_roots.append(slice_root)
+        search_roots.append(workspace)
+
+        architecture_artifacts: list[dict[str, str]] = []
+        for rel_path in arch_manifest_paths[:12]:
+            artifact_path: Path | None = None
+            for root in search_roots:
+                candidate = root / rel_path
+                if candidate.exists() and candidate.is_file():
+                    artifact_path = candidate
+                    break
+            if artifact_path is None:
+                continue
+            try:
+                content = artifact_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            architecture_artifacts.append(
+                {
+                    "path": rel_path,
+                    "content": content[:4000],
+                }
+            )
+
+        analyzed_components: list[dict[str, Any]] = []
+        for entry in bundle.source_index.entries:
+            if not isinstance(entry, dict):
+                continue
+            analysis = entry.get("analysis")
+            if isinstance(analysis, dict):
+                analyzed_components.append(analysis)
+
+        return {
+            "slice": {
+                "run_id": bundle.run_id,
+                "slice_id": bundle.slice_id,
+                "iteration": bundle.iteration,
+                "layer": ctx.layer,
+            },
+            "manifest": {
+                "files": manifest_entries,
+                "slice_patterns": list(bundle.manifest.slice_patterns or []),
+                "generated_files": list(bundle.manifest.generated_files or []),
+                "architecture_paths": arch_manifest_paths,
+            },
+            "diff": {
+                "changed_files": list(bundle.diff.changed_files or []),
+                "content_hash": bundle.diff.content_hash,
+                "head_commit": bundle.diff.head_commit,
+            },
+            "analysis": {
+                "source_index_entries": len(bundle.source_index.entries or []),
+                "components": analyzed_components[:150],
+            },
+            "implementation_receipts": {
+                "applied_edits": list(bundle.implementation.applied_edits or []),
+                "pin_proposals": list(bundle.implementation.pin_proposals or []),
+                "edge_proposals": list(bundle.implementation.edge_proposals or []),
+                "under_spec_events": list(bundle.implementation.under_spec_events or []),
+            },
+            "graph_artifacts": {
+                "pins_snapshot": asdict(bundle.pins_snapshot),
+                "graph_snapshot": asdict(bundle.graph_snapshot),
+                "graph_deltas": [asdict(delta) for delta in bundle.graph_deltas],
+            },
+            "promotion": {
+                "promotion_report_path": bundle.promotion.path,
+                "gates": list(bundle.gates.gates or []),
+                "demotions": asdict(bundle.demotions),
+            },
+            "integration": {
+                "integration_report_path": bundle.integration.path,
+                "tests_slice_path": bundle.tests.slice_path,
+                "tests_full_path": bundle.tests.full_path,
+                "verification_path": bundle.verification.path,
+            },
+            "architecture_artifacts": architecture_artifacts,
+        }
 
 
 class AlignStep:

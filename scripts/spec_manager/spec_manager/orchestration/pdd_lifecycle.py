@@ -107,6 +107,7 @@ class PddLifecycle:
             a warning is logged and escalation metadata is emitted.
         max_pipeline_passes: Overall pipeline pass cap (budget #4).
             Maximum number of times the L1→L2→L3 pipeline can run.
+        max_parallel: Maximum concurrent slice loops per layer scheduler.
         model_profile: Optional model profile used for role-based model routing.
         planner_override_provider: Optional planner provider override for tests/evals.
     """
@@ -124,6 +125,7 @@ class PddLifecycle:
         max_approval_iterations: int = 3,
         max_demotions_per_layer: int = 50,
         max_pipeline_passes: int = 2,
+        max_parallel: int = 4,
         model_profile: Any = None,
         planner_override_provider: Any = None,
     ) -> None:
@@ -138,6 +140,7 @@ class PddLifecycle:
         self.max_approval_iterations = max_approval_iterations
         self.max_demotions_per_layer = max_demotions_per_layer
         self.max_pipeline_passes = max_pipeline_passes
+        self.max_parallel = max(1, max_parallel)
         self._model_profile = model_profile
         self._planner_override_provider = planner_override_provider
         self._compute_quality = False
@@ -308,22 +311,32 @@ class PddLifecycle:
         state_mgr.update_state(phase="intake", active_layer="")
 
         # Phase 0: Intake (raw prose → code-as-spec, if needed)
-        results["intake"] = self._run_intake()
+        intake_result = self._run_intake()
+        results["intake"] = intake_result
+        intake_ran = bool(intake_result.get("ran", True))
 
-        # Bootstrap constraints from intake artifacts
-        try:
-            from spec_manager.planner.constraints.bootstrap import bootstrap_constraints_from_intake
+        # Bootstrap constraints from intake artifacts only when intake ran.
+        if intake_ran:
+            try:
+                from spec_manager.planner.constraints.bootstrap import (
+                    bootstrap_constraints_from_intake,
+                )
 
-            libraries_dir = self.manager.structure.libraries_dir
-            system_dir = self.manager.structure.root / "system"
-            results["constraints_bootstrapped"] = bootstrap_constraints_from_intake(
-                workspace_root=self.manager.workspace_path,
-                libraries_dir=libraries_dir,
-                system_dir=system_dir if system_dir.exists() else None,
-            )
-        except Exception as exc:
-            logger.warning("Constraint bootstrap failed: %s", exc)
-            results["constraints_bootstrapped"] = {"error": str(exc)}
+                libraries_dir = self.manager.structure.libraries_dir
+                system_dir = self.manager.structure.root / "system"
+                results["constraints_bootstrapped"] = bootstrap_constraints_from_intake(
+                    workspace_root=self.manager.workspace_path,
+                    libraries_dir=libraries_dir,
+                    system_dir=system_dir if system_dir.exists() else None,
+                )
+            except Exception as exc:
+                logger.warning("Constraint bootstrap failed: %s", exc)
+                results["constraints_bootstrapped"] = {"error": str(exc)}
+        else:
+            results["constraints_bootstrapped"] = {
+                "skipped": True,
+                "reason": "Phase 0 intake skipped",
+            }
 
         state_mgr.update_state(phase="intake_done")
 
@@ -331,11 +344,26 @@ class PddLifecycle:
         results["pipeline_pass"] = 1
         results["max_pipeline_passes"] = self.max_pipeline_passes
 
-        self._record_git_ref(f"pdd/{self.manager.run_id}/base")
+        base_ref_name = f"pdd/{self.manager.run_id}/base"
+        base_ref_for_setup: str | None = None
+        if intake_ran:
+            base_ref_created = self._record_git_ref(base_ref_name)
+            results["base_ref"] = {"name": base_ref_name, "created": base_ref_created}
+            if not base_ref_created:
+                logger.warning(
+                    "Failed to create base ref '%s' after intake; "
+                    "falling back to default HEAD setup",
+                    base_ref_name,
+                )
+            else:
+                base_ref_for_setup = base_ref_name
 
         # Setup layer worktrees if managed
         if self.worktree_manager:
-            results["setup"] = self.worktree_manager.setup_layers()
+            if base_ref_for_setup is not None:
+                results["setup"] = self.worktree_manager.setup_layers(base_ref=base_ref_for_setup)
+            else:
+                results["setup"] = self.worktree_manager.setup_layers()
 
         # L1: Code-as-Spec (with human approval loop)
         state_mgr.update_state(phase="l1", active_layer="l1")
@@ -374,6 +402,11 @@ class PddLifecycle:
 
         # L1→L2 transition: architectural refinement (may demote to L1)
         results["l1_l2_transition"] = self._run_transition("l1", "l2")
+        if results["l1_l2_transition"].get("governance_blocked"):
+            logger.error("Blocking L2 start: L1→L2 transition governance gate failed")
+            results["l2_blocked"] = True
+            results["l2_blocked_reason"] = "L1→L2 transition governance gate failed"
+            return results
         state_mgr.update_state(
             transitions_completed=["l1_l2"],
             phase="l2",
@@ -395,6 +428,11 @@ class PddLifecycle:
 
         # L2→L3 transition: code quality refinement (may demote to L2)
         results["l2_l3_transition"] = self._run_transition("l2", "l3")
+        if results["l2_l3_transition"].get("governance_blocked"):
+            logger.error("Blocking L3 start: L2→L3 transition governance gate failed")
+            results["l3_blocked"] = True
+            results["l3_blocked_reason"] = "L2→L3 transition governance gate failed"
+            return results
         state_mgr.update_state(
             transitions_completed=["l1_l2", "l2_l3"],
             phase="l3",
@@ -537,10 +575,14 @@ class PddLifecycle:
         )
         results["final_governance"] = final_governance
         if not final_governance.get("passed", True):
-            logger.warning(
+            logger.error(
                 "Final governance gate failed: %s",
                 final_governance.get("error", ""),
             )
+            results["release_blocked"] = True
+            results["release_blocked_reason"] = "Final governance gate failed"
+            state_mgr.update_state(phase="blocked_final_governance")
+            return results
 
         # Release signoff (auto-approve in auto mode)
         results["release_signoff"] = self._request_release_signoff(results)
@@ -700,12 +742,18 @@ class PddLifecycle:
         )
         results["governance"] = governance
         if not governance.get("passed", True):
-            logger.warning(
+            logger.error(
                 "Transition %s→%s governance gate failed: %s",
                 from_layer,
                 to_layer,
                 governance.get("error", ""),
             )
+            results["governance_blocked"] = True
+            results["error"] = (
+                f"Transition {from_layer}→{to_layer} blocked by governance gate: "
+                f"{governance.get('error', '')}"
+            )
+            return results
 
         # Propagate clean → next layer's dirty
         if self.worktree_manager:
@@ -793,7 +841,7 @@ class PddLifecycle:
 
         scheduler = ReactivePromotionScheduler(
             loop=loop,
-            config=SchedulerConfig(max_parallel=4),
+            config=SchedulerConfig(max_parallel=self.max_parallel),
             monitor_executor=monitor_executor,
             wake_queue=wake_queue,
         )
@@ -1309,7 +1357,105 @@ class PddLifecycle:
     # ------------------------------------------------------------------
 
     def _run_intake(self) -> dict[str, Any]:
-        """Run Phase 0 intake: raw prose → code-as-spec.
+        """Run Phase 0 intake conditionally with bounded rework.
+
+        Intake runs only when input appears to be raw prose and no structured
+        libraries already exist. If intake quality indicates unresolved
+        coverage/overlap issues, intake re-runs up to 2 passes.
+
+        Returns:
+            Intake summary with ``ran`` flag and final pass details.
+        """
+        should_run, reason = self._should_run_intake()
+        if not should_run:
+            logger.info("Skipping Phase 0 intake: %s", reason)
+            return {
+                "ran": False,
+                "skipped": True,
+                "reason": reason,
+                "attempts": 0,
+                "max_rework_passes": 2,
+            }
+
+        max_passes = 2
+        passes: list[dict[str, Any]] = []
+        rework_reasons: list[str] = []
+
+        for attempt in range(1, max_passes + 1):
+            pass_result = self._run_intake_once()
+            pass_result["attempt"] = attempt
+            passes.append(pass_result)
+
+            rework_reasons = self._intake_rework_reasons(pass_result)
+            if not rework_reasons:
+                break
+
+            if attempt < max_passes:
+                logger.warning(
+                    "Phase 0 intake pass %d/%d requires rework (%s); retrying",
+                    attempt,
+                    max_passes,
+                    ", ".join(rework_reasons),
+                )
+
+        final_result: dict[str, Any] = dict(passes[-1]) if passes else {}
+        final_result["ran"] = True
+        final_result["attempts"] = len(passes)
+        final_result["max_rework_passes"] = max_passes
+        final_result["passes"] = passes
+        if rework_reasons:
+            final_result["rework_reasons"] = rework_reasons
+        return final_result
+
+    def _should_run_intake(self) -> tuple[bool, str]:
+        """Return whether Phase 0 intake should run for this lifecycle."""
+        libraries_dir = self.manager.structure.libraries_dir
+        if libraries_dir.exists() and any(path.is_dir() for path in libraries_dir.iterdir()):
+            return False, "workspace already contains libraries"
+
+        raw_input_root = getattr(self.manager, "input_folder", None)
+        if isinstance(raw_input_root, Path):
+            input_root = raw_input_root
+        elif isinstance(raw_input_root, str):
+            input_root = Path(raw_input_root)
+        else:
+            input_root = self.manager.workspace_path / "spec_snapshot"
+        if not input_root.exists():
+            return True, "input folder does not exist locally; attempting intake"
+
+        if self._input_appears_structured(input_root):
+            return False, "input already structured"
+
+        prose_suffixes = {".md", ".markdown", ".txt", ".rst", ".adoc"}
+        candidate_files = [
+            path
+            for path in input_root.rglob("*")
+            if path.is_file() and not any(part.startswith(".") for part in path.parts)
+        ]
+        if not candidate_files:
+            return False, "input folder contains no files"
+
+        has_non_prose = any(path.suffix.lower() not in prose_suffixes for path in candidate_files)
+        if has_non_prose:
+            return False, "input contains non-prose files"
+
+        return True, "raw prose input detected"
+
+    @staticmethod
+    def _input_appears_structured(input_root: Path) -> bool:
+        """Heuristic: detect pre-structured intake input layout."""
+        if (input_root / "libraries.yaml").exists():
+            return True
+        if (input_root / "route_table.jsonl").exists():
+            return True
+        if (input_root / "coverage_ledger.jsonl").exists():
+            return True
+
+        libraries_dir = input_root / "libraries"
+        return libraries_dir.exists() and any(path.is_dir() for path in libraries_dir.iterdir())
+
+    def _run_intake_once(self) -> dict[str, Any]:
+        """Run one Phase 0 intake pass.
 
         Uses the PddOrchestrator for Phase 0 execution.
 
@@ -1324,6 +1470,40 @@ class PddLifecycle:
         except Exception as exc:
             logger.warning("Phase 0 intake failed: %s", exc)
             return {"error": str(exc)}
+
+    @staticmethod
+    def _intake_rework_reasons(result: dict[str, Any]) -> list[str]:
+        """Extract bounded rework triggers from an intake result payload."""
+        reasons: list[str] = []
+
+        def add_reason(reason: str) -> None:
+            if reason not in reasons:
+                reasons.append(reason)
+
+        if int(result.get("coverage_files_incomplete", 0) or 0) > 0:
+            add_reason("coverage_below_100")
+
+        quality = result.get("library_quality")
+        if isinstance(quality, dict):
+            dimensions = quality.get("dimensions")
+            if isinstance(dimensions, list):
+                for dim in dimensions:
+                    if not isinstance(dim, dict):
+                        continue
+                    name = str(dim.get("name", "")).lower().strip()
+                    passed = bool(dim.get("passed", True))
+                    if name == "completeness" and not passed:
+                        add_reason("coverage_below_100")
+                    if name == "routing_overlap" and not passed:
+                        add_reason("fatal_routing_overlap")
+
+        error_text = str(result.get("error", "")).lower()
+        if "coverage" in error_text:
+            add_reason("coverage_below_100")
+        if "routing overlap" in error_text or ("overlap" in error_text and "route" in error_text):
+            add_reason("fatal_routing_overlap")
+
+        return reasons
 
     # ------------------------------------------------------------------
     # Typed refinement methods
@@ -1926,29 +2106,65 @@ class PddLifecycle:
         sha = result.stdout.strip()
         return sha or None
 
-    def _record_git_ref(self, ref_name: str) -> None:
-        """Record a git ref milestone for the run.
+    def _record_git_ref(self, ref_name: str) -> bool:
+        """Record a git ref milestone for the run and create a real git ref.
 
-        Writes ref metadata to the run directory so downstream tooling
-        can reconstruct the pipeline timeline.
+        Creates/moves the git ref at current HEAD via the VCS abstraction and
+        writes metadata to the run directory for pipeline timeline auditing.
 
         Args:
             ref_name: Ref name (e.g., ``pdd/<run_id>/l1-approved``).
+
+        Returns:
+            True when the git ref was created/updated successfully.
         """
-        if not hasattr(self, "_state_mgr"):
-            return
+        head_sha = self._read_git_sha()
+        ref_created = False
+        ref_error = ""
+
+        vcs = self.worktree_manager.vcs if self.worktree_manager else None
+        if vcs is None:
+            try:
+                from spec_manager.vcs.operations import GitVcs
+
+                vcs = GitVcs(repo_root=self.manager.workspace_path)
+            except Exception as exc:
+                ref_error = f"Unable to initialize VCS helper: {exc}"
+
+        if not head_sha:
+            ref_error = ref_error or "Unable to resolve HEAD SHA"
+        elif vcs is not None:
+            try:
+                update_result = vcs.update_ref(ref_name, head_sha)
+                if isinstance(update_result, tuple) and len(update_result) == 2:
+                    ok, err = update_result
+                else:
+                    ok, err = False, f"Unexpected update_ref return value: {update_result!r}"
+            except Exception as exc:
+                ok, err = False, str(exc)
+            ref_created = bool(ok)
+            ref_error = str(err)
+            if not ref_created:
+                logger.warning("Failed to create git ref '%s': %s", ref_name, ref_error)
+
         import time
 
-        refs_dir = self._state_mgr.run_dir / "refs"
-        refs_dir.mkdir(parents=True, exist_ok=True)
-        ref_data = {
-            "ref": ref_name,
-            "run_id": self.manager.run_id,
-            "timestamp": time.time(),
-        }
-        (refs_dir / f"{ref_name.replace('/', '_')}.json").write_text(
-            json.dumps(ref_data, indent=2), encoding="utf-8"
-        )
+        if hasattr(self, "_state_mgr"):
+            refs_dir = self._state_mgr.run_dir / "refs"
+            refs_dir.mkdir(parents=True, exist_ok=True)
+            ref_data = {
+                "ref": ref_name,
+                "run_id": self.manager.run_id,
+                "timestamp": time.time(),
+                "head_sha": head_sha or "",
+                "git_ref_created": ref_created,
+                "git_ref_error": ref_error,
+            }
+            (refs_dir / f"{ref_name.replace('/', '_')}.json").write_text(
+                json.dumps(ref_data, indent=2), encoding="utf-8"
+            )
+
+        return ref_created
 
     def _write_run_report(self, filename: str, data: dict | list | str) -> None:
         """Write a report file to the run-scoped reports directory.
