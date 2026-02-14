@@ -25,6 +25,17 @@ class RouteEntry:
     element_id: str  # e.g. "ALG-LIB01-001"
     notes: str = ""  # free-text from LLM explaining decision
     ref_stubs: list[str] = field(default_factory=list)  # unresolved cross-file references
+    resolved_refs: list[ResolvedReference] = field(default_factory=list)
+
+
+@dataclass
+class ResolvedReference:
+    """Resolved cross-file reference produced from a ref stub."""
+
+    stub: str
+    target: SourceSpan
+    target_route_id: str = ""
+    target_element_id: str = ""
 
 
 @dataclass
