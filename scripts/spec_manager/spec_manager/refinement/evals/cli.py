@@ -411,10 +411,43 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
 
     p_planner = eval_subparsers.add_parser(
         "planner",
-        help="Planner evaluation and trace analysis",
-        description="Evaluate planner decisions against ground truth and analyze traces",
+        help="Planner eval harness and trace analysis",
+        description=(
+            "Primary harness entry point: eval planner --fixture <name> --gt <path> --mode <mode>. "
+            "Trace utility subcommands remain available."
+        ),
     )
-    planner_sub = p_planner.add_subparsers(dest="planner_command", required=True)
+    p_planner.add_argument(
+        "--fixture",
+        default="",
+        help="Fixture name (without _pdd suffix), e.g. chaotic_treasury_expanded",
+    )
+    p_planner.add_argument(
+        "--fixture-root",
+        default="",
+        help="Fixture root directory (defaults to repository eval fixtures dir)",
+    )
+    p_planner.add_argument("--gt", default="", help="Path to planner ground truth YAML")
+    p_planner.add_argument(
+        "--mode",
+        choices=["e2e", "slice", "replay", "shadow"],
+        default="e2e",
+        help="Harness mode (default: e2e)",
+    )
+    p_planner.add_argument("--run-id", default="", help="Run ID override")
+    p_planner.add_argument("--workspace", default=".", help="Workspace root for traces/replay")
+    p_planner.add_argument("--slice-id", default="", help="Slice ID for mode=slice")
+    p_planner.add_argument("--layer", default="", help="Layer for mode=slice (l1|l2|l3)")
+    p_planner.add_argument("--trace-id", default="", help="Trace ID for mode=replay")
+    p_planner.add_argument("--override", default="", help="Override YAML/JSON for mode=replay")
+    p_planner.add_argument("--model-config", default="", help="Candidate model ID override")
+    p_planner.add_argument(
+        "--shadow-model",
+        default="",
+        help="Oracle model ID for mode=shadow",
+    )
+
+    planner_sub = p_planner.add_subparsers(dest="planner_command", required=False)
 
     # eval planner score
     p_pl_score = planner_sub.add_parser("score", help="Score planner traces against ground truth")
@@ -577,6 +610,67 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 # --- Planner command handlers ---
+
+
+def cmd_planner_run(args: argparse.Namespace) -> int:
+    """Run planner eval harness via mode-based entry point."""
+    from spec_manager.refinement.evals.planner.harness import EvalConfig, PlannerEvalHarness
+
+    workspace = Path(args.workspace)
+    gt_path = Path(args.gt) if args.gt else None
+    fixture_root = Path(args.fixture_root) if args.fixture_root else None
+    override_path = Path(args.override) if args.override else None
+
+    config = EvalConfig(
+        workspace_root=workspace,
+        gt_path=gt_path,
+        run_id=args.run_id,
+        mode=args.mode,
+        fixture=args.fixture,
+        fixture_root=fixture_root,
+        model_config=args.model_config,
+        shadow_model_config=args.shadow_model,
+        slice_id=args.slice_id,
+        layer=args.layer,
+        replay_trace_id=args.trace_id,
+        override_path=override_path,
+    )
+    harness = PlannerEvalHarness(workspace, gt_path=gt_path)
+    result = harness.run_and_score(config)
+
+    print(f"Mode: {args.mode}")
+    if result.run_id:
+        print(f"Run ID: {result.run_id}")
+    print(f"Traces evaluated: {result.traces_evaluated}")
+
+    if args.mode == "replay":
+        if result.verdicts:
+            verdict = result.verdicts[0]
+            print(f"Replay: {'SAME' if verdict.passed else 'DIFFERENT'}")
+            print(f"Detail: {verdict.detail}")
+        if result.errors:
+            print("\nErrors:")
+            for err in result.errors:
+                print(f"  - {err}")
+        replay_ok = bool(result.verdicts and result.verdicts[0].passed)
+        return 0 if replay_ok and not result.errors else 1
+
+    if result.scorecard:
+        scorecard = result.scorecard
+        print(f"Overall: {'PASS' if scorecard.overall_pass else 'FAIL'}")
+        hard_pass = sum(1 for g in scorecard.hard_gates if g.status == "PASS")
+        print(f"Hard gates: {hard_pass}/{len(scorecard.hard_gates)}")
+        soft_pass = sum(1 for s in scorecard.soft_signals if s.status == "PASS")
+        print(f"Soft signals: {soft_pass}/{len(scorecard.soft_signals)}")
+
+    if result.errors:
+        print("\nErrors:")
+        for err in result.errors:
+            print(f"  - {err}")
+
+    if result.scorecard is None:
+        return 1 if result.errors else 0
+    return 0 if (result.scorecard.overall_pass and not result.errors) else 1
 
 
 def cmd_planner_score(args: argparse.Namespace) -> int:
@@ -1039,6 +1133,8 @@ def handle_eval_command(args: argparse.Namespace) -> int:
     }
 
     if args.eval_command == "planner":
+        if not getattr(args, "planner_command", None):
+            return cmd_planner_run(args)
         planner_commands = {
             "score": cmd_planner_score,
             "list": cmd_planner_list,

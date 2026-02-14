@@ -91,6 +91,7 @@ class LoadedTrace:
     model_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
+    replay: dict[str, Any] = field(default_factory=dict)
     status: str = ""
     overridden: bool = False
 
@@ -103,6 +104,11 @@ class LoadedTrace:
 def _traces_dir(workspace_root: Path) -> Path:
     """Return the planner traces directory."""
     return workspace_root / "analysis" / "planner_traces"
+
+
+def trace_dir(workspace_root: Path, trace_id: str) -> Path:
+    """Return a single trace directory path."""
+    return _traces_dir(workspace_root) / trace_id
 
 
 # ------------------------------------------------------------------
@@ -215,21 +221,22 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
     Raises:
         FileNotFoundError: If the trace directory does not exist.
     """
-    trace_dir = _traces_dir(workspace_root) / trace_id
-    if not trace_dir.is_dir():
-        raise FileNotFoundError(f"Trace directory not found: {trace_dir}")
+    tdir = trace_dir(workspace_root, trace_id)
+    if not tdir.is_dir():
+        raise FileNotFoundError(f"Trace directory not found: {tdir}")
 
-    request = _read_json(trace_dir / "request.json")
-    decision = _read_json(trace_dir / "decision.json")
+    request = _read_json(tdir / "request.json")
+    decision = _read_json(tdir / "decision.json")
+    replay = _read_json(tdir / "replay.json")
 
     # Call logs
-    calls_dir = trace_dir / "calls"
+    calls_dir = tdir / "calls"
     model_calls = _read_jsonl(calls_dir / "model_calls.jsonl")
     tool_calls = _read_jsonl(calls_dir / "tool_calls.jsonl")
 
     # Artifacts
     artifacts: dict[str, Any] = {}
-    artifacts_dir = trace_dir / "artifacts"
+    artifacts_dir = tdir / "artifacts"
     if artifacts_dir.is_dir():
         for artifact_path in sorted(artifacts_dir.iterdir()):
             if artifact_path.suffix == ".json" and artifact_path.is_file():
@@ -244,6 +251,7 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
         model_calls=model_calls,
         tool_calls=tool_calls,
         artifacts=artifacts,
+        replay=replay,
         status=decision.get("status", ""),
         overridden=bool(decision.get("overridden", False)),
     )

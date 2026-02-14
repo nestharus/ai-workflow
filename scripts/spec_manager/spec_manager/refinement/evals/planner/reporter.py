@@ -1,10 +1,11 @@
 """Compute and write the PlannerScorecard from trace data and ground truth verdicts.
 
-Produces three output files under ``reports/pdd/{run_id}/``:
+Produces four output files under ``reports/pdd/{run_id}/``:
 
 - ``planner_scorecard.json`` -- machine-readable scorecard
 - ``planner_scorecard.md`` -- human-readable tables
 - ``planner_decisions.jsonl`` -- one line per decision with verdict
+- ``planner_eval.jsonl`` -- one line per decision with eval inputs/outputs/scoring
 
 Hard gates (5) are mechanical pass/fail checks derived from traces:
 
@@ -156,6 +157,7 @@ class PlannerReporter:
         self._run_id = run_id
         self._reports_dir = workspace_root / "reports" / "pdd" / run_id
         self._last_verdicts: list[Any] = []
+        self._last_traces: list[Any] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -176,6 +178,7 @@ class PlannerReporter:
             Fully populated :class:`PlannerScorecard`.
         """
         self._last_verdicts = list(verdicts)
+        self._last_traces = list(traces)
         hard_gates = self._compute_hard_gates(verdicts, traces)
         soft_signals = self._compute_soft_signals(verdicts, traces)
         slice_aggregates = self._compute_slice_aggregates(verdicts, traces)
@@ -216,13 +219,14 @@ class PlannerReporter:
             summary=" ".join(summary_parts),
         )
 
-    def write(self, scorecard: PlannerScorecard) -> None:
-        """Write planner_scorecard.json, planner_scorecard.md, planner_decisions.jsonl.
+    def write(self, scorecard: PlannerScorecard, *, traces: list[Any]) -> None:
+        """Write scorecards and per-decision planner eval artifacts.
 
         All files are written under ``reports/pdd/{run_id}/``.
 
         Args:
             scorecard: The scorecard to persist.
+            traces: Loaded traces included in this scorecard.
         """
         self._reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -242,15 +246,28 @@ class PlannerReporter:
         lines = [json.dumps(self._verdict_to_row(v), sort_keys=True) for v in self._last_verdicts]
         jsonl_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
+        # Per-decision eval stream for downstream tooling.
+        eval_jsonl_path = self._reports_dir / "planner_eval.jsonl"
+        verdict_by_trace_id = self._verdicts_by_trace_id()
+        eval_lines = [
+            json.dumps(self._eval_row(trace=t, verdict_by_trace_id=verdict_by_trace_id))
+            for t in traces
+        ]
+        eval_jsonl_path.write_text(
+            "\n".join(eval_lines) + ("\n" if eval_lines else ""),
+            encoding="utf-8",
+        )
+
         # Planner review (FAIL/WARN/NEEDS_REVIEW decisions with trace paths)
         review_path = self._reports_dir / "planner_review.md"
         review_path.write_text(self._render_review(self._last_verdicts), encoding="utf-8")
 
         logger.info(
-            "Planner scorecard written: json=%s md=%s jsonl=%s review=%s",
+            "Planner scorecard written: json=%s md=%s decisions=%s eval=%s review=%s",
             json_path,
             md_path,
             jsonl_path,
+            eval_jsonl_path,
             review_path,
         )
 
@@ -837,6 +854,48 @@ class PlannerReporter:
             "detail": str(getattr(verdict, "detail", "") or ""),
             "hard_gate_failures": list(getattr(verdict, "hard_gate_failures", []) or []),
             "soft_signal_warnings": list(getattr(verdict, "soft_signal_warnings", []) or []),
+        }
+
+    def _verdicts_by_trace_id(self) -> dict[str, Any]:
+        by_id: dict[str, Any] = {}
+        for verdict in self._last_verdicts:
+            trace_id = str(getattr(verdict, "trace_id", "") or "")
+            if trace_id:
+                by_id[trace_id] = verdict
+        return by_id
+
+    @classmethod
+    def _eval_row(cls, *, trace: Any, verdict_by_trace_id: dict[str, Any]) -> dict[str, Any]:
+        trace_id = str(getattr(trace, "trace_id", "") or "")
+        verdict = verdict_by_trace_id.get(trace_id)
+        verdict_row = cls._verdict_to_row(verdict) if verdict is not None else None
+
+        artifacts = getattr(trace, "artifacts", {}) or {}
+        outputs = artifacts.get("outputs")
+        if not isinstance(outputs, dict):
+            outputs = artifacts.get("override_outputs", {})
+        if not isinstance(outputs, dict):
+            outputs = {}
+
+        decision_key = str(getattr(trace, "decision_key", "") or "")
+        capability = ""
+        if decision_key:
+            parts = decision_key.split(":")
+            if len(parts) > 1:
+                capability = parts[1]
+
+        return {
+            "trace_id": trace_id,
+            "decision_key": decision_key,
+            "capability": capability,
+            "status": str(getattr(trace, "status", "") or ""),
+            "overridden": bool(getattr(trace, "overridden", False)),
+            "request": getattr(trace, "request", {}) or {},
+            "decision": getattr(trace, "decision", {}) or {},
+            "outputs": outputs,
+            "model_calls_count": len(getattr(trace, "model_calls", []) or []),
+            "tool_calls_count": len(getattr(trace, "tool_calls", []) or []),
+            "verdict": verdict_row,
         }
 
     # ------------------------------------------------------------------
