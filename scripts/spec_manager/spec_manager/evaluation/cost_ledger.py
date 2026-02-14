@@ -21,11 +21,31 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _as_int(value: Any) -> int:
+    """Convert value to int with safe fallback."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(value: Any) -> float:
+    """Convert value to float with safe fallback."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass
 class LLMCallRecord:
     """A single LLM call record."""
 
     agent_name: str = ""
+    role: str = ""
+    model_id: str = ""
+    tokens_in: int = 0
+    tokens_out: int = 0
     duration_ms: float = 0.0
     timestamp: float = 0.0
     run_id: str = ""
@@ -39,8 +59,12 @@ class LLMCallRecord:
     def from_dict(cls, data: dict[str, Any]) -> LLMCallRecord:
         return cls(
             agent_name=data.get("agent_name", ""),
-            duration_ms=data.get("duration_ms", 0.0),
-            timestamp=data.get("timestamp", 0.0),
+            role=data.get("role", ""),
+            model_id=data.get("model_id", ""),
+            tokens_in=_as_int(data.get("tokens_in", 0)),
+            tokens_out=_as_int(data.get("tokens_out", 0)),
+            duration_ms=_as_float(data.get("duration_ms", 0.0)),
+            timestamp=_as_float(data.get("timestamp", 0.0)),
             run_id=data.get("run_id", ""),
             slice_id=data.get("slice_id", ""),
             layer=data.get("layer", ""),
@@ -74,17 +98,27 @@ class CostLedger:
         records = self.read_all()
         by_agent: dict[str, int] = {}
         by_layer: dict[str, int] = {}
+        by_model: dict[str, int] = {}
         total_duration_ms = 0.0
+        total_tokens_in = 0
+        total_tokens_out = 0
 
         for r in records:
             by_agent[r.agent_name] = by_agent.get(r.agent_name, 0) + 1
             if r.layer:
                 by_layer[r.layer] = by_layer.get(r.layer, 0) + 1
+            if r.model_id:
+                by_model[r.model_id] = by_model.get(r.model_id, 0) + 1
             total_duration_ms += r.duration_ms
+            total_tokens_in += r.tokens_in
+            total_tokens_out += r.tokens_out
 
         return {
             "total_calls": len(records),
             "total_duration_ms": total_duration_ms,
+            "total_tokens_in": total_tokens_in,
+            "total_tokens_out": total_tokens_out,
             "by_agent": by_agent,
             "by_layer": by_layer,
+            "by_model": by_model,
         }

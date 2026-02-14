@@ -129,10 +129,8 @@ class FinalReportGenerator:
             "",
         ]
 
-        # Try run-scoped first, fall back to global
+        # Run-scoped manifest only (no global fallback).
         manifest_path = self._reports_dir / "component_manifest.json"
-        if not manifest_path.exists():
-            manifest_path = self.workspace_root / "reports" / "component_manifest.json"
         if manifest_path.exists():
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -146,12 +144,20 @@ class FinalReportGenerator:
         else:
             lines.append("No component manifest found.")
 
-        # Check for architecture proposals
+        # Run-scoped architecture proposals only.
         proposals_path = self._reports_dir / "architecture_proposals.json"
-        if not proposals_path.exists():
-            proposals_path = self.workspace_root / "reports" / "architecture_proposals.json"
         if proposals_path.exists():
-            lines.append(f"\nArchitecture proposals: `{proposals_path}`")
+            try:
+                proposals_data = json.loads(proposals_path.read_text(encoding="utf-8"))
+                candidates = proposals_data.get("candidates", [])
+                issues = proposals_data.get("issues", [])
+                lines.append("")
+                lines.append(f"**Architecture Proposals**: {len(candidates)}")
+                lines.append(f"**Architectural Issues**: {len(issues)}")
+            except (json.JSONDecodeError, OSError):
+                lines.append("Architecture proposals could not be read.")
+        else:
+            lines.append("No architecture proposals found for this run.")
 
         return "\n".join(lines)
 

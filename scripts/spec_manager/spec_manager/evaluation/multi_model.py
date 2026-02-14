@@ -48,6 +48,7 @@ class MultiModelRunConfig:
     input_folder: str = ""
     judge_model: str = ""
     compute_quality: bool = True
+    enable_planner_eval: bool = True
     runs_per_model: int = 1
 
 
@@ -84,6 +85,7 @@ class MultiModelRunner:
         comparison_id: str = "",
         judge_model: str = "",
         compute_quality: bool = True,
+        enable_planner_eval: bool = True,
         runs_per_model: int = 1,
         allow_self_judge: bool = False,
     ) -> dict[str, Any]:
@@ -94,6 +96,7 @@ class MultiModelRunner:
             comparison_id: Unique comparison identifier.
             judge_model: Model ID for quality judges.
             compute_quality: Whether to compute quality scorecards.
+            enable_planner_eval: Whether to compute planner scorecards.
             runs_per_model: Number of replicates per model.
             allow_self_judge: Allow judge model to match producer model.
 
@@ -121,6 +124,7 @@ class MultiModelRunner:
                     replicate=rep,
                     judge_model=judge_model,
                     compute_quality=compute_quality,
+                    enable_planner_eval=enable_planner_eval,
                     allow_self_judge=allow_self_judge,
                 )
                 entries.append(entry)
@@ -130,6 +134,7 @@ class MultiModelRunner:
             "profiles": [p.to_dict() for p in profiles],
             "runs_per_model": runs_per_model,
             "judge_model": judge_model,
+            "enable_planner_eval": enable_planner_eval,
             "entries": [asdict(e) for e in entries],
             "timestamp": time.time(),
         }
@@ -150,6 +155,7 @@ class MultiModelRunner:
         replicate: int,
         judge_model: str,
         compute_quality: bool,
+        enable_planner_eval: bool,
         allow_self_judge: bool,
     ) -> RunManifestEntry:
         """Run a single pipeline instance."""
@@ -189,9 +195,8 @@ class MultiModelRunner:
             code_path.write_text(json.dumps(code_digest, indent=2), encoding="utf-8")
             entry.code_digest_path = str(code_path)
 
-            # Quality scoring
-            if compute_quality:
-                planner_scorecard = None
+            planner_scorecard = None
+            if enable_planner_eval:
                 try:
                     planner_eval = PlannerEvalHarness(self.workspace_root).score_existing_traces(
                         run_id
@@ -209,6 +214,8 @@ class MultiModelRunner:
                 except Exception:
                     logger.exception("Planner eval failed for run %s", run_id)
 
+            # Quality scoring
+            if compute_quality:
                 arch_judge_output = None
                 code_judge_output = None
                 spec_judge_output = None

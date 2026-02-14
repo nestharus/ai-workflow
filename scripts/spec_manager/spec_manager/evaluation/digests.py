@@ -34,31 +34,32 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
         Architecture digest dict.
     """
     run_reports = workspace_root / "reports" / "pdd" / run_id
-    global_reports = workspace_root / "reports"
+    manifest_path = run_reports / "component_manifest.json"
+    proposals_path = run_reports / "architecture_proposals.json"
+    findings_path = run_reports / "code_quality_report.json"
 
-    # Load component manifest
-    manifest = (
-        _load_json(run_reports / "component_manifest.json")
-        or _load_json(global_reports / "component_manifest.json")
-        or {}
-    )
+    # Load run-scoped component manifest (strict: no global fallback).
+    manifest_data = _load_json(manifest_path)
+    manifest = manifest_data if isinstance(manifest_data, dict) else {}
+    if not manifest:
+        logger.warning("Run-scoped component manifest missing or unreadable: %s", manifest_path)
 
     components = manifest.get("components", [])
     topology = _build_topology(components)
 
-    # Load architecture proposals
-    _ = (
-        _load_json(run_reports / "architecture_proposals.json")
-        or _load_json(global_reports / "architecture_proposals.json")
-        or {}
-    )
+    # Load run-scoped architecture proposals.
+    proposals_data = _load_json(proposals_path)
+    proposals = proposals_data if isinstance(proposals_data, dict) else {}
+    if not proposals:
+        logger.warning(
+            "Run-scoped architecture proposals missing or unreadable: %s", proposals_path
+        )
 
-    # Load L2 findings
-    l2_findings = (
-        _load_json(run_reports / "code_quality_report.json")
-        or _load_json(global_reports / "code_quality_report.json")
-        or {}
-    )
+    # Load run-scoped L2 findings.
+    findings_data = _load_json(findings_path)
+    l2_findings = findings_data if isinstance(findings_data, dict) else {}
+    if not l2_findings:
+        logger.warning("Run-scoped quality report missing or unreadable: %s", findings_path)
     l2_severity = _count_severity(l2_findings.get("findings", []))
 
     # Load spec summary if available
@@ -88,8 +89,9 @@ def build_architecture_digest(workspace_root: Path, run_id: str) -> dict[str, An
             "final_findings": l2_severity,
         },
         "notes": {
-            "architecture_proposals_path": str(run_reports / "architecture_proposals.json"),
-            "component_manifest_path": str(run_reports / "component_manifest.json"),
+            "architecture_proposals_path": str(proposals_path),
+            "architecture_candidates": len(proposals.get("candidates", [])),
+            "component_manifest_path": str(manifest_path),
         },
     }
 
@@ -109,18 +111,21 @@ def build_code_digest(workspace_root: Path, run_id: str) -> dict[str, Any]:
     """
     run_dir = workspace_root / ".pdd_runs" / run_id
     run_reports = workspace_root / "reports" / "pdd" / run_id
-    global_reports = workspace_root / "reports"
+    quality_report_path = run_reports / "code_quality_report.json"
 
-    # Build file list from snapshot or workspace
+    # Build file list from run snapshot only (no workspace/global fallback).
     snapshot_dir = run_dir / "snapshot" / "files"
-    files_info = _build_file_list(snapshot_dir if snapshot_dir.exists() else workspace_root)
+    if snapshot_dir.exists():
+        files_info = _build_file_list(snapshot_dir)
+    else:
+        logger.warning("Run snapshot missing for code digest: %s", snapshot_dir)
+        files_info = []
 
-    # Load L3 / code quality findings
-    code_quality = (
-        _load_json(run_reports / "code_quality_report.json")
-        or _load_json(global_reports / "code_quality_report.json")
-        or {}
-    )
+    # Load run-scoped L3 / code quality findings.
+    quality_data = _load_json(quality_report_path)
+    code_quality = quality_data if isinstance(quality_data, dict) else {}
+    if not code_quality:
+        logger.warning("Run-scoped quality report missing or unreadable: %s", quality_report_path)
     findings = code_quality.get("findings", [])
     l3_severity = _count_severity(findings)
     top_files = _top_files_by_findings(findings)

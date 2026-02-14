@@ -139,6 +139,7 @@ class PddLifecycle:
         self._model_profile = model_profile
         self._planner_override_provider = planner_override_provider
         self._compute_quality = False
+        self._cost_ledger: Any | None = None
 
     # ------------------------------------------------------------------
     # Planner construction
@@ -1376,6 +1377,10 @@ class PddLifecycle:
                 prompt=prompt,
                 workspace=self.manager.workspace_path,
                 model_id=refinement_model_id,
+                role="architecture_proposer",
+                run_id=self.manager.run_id,
+                layer="l2",
+                call_hook=self._record_llm_call,
             )
             cleaned = _strip_code_fences(output)
             data = json.loads(_extract_json_payload(cleaned))
@@ -1404,7 +1409,7 @@ class PddLifecycle:
 
             return {
                 "candidates_proposed": len(candidates),
-                "proposals_path": "reports/architecture_proposals.json",
+                "proposals_path": self._run_report_relpath("architecture_proposals.json"),
                 "demotion_tickets": len(tickets),
             }
         except Exception as exc:
@@ -1482,6 +1487,11 @@ class PddLifecycle:
                         prompt=prompt,
                         workspace=self.manager.workspace_path,
                         model_id=review_model_id,
+                        role=reviewer,
+                        run_id=self.manager.run_id,
+                        slice_id=slice_id,
+                        layer=str(row.get("layer", "l3")),
+                        call_hook=self._record_llm_call,
                     )
                     cleaned = _strip_code_fences(output)
                     data = json.loads(_extract_json_payload(cleaned))
@@ -1521,7 +1531,7 @@ class PddLifecycle:
         return {
             "files_reviewed": len(evidence_rows),
             "total_findings": len(all_findings),
-            "report_path": "reports/code_quality_report.json",
+            "report_path": self._run_report_relpath("code_quality_report.json"),
             "demotion_tickets": len(tickets),
         }
 
@@ -1682,9 +1692,32 @@ class PddLifecycle:
         )
 
         # Run-scoped path
-        run_reports_dir = self.manager.structure.root / "reports" / "pdd" / self.manager.run_id
+        run_reports_dir = self._run_reports_dir()
         run_reports_dir.mkdir(parents=True, exist_ok=True)
         (run_reports_dir / filename).write_text(content, encoding="utf-8")
+
+    def _run_reports_dir(self) -> Path:
+        """Return the run-scoped reports directory path."""
+        return self.manager.structure.root / "reports" / "pdd" / self.manager.run_id
+
+    def _run_report_relpath(self, filename: str) -> str:
+        """Return run-scoped report path relative to workspace root."""
+        return f"reports/pdd/{self.manager.run_id}/{filename}"
+
+    def _record_llm_call(self, payload: dict[str, Any]) -> None:
+        """Persist LLM call telemetry to this run's cost ledger."""
+        from spec_manager.evaluation.cost_ledger import CostLedger, LLMCallRecord
+
+        run_id = str(payload.get("run_id", "") or self.manager.run_id)
+        ledger_path = (
+            self.manager.workspace_path / ".pdd_runs" / run_id / "analysis" / "llm_calls.jsonl"
+        )
+        if (
+            self._cost_ledger is None
+            or getattr(self._cost_ledger, "ledger_path", None) != ledger_path
+        ):
+            self._cost_ledger = CostLedger(ledger_path)
+        self._cost_ledger.record(LLMCallRecord.from_dict(payload))
 
     def _iter_bundle_paths(self) -> list[Path]:
         """List all per-iteration bundle.json artifacts for the active run."""
@@ -1883,6 +1916,11 @@ class PddLifecycle:
                     prompt=prompt,
                     workspace=self.manager.workspace_path,
                     model_id=review_model_id,
+                    role="alignment_checker",
+                    run_id=self.manager.run_id,
+                    slice_id=lib_id,
+                    layer="l3",
+                    call_hook=self._record_llm_call,
                 )
                 cleaned = _strip_code_fences(output)
                 data = json.loads(_extract_json_payload(cleaned))
@@ -1954,6 +1992,11 @@ class PddLifecycle:
                     prompt=prompt,
                     workspace=self.manager.workspace_path,
                     model_id=refinement_model_id,
+                    role="overview_writer",
+                    run_id=self.manager.run_id,
+                    slice_id=lib_id,
+                    layer="l3",
+                    call_hook=self._record_llm_call,
                 )
                 overview_parts.append(f"## {lib_id}\n\n{output.strip()}\n")
                 libraries_processed += 1

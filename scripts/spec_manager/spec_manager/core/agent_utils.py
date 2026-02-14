@@ -28,6 +28,12 @@ def clear_call_hooks() -> None:
 
 
 _FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
+_TOKENS_IN_RE = re.compile(
+    r'(?i)(?:tokens[\s_]*in|input[\s_]*tokens|prompt[\s_]*tokens)\s*[:=]\s*["\']?(\d+)["\']?'
+)
+_TOKENS_OUT_RE = re.compile(
+    r'(?i)(?:tokens[\s_]*out|output[\s_]*tokens|completion[\s_]*tokens)\s*[:=]\s*["\']?(\d+)["\']?'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +96,16 @@ def _analyze_prompt_structure(prompt: str) -> dict[str, Any]:
     }
 
 
+def _extract_token_counts(stdout: str, stderr: str) -> tuple[int, int]:
+    """Extract token counts from agent runner output when available."""
+    material = f"{stdout}\n{stderr}"
+    in_match = _TOKENS_IN_RE.search(material)
+    out_match = _TOKENS_OUT_RE.search(material)
+    tokens_in = int(in_match.group(1)) if in_match else 0
+    tokens_out = int(out_match.group(1)) if out_match else 0
+    return tokens_in, tokens_out
+
+
 def run_agent(
     *,
     agent_name: str,
@@ -98,6 +114,11 @@ def run_agent(
     max_retries: int = 2,
     extra_env: dict[str, str] | None = None,
     model_id: str = "",
+    role: str = "",
+    run_id: str = "",
+    slice_id: str = "",
+    layer: str = "",
+    call_hook: Callable[[dict[str, Any]], None] | None = None,
 ) -> str:
     """Run an agent via `uv run agents`.
 
@@ -160,16 +181,25 @@ def run_agent(
             result_text = file_output if file_output is not None else output
             # Call hooks on success
             elapsed_ms = (time.time() - start_time) * 1000
+            tokens_in, tokens_out = _extract_token_counts(result.stdout or "", result.stderr or "")
             hook_data: dict[str, Any] = {
                 "agent_name": agent_name,
+                "role": role or agent_name,
                 "duration_ms": elapsed_ms,
                 "timestamp": time.time(),
+                "model_id": model_id,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "run_id": run_id,
+                "slice_id": slice_id,
+                "layer": layer,
             }
-            if model_id:
-                hook_data["model_id"] = model_id
             for hook in _call_hooks:
                 with contextlib.suppress(Exception):
                     hook(hook_data)
+            if call_hook is not None:
+                with contextlib.suppress(Exception):
+                    call_hook(hook_data)
             return result_text
 
         last_error = RuntimeError(f"Agent returned empty output (agent={agent_name}).")
