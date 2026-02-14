@@ -60,6 +60,115 @@ logger = logging.getLogger(__name__)
 _SCAN_FALLBACK_KEY = "enable_gap_scanner_fallback"
 
 
+@dataclass(frozen=True)
+class ReviewerSpec:
+    """Definition of one reviewer pass in a layer review pack."""
+
+    reviewer_id: str
+    agent_name: str
+    dimension: str
+    objective: str
+    default_category: str = "style"
+    default_required_change_type: str = "refactor_only"
+
+
+L2_REVIEW_PACK: tuple[ReviewerSpec, ...] = (
+    ReviewerSpec(
+        reviewer_id="pdd-l2-arch-boundary-reviewer",
+        agent_name="pdd-l2-arch-boundary-reviewer",
+        dimension="ARCH_BOUNDARY",
+        objective=(
+            "Validate boundaries, responsibilities, and dependency direction between components."
+        ),
+        default_category="architecture",
+        default_required_change_type="wiring_only",
+    ),
+    ReviewerSpec(
+        reviewer_id="pdd-l2-topology-reviewer",
+        agent_name="pdd-l2-topology-reviewer",
+        dimension="TOPOLOGY",
+        objective="Validate topology connectivity, reachability, and handler chain completeness.",
+        default_category="architecture",
+        default_required_change_type="wiring_only",
+    ),
+    ReviewerSpec(
+        reviewer_id="pdd-l2-pin-edge-reviewer",
+        agent_name="pdd-l2-pin-edge-reviewer",
+        dimension="PIN_COVERAGE",
+        objective="Validate pin consumption and edge realization against declared architecture.",
+        default_category="architecture",
+        default_required_change_type="wiring_only",
+    ),
+    ReviewerSpec(
+        reviewer_id="pdd-l2-arch-drift-reviewer",
+        agent_name="pdd-l2-arch-drift-reviewer",
+        dimension="ARCH_DRIFT",
+        objective="Detect drift between declared architecture artifacts and realized wiring.",
+        default_category="drift",
+        default_required_change_type="wiring_only",
+    ),
+    ReviewerSpec(
+        reviewer_id="pdd-l2-governance-reviewer",
+        agent_name="pdd-l2-governance-reviewer",
+        dimension="GOVERNANCE",
+        objective="Validate receipts, governance controls, and authorized wiring changes.",
+        default_category="governance",
+        default_required_change_type="wiring_only",
+    ),
+)
+
+L3_REVIEW_PACK: tuple[ReviewerSpec, ...] = (
+    ReviewerSpec(
+        reviewer_id="chatgpt-clarity-reviewer",
+        agent_name="chatgpt-clarity-reviewer",
+        dimension="CLARITY",
+        objective="Assess readability, naming intent, and cognitive load.",
+        default_category="style",
+    ),
+    ReviewerSpec(
+        reviewer_id="chatgpt-consistency-reviewer",
+        agent_name="chatgpt-consistency-reviewer",
+        dimension="CONSISTENCY",
+        objective="Assess API and convention consistency across the touched scope.",
+        default_category="style",
+    ),
+    ReviewerSpec(
+        reviewer_id="chatgpt-maintainability-reviewer",
+        agent_name="chatgpt-completeness-reviewer",
+        dimension="MAINTAINABILITY",
+        objective=(
+            "Assess structure, complexity, decomposition quality, and avoidable duplication."
+        ),
+        default_category="maintainability",
+    ),
+    ReviewerSpec(
+        reviewer_id="chatgpt-correctness-reviewer",
+        agent_name="chatgpt-correctness-reviewer",
+        dimension="CORRECTNESS",
+        objective="Assess correctness, safety, invariants, and error-path robustness.",
+        default_category="logic",
+        default_required_change_type="behavior_change",
+    ),
+    ReviewerSpec(
+        reviewer_id="pdd-l3-drift-reviewer",
+        agent_name="pdd-l3-drift-reviewer",
+        dimension="DRIFT",
+        objective="Detect unplanned behavior and plan/design drift.",
+        default_category="drift",
+    ),
+    ReviewerSpec(
+        reviewer_id="pdd-l3-diff-impact-classifier",
+        agent_name="chatgpt-correctness-reviewer",
+        dimension="DIFF_IMPACT",
+        objective=(
+            "Classify whether the diff is behavior-preserving; flag any behavior-changing edits."
+        ),
+        default_category="diff-impact",
+        default_required_change_type="behavior_change",
+    ),
+)
+
+
 def _hash_bytes(content: bytes) -> str:
     """Return stable SHA256 hex digest for content."""
     return hashlib.sha256(content).hexdigest()
@@ -391,6 +500,78 @@ class GapExplorationStep:
         """Normalize prior gap evidence to span/location schema."""
         return _normalize_gap_record(gap)
 
+    @staticmethod
+    def _pattern_library_path(workspace: Path) -> Path:
+        """Return the run-shared pattern library path."""
+        return workspace / ".pdd_runs" / "pattern_library.json"
+
+    @staticmethod
+    def _record_strategy_candidates(
+        pattern_lib: Any,
+        *,
+        dimension: str,
+        findings: list[dict[str, Any]],
+    ) -> int:
+        """Convert findings into strategy candidates for incremental evolution."""
+        from spec_manager.orchestration.pattern_library import StrategyCandidate
+
+        recorded = 0
+        for finding in findings:
+            evidence = str(finding.get("evidence") or finding.get("description") or "").strip()
+            if not evidence:
+                continue
+            signal = " ".join(evidence.split())[:180]
+            suggested_fix = str(finding.get("suggested_fix", "")).strip()
+            candidate = StrategyCandidate(
+                signal_patterns=[signal],
+                approved_remediation=suggested_fix,
+                exceptions=[],
+                occurrences=1,
+                source_dimension=dimension,
+            )
+            pattern_lib.record_candidate(candidate)
+            recorded += 1
+        return recorded
+
+    @staticmethod
+    def _load_review_files_from_manifest(
+        slice_root: Path,
+        bundle: EvidenceBundle,
+        *,
+        target_stem: str = "",
+    ) -> tuple[dict[str, str], int]:
+        """Load review file content using baseline manifest entries, not ad-hoc scans."""
+        manifest_paths: list[str] = []
+        for item in bundle.manifest.files or []:
+            rel_path = str(item.get("path", "")).strip()
+            if not rel_path:
+                continue
+            rel = Path(rel_path)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            if target_stem and rel.stem != target_stem:
+                continue
+            manifest_paths.append(rel_path)
+
+        changed = {str(path) for path in (bundle.diff.changed_files or []) if isinstance(path, str)}
+        if changed:
+            prioritized = [p for p in manifest_paths if p in changed]
+            fallback = [p for p in manifest_paths if p not in changed]
+            ordered_paths = prioritized + fallback
+        else:
+            ordered_paths = manifest_paths
+
+        loaded: dict[str, str] = {}
+        for rel_path in ordered_paths:
+            candidate = slice_root / rel_path
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                loaded[rel_path] = candidate.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        return loaded, len(ordered_paths)
+
     def _discover_l2_topology(self, ctx: SliceContext, bundle: EvidenceBundle) -> dict[str, Any]:
         """Resolve L2 topology via planner discovery (or local fallback)."""
         from types import SimpleNamespace
@@ -571,19 +752,11 @@ class GapExplorationStep:
                     logger.debug("Failed to read ticket file %s: %s", ticket_file, exc)
                     continue
 
-        # L2 ReviewPack: 5 specialized architecture reviewers
-        l2_reviewers = [
-            ("pdd-l2-arch-boundary-reviewer", "ARCH_BOUNDARY"),
-            ("pdd-l2-topology-reviewer", "TOPOLOGY"),
-            ("pdd-l2-pin-edge-reviewer", "PIN_COVERAGE"),
-            ("pdd-l2-arch-drift-reviewer", "ARCH_DRIFT"),
-            ("pdd-l2-governance-reviewer", "GOVERNANCE"),
-        ]
-
         # Pattern library for review context
         from spec_manager.orchestration.pattern_library import PatternLibrary
 
-        pattern_lib = PatternLibrary()
+        pattern_lib = PatternLibrary(library_path=self._pattern_library_path(workspace))
+        strategy_candidates_recorded = 0
 
         all_gaps: list[dict[str, Any]] = []
         if not arch_files:
@@ -645,13 +818,14 @@ class GapExplorationStep:
                 f"- {t}" for t in open_tickets[:10]
             )
 
-        for reviewer_name, dimension in l2_reviewers:
-            pattern_section = pattern_lib.get_review_prompt_section(dimension)
+        for reviewer in L2_REVIEW_PACK:
+            pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
             reviewer_prompt = (
                 f"## TASK\n"
-                f"Review this L2 architecture slice for {dimension} continuity issues.\n"
+                f"Review this L2 architecture slice for {reviewer.dimension} findings.\n"
+                f"Objective: {reviewer.objective}\n"
                 f"Detect unconsumed pins, missing wiring/components, missing integration points, "
-                f"and architecture-boundary violations.\n\n"
+                f"architecture-boundary violations, and governance gaps.\n\n"
                 f"{pattern_section}\n\n"
                 f"## ARCHITECTURE MANIFESTS\n"
                 f"{json.dumps(arch_artifacts, indent=2)}\n\n"
@@ -667,16 +841,20 @@ class GapExplorationStep:
                 from spec_manager.refinement.formats import _strip_code_fences
 
                 output = run_agent(
-                    agent_name=reviewer_name,
+                    agent_name=reviewer.agent_name,
                     prompt=reviewer_prompt,
                     workspace=workspace,
                 )
                 cleaned = _strip_code_fences(output)
                 data = json.loads(_extract_json_payload(cleaned))
+                findings = [f for f in data.get("findings", []) if isinstance(f, dict)]
+                strategy_candidates_recorded += self._record_strategy_candidates(
+                    pattern_lib,
+                    dimension=reviewer.dimension,
+                    findings=findings,
+                )
 
-                for finding in data.get("findings", []):
-                    if not isinstance(finding, dict):
-                        continue
+                for finding in findings:
                     location = finding.get("location", {}) or {}
                     span = _location_span(
                         start_line=location.get("start_line"),
@@ -687,15 +865,16 @@ class GapExplorationStep:
                     file_path = location.get("file", "")
                     all_gaps.append(
                         {
-                            "kind": f"l2_{dimension.lower()}_finding",
-                            "reviewer": reviewer_name,
-                            "dimension": dimension,
+                            "kind": f"l2_{reviewer.dimension.lower()}_finding",
+                            "reviewer": reviewer.reviewer_id,
+                            "agent_name": reviewer.agent_name,
+                            "dimension": reviewer.dimension,
                             "component_id": location.get("symbol", ""),
                             "file": file_path,
                             "description": finding.get("evidence", finding.get("description", "")),
                             "severity": finding.get("severity", "MINOR"),
                             "required_change_type": finding.get(
-                                "required_change_type", "wiring_only"
+                                "required_change_type", reviewer.default_required_change_type
                             ),
                             "suggested_fix": finding.get("suggested_fix", ""),
                             "span": span,
@@ -703,7 +882,29 @@ class GapExplorationStep:
                         }
                     )
             except Exception as exc:
-                logger.debug("L2 reviewer %s failed: %s", reviewer_name, exc)
+                logger.warning("L2 reviewer %s failed: %s", reviewer.reviewer_id, exc)
+                all_gaps.append(
+                    {
+                        "kind": "l2_reviewer_execution_failure",
+                        "reviewer": reviewer.reviewer_id,
+                        "agent_name": reviewer.agent_name,
+                        "dimension": reviewer.dimension,
+                        "file": "",
+                        "description": (
+                            f"Reviewer execution failed for {reviewer.reviewer_id}: {exc}"
+                        ),
+                        "severity": "BLOCKER",
+                        "required_change_type": reviewer.default_required_change_type,
+                        "span": {},
+                        "location": {"file": ""},
+                    }
+                )
+
+        if strategy_candidates_recorded:
+            try:
+                pattern_lib.save()
+            except Exception as exc:
+                logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
 
         bundle.gaps = GapReportRef(path="gaps.json", open_gaps=all_gaps)
 
@@ -716,7 +917,6 @@ class GapExplorationStep:
         """
         import json
 
-        from spec_manager.core.language import source_rglob
         from spec_manager.orchestration.evidence import GapReportRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -733,60 +933,53 @@ class GapExplorationStep:
             )
             return StepResult(status="OK")
 
-        # Gather code from slice — L3 slices are per-file (cq-{stem}),
-        # so only review the matching file, not all files in the worktree
-        code_files: dict[str, str] = {}
+        # Gather code from baseline manifest entries so review input is explicit
+        # and upstream-owned rather than scanner-owned at review time.
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
-        for py_file in source_rglob(slice_root):
-            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
-                if target_stem and py_file.stem != target_stem:
-                    continue
-                try:
-                    code_files[str(py_file.relative_to(slice_root))] = py_file.read_text(
-                        encoding="utf-8"
-                    )
-                except (OSError, UnicodeDecodeError):
-                    continue
+        code_files, candidate_count = self._load_review_files_from_manifest(
+            slice_root,
+            bundle,
+            target_stem=target_stem,
+        )
 
         if not code_files:
-            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
+            open_gaps: list[dict[str, Any]] = []
+            if candidate_count > 0:
+                open_gaps.append(
+                    {
+                        "kind": "quality_review_input_unavailable",
+                        "file": "",
+                        "description": (
+                            "L3 review input files were declared in the manifest but could not be "
+                            "loaded for reviewer execution."
+                        ),
+                        "severity": "BLOCKER",
+                        "category": "review_execution",
+                        "required_change_type": "refactor_only",
+                        "span": {},
+                        "location": {"file": ""},
+                    }
+                )
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=open_gaps)
             return StepResult(status="OK")
-
-        reviewers = [
-            "chatgpt-clarity-reviewer",
-            "chatgpt-completeness-reviewer",
-            "chatgpt-consistency-reviewer",
-            "chatgpt-correctness-reviewer",
-            "pdd-l3-drift-reviewer",
-        ]
 
         # Pattern library for review context
         from spec_manager.orchestration.pattern_library import PatternLibrary
 
-        pattern_lib = PatternLibrary()
-
-        # Map reviewer names to pattern dimensions
-        _REVIEWER_DIMENSIONS: dict[str, str] = {
-            "chatgpt-clarity-reviewer": "CLARITY",
-            "chatgpt-completeness-reviewer": "CORRECTNESS",
-            "chatgpt-consistency-reviewer": "CONSISTENCY",
-            "chatgpt-correctness-reviewer": "CORRECTNESS",
-            "pdd-l3-drift-reviewer": "DRIFT",
-        }
+        pattern_lib = PatternLibrary(library_path=self._pattern_library_path(workspace))
+        strategy_candidates_recorded = 0
 
         all_gaps: list[dict[str, Any]] = []
 
         for file_path, code_content in code_files.items():
-            for reviewer in reviewers:
-                dimension = _REVIEWER_DIMENSIONS.get(reviewer, "")
-                pattern_section = (
-                    pattern_lib.get_review_prompt_section(dimension) if dimension else ""
-                )
+            for reviewer in L3_REVIEW_PACK:
+                pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
                 reviewer_prompt = (
                     "## TASK\n"
                     "Review the following code for quality issues.\n"
+                    f"Objective: {reviewer.objective}\n"
                     "For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
-                    "category (style/maintainability/logic/architecture/drift),\n"
+                    "category (style/maintainability/logic/architecture/drift/diff-impact),\n"
                     "required_change_type (refactor_only/wiring_only/behavior_change),\n"
                     "and description.\n"
                     'Return JSON: {"findings": [...]}\n\n'
@@ -801,14 +994,20 @@ class GapExplorationStep:
                     from spec_manager.refinement.formats import _strip_code_fences
 
                     output = run_agent(
-                        agent_name=reviewer,
+                        agent_name=reviewer.agent_name,
                         prompt=reviewer_prompt,
                         workspace=workspace,
                     )
                     cleaned = _strip_code_fences(output)
                     data = json.loads(_extract_json_payload(cleaned))
+                    findings = [f for f in data.get("findings", []) if isinstance(f, dict)]
+                    strategy_candidates_recorded += self._record_strategy_candidates(
+                        pattern_lib,
+                        dimension=reviewer.dimension,
+                        findings=findings,
+                    )
 
-                    for finding in data.get("findings", []):
+                    for finding in findings:
                         location = finding.get("location", {}) or {}
                         span = _location_span(
                             start_line=location.get("start_line"),
@@ -820,19 +1019,50 @@ class GapExplorationStep:
                             {
                                 "kind": "quality_finding",
                                 "file": file_path,
-                                "reviewer": reviewer,
+                                "reviewer": reviewer.reviewer_id,
+                                "agent_name": reviewer.agent_name,
+                                "dimension": reviewer.dimension,
                                 "description": finding.get("description", ""),
                                 "severity": finding.get("severity", "MINOR"),
-                                "category": finding.get("category", "style"),
+                                "category": finding.get("category", reviewer.default_category),
                                 "required_change_type": finding.get(
-                                    "required_change_type", "refactor_only"
+                                    "required_change_type",
+                                    reviewer.default_required_change_type,
                                 ),
                                 "span": span,
                                 "location": {"file": file_path, **span},
                             }
                         )
                 except Exception as exc:
-                    logger.debug("L3 reviewer %s failed for %s: %s", reviewer, file_path, exc)
+                    logger.warning(
+                        "L3 reviewer %s failed for %s: %s",
+                        reviewer.reviewer_id,
+                        file_path,
+                        exc,
+                    )
+                    all_gaps.append(
+                        {
+                            "kind": "quality_finding",
+                            "file": file_path,
+                            "reviewer": reviewer.reviewer_id,
+                            "agent_name": reviewer.agent_name,
+                            "dimension": reviewer.dimension,
+                            "description": (
+                                f"Reviewer execution failed for {reviewer.reviewer_id}: {exc}"
+                            ),
+                            "severity": "BLOCKER",
+                            "category": "review_execution",
+                            "required_change_type": "refactor_only",
+                            "span": {},
+                            "location": {"file": file_path},
+                        }
+                    )
+
+        if strategy_candidates_recorded:
+            try:
+                pattern_lib.save()
+            except Exception as exc:
+                logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
 
         bundle.gaps = GapReportRef(path="gaps.json", open_gaps=all_gaps)
         return StepResult(status="OK")
@@ -2161,6 +2391,31 @@ class PromoteStep:
         # Check if there are still open quality gaps
         open_gaps = bundle.gaps.open_gaps
         quality_gaps = [g for g in open_gaps if g.get("kind") == "quality_finding"]
+        diff_impact_gaps = [
+            g
+            for g in quality_gaps
+            if g.get("dimension") == "DIFF_IMPACT" or g.get("category") == "diff-impact"
+        ]
+
+        bundle.gates.gates = [
+            self._to_gate(
+                "ALL_QUALITY_REVIEWERS_PASS",
+                not quality_gaps,
+                "No unresolved quality findings"
+                if not quality_gaps
+                else f"{len(quality_gaps)} quality finding(s) remain open",
+                "refactor_only",
+            ),
+            self._to_gate(
+                "DIFF_IMPACT_PASS",
+                not diff_impact_gaps,
+                "Diff-impact classifier reports behavior-preserving changes"
+                if not diff_impact_gaps
+                else f"{len(diff_impact_gaps)} diff-impact finding(s) indicate behavior risk",
+                "behavior_change",
+            ),
+        ]
+        bundle.gates.path = "gates.report.json"
 
         if quality_gaps:
             # Still have unresolved findings — not ready to promote
@@ -2225,31 +2480,32 @@ class PromoteStep:
             if self._canonical_edge_signal(e.get("signal_type")) != "REFERENCE"
         ]
 
-        bundle.gates.gates = [
-            self._to_gate(
-                "NO_LOGIC_CHANGE_EVIDENCE",
-                not behavior_change_gaps,
-                "No behavior-change gaps in implementation evidence"
-                if not behavior_change_gaps
-                else f"{len(behavior_change_gaps)} behavior-change gap(s) reported",
-                "behavior_change",
-            ),
-            self._to_gate(
-                "NO_ARCH_BOUNDARY_VIOLATIONS_EVIDENCE",
-                not wiring_edges,
-                "No architecture wiring edges emitted in L3"
-                if not wiring_edges
-                else f"{len(wiring_edges)} architecture edge(s) emitted in L3",
-                "wiring_only",
-            ),
-            self._to_gate(
-                "EVIDENCE_HASH_ALIGNMENT",
-                not failures,
-                "; ".join(failures) if failures else "Evidence hashes align with current text",
-                "refactor_only",
-            ),
-        ]
-        bundle.gates.path = "gates.report.json"
+        bundle.gates.gates.extend(
+            [
+                self._to_gate(
+                    "NO_LOGIC_CHANGE_EVIDENCE",
+                    not behavior_change_gaps,
+                    "No behavior-change gaps in implementation evidence"
+                    if not behavior_change_gaps
+                    else f"{len(behavior_change_gaps)} behavior-change gap(s) reported",
+                    "behavior_change",
+                ),
+                self._to_gate(
+                    "NO_ARCH_BOUNDARY_VIOLATIONS_EVIDENCE",
+                    not wiring_edges,
+                    "No architecture wiring edges emitted in L3"
+                    if not wiring_edges
+                    else f"{len(wiring_edges)} architecture edge(s) emitted in L3",
+                    "wiring_only",
+                ),
+                self._to_gate(
+                    "EVIDENCE_HASH_ALIGNMENT",
+                    not failures,
+                    "; ".join(failures) if failures else "Evidence hashes align with current text",
+                    "refactor_only",
+                ),
+            ]
+        )
 
         failed = [gate for gate in bundle.gates.gates if not gate["passed"]]
         if failed:

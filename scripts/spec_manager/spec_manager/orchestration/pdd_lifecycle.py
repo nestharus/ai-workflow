@@ -14,7 +14,8 @@ Refinement types:
 
 - **L1 (Code-as-Spec)**: Library refinement — concern isolation, overlap, coverage
 - **L2 (Architecture)**: Architectural refinement — service decomposition, event topology
-- **L3 (Clean Code)**: Code quality refinement — correctness, clarity, consistency
+- **L3 (Clean Code)**: Code quality refinement — clarity, consistency,
+  maintainability, correctness/safety, drift, diff-impact
 
 The refinement cascade::
 
@@ -1466,7 +1467,7 @@ class PddLifecycle:
             return {"error": str(exc)}
 
     def _code_quality_refinement(self) -> dict[str, Any]:
-        """Code quality refinement: correctness, clarity, consistency.
+        """Code quality refinement using the authoritative L3 review pack.
 
         Runs N quality reviewers and emits :class:`DemotionTicket`
         instances for findings that touch logic (demote to L1) or
@@ -1479,6 +1480,8 @@ class PddLifecycle:
 
         from spec_manager.core.agent_utils import run_agent
         from spec_manager.orchestration.demotion import DemotionTicket
+        from spec_manager.orchestration.pattern_library import PatternLibrary
+        from spec_manager.orchestration.promotion_loop import L3_REVIEW_PACK
         from spec_manager.refinement.formats import (
             _extract_json_payload,
             _strip_code_fences,
@@ -1507,36 +1510,37 @@ class PddLifecycle:
                 for path, content in all_specs.items()
             ]
 
-        reviewers = [
-            "chatgpt-clarity-reviewer",
-            "chatgpt-completeness-reviewer",
-            "chatgpt-consistency-reviewer",
-            "chatgpt-correctness-reviewer",
-        ]
         review_model_id = self._resolve_model_id_for_role("review")
+        pattern_lib = PatternLibrary(
+            library_path=self.manager.workspace_path / ".pdd_runs" / "pattern_library.json"
+        )
 
         all_findings: list[dict[str, Any]] = []
 
         for row in evidence_rows:
             slice_id = row.get("slice_id", "")
-            prompt = (
-                f"## TASK\n\n"
-                f"Review the following promotion evidence for quality risks.\n"
-                f"For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
-                f"category (logic/architecture/style), and description.\n"
-                f"Return JSON with key 'findings' containing an array of issues.\n\n"
-                f"Evidence slice: {slice_id}\n\n"
-                f"Evidence:\n{json.dumps(row, indent=2)}\n"
-            )
-
-            for reviewer in reviewers:
+            for reviewer in L3_REVIEW_PACK:
+                pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
+                prompt = (
+                    "## TASK\n\n"
+                    "Review the following promotion evidence for quality and conformance risks.\n"
+                    f"Objective: {reviewer.objective}\n"
+                    "For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
+                    "category (logic/architecture/style/maintainability/drift/diff-impact),\n"
+                    "required_change_type (refactor_only/wiring_only/behavior_change), and "
+                    "description.\n"
+                    "Return JSON with key 'findings' containing an array of issues.\n\n"
+                    f"{pattern_section}\n\n"
+                    f"Evidence slice: {slice_id}\n\n"
+                    f"Evidence:\n{json.dumps(row, indent=2)}\n"
+                )
                 try:
                     output = run_agent(
-                        agent_name=reviewer,
+                        agent_name=reviewer.agent_name,
                         prompt=prompt,
                         workspace=self.manager.workspace_path,
                         model_id=review_model_id,
-                        role=reviewer,
+                        role=reviewer.reviewer_id,
                         run_id=self.manager.run_id,
                         slice_id=slice_id,
                         layer=str(row.get("layer", "l3")),
@@ -1546,12 +1550,23 @@ class PddLifecycle:
                     data = json.loads(_extract_json_payload(cleaned))
                     findings = data.get("findings", [])
                     for finding in findings:
+                        if not isinstance(finding, dict):
+                            continue
                         finding["file"] = slice_id
-                        finding["reviewer"] = reviewer
-                    all_findings.extend(findings)
+                        finding["reviewer"] = reviewer.reviewer_id
+                        finding["agent_name"] = reviewer.agent_name
+                        finding["dimension"] = reviewer.dimension
+                        finding.setdefault("category", reviewer.default_category)
+                        finding.setdefault(
+                            "required_change_type", reviewer.default_required_change_type
+                        )
+                        all_findings.append(finding)
                 except Exception as exc:
                     logger.warning(
-                        "Reviewer %s failed for evidence slice %s: %s", reviewer, slice_id, exc
+                        "Reviewer %s failed for evidence slice %s: %s",
+                        reviewer.reviewer_id,
+                        slice_id,
+                        exc,
                     )
 
         # Write quality report
@@ -1562,8 +1577,21 @@ class PddLifecycle:
         for finding in all_findings:
             category = finding.get("category", "style")
             severity = finding.get("severity", "MINOR")
-            if category in ("logic", "architecture") or severity == "BLOCKER":
-                target = "L1" if category == "logic" else "L2"
+            required_change_type = finding.get("required_change_type", "refactor_only")
+            if (
+                category in ("logic", "diff-impact")
+                or required_change_type == "behavior_change"
+                or category == "architecture"
+                or severity == "BLOCKER"
+            ):
+                target = (
+                    "L1"
+                    if (
+                        category in ("logic", "diff-impact")
+                        or required_change_type == "behavior_change"
+                    )
+                    else "L2"
+                )
                 ticket = DemotionTicket(
                     source="REVIEW",
                     target_layer=target,

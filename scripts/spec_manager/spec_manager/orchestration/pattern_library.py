@@ -370,6 +370,31 @@ def _default_core_patterns() -> list[Pattern]:
             dimension="DRIFT",
             fix_guidance="Link the change to an existing plan item or file a new gap.",
         ),
+        # ---- DIFF_IMPACT (2 patterns) ----
+        Pattern(
+            pattern_id="DI-001",
+            principle=(
+                "A refactor-only change must preserve observable behavior at all declared "
+                "interfaces and side-effect boundaries."
+            ),
+            dimension="DIFF_IMPACT",
+            fix_guidance=(
+                "Rework the patch to preserve behavior, or reclassify and route it as a "
+                "behavior_change."
+            ),
+        ),
+        Pattern(
+            pattern_id="DI-002",
+            principle=(
+                "Any detected behavior change must be explicitly classified and demoted to "
+                "the authoritative layer before promotion can continue."
+            ),
+            dimension="DIFF_IMPACT",
+            fix_guidance=(
+                "Emit a behavior_change finding with evidence and route the change through "
+                "the appropriate lower-layer workflow."
+            ),
+        ),
     ]
 
 
