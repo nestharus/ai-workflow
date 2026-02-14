@@ -15,7 +15,7 @@ Hard gates (5) are mechanical pass/fail checks derived from traces:
 4. ``planner.schema_validity`` -- all outputs conform to capability schema
 5. ``planner.no_oos_intentions`` -- no out-of-scope intentions in PLAN step
 
-Soft signals (~12) are computed from verdicts (GT comparison) and traces
+Soft signals (~18) are computed from verdicts (GT comparison) and traces
 (efficiency / epistemic hygiene).
 """
 
@@ -58,7 +58,7 @@ class PlannerMetric:
     Attributes:
         name: Dot-separated metric name (e.g. ``planner.trace_integrity``).
         raw: Raw computed value before normalization.
-        score: Normalized score between 0.0 and 1.0.
+        score: Internal normalized score between 0.0 and 1.0.
         status: One of ``PASS``, ``WARN``, or ``FAIL``.
         hard_gate: Whether this metric is a hard gate (blocks pipeline).
         detail: Human-readable explanation.
@@ -75,6 +75,12 @@ class PlannerMetric:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def to_export_dict(self) -> dict[str, Any]:
+        """Return artifact representation with score normalized to 0-100."""
+        payload = asdict(self)
+        payload["score"] = max(0.0, min(float(self.score), 1.0)) * 100.0
+        return payload
 
 
 @dataclass
@@ -128,6 +134,20 @@ class PlannerScorecard:
             "summary": self.summary,
             "hard_gates": [m.to_dict() for m in self.hard_gates],
             "soft_signals": [m.to_dict() for m in self.soft_signals],
+            "slice_aggregates": [a.to_dict() for a in self.slice_aggregates],
+        }
+
+    def to_export_dict(self) -> dict[str, Any]:
+        """Return artifact representation with metric scores on a 0-100 scale."""
+        return {
+            "run_id": self.run_id,
+            "model_id": self.model_id,
+            "overall_pass": self.overall_pass,
+            "decisions_evaluated": self.decisions_evaluated,
+            "decisions_total": self.decisions_total,
+            "summary": self.summary,
+            "hard_gates": [m.to_export_dict() for m in self.hard_gates],
+            "soft_signals": [m.to_export_dict() for m in self.soft_signals],
             "slice_aggregates": [a.to_dict() for a in self.slice_aggregates],
         }
 
@@ -246,7 +266,7 @@ class PlannerReporter:
         # Machine-readable JSON
         json_path = self._reports_dir / "planner_scorecard.json"
         json_path.write_text(
-            json.dumps(scorecard.to_dict(), indent=2),
+            json.dumps(scorecard.to_export_dict(), indent=2),
             encoding="utf-8",
         )
 
@@ -437,9 +457,16 @@ class PlannerReporter:
             self._signal_gap_precision(verdicts),
             self._signal_plan_redundancy(verdicts),
             self._signal_integration_risk_recall(verdicts),
+            self._signal_block_when_uncertain_rate(traces),
             self._signal_model_calls_p50(traces),
             self._signal_model_calls_p95(traces),
+            self._signal_tokens_per_decision_p50(traces),
+            self._signal_tokens_per_decision_p95(traces),
             self._signal_tool_calls_per_decision(traces),
+            self._signal_web_escalation_rate(traces),
+            self._signal_integration_tool_used_rate(traces),
+            self._signal_iterations_per_slice_delta_vs_baseline(traces),
+            self._signal_demotion_rate_delta_vs_baseline(traces),
         ]
         deduped: dict[str, PlannerMetric] = {}
         for metric in signals:
@@ -644,6 +671,47 @@ class PlannerReporter:
             detail=f"{evidence_first_count}/{len(traces)} decisions used evidence first",
         )
 
+    def _signal_block_when_uncertain_rate(self, traces: list[Any]) -> PlannerMetric:
+        """Rate of uncertain UNDER_SPEC decisions that remained blocked."""
+        uncertain_total = 0
+        blocked_count = 0
+        refs: list[str] = []
+
+        for trace in traces:
+            if self._trace_capability(trace) != "UNDER_SPEC":
+                continue
+            outputs = self._trace_outputs(trace)
+            questions = outputs.get("questions", [])
+            constraints = outputs.get("constraints", {})
+            uncertain = bool(questions) or not bool(constraints)
+            if not uncertain:
+                continue
+            uncertain_total += 1
+            blocked = bool(outputs.get("blocked", False))
+            if blocked:
+                blocked_count += 1
+                continue
+            refs.append(str(getattr(trace, "trace_id", "")))
+
+        if uncertain_total == 0:
+            return PlannerMetric(
+                name="planner.block_when_uncertain_rate",
+                raw=1.0,
+                score=1.0,
+                status="PASS",
+                detail="No uncertain UNDER_SPEC traces",
+            )
+
+        rate = blocked_count / uncertain_total
+        return PlannerMetric(
+            name="planner.block_when_uncertain_rate",
+            raw=rate,
+            score=rate,
+            status=_threshold_gte(rate, pass_=0.9, warn=0.75),
+            detail=f"{blocked_count}/{uncertain_total} uncertain UNDER_SPEC traces blocked",
+            evidence_refs=refs[:20],
+        )
+
     # -- Efficiency --
 
     def _signal_tokens_per_decision(self, traces: list[Any]) -> PlannerMetric:
@@ -664,6 +732,46 @@ class PlannerReporter:
             score=1.0,
             status="PASS",
             detail=f"avg={avg_tokens:.1f} across {len(traces)} decisions",
+        )
+
+    def _signal_tokens_per_decision_p50(self, traces: list[Any]) -> PlannerMetric:
+        """P50 token consumption per decision (informational)."""
+        if not traces:
+            return PlannerMetric(
+                name="planner.tokens_per_decision_p50",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No traces",
+            )
+        totals = [float(self._trace_tokens_and_latency(t)[0]) for t in traces]
+        p50 = _percentile(totals, 50)
+        return PlannerMetric(
+            name="planner.tokens_per_decision_p50",
+            raw=p50,
+            score=1.0,
+            status="PASS",
+            detail=f"p50={p50:.1f} across {len(traces)} decisions",
+        )
+
+    def _signal_tokens_per_decision_p95(self, traces: list[Any]) -> PlannerMetric:
+        """P95 token consumption per decision (informational)."""
+        if not traces:
+            return PlannerMetric(
+                name="planner.tokens_per_decision_p95",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No traces",
+            )
+        totals = [float(self._trace_tokens_and_latency(t)[0]) for t in traces]
+        p95 = _percentile(totals, 95)
+        return PlannerMetric(
+            name="planner.tokens_per_decision_p95",
+            raw=p95,
+            score=1.0,
+            status="PASS",
+            detail=f"p95={p95:.1f} across {len(traces)} decisions",
         )
 
     def _signal_latency_per_decision(self, traces: list[Any]) -> PlannerMetric:
@@ -735,6 +843,65 @@ class PlannerReporter:
             score=min(1.0, avg),
             status=_threshold_gte(avg, pass_=1.0, warn=0.5),
             detail=f"avg={avg:.2f} across {len(traces)} decisions",
+        )
+
+    def _signal_web_escalation_rate(self, traces: list[Any]) -> PlannerMetric:
+        """Rate of decisions that escalated to web tooling (informational)."""
+        if not traces:
+            return PlannerMetric(
+                name="planner.web_escalation_rate",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No traces",
+            )
+        escalated = 0
+        refs: list[str] = []
+        for trace in traces:
+            tool_calls = getattr(trace, "tool_calls", []) or []
+            if any(self._is_web_tool_call(call) for call in tool_calls if isinstance(call, dict)):
+                escalated += 1
+                refs.append(str(getattr(trace, "trace_id", "")))
+
+        rate = escalated / len(traces)
+        return PlannerMetric(
+            name="planner.web_escalation_rate",
+            raw=rate,
+            score=1.0,
+            status="PASS",
+            detail=f"{escalated}/{len(traces)} decisions used web tools",
+            evidence_refs=refs[:20],
+        )
+
+    def _signal_integration_tool_used_rate(self, traces: list[Any]) -> PlannerMetric:
+        """Rate of L2/L3 traces that used at least one tool call."""
+        candidate_traces = [trace for trace in traces if self._trace_layer(trace) in {"L2", "L3"}]
+        if not candidate_traces:
+            return PlannerMetric(
+                name="planner.integration_tool_used_rate",
+                raw=1.0,
+                score=1.0,
+                status="PASS",
+                detail="No L2/L3 traces",
+            )
+
+        used = 0
+        refs: list[str] = []
+        for trace in candidate_traces:
+            tool_calls = getattr(trace, "tool_calls", []) or []
+            if len(tool_calls) > 0:
+                used += 1
+            else:
+                refs.append(str(getattr(trace, "trace_id", "")))
+
+        rate = used / len(candidate_traces)
+        return PlannerMetric(
+            name="planner.integration_tool_used_rate",
+            raw=rate,
+            score=rate,
+            status=_threshold_gte(rate, pass_=0.9, warn=0.75),
+            detail=f"{used}/{len(candidate_traces)} L2/L3 decisions used tools",
+            evidence_refs=refs[:20],
         )
 
     # -- Convergence (informational) --
@@ -820,6 +987,58 @@ class PlannerReporter:
             score=1.0,
             status="PASS",
             detail=f"avg={avg_demotions:.2f} across {len(by_slice)} slice(s); top={top_desc}",
+        )
+
+    def _signal_iterations_per_slice_delta_vs_baseline(self, traces: list[Any]) -> PlannerMetric:
+        """Delta in iterations-per-slice versus baseline run when available."""
+        metric_name = "planner.iterations_per_slice_delta_vs_baseline"
+        current = self._signal_iterations_per_slice(traces).raw
+        baseline = self._baseline_metric_raw(traces, "planner.iterations_per_slice")
+        if baseline is None:
+            return PlannerMetric(
+                name=metric_name,
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail=(
+                    f"Baseline unavailable; current iterations_per_slice={current:.2f} "
+                    "used as interim reference"
+                ),
+            )
+
+        delta = current - baseline
+        return PlannerMetric(
+            name=metric_name,
+            raw=delta,
+            score=1.0,
+            status="PASS",
+            detail=f"current={current:.2f}, baseline={baseline:.2f}, delta={delta:+.2f}",
+        )
+
+    def _signal_demotion_rate_delta_vs_baseline(self, traces: list[Any]) -> PlannerMetric:
+        """Delta in demotions-per-slice versus baseline run when available."""
+        metric_name = "planner.demotion_rate_delta_vs_baseline"
+        current = self._signal_demotions_per_slice().raw
+        baseline = self._baseline_metric_raw(traces, "planner.demotions_per_slice")
+        if baseline is None:
+            return PlannerMetric(
+                name=metric_name,
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail=(
+                    f"Baseline unavailable; current demotions_per_slice={current:.2f} "
+                    "used as interim reference"
+                ),
+            )
+
+        delta = current - baseline
+        return PlannerMetric(
+            name=metric_name,
+            raw=delta,
+            score=1.0,
+            status="PASS",
+            detail=f"current={current:.2f}, baseline={baseline:.2f}, delta={delta:+.2f}",
         )
 
     def _compute_slice_aggregates(
@@ -939,6 +1158,30 @@ class PlannerReporter:
         return ""
 
     @classmethod
+    def _trace_layer(cls, trace: Any) -> str:
+        """Resolve layer from decision key or request snapshot."""
+        decision_key = str(getattr(trace, "decision_key", "") or "")
+        if decision_key:
+            parts = decision_key.split(":")
+            if parts and parts[0]:
+                return str(parts[0]).upper()
+        request = getattr(trace, "request", None)
+        if isinstance(request, dict):
+            layer = str(request.get("layer", "") or "")
+            if layer:
+                return layer.upper()
+        return ""
+
+    @staticmethod
+    def _trace_outputs(trace: Any) -> dict[str, Any]:
+        """Resolve structured outputs from planner artifacts."""
+        artifacts = getattr(trace, "artifacts", None) or {}
+        outputs = artifacts.get("outputs", {})
+        if isinstance(outputs, dict):
+            return outputs
+        return {}
+
+    @classmethod
     def _collect_out_of_scope_traces(cls, traces: list[Any]) -> tuple[int, list[str]]:
         """Return (scoped PLAN trace count, out-of-scope trace refs)."""
         scoped_plan_traces = 0
@@ -993,6 +1236,79 @@ class PlannerReporter:
                     )
                     break
         return under_spec_total, len(false_unblock_refs), false_unblock_refs
+
+    @staticmethod
+    def _is_web_tool_call(call: dict[str, Any]) -> bool:
+        """Best-effort web-tool classifier based on tool metadata."""
+        tool_name = str(call.get("tool_name", "") or "").lower()
+        if any(
+            token in tool_name
+            for token in ("web", "search", "browser", "http", "serp", "firecrawl")
+        ):
+            return True
+        params = call.get("tool_params")
+        if isinstance(params, dict):
+            for key in ("url", "urls", "domain", "domains"):
+                value = params.get(key)
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    return True
+                if isinstance(value, list) and any(
+                    isinstance(item, str) and item.startswith(("http://", "https://"))
+                    for item in value
+                ):
+                    return True
+        return False
+
+    def _baseline_metric_raw(self, traces: list[Any], metric_name: str) -> float | None:
+        """Load baseline metric raw value when baseline scorecard is available."""
+        baseline_scorecard = self._load_baseline_scorecard(traces)
+        if not baseline_scorecard:
+            return None
+        metrics: list[dict[str, Any]] = []
+        hard_gates = baseline_scorecard.get("hard_gates")
+        soft_signals = baseline_scorecard.get("soft_signals")
+        if isinstance(hard_gates, list):
+            metrics.extend(item for item in hard_gates if isinstance(item, dict))
+        if isinstance(soft_signals, list):
+            metrics.extend(item for item in soft_signals if isinstance(item, dict))
+
+        for metric in metrics:
+            if str(metric.get("name", "") or "") != metric_name:
+                continue
+            raw = metric.get("raw")
+            if isinstance(raw, (int, float)):
+                return float(raw)
+            return None
+        return None
+
+    def _load_baseline_scorecard(self, traces: list[Any]) -> dict[str, Any] | None:
+        """Return baseline planner scorecard JSON when trace metadata provides a run id."""
+        baseline_run_id = ""
+        for trace in traces:
+            request = getattr(trace, "request", None)
+            if not isinstance(request, dict):
+                continue
+            for key in ("baseline_run_id", "reference_run_id", "comparison_run_id"):
+                candidate = str(request.get(key, "") or "").strip()
+                if candidate:
+                    baseline_run_id = candidate
+                    break
+            if baseline_run_id:
+                break
+
+        if not baseline_run_id:
+            return None
+
+        path = self._workspace / "reports" / "pdd" / baseline_run_id / "planner_scorecard.json"
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
 
     @staticmethod
     def _trace_tokens_and_latency(trace: Any) -> tuple[int, float]:
@@ -1174,13 +1490,13 @@ class PlannerReporter:
                 "",
                 "## Stable Comparison Metrics",
                 "",
-                "| Metric | Status | Score | Raw | Detail |",
+                "| Metric | Status | Score (0-100) | Raw | Detail |",
                 "|--------|--------|-------|-----|--------|",
             ]
         )
         for signal in stable_signals:
             lines.append(
-                f"| {signal.name} | {signal.status} | {signal.score:.2f} | "
+                f"| {signal.name} | {signal.status} | {signal.score * 100.0:.1f} | "
                 f"{signal.raw:.2f} | {signal.detail} |"
             )
 
@@ -1189,13 +1505,13 @@ class PlannerReporter:
                 "",
                 "## Additional Soft Signals",
                 "",
-                "| Signal | Status | Score | Raw | Detail |",
+                "| Signal | Status | Score (0-100) | Raw | Detail |",
                 "|--------|--------|-------|-----|--------|",
             ]
         )
         for signal in other_signals:
             lines.append(
-                f"| {signal.name} | {signal.status} | {signal.score:.2f} | "
+                f"| {signal.name} | {signal.status} | {signal.score * 100.0:.1f} | "
                 f"{signal.raw:.2f} | {signal.detail} |"
             )
 
