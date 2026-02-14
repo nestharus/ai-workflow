@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,7 +115,7 @@ class LibraryQualityValidator:
         libraries = self._load_libraries(output_dir)
 
         report.library_count = len(libraries)
-        report.source_line_count = len(route_table)
+        report.source_line_count = self._estimate_source_line_count(route_table, coverage_ledger)
 
         # 1. Completeness
         completeness = self._check_completeness(route_table, coverage_ledger)
@@ -156,26 +158,60 @@ class LibraryQualityValidator:
                 details={"note": "No route table found — trivially complete"},
             )
 
-        total = len(coverage_ledger) if coverage_ledger else len(route_table)
-        routed = sum(
-            1
-            for entry in (coverage_ledger or route_table)
-            if entry.get("status") in ("routed", "noise", None)
-        )
+        if not coverage_ledger:
+            return DimensionScore(
+                name="completeness",
+                score=0.0,
+                passed=False,
+                details={"note": "coverage_ledger.jsonl missing"},
+                issues=["Missing coverage ledger; cannot verify coverage closure."],
+            )
 
-        score = (routed / total * 100.0) if total > 0 else 100.0
-        passed = score >= 100.0
+        total_lines = 0
+        unresolved_lines = 0
+        incomplete_files = 0
 
-        issues = []
-        if not passed:
-            unrouted = total - routed
-            issues.append(f"{unrouted} of {total} lines not routed")
+        for entry in coverage_ledger:
+            start = int(entry.get("start", 0))
+            end = int(entry.get("end", 0))
+            if start > 0 and end >= start:
+                total_lines += end - start + 1
+
+            exceptions = entry.get("exceptions", [])
+            if isinstance(exceptions, list):
+                for exception in exceptions:
+                    if not isinstance(exception, dict):
+                        continue
+                    if exception.get("status") != "uncovered":
+                        continue
+                    exc_start = int(exception.get("start", 0))
+                    exc_end = int(exception.get("end", 0))
+                    if exc_start > 0 and exc_end >= exc_start:
+                        unresolved_lines += exc_end - exc_start + 1
+
+            if entry.get("status") != "fully_routed":
+                incomplete_files += 1
+
+        accounted_lines = max(0, total_lines - unresolved_lines)
+        score = (accounted_lines / total_lines * 100.0) if total_lines > 0 else 100.0
+        passed = unresolved_lines == 0 and incomplete_files == 0
+
+        issues: list[str] = []
+        if unresolved_lines > 0:
+            issues.append(f"{unresolved_lines} source lines remain uncovered")
+        if incomplete_files > 0:
+            issues.append(f"{incomplete_files} files are marked incomplete")
 
         return DimensionScore(
             name="completeness",
             score=score,
             passed=passed,
-            details={"total": total, "routed": routed},
+            details={
+                "total_lines": total_lines,
+                "accounted_lines": accounted_lines,
+                "unresolved_lines": unresolved_lines,
+                "incomplete_files": incomplete_files,
+            },
             issues=issues,
         )
 
@@ -184,12 +220,24 @@ class LibraryQualityValidator:
         if not route_table:
             return DimensionScore(name="routing_overlap", score=100.0, passed=True)
 
-        # Count libraries per source line
+        # Count libraries per source line from span-based routes.
         line_libs: dict[str, set[str]] = {}
         for entry in route_table:
-            line_key = f"{entry.get('source_file', '')}:{entry.get('line', 0)}"
-            lib_id = entry.get("library_id", entry.get("target_library", ""))
-            if lib_id:
+            src = entry.get("src", {})
+            dest = entry.get("dest", {})
+            if not isinstance(src, dict) or not isinstance(dest, dict):
+                continue
+            file_path = str(src.get("file", "")).strip()
+            start = int(src.get("start", 0))
+            end = int(src.get("end", 0))
+            lib_id = str(dest.get("library", "")).strip()
+            bucket = str(dest.get("bucket", "")).strip()
+            if not file_path or not lib_id or not bucket or bucket == "IGNORED":
+                continue
+            if start <= 0 or end < start:
+                continue
+            for line_num in range(start, end + 1):
+                line_key = f"{file_path}:{line_num}"
                 line_libs.setdefault(line_key, set()).add(lib_id)
 
         overlap_count = sum(1 for libs in line_libs.values() if len(libs) > 1)
@@ -329,6 +377,35 @@ class LibraryQualityValidator:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _estimate_source_line_count(
+        route_table: list[dict[str, Any]],
+        coverage_ledger: list[dict[str, Any]],
+    ) -> int:
+        """Estimate source-line volume from coverage records or route spans."""
+        if not coverage_ledger:
+            covered_lines: set[str] = set()
+            for entry in route_table:
+                src = entry.get("src", {})
+                if not isinstance(src, dict):
+                    continue
+                file_path = str(src.get("file", "")).strip()
+                start = int(src.get("start", 0))
+                end = int(src.get("end", 0))
+                if not file_path or start <= 0 or end < start:
+                    continue
+                for line_num in range(start, end + 1):
+                    covered_lines.add(f"{file_path}:{line_num}")
+            return len(covered_lines)
+
+        total = 0
+        for entry in coverage_ledger:
+            start = int(entry.get("start", 0))
+            end = int(entry.get("end", 0))
+            if start > 0 and end >= start:
+                total += end - start + 1
+        return total
+
+    @staticmethod
     def _load_route_table(output_dir: Path) -> list[dict[str, Any]]:
         """Load route_table.jsonl from Phase 0 output."""
         path = output_dir / "route_table.jsonl"
@@ -358,14 +435,17 @@ class LibraryQualityValidator:
 
     @staticmethod
     def _load_libraries(output_dir: Path) -> list[dict[str, Any]]:
-        """Load libraries.json from Phase 0 output."""
-        path = output_dir / "libraries.json"
+        """Load libraries.yaml from Phase 0 output."""
+        path = output_dir / "libraries.yaml"
         if not path.exists():
             return []
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data.get("libraries", data if isinstance(data, list) else [])
-        except (json.JSONDecodeError, KeyError):
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                libraries = data.get("libraries", [])
+                return libraries if isinstance(libraries, list) else []
+            return data if isinstance(data, list) else []
+        except (yaml.YAMLError, OSError):
             return []
 
 

@@ -21,9 +21,7 @@ class RouteEntry:
     route_id: str  # unique ID, e.g. "R-000001"
     src: SourceSpan
     library: str  # library ID, e.g. "LIB-01"
-    category: (
-        str  # ANALYSIS | CONSTRAINTS | DETAIL/ALGORITHM | DETAIL/STORE | DETAIL/SHAPE | IGNORED
-    )
+    bucket: str  # ANALYSIS | CONSTRAINTS | DETAIL/ALGORITHM | DETAIL/STORE | DETAIL/SHAPE | IGNORED
     element_id: str  # e.g. "ALG-LIB01-001"
     notes: str = ""  # free-text from LLM explaining decision
     ref_stubs: list[str] = field(default_factory=list)  # unresolved cross-file references
@@ -39,12 +37,22 @@ class LibraryDef:
 
 
 @dataclass
+class CoverageException:
+    """An explicit non-routed exception range inside a file."""
+
+    start: int
+    end: int
+    status: str  # "ignored" | "uncovered"
+    route_ids: list[str] = field(default_factory=list)
+    reason: str = ""
+
+
+@dataclass
 class CoverageLedgerEntry:
-    """Coverage status for a line range."""
+    """Per-file routing completeness record."""
 
     file: str
     start: int
     end: int
-    status: str  # "routed" | "ignored" | "uncovered"
-    route_ids: list[str] = field(default_factory=list)  # which routes cover these lines
-    ignore_reason: str = ""  # if ignored, why
+    status: str  # "fully_routed" | "incomplete"
+    exceptions: list[CoverageException] = field(default_factory=list)

@@ -11,8 +11,8 @@ from spec_manager.intake.types import LibraryDef, RouteEntry
 
 logger = logging.getLogger(__name__)
 
-# Map category to output file path within a library directory.
-_CATEGORY_PATHS: dict[str, str] = {
+# Map bucket to output file path within a library directory.
+_BUCKET_PATHS: dict[str, str] = {
     "ANALYSIS": "analysis.md",
     "CONSTRAINTS": "constraints.md",
     "DETAIL/ALGORITHM": "details/algorithms.md",
@@ -60,75 +60,43 @@ def assemble_output(
     # Build library lookup
     lib_lookup = {lib.lib_id: lib for lib in libraries}
 
-    # Group routes by library, then by category
-    lib_cat_routes: dict[str, dict[str, list[RouteEntry]]] = defaultdict(lambda: defaultdict(list))
+    # Group routes by library, then by bucket.
+    lib_bucket_routes: dict[str, dict[str, list[RouteEntry]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     for route in routes:
-        if route.category == "IGNORED":
+        if route.bucket == "IGNORED":
             continue
-        lib_cat_routes[route.library][route.category].append(route)
+        if not route.library:
+            raise ValueError(
+                f"Route {route.route_id} has empty library for "
+                f"{route.src.file}:{route.src.start}-{route.src.end}"
+            )
+        lib_bucket_routes[route.library][route.bucket].append(route)
 
     # Cache source file contents
     source_cache: dict[str, list[str]] = {}
 
-    # Assemble system-level routes (no library) separately
-    if "" in lib_cat_routes:
-        sys_cat_routes = lib_cat_routes.pop("")
-        sys_dir = output_dir / "system"
-        sys_dir.mkdir(parents=True, exist_ok=True)
-
-        has_details = any(cat.startswith("DETAIL/") for cat in sys_cat_routes)
-        if has_details:
-            (sys_dir / "details").mkdir(parents=True, exist_ok=True)
-
-        for category in sorted(sys_cat_routes.keys()):
-            output_path = _CATEGORY_PATHS.get(category)
-            if not output_path:
-                raise ValueError(
-                    f"Unknown category {category!r} for system-level routes. "
-                    f"Valid categories: {sorted(_CATEGORY_PATHS.keys())}"
-                )
-
-            cat_routes = sys_cat_routes[category]
-            cat_routes.sort(key=lambda r: (r.src.file, r.src.start))
-
-            out_file = sys_dir / output_path
-            parts: list[str] = []
-            cat_label = category.replace("/", " — ")
-            parts.append(f"# System: {cat_label}\n")
-
-            for route in cat_routes:
-                if route.src.file not in source_cache:
-                    source_cache[route.src.file] = _read_source_lines(source_dir, route.src.file)
-                source_lines = source_cache[route.src.file]
-                text = _extract_verbatim(source_lines, route.src.start, route.src.end)
-                parts.append(f"\n([={route.element_id}])")
-                parts.append(f"<!-- source: {route.src.file}:{route.src.start}-{route.src.end} -->")
-                parts.append(text)
-                parts.append("")
-
-            out_file.write_text("\n".join(parts), encoding="utf-8")
-            logger.info("Assembled system/%s: %d entries", output_path, len(cat_routes))
-
-    for lib_id in sorted(lib_cat_routes.keys()):
+    for lib_id in sorted(lib_bucket_routes.keys()):
         lib = lib_lookup.get(lib_id)
         lib_name = lib.name if lib else lib_id
         lib_dir = libraries_dir / lib_id
         lib_dir.mkdir(parents=True, exist_ok=True)
 
         # Create details subdirectory if needed
-        has_details = any(cat.startswith("DETAIL/") for cat in lib_cat_routes[lib_id])
+        has_details = any(bucket.startswith("DETAIL/") for bucket in lib_bucket_routes[lib_id])
         if has_details:
             (lib_dir / "details").mkdir(parents=True, exist_ok=True)
 
-        for category in sorted(lib_cat_routes[lib_id].keys()):
-            output_path = _CATEGORY_PATHS.get(category)
+        for bucket in sorted(lib_bucket_routes[lib_id].keys()):
+            output_path = _BUCKET_PATHS.get(bucket)
             if not output_path:
                 raise ValueError(
-                    f"Unknown category {category!r} for library {lib_id}. "
-                    f"Valid categories: {sorted(_CATEGORY_PATHS.keys())}"
+                    f"Unknown bucket {bucket!r} for library {lib_id}. "
+                    f"Valid buckets: {sorted(_BUCKET_PATHS.keys())}"
                 )
 
-            cat_routes = lib_cat_routes[lib_id][category]
+            cat_routes = lib_bucket_routes[lib_id][bucket]
             # Sort by source file then start line for deterministic output
             cat_routes.sort(key=lambda r: (r.src.file, r.src.start))
 
@@ -136,7 +104,7 @@ def assemble_output(
             parts: list[str] = []
 
             # Header
-            cat_label = category.replace("/", " — ")
+            cat_label = bucket.replace("/", " — ")
             parts.append(f"# {lib_name}: {cat_label}\n")
 
             for route in cat_routes:
@@ -167,7 +135,7 @@ def assemble_output(
 
     logger.info(
         "Assembly complete: %d libraries in %s",
-        len(lib_cat_routes),
+        len(lib_bucket_routes),
         libraries_dir,
     )
     return libraries_dir
@@ -181,7 +149,7 @@ def _write_constraints_indexes(
 ) -> None:
     """Write constraints_index.json per library with subtype tags.
 
-    For each library that has CONSTRAINTS-category routes, classifies each
+    For each library that has CONSTRAINTS bucket routes, classifies each
     constraint element and writes a JSON index file alongside constraints.md.
     """
     from spec_manager.planner.constraints.bootstrap import _classify_constraint_subtype
@@ -189,13 +157,10 @@ def _write_constraints_indexes(
     # Group CONSTRAINTS routes by library
     lib_constraint_routes: dict[str, list[RouteEntry]] = defaultdict(list)
     for route in routes:
-        if route.category == "CONSTRAINTS":
+        if route.bucket == "CONSTRAINTS":
             lib_constraint_routes[route.library].append(route)
 
     for lib_id, constraint_routes in lib_constraint_routes.items():
-        if not lib_id:
-            continue  # Skip system-level for now
-
         entries: list[dict[str, str | list[str]]] = []
         for route in constraint_routes:
             if route.src.file not in source_cache:

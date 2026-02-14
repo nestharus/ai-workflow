@@ -6,6 +6,8 @@ import json
 import logging
 from pathlib import Path
 
+import yaml
+
 from spec_manager.core.agent_utils import run_agent
 from spec_manager.intake.types import LibraryDef
 from spec_manager.refinement.formats import _strip_code_fences
@@ -80,13 +82,6 @@ def discover_libraries(
             f"Failed to parse library discovery JSON after 3 attempts: {last_json_error}"
         )
 
-    # Write full discovery output
-    libraries_file = output_dir / "libraries.json"
-    libraries_file.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
     if "libraries" not in data:
         raise ValueError(
             f"Library discovery JSON missing 'libraries' key. Got keys: {sorted(data.keys())}"
@@ -101,6 +96,25 @@ def discover_libraries(
                 description=lib_data["description"],
             )
         )
+
+    libraries_file = output_dir / "libraries.yaml"
+    libraries_file.write_text(
+        yaml.safe_dump(
+            {
+                "libraries": [
+                    {
+                        "lib_id": lib.lib_id,
+                        "name": lib.name,
+                        "description": lib.description,
+                    }
+                    for lib in libraries
+                ]
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
 
     logger.info(
         "Discovered %d libraries: %s",

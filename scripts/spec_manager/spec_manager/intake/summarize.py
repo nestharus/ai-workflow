@@ -12,6 +12,70 @@ from spec_manager.refinement.formats import _strip_code_fences
 logger = logging.getLogger(__name__)
 
 
+def _pick_first_text(summary: dict, keys: tuple[str, ...]) -> str:
+    """Pick the first non-empty string value from candidate keys."""
+    for key in keys:
+        value = summary.get(key, "")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _as_text_list(value: object) -> list[str]:
+    """Normalize an arbitrary value into a compact list of strings."""
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _render_summary_markdown(source_rel_path: str, summary: dict) -> str:
+    """Render a high-level routing summary artifact as markdown."""
+    overview = _pick_first_text(
+        summary,
+        ("summary", "high_level_summary", "overview", "file_summary"),
+    )
+    concerns = _as_text_list(
+        summary.get("core_concerns")
+        or summary.get("candidate_responsibilities")
+        or summary.get("responsibilities")
+        or summary.get("topics")
+    )
+    library_hints = _as_text_list(
+        summary.get("library_hints")
+        or summary.get("candidate_libraries")
+        or summary.get("libraries")
+    )
+
+    lines = [
+        "# Routing Summary",
+        "",
+        f"- Source: `{source_rel_path}`",
+        f"- File ID: `{summary.get('file_id', '')}`",
+        "",
+    ]
+    if overview:
+        lines.extend(["## Overview", overview, ""])
+    if concerns:
+        lines.append("## Core Concerns")
+        lines.extend(f"- {item}" for item in concerns[:12])
+        lines.append("")
+    if library_hints:
+        lines.append("## Library Hints")
+        lines.extend(f"- {item}" for item in library_hints[:12])
+        lines.append("")
+    if not overview and not concerns and not library_hints:
+        lines.extend(
+            [
+                "## Overview",
+                "High-level routing hints were unavailable in structured fields.",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
     """Summarize all markdown source files for routing decisions.
 
@@ -79,10 +143,11 @@ def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
             )
         summary["file_id"] = canonical_id
 
-        # Write individual summary
-        summary_file = summaries_dir / f"{source_file.stem}.json"
+        # Write high-level routing summary artifact.
+        source_rel_path = str(source_file.relative_to(source_dir))
+        summary_file = summaries_dir / f"{source_file.stem}.md"
         summary_file.write_text(
-            json.dumps(summary, indent=2, ensure_ascii=False),
+            _render_summary_markdown(source_rel_path, summary),
             encoding="utf-8",
         )
 

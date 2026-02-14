@@ -44,20 +44,27 @@ def run_phase0(source_dir: Path, output_dir: Path) -> dict[str, Any]:
 
     # Step 3: Route (may re-run discovery if content doesn't fit any library)
     logger.info("Phase 0 Step 3: Routing source spans...")
-    routes, libraries = route_sources(source_dir, libraries, output_dir)
+    routes, libraries = route_sources(source_dir, libraries, summaries, output_dir)
 
     # Step 4: Coverage check
     logger.info("Phase 0 Step 4: Checking coverage...")
     ledger = check_coverage(source_dir, routes, output_dir)
 
-    # Report coverage
-    routed = sum(1 for e in ledger if e.status == "routed")
-    uncovered = sum(1 for e in ledger if e.status == "uncovered")
-    if uncovered > 0:
-        logger.warning(
-            "Coverage incomplete: %d routed ranges, %d uncovered ranges",
-            routed,
-            uncovered,
+    # Coverage equals termination: unresolved uncovered lines block completion.
+    fully_routed_files = sum(1 for entry in ledger if entry.status == "fully_routed")
+    incomplete_files = [entry for entry in ledger if entry.status != "fully_routed"]
+    unresolved_lines = sum(
+        exc.end - exc.start + 1
+        for entry in incomplete_files
+        for exc in entry.exceptions
+        if exc.status == "uncovered"
+    )
+    if incomplete_files:
+        unresolved_file_ids = [entry.file for entry in incomplete_files]
+        raise ValueError(
+            "Coverage closure failed: unresolved uncovered lines remain after "
+            f"noise filtering ({unresolved_lines} lines across {len(unresolved_file_ids)} files). "
+            f"Files: {unresolved_file_ids}"
         )
 
     # Step 5: Assemble
@@ -68,8 +75,8 @@ def run_phase0(source_dir: Path, output_dir: Path) -> dict[str, Any]:
         "files_summarized": len(summaries),
         "libraries_discovered": len(libraries),
         "routes_created": len(routes),
-        "coverage_routed": routed,
-        "coverage_uncovered": uncovered,
+        "coverage_files_fully_routed": fully_routed_files,
+        "coverage_files_incomplete": len(incomplete_files),
         "output_dir": str(libraries_dir),
     }
 

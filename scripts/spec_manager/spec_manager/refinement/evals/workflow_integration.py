@@ -226,11 +226,11 @@ class WorkspaceIntegration:
             return sorted(set(outputs))
 
         # Phase 0 fallback: derive section labels from summary file stems.
-        # Phase 0 produces summaries/*.json where each file stem corresponds
+        # Phase 0 produces summaries/*.md where each file stem corresponds
         # to a source section (e.g. settlement_processing -> SETTLEMENT_PROCESSING).
         summaries_dir = manager.structure.summaries_dir
         if summaries_dir.exists():
-            for summary_file in summaries_dir.glob("*.json"):
+            for summary_file in summaries_dir.glob("*.md"):
                 label = summary_file.stem.upper()
                 outputs.append(label)
 
@@ -253,8 +253,8 @@ class WorkspaceIntegration:
 
         Supports two formats:
         1. Legacy refinement: markdown summary files with bullet points
-        2. Phase 0: libraries.json with library descriptions, or JSON
-           summary files with per-file summaries
+        2. Phase 0: libraries.yaml with library descriptions, plus markdown
+           routing summaries in summaries/*.md
 
         Args:
             manager: WorkspaceManager with summarization completed.
@@ -262,36 +262,47 @@ class WorkspaceIntegration:
         Returns:
             List of summary strings.
         """
-        import json
+        import yaml
 
         outputs: list[str] = []
 
-        # Phase 0 path: read library descriptions from libraries.json.
+        # Phase 0 path: read library descriptions from libraries.yaml.
         # Summarization ground truth expects per-library descriptions.
-        libraries_json = manager.structure.root / "libraries.json"
-        if libraries_json.exists():
+        libraries_yaml = manager.structure.root / "libraries.yaml"
+        if libraries_yaml.exists():
             try:
-                data = json.loads(libraries_json.read_text(encoding="utf-8"))
-                for lib in data.get("libraries", []):
-                    desc = lib.get("description", "")
-                    if desc:
-                        outputs.append(desc)
-            except (json.JSONDecodeError, OSError):
+                data = yaml.safe_load(libraries_yaml.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for lib in data.get("libraries", []):
+                        if not isinstance(lib, dict):
+                            continue
+                        desc = str(lib.get("description", "")).strip()
+                        if desc:
+                            outputs.append(desc)
+            except (yaml.YAMLError, OSError):
                 pass
 
         if outputs:
             return outputs
 
-        # Phase 0 fallback: read per-file summaries from JSON
+        # Phase 0 fallback: read per-file summaries from markdown artifacts.
         summaries_dir = manager.structure.summaries_dir
         if summaries_dir.exists():
-            for summary_file in summaries_dir.glob("*.json"):
+            for summary_file in summaries_dir.glob("*.md"):
                 try:
-                    data = json.loads(summary_file.read_text(encoding="utf-8"))
-                    summary_text = data.get("summary", "")
-                    if summary_text:
-                        outputs.append(summary_text)
-                except (json.JSONDecodeError, OSError):
+                    content = summary_file.read_text(encoding="utf-8")
+                    for line in content.splitlines():
+                        stripped = line.strip()
+                        if not stripped or stripped.startswith("#"):
+                            continue
+                        if stripped.startswith("- ") or stripped.startswith("* "):
+                            text = stripped[2:].strip()
+                            if text and len(text) > 5:
+                                outputs.append(text)
+                            continue
+                        if len(stripped) > 20:
+                            outputs.append(stripped)
+                except OSError:
                     continue
 
         if outputs:
@@ -322,7 +333,7 @@ class WorkspaceIntegration:
 
         Supports two formats:
         1. Legacy refinement: charter.md files with Intent/Responsibilities
-        2. Phase 0: libraries.json with library names, plus assembled
+        2. Phase 0: libraries.yaml with library names, plus assembled
            markdown files with requirement text
 
         Args:
@@ -331,7 +342,7 @@ class WorkspaceIntegration:
         Returns:
             List of library-related strings (names, intents, requirements).
         """
-        import json
+        import yaml
 
         outputs: list[str] = []
         libraries_dir = manager.structure.libraries_dir
@@ -339,16 +350,19 @@ class WorkspaceIntegration:
         if not libraries_dir.exists():
             return outputs
 
-        # Phase 0 path: read library names from libraries.json
-        libraries_json = manager.structure.root / "libraries.json"
-        if libraries_json.exists():
+        # Phase 0 path: read library names from libraries.yaml.
+        libraries_yaml = manager.structure.root / "libraries.yaml"
+        if libraries_yaml.exists():
             try:
-                data = json.loads(libraries_json.read_text(encoding="utf-8"))
-                for lib in data.get("libraries", []):
-                    name = lib.get("name", "")
-                    if name:
-                        outputs.append(name)
-            except (json.JSONDecodeError, OSError):
+                data = yaml.safe_load(libraries_yaml.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for lib in data.get("libraries", []):
+                        if not isinstance(lib, dict):
+                            continue
+                        name = str(lib.get("name", "")).strip()
+                        if name:
+                            outputs.append(name)
+            except (yaml.YAMLError, OSError):
                 pass
 
         # Check if this is Phase 0 format (library dirs contain details/
@@ -365,11 +379,11 @@ class WorkspaceIntegration:
             #   ([=ALG-LIB-01-001])
             #   <!-- source: file.md:3-3 -->
             #   [verbatim source text]
-            has_library_names = libraries_json.exists()
+            has_library_names = libraries_yaml.exists()
             for lib_dir in libraries_dir.iterdir():
                 if not lib_dir.is_dir():
                     continue
-                # If no library names from libraries.json, use dir name
+                # If no library names from libraries.yaml, use dir name
                 if not has_library_names:
                     outputs.append(lib_dir.name)
                 outputs.extend(self._extract_phase0_requirements(lib_dir))

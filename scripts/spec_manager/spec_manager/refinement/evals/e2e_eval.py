@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Maps library IDs to their PDD skeleton Python files.
-# Derived from libraries.json overlap_notes and route_table.jsonl.
+# Derived from libraries.yaml overlap_notes and route_table.jsonl.
 _LIB_TO_PDD_FILES: dict[str, list[str]] = {
     "LIB-01": ["settlement_processor.py", "transaction_validator.py"],
     "LIB-02": ["risk_engine.py"],
@@ -202,7 +202,7 @@ def setup_workspace(run_id: str, *, force: bool = True) -> tuple[Any, Path]:
     """Initialize workspace with PDD skeletons + Phase 0 output.
 
     1. Create workspace with PDD skeleton files as ``spec_snapshot``
-    2. Install Phase 0 output (libraries/, summaries/, system/)
+    2. Install Phase 0 output (libraries/, summaries/)
 
     Returns:
         Tuple of (WorkspaceManager, workspace_root_path).
@@ -243,8 +243,7 @@ def _install_phase0_output(workspace_root: Path, phase0_dir: Path) -> None:
     Phase 0 produces:
     - libraries/ (LIB-01 through LIB-08 with details/)
     - summaries/ (per-section JSON summaries)
-    - system/constraints.md
-    - libraries.json, route_table.jsonl, coverage_ledger.jsonl
+    - libraries.yaml, route_table.jsonl, coverage_ledger.jsonl
     """
     # Install libraries
     src_libs = phase0_dir / "libraries"
@@ -263,16 +262,8 @@ def _install_phase0_output(workspace_root: Path, phase0_dir: Path) -> None:
             shutil.rmtree(dst_summaries)
         shutil.copytree(src_summaries, dst_summaries)
 
-    # Install system constraints
-    src_system = phase0_dir / "system"
-    dst_system = workspace_root / "system"
-    if src_system.exists():
-        dst_system.mkdir(parents=True, exist_ok=True)
-        for f in src_system.iterdir():
-            shutil.copy2(f, dst_system / f.name)
-
     # Install top-level Phase 0 artifacts
-    for fname in ("libraries.json", "route_table.jsonl", "coverage_ledger.jsonl"):
+    for fname in ("libraries.yaml", "route_table.jsonl", "coverage_ledger.jsonl"):
         src = phase0_dir / fname
         if src.exists():
             shutil.copy2(src, workspace_root / fname)

@@ -345,7 +345,7 @@ class PddOrchestrator:
         5. Assemble output by verbatim copy (deterministic)
 
         After Phase 0 completes, its output is installed into the workspace
-        structure (libraries/, summaries/, system/) so downstream phases and
+        structure (libraries/, summaries/) so downstream phases and
         extraction methods can find it.
         """
         from spec_manager.intake import run_phase0
@@ -387,7 +387,7 @@ class PddOrchestrator:
         """Copy Phase 0 assembled output into the workspace directory structure.
 
         Phase 0 writes to its own output directory. The workspace structure
-        (libraries/, summaries/, system/) is where extraction methods and
+        (libraries/, summaries/) is where extraction methods and
         downstream phases look for content. This bridge copies the output
         into those locations.
         """
@@ -403,26 +403,18 @@ class PddOrchestrator:
                         shutil.rmtree(dest)
                     shutil.copytree(lib_dir, dest)
 
-        # Install system-level constraints
-        phase0_system = phase0_dir / "system"
-        if phase0_system.exists():
-            system_dest = self.manager.structure.root / "system"
-            if system_dest.exists():
-                shutil.rmtree(system_dest)
-            shutil.copytree(phase0_system, system_dest)
-
         # Install per-file summaries
         phase0_summaries = phase0_dir / "summaries"
         if phase0_summaries.exists():
-            for summary_file in phase0_summaries.glob("*.json"):
+            for summary_file in phase0_summaries.glob("*.md"):
                 dest = self.manager.structure.summaries_dir / summary_file.name
                 shutil.copy2(summary_file, dest)
 
-        # Install libraries.json (library definitions with names)
-        libraries_json = phase0_dir / "libraries.json"
-        if libraries_json.exists():
-            dest = self.manager.structure.root / "libraries.json"
-            shutil.copy2(libraries_json, dest)
+        # Install libraries.yaml (library definitions with names)
+        libraries_yaml = phase0_dir / "libraries.yaml"
+        if libraries_yaml.exists():
+            dest = self.manager.structure.root / "libraries.yaml"
+            shutil.copy2(libraries_yaml, dest)
 
         # Install route_table.jsonl
         route_table = phase0_dir / "route_table.jsonl"
@@ -765,18 +757,23 @@ class PddOrchestrator:
 
         # 5. Load libraries + elements for projection plan
         libraries: list[Library] = []
-        libraries_json = root / "libraries.json"
-        if libraries_json.exists():
-            data = json.loads(libraries_json.read_text(encoding="utf-8"))
-            for lib_data in data.get("libraries", []):
-                lib_id = lib_data.get("lib_id", "")
-                libraries.append(
-                    Library(
-                        lib_id=lib_id,
-                        name=lib_data.get("name", lib_id),
-                        description=lib_data.get("description", ""),
+        libraries_yaml = root / "libraries.yaml"
+        if libraries_yaml.exists():
+            import yaml
+
+            data = yaml.safe_load(libraries_yaml.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for lib_data in data.get("libraries", []):
+                    if not isinstance(lib_data, dict):
+                        continue
+                    lib_id = str(lib_data.get("lib_id", "")).strip()
+                    libraries.append(
+                        Library(
+                            lib_id=lib_id,
+                            name=str(lib_data.get("name", lib_id)),
+                            description=str(lib_data.get("description", "")),
+                        )
                     )
-                )
 
         elements: list[DerivedElement] = []
         lib_dirs = self.manager.get_all_libraries_recursive()

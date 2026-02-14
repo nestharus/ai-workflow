@@ -74,7 +74,6 @@ def _build_library_context(libraries: list[LibraryDef]) -> str:
 def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
     """Parse JSON routing output into RouteEntry objects."""
     entries: list[RouteEntry] = []
-    route_counter = len(entries)
 
     if "routes" not in data:
         raise ValueError(
@@ -82,31 +81,27 @@ def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
         )
 
     for route_data in data["routes"]:
-        category = route_data.get("category")
-        if category is None:
-            raise ValueError(f"Route in {source_file} missing 'category'. Route data: {route_data}")
-
-        route_counter += 1
-        route_id = f"R-{route_counter:06d}"
+        bucket = route_data.get("bucket")
+        if bucket is None:
+            raise ValueError(f"Route in {source_file} missing 'bucket'. Route data: {route_data}")
 
         library = route_data.get("library", "")
-        if category not in ("IGNORED", "CONSTRAINTS") and not library:
+        if not library:
             raise ValueError(
-                f"Non-IGNORED, non-CONSTRAINTS route in {source_file} missing 'library'. "
-                f"Category={category}, lines {route_data.get('start')}-{route_data.get('end')}. "
-                f"This likely means library discovery missed an orchestration library."
+                f"Route in {source_file} missing 'library'. "
+                f"Bucket={bucket}, lines {route_data.get('start')}-{route_data.get('end')}."
             )
 
         entries.append(
             RouteEntry(
-                route_id=route_id,
+                route_id="",
                 src=SourceSpan(
                     file=source_file,
                     start=route_data["start"],
                     end=route_data["end"],
                 ),
                 library=library,
-                category=category,
+                bucket=bucket,
                 element_id=route_data.get("element_id", ""),
                 notes=route_data.get("notes", ""),
                 ref_stubs=route_data.get("ref_stubs", []),
@@ -116,7 +111,7 @@ def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
     return entries
 
 
-_CATEGORY_PREFIXES: dict[str, str] = {
+_BUCKET_PREFIXES: dict[str, str] = {
     "DETAIL/ALGORITHM": "ALG",
     "DETAIL/STORE": "STO",
     "DETAIL/SHAPE": "SHP",
@@ -129,23 +124,28 @@ def _reassign_element_ids(routes: list[RouteEntry]) -> None:
     """Reassign element IDs to guarantee global uniqueness.
 
     The LLM generates per-file counters that collide across files.
-    This uses a (library, category) counter to produce unique IDs.
+    This uses a (library, bucket) counter to produce unique IDs.
     """
     counters: dict[tuple[str, str], int] = defaultdict(int)
     for route in routes:
-        if route.category == "IGNORED":
+        if route.bucket == "IGNORED":
             continue
-        prefix = _CATEGORY_PREFIXES.get(route.category)
+        prefix = _BUCKET_PREFIXES.get(route.bucket)
         if prefix is None:
             raise ValueError(
-                f"Unknown category {route.category!r} in route {route.route_id} "
+                f"Unknown bucket {route.bucket!r} in route {route.route_id} "
                 f"({route.src.file}:{route.src.start}-{route.src.end}). "
-                f"Valid categories: {sorted(_CATEGORY_PREFIXES.keys())}"
+                f"Valid buckets: {sorted(_BUCKET_PREFIXES.keys())}"
             )
-        lib_label = route.library if route.library else "SYS"
-        key = (lib_label, route.category)
+        key = (route.library, route.bucket)
         counters[key] += 1
-        route.element_id = f"{prefix}-{lib_label}-{counters[key]:03d}"
+        route.element_id = f"{prefix}-{route.library}-{counters[key]:03d}"
+
+
+def _assign_route_ids(routes: list[RouteEntry]) -> None:
+    """Assign globally unique route IDs in deterministic order."""
+    for idx, route in enumerate(routes, start=1):
+        route.route_id = f"R-{idx:06d}"
 
 
 def _route_file(
@@ -164,6 +164,12 @@ def _route_file(
     prompt = (
         f"{_CLASSIFICATION_GUIDANCE}\n\n"
         f"{library_context}\n\n"
+        "## Output Requirements\n\n"
+        "Return JSON with a top-level `routes` array.\n"
+        "Each route MUST include: `start`, `end`, `library`, `bucket`, "
+        "`element_id`, `notes`, `ref_stubs`.\n"
+        "Use one of these buckets: ANALYSIS, CONSTRAINTS, DETAIL/ALGORITHM, "
+        "DETAIL/STORE, DETAIL/SHAPE, IGNORED.\n\n"
         "## INPUT DATA\n\n"
         f"File: {source_file.relative_to(source_dir)}\n"
         f"Total lines: {total_lines}\n\n"
@@ -213,6 +219,7 @@ _MAX_REDISCOVERY_ROUNDS = 2
 def route_sources(
     source_dir: Path,
     libraries: list[LibraryDef],
+    summaries: list[dict],
     output_dir: Path,
 ) -> tuple[list[RouteEntry], list[LibraryDef]]:
     """Build a routing table mapping source spans to destinations.
@@ -224,6 +231,7 @@ def route_sources(
     Args:
         source_dir: Directory containing source .md files.
         libraries: Discovered library definitions from Step 2.
+        summaries: Step 1 summary payloads for rediscovery feedback.
         output_dir: Directory for writing output artifacts.
 
     Returns:
@@ -282,16 +290,9 @@ def route_sources(
             len(failed_files),
         )
 
-        # Load all step-1 summaries for rediscovery
-        existing_summaries: list[dict] = []
-        summaries_dir = output_dir / "summaries"
-        if summaries_dir.exists():
-            for f in sorted(summaries_dir.glob("*.json")):
-                existing_summaries.append(json.loads(f.read_text(encoding="utf-8")))
-
         unroutable_file_ids = [f.stem for f in failed_files]
         new_libraries = discover_libraries(
-            existing_summaries,
+            summaries,
             output_dir,
             existing_libraries=current_libraries,
             unroutable_files=unroutable_file_ids,
@@ -317,6 +318,7 @@ def route_sources(
 
     # Reassign element IDs to guarantee global uniqueness.
     _reassign_element_ids(all_routes)
+    _assign_route_ids(all_routes)
 
     # Write route table as JSONL
     route_table_path = output_dir / "route_table.jsonl"
@@ -331,7 +333,7 @@ def route_sources(
                 },
                 "dest": {
                     "library": entry.library,
-                    "category": entry.category,
+                    "bucket": entry.bucket,
                     "element_id": entry.element_id,
                 },
                 "notes": entry.notes,

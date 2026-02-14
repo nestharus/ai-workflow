@@ -1,10 +1,4 @@
-"""Step 4: Coverage check with LLM-assisted noise classification.
-
-After the deterministic routing scan, uncovered lines are passed to an LLM
-which generates a filtering script to separate format noise from real content
-gaps.  The LLM iterates the script until the filtered result is stable —
-keeping all genuine content, ignoring all noise.
-"""
+"""Step 4: Coverage closure for routing-table completeness."""
 
 from __future__ import annotations
 
@@ -14,11 +8,43 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from spec_manager.intake.types import CoverageLedgerEntry, RouteEntry
+from spec_manager.intake.types import CoverageException, CoverageLedgerEntry, RouteEntry
 
 logger = logging.getLogger(__name__)
 
 _MAX_FILTER_ITERATIONS = 3
+
+
+def _collect_explicit_ignored_ranges(
+    ignored_marks: list[bool],
+    ignored_route_ids: dict[int, list[str]],
+) -> list[CoverageException]:
+    """Convert per-line IGNORED route marks into contiguous ranges."""
+    exceptions: list[CoverageException] = []
+    line_count = len(ignored_marks) - 1
+    line_num = 1
+    while line_num <= line_count:
+        if not ignored_marks[line_num]:
+            line_num += 1
+            continue
+
+        start = line_num
+        route_ids: set[str] = set()
+        while line_num <= line_count and ignored_marks[line_num]:
+            route_ids.update(ignored_route_ids.get(line_num, []))
+            line_num += 1
+
+        exceptions.append(
+            CoverageException(
+                start=start,
+                end=line_num - 1,
+                status="ignored",
+                route_ids=sorted(route_ids),
+                reason="explicitly ignored during routing",
+            )
+        )
+
+    return exceptions
 
 
 def check_coverage(
@@ -26,33 +52,29 @@ def check_coverage(
     routes: list[RouteEntry],
     output_dir: Path,
 ) -> list[CoverageLedgerEntry]:
-    """Check that every source line is covered by at least one route.
+    """Check per-file routing completeness for all source files.
 
-    Two passes:
-      1. Deterministic — mark lines routed or uncovered based on route spans.
-      2. LLM — classify uncovered lines as noise (ignored) or real gaps.
-
-    Args:
-        source_dir: Directory containing source .md files.
-        routes: List of routing entries from Step 3.
-        output_dir: Directory for writing the coverage ledger.
-
-    Returns:
-        List of CoverageLedgerEntry objects.
+    Each source file receives one ledger record:
+    - ``fully_routed``: all lines are routed or explicitly ignored.
+    - ``incomplete``: at least one line remains uncovered.
     """
-    # --- Pass 1: deterministic scan ---
-    file_routes: dict[str, list[RouteEntry]] = defaultdict(list)
+    routed_routes: dict[str, list[RouteEntry]] = defaultdict(list)
+    ignored_routes: dict[str, list[RouteEntry]] = defaultdict(list)
     for route in routes:
-        file_routes[route.src.file].append(route)
+        if route.bucket == "IGNORED":
+            ignored_routes[route.src.file].append(route)
+        else:
+            routed_routes[route.src.file].append(route)
 
     source_files = sorted(source_dir.glob("**/*.md"))
-    ledger: list[CoverageLedgerEntry] = []
-    total_lines = 0
-    covered_lines = 0
+    if not source_files:
+        logger.warning("No .md files found in %s", source_dir)
+        return []
 
-    # Per-file line content needed for LLM pass
     file_lines: dict[str, list[str]] = {}
-    uncovered_entries: list[CoverageLedgerEntry] = []
+    uncovered_ranges: list[tuple[str, int, int]] = []
+    explicit_ignored: dict[str, list[CoverageException]] = defaultdict(list)
+    total_lines = 0
 
     for source_file in source_files:
         rel_path = str(source_file.relative_to(source_dir))
@@ -62,125 +84,150 @@ def check_coverage(
         total_lines += line_count
 
         if line_count == 0:
-            # C01: Account for all inputs — record empty files
-            logger.warning("Empty source file: %s — skipping coverage check", rel_path)
             continue
 
         covered = [False] * (line_count + 1)
-        line_route_ids: dict[int, list[str]] = defaultdict(list)
+        ignored_marks = [False] * (line_count + 1)
+        ignored_route_ids: dict[int, list[str]] = defaultdict(list)
 
-        for route in file_routes.get(rel_path, []):
-            for line_num in range(route.src.start, route.src.end + 1):
-                if 1 <= line_num <= line_count:
-                    covered[line_num] = True
-                    line_route_ids[line_num].append(route.route_id)
+        for route in routed_routes.get(rel_path, []):
+            start = max(1, route.src.start)
+            end = min(line_count, route.src.end)
+            if start > end:
+                continue
+            for line_num in range(start, end + 1):
+                covered[line_num] = True
 
-        i = 1
-        while i <= line_count:
-            if covered[i]:
-                start = i
-                route_ids: set[str] = set()
-                while i <= line_count and covered[i]:
-                    route_ids.update(line_route_ids[i])
-                    i += 1
-                end = i - 1
-                covered_lines += end - start + 1
-                ledger.append(
-                    CoverageLedgerEntry(
-                        file=rel_path,
-                        start=start,
-                        end=end,
-                        status="routed",
-                        route_ids=sorted(route_ids),
-                    )
-                )
-            else:
-                start = i
-                while i <= line_count and not covered[i]:
-                    i += 1
-                end = i - 1
-                entry = CoverageLedgerEntry(
-                    file=rel_path,
-                    start=start,
-                    end=end,
-                    status="uncovered",
-                )
-                uncovered_entries.append(entry)
+        for route in ignored_routes.get(rel_path, []):
+            start = max(1, route.src.start)
+            end = min(line_count, route.src.end)
+            if start > end:
+                continue
+            for line_num in range(start, end + 1):
+                covered[line_num] = True
+                ignored_marks[line_num] = True
+                ignored_route_ids[line_num].append(route.route_id)
 
-    # --- Pass 2: LLM classification of uncovered lines ---
-    if uncovered_entries:
-        classified = _classify_uncovered(uncovered_entries, file_lines, output_dir)
-        for entry in classified:
-            if entry.status == "ignored":
-                covered_lines += entry.end - entry.start + 1
-        ledger.extend(classified)
-    else:
-        covered_lines = total_lines
+        if any(ignored_marks):
+            explicit_ignored[rel_path].extend(
+                _collect_explicit_ignored_ranges(ignored_marks, ignored_route_ids)
+            )
 
-    # Sort ledger by file then start line
-    ledger.sort(key=lambda e: (e.file, e.start))
+        line_num = 1
+        while line_num <= line_count:
+            if covered[line_num]:
+                line_num += 1
+                continue
+            start = line_num
+            while line_num <= line_count and not covered[line_num]:
+                line_num += 1
+            uncovered_ranges.append((rel_path, start, line_num - 1))
 
-    # --- Write ledger ---
+    llm_classified = (
+        _classify_uncovered(uncovered_ranges, file_lines, output_dir) if uncovered_ranges else {}
+    )
+
+    all_exceptions: dict[str, list[CoverageException]] = {
+        file_path: list(exceptions) for file_path, exceptions in explicit_ignored.items()
+    }
+    for file_path, exceptions in llm_classified.items():
+        all_exceptions.setdefault(file_path, []).extend(exceptions)
+
+    ledger: list[CoverageLedgerEntry] = []
+    unresolved_lines = 0
+    ignored_lines = 0
+
+    for source_file in source_files:
+        rel_path = str(source_file.relative_to(source_dir))
+        line_count = len(file_lines[rel_path])
+        exceptions = all_exceptions.get(rel_path, [])
+        exceptions.sort(key=lambda exc: exc.start)
+
+        unresolved = [exc for exc in exceptions if exc.status == "uncovered"]
+        ignored = [exc for exc in exceptions if exc.status == "ignored"]
+        unresolved_lines += sum(exc.end - exc.start + 1 for exc in unresolved)
+        ignored_lines += sum(exc.end - exc.start + 1 for exc in ignored)
+
+        ledger.append(
+            CoverageLedgerEntry(
+                file=rel_path,
+                start=1 if line_count > 0 else 0,
+                end=line_count,
+                status="fully_routed" if not unresolved else "incomplete",
+                exceptions=exceptions,
+            )
+        )
+
     ledger_path = output_dir / "coverage_ledger.jsonl"
-    with ledger_path.open("w", encoding="utf-8") as f:
+    with ledger_path.open("w", encoding="utf-8") as handle:
         for entry in ledger:
             record: dict[str, Any] = {
                 "file": entry.file,
                 "start": entry.start,
                 "end": entry.end,
                 "status": entry.status,
+                "exceptions": [
+                    {
+                        "start": exc.start,
+                        "end": exc.end,
+                        "status": exc.status,
+                        **({"route_ids": exc.route_ids} if exc.route_ids else {}),
+                        **({"reason": exc.reason} if exc.reason else {}),
+                    }
+                    for exc in entry.exceptions
+                ],
             }
-            if entry.route_ids:
-                record["route_ids"] = entry.route_ids
-            if entry.ignore_reason:
-                record["ignore_reason"] = entry.ignore_reason
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    uncovered_count = sum(1 for e in ledger if e.status == "uncovered")
-    coverage_pct = (covered_lines / total_lines * 100) if total_lines > 0 else 100.0
-    logger.info("Coverage: %d/%d lines (%.1f%%)", covered_lines, total_lines, coverage_pct)
-    if uncovered_count:
-        logger.warning("Uncovered content ranges: %d", uncovered_count)
+    incomplete_files = [entry for entry in ledger if entry.status == "incomplete"]
+    accounted_lines = total_lines - unresolved_lines
+    coverage_pct = (accounted_lines / total_lines * 100.0) if total_lines > 0 else 100.0
+    logger.info(
+        "Coverage: %d/%d lines accounted for (%.1f%%), %d lines ignored",
+        accounted_lines,
+        total_lines,
+        coverage_pct,
+        ignored_lines,
+    )
+    if incomplete_files:
+        logger.warning(
+            "Coverage incomplete for %d files with %d unresolved lines",
+            len(incomplete_files),
+            unresolved_lines,
+        )
 
     return ledger
 
 
 def _classify_uncovered(
-    entries: list[CoverageLedgerEntry],
+    ranges: list[tuple[str, int, int]],
     file_lines: dict[str, list[str]],
     output_dir: Path,
-) -> list[CoverageLedgerEntry]:
-    """Use GLM to classify uncovered lines as noise or real content gaps.
-
-    The LLM generates a filter script, applies it, reviews the result, and
-    iterates until satisfied.  Returns updated entries with status set to
-    either ``"ignored"`` (with reason) or ``"uncovered"``.
-    """
+) -> dict[str, list[CoverageException]]:
+    """Classify uncovered ranges as ignored noise or unresolved content gaps."""
     from spec_manager.core.agent_utils import run_agent
     from spec_manager.refinement.formats import _strip_code_fences
 
-    # Build the uncovered-lines payload for the LLM
-    uncovered_payload: list[dict[str, Any]] = []
-    for entry in entries:
-        lines = file_lines.get(entry.file, [])
-        content_lines = []
-        for line_num in range(entry.start, entry.end + 1):
+    payload: list[dict[str, Any]] = []
+    for file_path, start, end in ranges:
+        lines = file_lines.get(file_path, [])
+        content: list[str] = []
+        for line_num in range(start, end + 1):
             if 1 <= line_num <= len(lines):
-                content_lines.append(f"{line_num}: {lines[line_num - 1]}")
-        uncovered_payload.append(
+                content.append(f"{line_num}: {lines[line_num - 1]}")
+        payload.append(
             {
-                "id": f"{entry.file}:{entry.start}-{entry.end}",
-                "file": entry.file,
-                "start": entry.start,
-                "end": entry.end,
-                "content": content_lines,
+                "id": f"{file_path}:{start}-{end}",
+                "file": file_path,
+                "start": start,
+                "end": end,
+                "content": content,
             }
         )
 
-    # Iteration loop: generate filter, review, refine
-    current_payload = uncovered_payload
+    current_payload = payload
     filter_script: str | None = None
-    classifications: dict[str, str] = {}  # id -> "noise"|"content"
+    classifications: dict[str, str] = {}
     reasons: dict[str, str] = {}
 
     for iteration in range(1, _MAX_FILTER_ITERATIONS + 1):
@@ -190,7 +237,6 @@ def _classify_uncovered(
             f"Uncovered line ranges ({len(current_payload)} ranges):\n\n",
             json.dumps(current_payload, indent=2, ensure_ascii=False),
         ]
-
         if filter_script:
             prompt_parts.append(
                 f"\n\n## Previous filter script\n\n```python\n{filter_script}\n```\n"
@@ -199,22 +245,21 @@ def _classify_uncovered(
             )
 
         last_json_error: json.JSONDecodeError | None = None
-        for json_attempt in range(3):
+        for attempt in range(3):
             raw = run_agent(
                 agent_name="spec-intake-coverage-filter",
                 prompt="\n".join(prompt_parts),
                 workspace=output_dir,
             )
-
             cleaned = _strip_code_fences(raw)
             try:
                 result = json.loads(cleaned)
                 break
-            except json.JSONDecodeError as e:
-                last_json_error = e
+            except json.JSONDecodeError as error:
+                last_json_error = error
                 logger.warning(
                     "JSON parse attempt %d/3 failed for coverage filter (iter %d): %s",
-                    json_attempt + 1,
+                    attempt + 1,
                     iteration,
                     cleaned[:200],
                 )
@@ -230,7 +275,6 @@ def _classify_uncovered(
                 f"Got keys: {sorted(result.keys())}"
             )
 
-        # Accumulate classifications across iterations
         for item in result["classifications"]:
             item_id = item.get("id")
             if item_id is None:
@@ -244,42 +288,39 @@ def _classify_uncovered(
             reasons[item_id] = item.get("reason", "")
 
         filter_script = result.get("filter_script", "")
-
-        # Check if the LLM is satisfied
         if result.get("stable", False):
             logger.info("Coverage filter stabilized at iteration %d", iteration)
             break
 
-        # Build next iteration payload with only items marked "content"
         current_payload = [
-            p for p in current_payload if classifications.get(p["id"], "content") == "content"
+            item
+            for item in current_payload
+            if classifications.get(item["id"], "content") == "content"
         ]
         if not current_payload:
             break
 
-    # Build final classified entries
-    classified: list[CoverageLedgerEntry] = []
-    for entry in entries:
-        entry_id = f"{entry.file}:{entry.start}-{entry.end}"
-        verdict = classifications.get(entry_id, "content")
+    classified: dict[str, list[CoverageException]] = defaultdict(list)
+    for file_path, start, end in ranges:
+        item_id = f"{file_path}:{start}-{end}"
+        verdict = classifications.get(item_id, "content")
         if verdict == "noise":
-            classified.append(
-                CoverageLedgerEntry(
-                    file=entry.file,
-                    start=entry.start,
-                    end=entry.end,
+            classified[file_path].append(
+                CoverageException(
+                    start=start,
+                    end=end,
                     status="ignored",
-                    ignore_reason=reasons.get(entry_id, "formatting"),
+                    reason=reasons.get(item_id, "formatting"),
                 )
             )
         else:
-            classified.append(
-                CoverageLedgerEntry(
-                    file=entry.file,
-                    start=entry.start,
-                    end=entry.end,
+            classified[file_path].append(
+                CoverageException(
+                    start=start,
+                    end=end,
                     status="uncovered",
+                    reason=reasons.get(item_id, "requires routing decision"),
                 )
             )
 
-    return classified
+    return dict(classified)
