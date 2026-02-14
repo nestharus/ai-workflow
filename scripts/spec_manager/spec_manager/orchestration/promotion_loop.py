@@ -18,6 +18,8 @@ State machine (per slice)::
       ↓
     UNDER_SPEC_CHECK   (block-or-decide)
       ↓
+    ANALYZE            (P1 + P2 + analyze_source cache)
+      ↓
     PROMOTE            (evidence integrity/completeness gates)
       ├─ if gates fail → DEMOTE → RESTART_ITER
       ↓
@@ -26,9 +28,6 @@ State machine (per slice)::
       ↓
     VERIFY             (P6 + P7 + architectural gates)
       ├─ if verify fails → DEMOTE → RESTART_ITER
-      ↓
-    ALIGN              (POWER alignment — drift/reward hacking)
-      ├─ if high-severity findings → DEMOTE → RESTART_ITER
       ↓
     DONE?              (termination checks)
       ├─ if done → SLICE_COMPLETE
@@ -232,11 +231,25 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _write_iteration_json(
-    bundle: EvidenceBundle, workspace_root: Path, name: str, data: Any
-) -> str:
+def _evidence_base_path(*, slice_root: str, workspace_root: str) -> Path:
+    """Resolve the base directory used for evidence artifacts."""
+    if workspace_root:
+        return Path(workspace_root)
+    if slice_root:
+        return Path(slice_root)
+    return Path(".")
+
+
+def _bundle_json_path(base: Path, run_id: str, slice_id: str, iteration: int) -> Path:
+    """Return the canonical bundle.json path for an iteration."""
+    return (
+        base / ".pdd_runs" / run_id / "slices" / slice_id / f"iter_{iteration:03d}" / "bundle.json"
+    )
+
+
+def _write_iteration_json(bundle: EvidenceBundle, evidence_root: Path, name: str, data: Any) -> str:
     """Write a JSON artifact in the current iteration directory and return filename."""
-    iteration_dir = bundle.iter_dir(workspace_root)
+    iteration_dir = bundle.iter_dir(evidence_root)
     iteration_dir.mkdir(parents=True, exist_ok=True)
     path = iteration_dir / name
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -296,6 +309,14 @@ class RunContext:
 
 
 @dataclass
+class SeedGapSet:
+    """Optional scheduler-provided gap set to seed iteration 1."""
+
+    open_gaps: list[dict[str, Any]] = field(default_factory=list)
+    source: str = ""
+
+
+@dataclass
 class SliceContext:
     """Per-slice context for loop steps."""
 
@@ -308,6 +329,9 @@ class SliceContext:
     mode: Literal["interactive", "auto"] = "auto"
     workspace_root: str = ""
     config: dict[str, Any] = field(default_factory=dict)
+    worktree_manager: Any | None = None
+    workspace_manager: Any | None = None
+    branch_manager: Any | None = None
 
 
 @dataclass
@@ -363,7 +387,10 @@ class CollectBaselineStep:
                     }
                 )
 
-        workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
         manifest_hash_input = "\n".join(
             f"{f['path']}:{f.get('sha256', '')}" for f in sorted(files, key=lambda x: x["path"])
         )
@@ -372,14 +399,11 @@ class CollectBaselineStep:
         previous_manifest: dict[str, str] = {}
         previous_head_commit = ""
         if bundle.iteration > 1:
-            prev_bundle_path = (
-                workspace_root
-                / ".pdd_runs"
-                / bundle.run_id
-                / "slices"
-                / bundle.slice_id
-                / f"iter_{bundle.iteration - 1:03d}"
-                / "bundle.json"
+            prev_bundle_path = _bundle_json_path(
+                evidence_root,
+                bundle.run_id,
+                bundle.slice_id,
+                bundle.iteration - 1,
             )
             if prev_bundle_path.exists():
                 try:
@@ -418,7 +442,7 @@ class CollectBaselineStep:
 
         _write_iteration_json(
             bundle,
-            workspace_root,
+            evidence_root,
             "manifest.json",
             {
                 "files": bundle.manifest.files,
@@ -428,7 +452,7 @@ class CollectBaselineStep:
         )
         _write_iteration_json(
             bundle,
-            workspace_root,
+            evidence_root,
             "diff.json",
             {
                 "base_commit": bundle.diff.base_commit,
@@ -471,15 +495,15 @@ class GapExplorationStep:
         """Reuse previous iteration gaps if file hash is unchanged."""
         if bundle.iteration <= 1:
             return None
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
-        prev_bundle_path = (
-            workspace
-            / ".pdd_runs"
-            / bundle.run_id
-            / "slices"
-            / bundle.slice_id
-            / f"iter_{bundle.iteration - 1:03d}"
-            / "bundle.json"
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        prev_bundle_path = _bundle_json_path(
+            evidence_root,
+            bundle.run_id,
+            bundle.slice_id,
+            bundle.iteration - 1,
         )
         if not prev_bundle_path.exists():
             return None
@@ -1353,8 +1377,11 @@ class ImplementStep:
         """Emit code+evidence artifacts as one promotion transaction."""
         from spec_manager.orchestration.evidence import GraphDeltaRef
 
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
-        iteration_dir = bundle.iter_dir(workspace)
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
         iteration_dir.mkdir(parents=True, exist_ok=True)
 
         file_hashes = self._collect_slice_hashes(slice_root)
@@ -1373,7 +1400,7 @@ class ImplementStep:
         bundle.diff.path = "diff.json"
         _write_iteration_json(
             bundle,
-            workspace,
+            evidence_root,
             "manifest.json",
             {
                 "files": bundle.manifest.files,
@@ -1383,7 +1410,7 @@ class ImplementStep:
         )
         _write_iteration_json(
             bundle,
-            workspace,
+            evidence_root,
             "diff.json",
             {
                 "base_commit": bundle.diff.base_commit,
@@ -1545,7 +1572,11 @@ class ImplementStep:
                 run_id=ctx.run_id,
             )
 
-            iteration_dir = bundle.iter_dir(workspace)
+            evidence_root = _evidence_base_path(
+                slice_root=ctx.slice_root,
+                workspace_root=ctx.workspace_root,
+            )
+            iteration_dir = bundle.iter_dir(evidence_root)
             run_result = runner.run_for_slice(
                 slice_root=slice_root,
                 iteration_dir=iteration_dir,
@@ -1787,7 +1818,7 @@ class ImplementStep:
 
 
 class CoordinateStep:
-    """Coordinate agent dependencies via reactive planner triage.
+    """Resolve under-specification and coordination signals.
 
     For L1: treats under_spec_events as coordination signals,
     calls planner triage, registers monitors, returns WAITING.
@@ -1795,7 +1826,7 @@ class CoordinateStep:
     For L2/L3: delegates to existing UnderSpecManager behavior.
     """
 
-    name = "COORDINATE"
+    name = "UNDER_SPEC_CHECK"
 
     def __init__(self, planner: Any = None) -> None:
         self._planner = planner
@@ -1818,8 +1849,6 @@ class CoordinateStep:
         raw_events = bundle.implementation.under_spec_events
         if not raw_events:
             return StepResult(status="OK")
-
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         # Convert under_spec_events to CoordinationSignals
         signals: list[CoordinationSignal] = []
@@ -1863,7 +1892,11 @@ class CoordinateStep:
                     logger.debug("Planner triage failed for signal %s: %s", signal.signal_id, exc)
 
         # Write signals to iteration dir
-        iteration_dir = bundle.iter_dir(workspace)
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
         for signal in signals:
             signal.write_to(iteration_dir)
 
@@ -2546,13 +2579,16 @@ class IntegrateStep:
 
     name = "INTEGRATE"
 
-    def __init__(self, worktree_manager: Any = None, *, investigator_budget: int = 2) -> None:
-        self._wm = worktree_manager
+    def __init__(self, *, investigator_budget: int = 2) -> None:
         self._investigator_budget = investigator_budget
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Merge grandchild → dirty, tick pipeline."""
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        wm = ctx.worktree_manager
 
         def record_artifacts(
             *,
@@ -2583,7 +2619,7 @@ class IntegrateStep:
                 }
             bundle.integration.path = _write_iteration_json(
                 bundle,
-                workspace,
+                evidence_root,
                 "integration.report.json",
                 integration_payload,
             )
@@ -2608,17 +2644,44 @@ class IntegrateStep:
                 tests_payload["note"] = "No pipeline tick result available"
             bundle.tests.slice_path = _write_iteration_json(
                 bundle,
-                workspace,
+                evidence_root,
                 "tests.slice.json",
                 tests_payload,
             )
 
-        if not self._wm:
+        if wm is None:
             record_artifacts(merge=None, tick=None, skipped=True)
             return StepResult(status="OK")
 
+        def failure_refs(tick: Any) -> list[str]:
+            refs: list[str] = list(getattr(tick, "demotion_tickets", []) or [])
+            for layer_name, layer_result in (getattr(tick, "layer_results", {}) or {}).items():
+                if not bool(getattr(layer_result, "gates_passed", True)):
+                    refs.extend(
+                        list(getattr(layer_result, "demotion_tickets", []) or [])
+                        or [f"{layer_name}:gates_failed"]
+                    )
+                if not bool(getattr(layer_result, "tests_passed", True)):
+                    refs.extend(
+                        list(getattr(layer_result, "demotion_tickets", []) or [])
+                        or [f"{layer_name}:tests_failed"]
+                    )
+            deduped: list[str] = []
+            seen: set[str] = set()
+            for ref in refs:
+                if ref not in seen:
+                    seen.add(ref)
+                    deduped.append(ref)
+            return deduped
+
+        merge_strategy = "merge"
+        if isinstance(ctx.config, dict):
+            configured = str(ctx.config.get("merge_strategy", "merge")).lower()
+            if configured in {"merge", "rebase"}:
+                merge_strategy = configured
+
         # 1. Merge slice → layer dirty
-        merge_result = self._wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id)
+        merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy=merge_strategy)
         if not merge_result.success:
             ticket = DemotionTicket(
                 run_id=ctx.run_id,
@@ -2641,9 +2704,10 @@ class IntegrateStep:
             )
 
         # 2. Tick CI pipeline
-        tick_result = self._wm.tick_pipeline(active_layer=ctx.layer)
+        tick_result = wm.tick_pipeline(active_layer=ctx.layer, run_tests=True)
+        tick_failures = failure_refs(tick_result)
 
-        if not tick_result.demotion_tickets:
+        if not tick_failures:
             record_artifacts(merge=merge_result, tick=tick_result)
             return StepResult(status="OK")
 
@@ -2651,8 +2715,9 @@ class IntegrateStep:
         investigator_result = self._try_investigator(ctx, tick_result)
         if investigator_result and investigator_result.get("fixed"):
             # Re-tick pipeline after fix
-            tick_result = self._wm.tick_pipeline(active_layer=ctx.layer)
-            if not tick_result.demotion_tickets:
+            tick_result = wm.tick_pipeline(active_layer=ctx.layer, run_tests=True)
+            tick_failures = failure_refs(tick_result)
+            if not tick_failures:
                 record_artifacts(
                     merge=merge_result,
                     tick=tick_result,
@@ -2662,7 +2727,7 @@ class IntegrateStep:
 
         # 4. Investigator failed or didn't fix — emit demotion tickets
         tickets = []
-        for dt_ref in tick_result.demotion_tickets:
+        for dt_ref in tick_failures:
             logger.warning("Pipeline demotion: %s", dt_ref)
             tickets.append(
                 DemotionTicket(
@@ -2884,7 +2949,12 @@ class VerifyStep:
             if status == "FAIL":
                 tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
                 notes["findings"] = findings
-                iteration_dir = bundle.iter_dir(workspace)
+                iteration_dir = bundle.iter_dir(
+                    _evidence_base_path(
+                        slice_root=ctx.slice_root,
+                        workspace_root=ctx.workspace_root,
+                    )
+                )
                 iteration_dir.mkdir(parents=True, exist_ok=True)
                 notes_path = iteration_dir / "verify.notes.json"
                 notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
@@ -2952,7 +3022,12 @@ class VerifyStep:
 
         # Persist verify notes
         notes["findings"] = findings
-        iteration_dir = bundle.iter_dir(workspace)
+        iteration_dir = bundle.iter_dir(
+            _evidence_base_path(
+                slice_root=ctx.slice_root,
+                workspace_root=ctx.workspace_root,
+            )
+        )
         iteration_dir.mkdir(parents=True, exist_ok=True)
         notes_path = iteration_dir / "verify.notes.json"
         notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
@@ -3243,6 +3318,8 @@ class PromotionLoop:
 
     Args:
         worktree_manager: Multi-layer worktree manager.
+        workspace_manager: Workspace manager reference for steps that need workspace state.
+        branch_manager: Branch manager reference for steps that need branch metadata.
         workspace_root: Root of the repository.
         demotion_manager: Handles applying demotion tickets.
         steps: Custom step sequence (defaults to all steps).
@@ -3251,12 +3328,16 @@ class PromotionLoop:
     def __init__(
         self,
         worktree_manager: Any = None,
+        workspace_manager: Any = None,
+        branch_manager: Any = None,
         workspace_root: Path = Path("."),
         demotion_manager: DemotionManager | None = None,
         steps: list[Any] | None = None,
         planner: Any = None,
     ) -> None:
         self._wm = worktree_manager
+        self._workspace_manager = workspace_manager
+        self._branch_manager = branch_manager
         self._workspace_root = workspace_root
         self._dm = demotion_manager or DemotionManager(workspace_root)
         self._planner = planner
@@ -3268,7 +3349,7 @@ class PromotionLoop:
             self._steps = []
             for step_cls in DEFAULT_STEPS:
                 if step_cls is IntegrateStep:
-                    self._steps.append(step_cls(worktree_manager=self._wm))
+                    self._steps.append(step_cls())
                 elif step_cls in (GapExplorationStep, PlanStep, CoordinateStep):
                     self._steps.append(step_cls(planner=self._planner))
                 else:
@@ -3395,12 +3476,15 @@ class PromotionLoop:
     @staticmethod
     def _persist_iteration_artifacts(ctx: SliceContext, bundle: EvidenceBundle) -> None:
         """Persist step artifacts and keep bundle refs pointing to them."""
-        workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
 
         if bundle.manifest.files:
             bundle.manifest.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "manifest.json",
                 {
                     "files": bundle.manifest.files,
@@ -3417,7 +3501,7 @@ class PromotionLoop:
         ):
             bundle.diff.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "diff.json",
                 {
                     "base_commit": bundle.diff.base_commit,
@@ -3430,7 +3514,7 @@ class PromotionLoop:
         if bundle.provenance.path or bundle.provenance.entries:
             bundle.provenance.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "provenance.json",
                 {"entries": bundle.provenance.entries},
             )
@@ -3438,7 +3522,7 @@ class PromotionLoop:
         if bundle.source_index.path or bundle.source_index.entries:
             bundle.source_index.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "source_analysis.index.json",
                 {"entries": bundle.source_index.entries},
             )
@@ -3452,7 +3536,7 @@ class PromotionLoop:
         ):
             bundle.facts.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "facts.json",
                 {
                     "functions": bundle.facts.functions,
@@ -3466,7 +3550,7 @@ class PromotionLoop:
         if bundle.gaps.path or bundle.gaps.open_gaps or bundle.gaps.stagnation:
             bundle.gaps.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "gaps.json",
                 {
                     "open_gaps": bundle.gaps.open_gaps,
@@ -3483,7 +3567,7 @@ class PromotionLoop:
         ):
             bundle.plan.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "plan.json",
                 {
                     "intentions": bundle.plan.intentions,
@@ -3505,7 +3589,7 @@ class PromotionLoop:
         ):
             bundle.implementation.result_path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "impl.result.json",
                 {
                     "patch_path": bundle.implementation.patch_path,
@@ -3521,7 +3605,7 @@ class PromotionLoop:
         if bundle.under_spec.path or bundle.under_spec.decisions or bundle.under_spec.blockers:
             bundle.under_spec.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "blockers.json",
                 {
                     "decisions": bundle.under_spec.decisions,
@@ -3532,7 +3616,7 @@ class PromotionLoop:
         if bundle.gates.path or bundle.gates.gates:
             bundle.gates.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "gates.report.json",
                 {"gates": bundle.gates.gates},
             )
@@ -3540,7 +3624,7 @@ class PromotionLoop:
         if bundle.promotion.path or bundle.gates.gates:
             bundle.promotion.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "promotion.report.json",
                 {
                     "slice_id": bundle.slice_id,
@@ -3560,7 +3644,7 @@ class PromotionLoop:
         ):
             bundle.demotions.path = _write_iteration_json(
                 bundle,
-                workspace_root,
+                evidence_root,
                 "demotions.json",
                 {
                     "emitted": bundle.demotions.emitted,
@@ -3573,12 +3657,14 @@ class PromotionLoop:
         self,
         slice_ref: SliceRef,
         run_context: RunContext,
+        seed_gap_set: SeedGapSet | None = None,
     ) -> SliceResult:
         """Run the promotion loop on a single slice until convergence.
 
         Args:
             slice_ref: The slice to process.
             run_context: Run-scoped configuration.
+            seed_gap_set: Optional scheduler-provided initial open gaps.
 
         Returns:
             SliceResult with final status.
@@ -3591,13 +3677,20 @@ class PromotionLoop:
             mode=run_context.mode,
             workspace_root=run_context.workspace_root,
             config=run_context.config,
+            worktree_manager=self._wm,
+            workspace_manager=self._workspace_manager,
+            branch_manager=self._branch_manager,
         )
         self._dm.run_id = run_context.run_id
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
 
         # Set dirty/clean parent paths if worktree manager available
-        if self._wm:
-            dirty = self._wm._layer_worktrees.get(ctx.layer, {}).get("dirty")
-            clean = self._wm._layer_worktrees.get(ctx.layer, {}).get("clean")
+        if ctx.worktree_manager:
+            dirty = ctx.worktree_manager._layer_worktrees.get(ctx.layer, {}).get("dirty")
+            clean = ctx.worktree_manager._layer_worktrees.get(ctx.layer, {}).get("clean")
             if dirty:
                 ctx.dirty_parent_root = str(dirty)
             if clean:
@@ -3638,6 +3731,13 @@ class PromotionLoop:
                 workspace_root=run_context.workspace_root,
                 slice_root=slice_ref.worktree_path,
             )
+            if iteration == 1 and seed_gap_set and seed_gap_set.open_gaps:
+                bundle.gaps.open_gaps = [
+                    _normalize_gap_record(gap)
+                    for gap in seed_gap_set.open_gaps
+                    if isinstance(gap, dict)
+                ]
+                bundle.gaps.path = "gaps.json"
 
             retry = False
             waiting = False
@@ -3677,7 +3777,7 @@ class PromotionLoop:
                             )
                             bundle.status = "FAILED"
                             self._persist_iteration_artifacts(ctx, bundle)
-                            bundle.save(Path(run_context.workspace_root))
+                            bundle.save(evidence_root)
                             return SliceResult(
                                 slice_id=ctx.slice_id,
                                 status="STAGNATED",
@@ -3690,7 +3790,29 @@ class PromotionLoop:
                 self._record_provenance(bundle, step.name, result, ctx)
                 self._refresh_facts(bundle)
                 self._persist_iteration_artifacts(ctx, bundle)
-                bundle.save(Path(run_context.workspace_root))
+                saved_bundle_path = bundle.save(evidence_root)
+                if not result.bundle_path:
+                    result.bundle_path = str(saved_bundle_path)
+
+                if result.status == "OK":
+                    next_bundle_path = Path(result.bundle_path)
+                    if not next_bundle_path.is_absolute():
+                        next_bundle_path = saved_bundle_path.parent / next_bundle_path
+                    try:
+                        bundle = EvidenceBundle.load(next_bundle_path)
+                    except Exception as exc:
+                        logger.exception(
+                            "Failed loading bundle handoff for step %s at %s",
+                            step.name,
+                            next_bundle_path,
+                        )
+                        return SliceResult(
+                            slice_id=ctx.slice_id,
+                            status="FAILED",
+                            iterations=iteration,
+                            demotion_tickets=all_tickets,
+                            error=f"Bundle handoff failed after {step.name}: {exc}",
+                        )
 
                 if result.status == "WAITING":
                     # Slice needs coordination — save bundle and return WAITING
@@ -3701,7 +3823,7 @@ class PromotionLoop:
                     # Slice is blocked — return with blocked status
                     bundle.status = "BLOCKED"
                     self._persist_iteration_artifacts(ctx, bundle)
-                    bundle.save(Path(run_context.workspace_root))
+                    bundle.save(evidence_root)
                     questions = []
                     for event in bundle.implementation.under_spec_events:
                         if q := event.get("question"):
@@ -3722,7 +3844,7 @@ class PromotionLoop:
                 if result.status == "FAIL":
                     bundle.status = "FAILED"
                     self._persist_iteration_artifacts(ctx, bundle)
-                    bundle.save(Path(run_context.workspace_root))
+                    bundle.save(evidence_root)
                     return SliceResult(
                         slice_id=ctx.slice_id,
                         status="FAILED",
@@ -3769,7 +3891,7 @@ class PromotionLoop:
                     )
                     bundle.status = "FAILED"
                     self._persist_iteration_artifacts(ctx, bundle)
-                    bundle.save(Path(run_context.workspace_root))
+                    bundle.save(evidence_root)
                     return SliceResult(
                         slice_id=ctx.slice_id,
                         status="STAGNATED",
@@ -3788,7 +3910,7 @@ class PromotionLoop:
             if remaining == 0:
                 bundle.status = "COMPLETE"
                 self._persist_iteration_artifacts(ctx, bundle)
-                bundle.save(Path(run_context.workspace_root))
+                bundle.save(evidence_root)
                 return SliceResult(
                     slice_id=ctx.slice_id,
                     status="COMPLETE",
@@ -3808,7 +3930,7 @@ class PromotionLoop:
         if bundle:
             bundle.status = "FAILED"
             self._persist_iteration_artifacts(ctx, bundle)
-            bundle.save(Path(run_context.workspace_root))
+            bundle.save(evidence_root)
         return SliceResult(
             slice_id=ctx.slice_id,
             status="MAX_ITERATIONS",

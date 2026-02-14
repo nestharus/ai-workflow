@@ -282,7 +282,11 @@ class PddOrchestrator:
             max_iterations=max_iterations,
         )
 
-        loop = PromotionLoop(workspace_root=self.manager.workspace_path)
+        loop = PromotionLoop(
+            workspace_manager=self.manager,
+            branch_manager=self.manager.branches,
+            workspace_root=self.manager.workspace_path,
+        )
 
         from spec_manager.orchestration.promotion_scheduler import (
             PromotionScheduler,

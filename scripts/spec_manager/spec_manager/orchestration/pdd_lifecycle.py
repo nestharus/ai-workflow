@@ -832,6 +832,8 @@ class PddLifecycle:
 
         loop = PromotionLoop(
             worktree_manager=self.worktree_manager,
+            workspace_manager=self.manager,
+            branch_manager=self.manager.branches,
             workspace_root=self.manager.workspace_path,
             planner=planner,
         )

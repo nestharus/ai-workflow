@@ -121,7 +121,7 @@ def run_promotion_loop_slice(
 ) -> dict[str, Any]:
     """Run PromotionLoop.run_slice() on a single slice with real LLM calls.
 
-    Uses the actual PromotionLoop state machine (10 steps: COLLECT through ALIGN).
+    Uses the actual PromotionLoop default state machine (COLLECT_BASELINE through VERIFY).
 
     Args:
         manager: Initialized workspace manager.
@@ -153,7 +153,11 @@ def run_promotion_loop_slice(
         workspace_root=str(manager.workspace_path),
     )
 
-    loop = PromotionLoop(workspace_root=manager.workspace_path)
+    loop = PromotionLoop(
+        workspace_manager=manager,
+        branch_manager=manager.branches,
+        workspace_root=manager.workspace_path,
+    )
 
     start = time.perf_counter()
     result = loop.run_slice(slice_ref, run_context)

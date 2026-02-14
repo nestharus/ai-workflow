@@ -955,10 +955,10 @@ class E2EEval:
                         "PLAN",
                         "IMPLEMENT",
                         "UNDER_SPEC_CHECK",
+                        "ANALYZE",
                         "GAP_EXPLORATION",
                         "PROMOTE",
                         "VERIFY",
-                        "ALIGN",
                     ):
                         total_llm_steps += 1
 

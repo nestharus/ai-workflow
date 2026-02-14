@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from spec_manager.orchestration.models import (
     LAYER_ORDER,
@@ -341,12 +341,18 @@ class WorktreeManager:
         """Return the worktree path for a slice, or None."""
         return self._slice_worktrees.get(f"{layer}:{slice_id}")
 
-    def merge_slice_to_dirty(self, layer: Layer, slice_id: str) -> MergeResult:
+    def merge_slice_to_dirty(
+        self,
+        layer: Layer,
+        slice_id: str,
+        strategy: Literal["merge", "rebase"] = "merge",
+    ) -> MergeResult:
         """Merge a completed slice into the layer's dirty worktree.
 
         Args:
             layer: Target layer.
             slice_id: Slice to merge.
+            strategy: Integration strategy (``merge`` or ``rebase``).
 
         Returns:
             MergeResult with success/failure details.
@@ -379,7 +385,17 @@ class WorktreeManager:
                 error="Cannot determine slice branch",
             )
 
-        ok, err = self.vcs.merge(dirty_path, slice_branch)
+        if strategy == "merge":
+            ok, err = self.vcs.merge(dirty_path, slice_branch)
+        elif strategy == "rebase":
+            ok, err = self.vcs.rebase(dirty_path, slice_branch)
+        else:
+            return MergeResult(
+                success=False,
+                slice_id=slice_id,
+                layer=layer,
+                error=f"Unknown merge strategy: {strategy}",
+            )
         if not ok:
             return MergeResult(
                 success=False,
@@ -438,18 +454,70 @@ class WorktreeManager:
         self.vcs.delete_ref(candidate_branch)
         self._candidate_refs.pop(layer, None)
 
-    def promote_dirty_to_clean(self, layer: Layer) -> BatchResult:
+    @staticmethod
+    def _resolve_ci_check(
+        config: bool | dict[str, Any],
+        *,
+        check_id: str,
+    ) -> tuple[bool, list[str], str]:
+        """Resolve one CI check config into pass/fail + ticket metadata."""
+        if isinstance(config, dict):
+            enabled = bool(config.get("enabled", True))
+            if not enabled:
+                return True, [], ""
+            passed = bool(config.get("passed", True))
+            tickets = [str(t) for t in (config.get("demotion_tickets", []) or []) if str(t).strip()]
+            error = str(config.get("error", "")).strip()
+            if passed:
+                return True, [], ""
+            if not tickets:
+                tickets = [f"{check_id}_failed"]
+            if not error:
+                error = f"{check_id} failed"
+            return False, tickets, error
+
+        enabled = bool(config)
+        if not enabled:
+            return True, [], ""
+        return True, [], ""
+
+    def promote_dirty_to_clean(
+        self,
+        layer: Layer,
+        *,
+        gates: bool | dict[str, Any] = False,
+        tests: bool | dict[str, Any] = False,
+    ) -> BatchResult:
         """Advance clean to the candidate snapshot (fast-forward).
 
         This is the "dirty → clean" promotion at a single layer.
-        Caller is responsible for running gates/tests before calling this.
+        Gate/test checks are configured by ``gates`` and ``tests``.
         """
+        gates_passed, gate_tickets, gate_error = self._resolve_ci_check(gates, check_id="gates")
+        tests_passed, test_tickets, test_error = self._resolve_ci_check(tests, check_id="tests")
+        ci_tickets = [*gate_tickets, *test_tickets]
+
         candidate_sha = self.vcs.rev_parse(self.candidate_ref(layer))
         if not candidate_sha:
             return BatchResult(
                 success=False,
                 layer=layer,
                 error="No candidate snapshot",
+                gates_passed=gates_passed,
+                tests_passed=tests_passed,
+                demotion_tickets=ci_tickets,
+            )
+
+        if not gates_passed or not tests_passed:
+            reasons = [reason for reason in (gate_error, test_error) if reason]
+            return BatchResult(
+                success=False,
+                layer=layer,
+                candidate_sha=candidate_sha,
+                gates_passed=gates_passed,
+                tests_passed=tests_passed,
+                error="; ".join(reasons) if reasons else "CI checks failed",
+                demotion_tickets=ci_tickets,
             )
 
         clean_branch = self.layer_branch(layer, "clean")
@@ -459,6 +527,8 @@ class WorktreeManager:
                 success=False,
                 layer=layer,
                 error=f"Failed to advance clean: {err}",
+                gates_passed=gates_passed,
+                tests_passed=tests_passed,
             )
 
         # Also update the clean worktree to match
@@ -473,6 +543,8 @@ class WorktreeManager:
             layer=layer,
             candidate_sha=candidate_sha,
             clean_sha=candidate_sha,
+            gates_passed=gates_passed,
+            tests_passed=tests_passed,
         )
 
     def propagate_clean_to_next_layer(self, from_layer: Layer) -> PropagateResult:
@@ -532,23 +604,23 @@ class WorktreeManager:
         active_layer: Layer,
         *,
         max_pending_batches: int = 1,
-        run_gates: bool = False,
-        run_tests: bool = False,
+        run_gates: bool | dict[str, Any] = False,
+        run_tests: bool | dict[str, Any] = False,
     ) -> PipelineTickResult:
         """Attempt to advance the entire pipeline in one tick.
 
         For each layer (L1 → L2 → L3):
         1. If dirty != clean and CI is free → snapshot candidate
-        2. (Caller runs gates/tests externally if needed)
-        3. Advance clean to candidate
+        2. Evaluate configured gates/tests for the candidate
+        3. Advance clean to candidate when checks pass
         4. Propagate clean to next layer's dirty
         5. At L3: merge clean to main
 
         Args:
             active_layer: The currently active creative layer.
             max_pending_batches: Backpressure limit.
-            run_gates: If True, gates are considered passed (placeholder).
-            run_tests: If True, tests are considered passed (placeholder).
+            run_gates: Gate check config for each promote operation.
+            run_tests: Test check config for each promote operation.
 
         Returns:
             PipelineTickResult summarizing what advanced.
@@ -577,15 +649,25 @@ class WorktreeManager:
 
             if existing_candidate and existing_candidate != clean_sha:
                 # Candidate in flight — assume it passes and promote
-                batch = self.promote_dirty_to_clean(layer)
+                batch = self.promote_dirty_to_clean(
+                    layer,
+                    gates=run_gates,
+                    tests=run_tests,
+                )
             else:
                 # Snapshot and promote
                 self.snapshot_candidate(layer)
-                batch = self.promote_dirty_to_clean(layer)
+                batch = self.promote_dirty_to_clean(
+                    layer,
+                    gates=run_gates,
+                    tests=run_tests,
+                )
 
             result.layer_results[layer] = batch
 
             if not batch.success:
+                if batch.demotion_tickets:
+                    result.demotion_tickets.extend(batch.demotion_tickets)
                 # Stop propagating if this layer failed
                 break
 
