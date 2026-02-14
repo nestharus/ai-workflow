@@ -105,6 +105,8 @@ class PddLifecycle:
             a warning is logged and escalation metadata is emitted.
         max_pipeline_passes: Overall pipeline pass cap (budget #4).
             Maximum number of times the L1→L2→L3 pipeline can run.
+        model_profile: Optional model profile used for role-based model routing.
+        planner_override_provider: Optional planner provider override for tests/evals.
     """
 
     def __init__(
@@ -216,14 +218,6 @@ class PddLifecycle:
         )
         constraints_tool = ConstraintsTool(workspace_root=self.manager.workspace_path)
 
-        # Resolve model_id from model profile if available
-        model_id = ""
-        if self._model_profile is not None:
-            try:
-                model_id = self._model_profile.get_model_for_role("planner")
-            except Exception:
-                logger.debug("Could not resolve planner model_id from model profile")
-
         return Planner(
             workspace_root=self.manager.workspace_path,
             mode=self.mode,
@@ -232,8 +226,48 @@ class PddLifecycle:
             integration_tool=integration_tool,
             constraints_tool=constraints_tool,
             override_provider=self._planner_override_provider,
-            model_id=model_id,
+            model_id=self._resolve_model_id_for_role("planner"),
         )
+
+    def _resolve_model_id_for_role(self, role: str) -> str:
+        """Resolve a model ID for a logical role using the active model profile."""
+        if self._model_profile is None:
+            return ""
+        if isinstance(self._model_profile, dict):
+            role_models = self._model_profile.get("role_models")
+            if isinstance(role_models, dict):
+                role_model_id = role_models.get(role)
+                if role_model_id:
+                    return str(role_model_id)
+            return str(self._model_profile.get("producer_model_id", "") or "")
+        try:
+            model_id = self._model_profile.get_model_for_role(role)
+        except Exception:
+            logger.debug("Could not resolve model_id for role '%s'", role)
+            return ""
+        return str(model_id or "")
+
+    def _build_run_context_config(self) -> dict[str, Any]:
+        """Build run context config payload with model profile and resolved ids."""
+        config: dict[str, Any] = {}
+        if self._model_profile is None:
+            return config
+
+        if hasattr(self._model_profile, "to_dict"):
+            config["model_profile"] = self._model_profile.to_dict()
+        elif isinstance(self._model_profile, dict):
+            config["model_profile"] = dict(self._model_profile)
+        else:
+            config["model_profile"] = {"name": str(self._model_profile)}
+
+        model_ids = {
+            role: model_id
+            for role in ("planner", "refinement", "review", "judge")
+            if (model_id := self._resolve_model_id_for_role(role))
+        }
+        if model_ids:
+            config["model_ids"] = model_ids
+        return config
 
     # ------------------------------------------------------------------
     # Public API
@@ -676,6 +710,7 @@ class PddLifecycle:
             run_id=self.manager.run_id,
             mode="auto" if self.mode != "interactive" else "interactive",
             workspace_root=str(self.manager.workspace_path),
+            config=self._build_run_context_config(),
         )
 
         planner = self._build_planner()
@@ -1319,11 +1354,14 @@ class PddLifecycle:
             + "\n\n---\n\n".join(evidence_section)
         )
 
+        refinement_model_id = self._resolve_model_id_for_role("refinement")
+
         try:
             output = run_agent(
                 agent_name="opus-architecture-proposer",
                 prompt=prompt,
                 workspace=self.manager.workspace_path,
+                model_id=refinement_model_id,
             )
             cleaned = _strip_code_fences(output)
             data = json.loads(_extract_json_payload(cleaned))
@@ -1407,6 +1445,7 @@ class PddLifecycle:
             "chatgpt-consistency-reviewer",
             "chatgpt-correctness-reviewer",
         ]
+        review_model_id = self._resolve_model_id_for_role("review")
 
         all_findings: list[dict[str, Any]] = []
 
@@ -1428,6 +1467,7 @@ class PddLifecycle:
                         agent_name=reviewer,
                         prompt=prompt,
                         workspace=self.manager.workspace_path,
+                        model_id=review_model_id,
                     )
                     cleaned = _strip_code_fences(output)
                     data = json.loads(_extract_json_payload(cleaned))
@@ -1767,8 +1807,7 @@ class PddLifecycle:
     def _check_alignment(self) -> dict[str, Any]:
         """Run POWER alignment check on all library specs.
 
-        Calls the ``opus-alignment-checker`` agent per library to detect
-        drift and reward hacking.
+        Calls alignment review agents per library to detect drift and reward hacking.
         """
         from spec_manager.core.agent_utils import run_agent
         from spec_manager.refinement.formats import (
@@ -1784,6 +1823,7 @@ class PddLifecycle:
         total_reward_hacking = 0
         libraries_checked = 0
         errors: list[dict[str, Any]] = []
+        review_model_id = self._resolve_model_id_for_role("review")
 
         code_files = self._gather_all_code()
 
@@ -1828,6 +1868,7 @@ class PddLifecycle:
                     agent_name="opus-alignment-checker",
                     prompt=prompt,
                     workspace=self.manager.workspace_path,
+                    model_id=review_model_id,
                 )
                 cleaned = _strip_code_fences(output)
                 data = json.loads(_extract_json_payload(cleaned))
@@ -1854,8 +1895,8 @@ class PddLifecycle:
     def _generate_overview(self) -> dict[str, Any]:
         """Generate a human-readable overview document for review.
 
-        Calls the ``opus-overview-writer`` agent per library and
-        consolidates into a single ``overview.md``.
+        Calls overview writer agents per library and consolidates into a
+        single ``overview.md``.
         """
         from spec_manager.core.agent_utils import run_agent
 
@@ -1866,6 +1907,7 @@ class PddLifecycle:
         overview_parts: list[str] = []
         libraries_processed = 0
         errors: list[dict[str, Any]] = []
+        refinement_model_id = self._resolve_model_id_for_role("refinement")
 
         for lib_dir in sorted(libraries_dir.iterdir()):
             if not lib_dir.is_dir():
@@ -1897,6 +1939,7 @@ class PddLifecycle:
                     agent_name="opus-overview-writer",
                     prompt=prompt,
                     workspace=self.manager.workspace_path,
+                    model_id=refinement_model_id,
                 )
                 overview_parts.append(f"## {lib_id}\n\n{output.strip()}\n")
                 libraries_processed += 1

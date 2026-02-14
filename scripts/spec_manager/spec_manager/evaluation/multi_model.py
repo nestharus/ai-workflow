@@ -157,7 +157,7 @@ class MultiModelRunner:
             )
             manager.initialize()
 
-            lifecycle = PddLifecycle(manager, mode="auto")
+            lifecycle = PddLifecycle(manager, mode="auto", model_profile=profile)
             lifecycle.run()
 
             # Snapshot

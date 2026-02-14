@@ -55,6 +55,20 @@ def _resolve_workspace(raw_path: str | None) -> Path:
     return resolve_from_root(raw_path)
 
 
+def _parse_model_profile(raw_profile: str) -> Any:
+    """Parse CLI model profile string into a ModelProfile object.
+
+    Expected format: ``name:model_id``. If ``model_id`` is omitted,
+    the profile name is reused as the model id.
+    """
+    from spec_manager.evaluation.model_profile import ModelProfile
+
+    parts = raw_profile.split(":", 1)
+    name = parts[0].strip()
+    model_id = parts[1].strip() if len(parts) > 1 and parts[1].strip() else name
+    return ModelProfile(name=name, producer_model_id=model_id)
+
+
 def _build_intent_agent(workspace: Path, run_id: str) -> Any:
     """Build a detached Intent Agent for question queue and answer handling."""
 
@@ -187,6 +201,7 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
     use_research = args.research
     steering_path = Path(args.steering) if args.steering else None
     use_worktrees = getattr(args, "worktrees", False)
+    model_profile = _parse_model_profile(args.model_profile) if args.model_profile else None
 
     print(f"PDD lifecycle: run_id={run_id}")
     print(f"  Input: {input_folder}")
@@ -197,6 +212,8 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
         print(f"  Steering: {steering_path}")
     if use_worktrees:
         print("  Worktrees: enabled")
+    if model_profile is not None:
+        print(f"  Model profile: {model_profile.name} ({model_profile.producer_model_id})")
 
     manager = WorkspaceManager(run_id=run_id, input_folder=input_folder)
     if not manager.is_initialized:
@@ -219,6 +236,7 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
         use_research=use_research,
         steering_path=steering_path,
         worktree_manager=worktree_manager,
+        model_profile=model_profile,
     )
 
     # Run specific phase or full lifecycle
@@ -235,41 +253,6 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
         print("\nPDD lifecycle complete:")
 
     print(json.dumps(result, indent=2, default=str))
-    return 0
-
-
-def cmd_compare(args: argparse.Namespace) -> int:
-    """Run multi-model comparison."""
-    from spec_manager.evaluation.model_profile import ModelProfile
-    from spec_manager.evaluation.multi_model import MultiModelRunner
-
-    profiles = []
-    for profile_str in args.profiles:
-        parts = profile_str.split(":", 1)
-        name = parts[0]
-        model_id = parts[1] if len(parts) > 1 else name
-        profiles.append(ModelProfile(name=name, producer_model_id=model_id))
-
-    input_folder = Path(args.input)
-    comparison_id = args.comparison_id or ""
-
-    print(f"Multi-model comparison: {len(profiles)} profiles")
-    for p in profiles:
-        print(f"  {p.name}: {p.producer_model_id}")
-
-    runner = MultiModelRunner(
-        workspace_root=input_folder,
-        input_folder=input_folder,
-    )
-    manifest = runner.run(
-        profiles=profiles,
-        comparison_id=comparison_id,
-        judge_model=args.judge_model,
-        compute_quality=not args.no_quality,
-    )
-
-    print(f"\nComparison complete: {manifest['comparison_id']}")
-    print(f"  Entries: {len(manifest['entries'])}")
     return 0
 
 
@@ -1186,37 +1169,6 @@ def main() -> int:
         help="Model profile name for multi-model comparison",
     )
 
-    # compare - run multi-model comparison
-    p_compare = subparsers.add_parser(
-        "compare",
-        help="Run multi-model comparison",
-    )
-    p_compare.add_argument(
-        "--profiles",
-        nargs="+",
-        required=True,
-        help="Model profile names to compare (format: name:model_id)",
-    )
-    p_compare.add_argument(
-        "--input",
-        required=True,
-        help="Path to input spec folder",
-    )
-    p_compare.add_argument(
-        "--comparison-id",
-        help="Comparison identifier (auto-generated if omitted)",
-    )
-    p_compare.add_argument(
-        "--judge-model",
-        default="",
-        help="Model ID for quality judges",
-    )
-    p_compare.add_argument(
-        "--no-quality",
-        action="store_true",
-        help="Skip quality scoring",
-    )
-
     # quality - compute quality scorecard for a run
     p_quality = subparsers.add_parser(
         "quality",
@@ -1510,7 +1462,6 @@ def main() -> int:
     commands = {
         "run": cmd_run,
         "lifecycle": cmd_lifecycle,
-        "compare": cmd_compare,
         "quality": cmd_quality,
         "phase": cmd_phase,
         "extract": cmd_extract,

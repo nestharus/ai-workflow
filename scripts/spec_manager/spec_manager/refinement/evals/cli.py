@@ -588,30 +588,40 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Model ID for quality judges",
     )
 
-    # eval compare - multi-model comparison subcommand
-    p_eval_compare = eval_subparsers.add_parser(
-        "compare",
+    # eval multi-model - multi-model comparison subcommand
+    p_eval_multi_model = eval_subparsers.add_parser(
+        "multi-model",
         help="Run multi-model comparison",
     )
-    p_eval_compare.add_argument(
-        "--profiles",
-        nargs="+",
-        required=True,
-        help="Model profiles (format: name:model_id)",
-    )
-    p_eval_compare.add_argument(
-        "--input",
+    p_eval_multi_model.add_argument(
+        "--spec",
         required=True,
         help="Path to input spec folder",
     )
-    p_eval_compare.add_argument(
+    p_eval_multi_model.add_argument(
+        "--models",
+        required=True,
+        help="Comma-separated model profiles (format: name[:model_id])",
+    )
+    p_eval_multi_model.add_argument(
+        "--runs-per-model",
+        type=int,
+        default=1,
+        help="Number of replicates to run per model profile",
+    )
+    p_eval_multi_model.add_argument(
         "--comparison-id",
         help="Comparison identifier",
     )
-    p_eval_compare.add_argument(
+    p_eval_multi_model.add_argument(
         "--judge-model",
         default="",
         help="Model ID for judges",
+    )
+    p_eval_multi_model.add_argument(
+        "--quality",
+        action="store_true",
+        help="Compute quality scorecards for each run",
     )
 
 
@@ -1121,19 +1131,23 @@ def cmd_eval_quality(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_eval_compare(args: argparse.Namespace) -> int:
+def cmd_eval_multi_model(args: argparse.Namespace) -> int:
     """Run multi-model comparison via eval framework."""
     from spec_manager.evaluation.model_profile import ModelProfile
     from spec_manager.evaluation.multi_model import MultiModelRunner
 
+    raw_models = [item.strip() for item in args.models.split(",") if item.strip()]
+    if not raw_models:
+        print("No models provided. Use --models name[:model_id],...", file=sys.stderr)
+        return 2
     profiles = []
-    for profile_str in args.profiles:
+    for profile_str in raw_models:
         parts = profile_str.split(":", 1)
-        name = parts[0]
-        model_id = parts[1] if len(parts) > 1 else name
+        name = parts[0].strip()
+        model_id = parts[1].strip() if len(parts) > 1 and parts[1].strip() else name
         profiles.append(ModelProfile(name=name, producer_model_id=model_id))
 
-    input_folder = Path(args.input)
+    input_folder = Path(args.spec)
 
     runner = MultiModelRunner(
         workspace_root=input_folder,
@@ -1143,6 +1157,8 @@ def cmd_eval_compare(args: argparse.Namespace) -> int:
         profiles=profiles,
         comparison_id=args.comparison_id or "",
         judge_model=args.judge_model,
+        compute_quality=args.quality,
+        runs_per_model=args.runs_per_model,
     )
 
     print(f"Comparison complete: {manifest['comparison_id']}")
@@ -1195,8 +1211,8 @@ def handle_eval_command(args: argparse.Namespace) -> int:
     if args.eval_command == "quality":
         return cmd_eval_quality(args)
 
-    if args.eval_command == "compare":
-        return cmd_eval_compare(args)
+    if args.eval_command == "multi-model":
+        return cmd_eval_multi_model(args)
 
     return commands[args.eval_command](args)
 
