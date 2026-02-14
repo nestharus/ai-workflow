@@ -56,7 +56,7 @@ from spec_manager.orchestration.models import Layer
 logger = logging.getLogger(__name__)
 
 
-_SCAN_FALLBACK_KEY = "enable_gap_scanner_fallback"
+_DISABLE_L1_GAP_SCAN_KEY = "disable_l1_gap_scan"
 
 
 @dataclass(frozen=True)
@@ -475,8 +475,9 @@ class GapExplorationStep:
 
     name = "GAP_EXPLORATION"
 
-    def __init__(self, planner: Any = None) -> None:
+    def __init__(self, planner: Any = None, gap_queue: Any | None = None) -> None:
         self._planner = planner
+        self._gap_queue = gap_queue
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Dispatch to layer-specific gap exploration."""
@@ -524,6 +525,61 @@ class GapExplorationStep:
     def _normalize_gap(gap: dict[str, Any]) -> dict[str, Any]:
         """Normalize prior gap evidence to span/location schema."""
         return _normalize_gap_record(gap)
+
+    @staticmethod
+    def _invariant_family_for_gap(kind: str) -> str:
+        """Map gap kind labels to canonical invariant families."""
+        if kind == "comment_gap":
+            return "executable_comment"
+        if kind == "stub_gap":
+            return "executable_stub"
+        if kind == "ambiguity_gap":
+            return "ambiguity"
+        return kind or "missing_detail"
+
+    @classmethod
+    def _report_from_gap_records(cls, gaps: list[dict[str, Any]]) -> Any:
+        """Project normalized gap records into executable-gap report evidence."""
+        from spec_manager.compliance.detection.orchestrator import ExecutableGapReport
+        from spec_manager.core.gap import GapEvidence
+
+        evidence: list[GapEvidence] = []
+        for gap in gaps:
+            file_path = str(gap.get("file", "")).strip()
+            description = str(gap.get("description", "")).strip() or "Gap detected"
+            kind = str(gap.get("kind", "gap")).strip()
+            details: dict[str, Any] = {
+                "derived_artifact_target": file_path or "unknown",
+            }
+            if file_path:
+                details["source"] = [file_path]
+            evidence.append(
+                GapEvidence(
+                    invariant_family=cls._invariant_family_for_gap(kind),
+                    description=description,
+                    details=details,
+                    location=file_path or None,
+                    detector="promotion_loop.gap_exploration",
+                )
+            )
+        return ExecutableGapReport(all_evidence=evidence)
+
+    def _merge_gap_queue(self, report: Any, bundle: EvidenceBundle) -> None:
+        """Merge L1 gap evidence into the shared queue and expose queue metrics."""
+        if self._gap_queue is None:
+            return
+
+        from spec_manager.compliance.detection.orchestrator import integrate_with_gap_queue
+        from spec_manager.core.gap import GapSynthesizer
+
+        integrate_with_gap_queue(report, self._gap_queue, GapSynthesizer())
+        metrics = self._gap_queue.get_coverage_metrics()
+        bundle.gaps.stagnation = {
+            "stagnation_count": self._gap_queue.stagnation_count,
+            "is_stagnant": self._gap_queue.is_stagnant,
+            "open_gaps": metrics.get("open_gaps", 0),
+            "total_gaps": metrics.get("total_gaps", 0),
+        }
 
     @staticmethod
     def _pattern_library_path(workspace: Path) -> Path:
@@ -670,19 +726,22 @@ class GapExplorationStep:
         return artifacts
 
     def _explore_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L1: prefer promotion evidence; scanner is fallback only."""
+        """L1: detect executable gaps for the slice and update queue view."""
         from spec_manager.orchestration.evidence import GapReportRef
 
         reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
         if reused is not None:
+            normalized = [self._normalize_gap(g) for g in reused]
             bundle.gaps = GapReportRef(
-                path="gaps.json", open_gaps=[self._normalize_gap(g) for g in reused]
+                path="gaps.json",
+                open_gaps=normalized,
             )
+            self._merge_gap_queue(self._report_from_gap_records(normalized), bundle)
             return StepResult(status="OK")
 
-        allow_scan_fallback = bool(ctx.config.get(_SCAN_FALLBACK_KEY, False))
-        if not allow_scan_fallback:
+        if bool(ctx.config.get(_DISABLE_L1_GAP_SCAN_KEY, False)):
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
+            self._merge_gap_queue(self._report_from_gap_records([]), bundle)
             return StepResult(status="OK")
 
         slice_root = Path(ctx.slice_root)
@@ -691,6 +750,7 @@ class GapExplorationStep:
         py_files = source_rglob(slice_root)
         if not py_files:
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
+            self._merge_gap_queue(self._report_from_gap_records([]), bundle)
             return StepResult(status="OK")
 
         try:
@@ -725,10 +785,11 @@ class GapExplorationStep:
                 )
 
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=gaps)
+            self._merge_gap_queue(report, bundle)
         except Exception as exc:
-            logger.warning("L1 fallback gap exploration failed: %s", exc, exc_info=True)
+            logger.warning("L1 gap exploration failed: %s", exc, exc_info=True)
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
-            return StepResult(status="RETRY", error=f"L1 fallback gap exploration failed: {exc}")
+            return StepResult(status="RETRY", error=f"L1 gap exploration failed: {exc}")
 
         return StepResult(status="OK")
 
@@ -1126,14 +1187,11 @@ class PlanStep:
             bundle.plan = PlanRef(path="plan.json", intentions=[])
             return StepResult(status="OK")
 
-        # L1: no-op — agents implement directly from spec comments/gaps,
-        # no planner-generated intentions needed.
+        # L1: generate function-oriented intentions from current open gaps.
         if ctx.layer == "l1":
-            bundle.plan = PlanRef(path="plan.json", intentions=[])
-            return StepResult(status="OK")
-
+            intentions = self._plan_l1(bundle.gaps.open_gaps)
         # Route through planner if available (L2/L3 only)
-        if self._planner is not None:
+        elif self._planner is not None:
             intentions = self._plan_via_planner(ctx, bundle)
         elif ctx.layer == "l2":
             intentions = self._plan_l2(bundle.gaps.open_gaps)
@@ -1167,10 +1225,51 @@ class PlanStep:
                     bundle.implementation.under_spec_events = (
                         existing + gate_result.under_spec_events
                     )
+                    return StepResult(status="BLOCKED")
             except Exception as exc:
                 logger.debug("Planning gate skipped: %s", exc)
 
         return StepResult(status="OK")
+
+    @staticmethod
+    def _plan_l1(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """L1: convert executable gaps into concrete implementation intentions."""
+        intentions: list[dict[str, Any]] = []
+        for idx, gap in enumerate(gaps, start=1):
+            file_path = str(gap.get("file", "")).strip()
+            kind = str(gap.get("kind", "gap")).strip() or "gap"
+            description = str(gap.get("description", "")).strip()
+            location = gap.get("location", {}) or {}
+            span = gap.get("span", {}) or {}
+            target_function = (
+                str(gap.get("function", "")).strip() or str(location.get("symbol", "")).strip()
+            )
+            target_id = file_path or target_function or f"gap-{idx}"
+            approach_parts = [f"Resolve {kind}"]
+            if target_function:
+                approach_parts.append(f"in {target_function}")
+            if file_path:
+                approach_parts.append(f"at {file_path}")
+            if description:
+                approach_parts.append(f"by implementing: {description}")
+            intentions.append(
+                {
+                    "intention_id": f"l1-intention-{idx}",
+                    "gap_id": target_id,
+                    "target_file": file_path,
+                    "target_function": target_function,
+                    "approach": " ".join(approach_parts),
+                    "acceptance_criteria": "Executable gap no longer appears in GAP_EXPLORATION",
+                    "layer_constraint": "implementation_only",
+                    "required_change_type": gap.get("required_change_type", "behavior_change"),
+                    "source_gap": {
+                        "kind": kind,
+                        "description": description,
+                        "span": span,
+                    },
+                }
+            )
+        return intentions
 
     def _plan_via_planner(self, ctx: SliceContext, bundle: EvidenceBundle) -> list[dict[str, Any]]:
         """Route plan generation through the planner module."""
@@ -3341,6 +3440,9 @@ class PromotionLoop:
         self._workspace_root = workspace_root
         self._dm = demotion_manager or DemotionManager(workspace_root)
         self._planner = planner
+        from spec_manager.core.gap_queue import GapQueue
+
+        self._gap_queue = GapQueue()
 
         # Build step instances
         if steps is not None:
@@ -3350,7 +3452,9 @@ class PromotionLoop:
             for step_cls in DEFAULT_STEPS:
                 if step_cls is IntegrateStep:
                     self._steps.append(step_cls())
-                elif step_cls in (GapExplorationStep, PlanStep, CoordinateStep):
+                elif step_cls is GapExplorationStep:
+                    self._steps.append(step_cls(planner=self._planner, gap_queue=self._gap_queue))
+                elif step_cls in (PlanStep, CoordinateStep):
                     self._steps.append(step_cls(planner=self._planner))
                 else:
                     self._steps.append(step_cls())
