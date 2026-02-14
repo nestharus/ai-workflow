@@ -33,6 +33,19 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+_STABLE_COMPARISON_METRIC_NAMES = {
+    "planner.under_spec_safety",
+    "planner.must_include_coverage",
+    "planner.out_of_scope_rate",
+    "planner.unsafe_resolution_rate",
+    "planner.evidence_first_rate",
+    "planner.tokens_per_decision",
+    "planner.latency_per_decision",
+    "planner.iterations_per_slice",
+    "planner.demotions_per_slice",
+}
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -348,25 +361,18 @@ class PlannerReporter:
 
     def _gate_under_spec_safety(self, verdicts: list[Any]) -> PlannerMetric:
         """False-unblock rate for events GT says must block must be 0."""
-        false_unblock_refs: list[str] = []
-        for v in verdicts:
-            cap = getattr(v, "capability", "")
-            if str(cap).lower() in ("under_spec",):
-                failures = getattr(v, "hard_gate_failures", []) or []
-                for f in failures:
-                    if "false_unblock" in str(f).lower():
-                        false_unblock_refs.append(
-                            getattr(v, "trace_id", "") or getattr(v, "decision_key", "")
-                        )
-
+        under_spec_total, false_unblock_count, false_unblock_refs = (
+            self._collect_under_spec_safety_counts(verdicts)
+        )
+        rate = false_unblock_count / max(under_spec_total, 1)
         ok = len(false_unblock_refs) == 0
         return PlannerMetric(
             name="planner.under_spec_safety",
-            raw=float(len(false_unblock_refs)),
-            score=1.0 if ok else 0.0,
+            raw=rate,
+            score=1.0 if ok else max(0.0, 1.0 - rate),
             status="PASS" if ok else "FAIL",
             hard_gate=True,
-            detail=f"{len(false_unblock_refs)} false-unblock event(s)",
+            detail=f"{false_unblock_count}/{under_spec_total} false-unblock event(s)",
             evidence_refs=false_unblock_refs[:20],
         )
 
@@ -392,49 +398,16 @@ class PlannerReporter:
 
     def _gate_no_oos_intentions(self, traces: list[Any]) -> PlannerMetric:
         """PLAN step: no intention targets outside slice scope."""
-        oos_refs: list[str] = []
-        for t in traces:
-            decision_key = str(getattr(t, "decision_key", ""))
-            # Only applies to PLAN capability
-            if ":PLAN:" not in decision_key.upper() and not decision_key.upper().startswith(
-                "PLAN:"
-            ):
-                continue
-
-            artifacts = getattr(t, "artifacts", None) or {}
-            outputs = artifacts.get("outputs", {}) or {}
-            intentions = outputs.get("intentions", []) or []
-            scope_files = set(outputs.get("scope_files", []) or [])
-            scope_functions = set(outputs.get("scope_functions", []) or [])
-
-            # If scope info is not available, skip the check for this trace
-            if not scope_files and not scope_functions:
-                continue
-
-            for intention in intentions:
-                if not isinstance(intention, dict):
-                    continue
-                target_file = intention.get("file", "")
-                target_fn = intention.get("function_name", "")
-
-                out_of_scope = False
-                if scope_files and target_file and target_file not in scope_files:
-                    out_of_scope = True
-                if scope_functions and target_fn and target_fn not in scope_functions:
-                    out_of_scope = True
-
-                if out_of_scope:
-                    oos_refs.append(str(getattr(t, "trace_id", "")))
-                    break  # one per trace is enough
-
+        scoped_plan_traces, oos_refs = self._collect_out_of_scope_traces(traces)
+        oos_count = len(oos_refs)
         ok = len(oos_refs) == 0
         return PlannerMetric(
             name="planner.no_oos_intentions",
-            raw=float(len(oos_refs)),
+            raw=float(oos_count),
             score=1.0 if ok else 0.0,
             status="PASS" if ok else "FAIL",
             hard_gate=True,
-            detail=f"{len(oos_refs)} trace(s) with out-of-scope intentions",
+            detail=f"{oos_count}/{scoped_plan_traces} scoped PLAN trace(s) out-of-scope",
             evidence_refs=oos_refs[:20],
         )
 
@@ -447,29 +420,31 @@ class PlannerReporter:
         verdicts: list[Any],
         traces: list[Any],
     ) -> list[PlannerMetric]:
-        signals: list[PlannerMetric] = []
-
-        # -- Decision quality (from verdicts) --
-        signals.append(self._signal_resolve_accuracy(verdicts))
-        signals.append(self._signal_gap_recall(verdicts))
-        signals.append(self._signal_gap_precision(verdicts))
-        signals.append(self._signal_plan_coverage(verdicts))
-        signals.append(self._signal_plan_redundancy(verdicts))
-        signals.append(self._signal_integration_risk_recall(verdicts))
-
-        # -- Epistemic hygiene (from traces) --
-        signals.append(self._signal_unsafe_resolution_rate(verdicts))
-        signals.append(self._signal_evidence_first_rate(traces))
-
-        # -- Efficiency (from traces) --
-        signals.append(self._signal_model_calls_p50(traces))
-        signals.append(self._signal_model_calls_p95(traces))
-        signals.append(self._signal_tool_calls_per_decision(traces))
-
-        # -- Convergence (informational) --
-        signals.append(self._signal_iterations_per_slice(traces))
-
-        return signals
+        signals: list[PlannerMetric] = [
+            # Stable cross-run comparison contract (SEC-016)
+            self._signal_under_spec_safety_rate(verdicts),
+            self._signal_must_include_coverage(verdicts),
+            self._signal_out_of_scope_rate(traces),
+            self._signal_unsafe_resolution_rate(verdicts),
+            self._signal_evidence_first_rate(traces),
+            self._signal_tokens_per_decision(traces),
+            self._signal_latency_per_decision(traces),
+            self._signal_iterations_per_slice(traces),
+            self._signal_demotions_per_slice(),
+            # Additional diagnostics
+            self._signal_resolve_accuracy(verdicts),
+            self._signal_gap_recall(verdicts),
+            self._signal_gap_precision(verdicts),
+            self._signal_plan_redundancy(verdicts),
+            self._signal_integration_risk_recall(verdicts),
+            self._signal_model_calls_p50(traces),
+            self._signal_model_calls_p95(traces),
+            self._signal_tool_calls_per_decision(traces),
+        ]
+        deduped: dict[str, PlannerMetric] = {}
+        for metric in signals:
+            deduped[metric.name] = metric
+        return list(deduped.values())
 
     # -- Decision quality --
 
@@ -519,12 +494,12 @@ class PlannerReporter:
             warn=0.75,
         )
 
-    def _signal_plan_coverage(self, verdicts: list[Any]) -> PlannerMetric:
+    def _signal_must_include_coverage(self, verdicts: list[Any]) -> PlannerMetric:
         """must_include recall. PASS >= 0.9, WARN >= 0.75, FAIL < 0.75."""
         return self._aggregate_verdict_score(
             verdicts,
             capability="plan",
-            metric_name="planner.plan.coverage",
+            metric_name="planner.must_include_coverage",
             score_key="coverage",
             pass_=0.9,
             warn=0.75,
@@ -579,6 +554,34 @@ class PlannerReporter:
         )
 
     # -- Epistemic hygiene --
+
+    def _signal_under_spec_safety_rate(self, verdicts: list[Any]) -> PlannerMetric:
+        """False-unblock rate for UNDER_SPEC decisions (target: 0)."""
+        under_spec_total, false_unblock_count, refs = self._collect_under_spec_safety_counts(
+            verdicts
+        )
+        rate = false_unblock_count / max(under_spec_total, 1)
+        return PlannerMetric(
+            name="planner.under_spec_safety",
+            raw=rate,
+            score=max(0.0, 1.0 - rate),
+            status=_threshold_lte(rate, pass_=0.0, warn=0.01),
+            detail=f"{false_unblock_count}/{under_spec_total} false-unblock events",
+            evidence_refs=refs[:20],
+        )
+
+    def _signal_out_of_scope_rate(self, traces: list[Any]) -> PlannerMetric:
+        """Rate of PLAN traces with out-of-scope intentions (target: 0)."""
+        scoped_plan_traces, oos_refs = self._collect_out_of_scope_traces(traces)
+        rate = len(oos_refs) / max(scoped_plan_traces, 1)
+        return PlannerMetric(
+            name="planner.out_of_scope_rate",
+            raw=rate,
+            score=max(0.0, 1.0 - rate),
+            status=_threshold_lte(rate, pass_=0.0, warn=0.01),
+            detail=f"{len(oos_refs)}/{scoped_plan_traces} scoped PLAN traces out-of-scope",
+            evidence_refs=oos_refs[:20],
+        )
 
     def _signal_unsafe_resolution_rate(self, verdicts: list[Any]) -> PlannerMetric:
         """PASS = 0, WARN <= 0.01, FAIL > 0.01.
@@ -642,6 +645,46 @@ class PlannerReporter:
         )
 
     # -- Efficiency --
+
+    def _signal_tokens_per_decision(self, traces: list[Any]) -> PlannerMetric:
+        """Average token consumption per decision (informational)."""
+        if not traces:
+            return PlannerMetric(
+                name="planner.tokens_per_decision",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No traces",
+            )
+        totals = [self._trace_tokens_and_latency(t)[0] for t in traces]
+        avg_tokens = sum(totals) / len(totals)
+        return PlannerMetric(
+            name="planner.tokens_per_decision",
+            raw=avg_tokens,
+            score=1.0,
+            status="PASS",
+            detail=f"avg={avg_tokens:.1f} across {len(traces)} decisions",
+        )
+
+    def _signal_latency_per_decision(self, traces: list[Any]) -> PlannerMetric:
+        """Average planner latency in milliseconds per decision (informational)."""
+        if not traces:
+            return PlannerMetric(
+                name="planner.latency_per_decision",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No traces",
+            )
+        latencies = [self._trace_tokens_and_latency(t)[1] for t in traces]
+        avg_latency_ms = sum(latencies) / len(latencies)
+        return PlannerMetric(
+            name="planner.latency_per_decision",
+            raw=avg_latency_ms,
+            score=1.0,
+            status="PASS",
+            detail=f"avg={avg_latency_ms:.1f}ms across {len(traces)} decisions",
+        )
 
     def _signal_model_calls_p50(self, traces: list[Any]) -> PlannerMetric:
         """PASS <= 3, WARN <= 6, FAIL > 6."""
@@ -723,6 +766,60 @@ class PlannerReporter:
             score=1.0,  # informational
             status="PASS",  # informational, no threshold
             detail=f"avg={avg_iter:.1f} across {len(slice_iterations)} slice(s)",
+        )
+
+    def _signal_demotions_per_slice(self) -> PlannerMetric:
+        """Average demotion tickets per slice for this run (informational)."""
+        demotions_root = self._workspace / ".pdd_runs" / self._run_id / "demotions" / "tickets"
+        if not self._run_id:
+            return PlannerMetric(
+                name="planner.demotions_per_slice",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="Run ID unavailable",
+            )
+        if not demotions_root.exists():
+            return PlannerMetric(
+                name="planner.demotions_per_slice",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No demotion tickets",
+            )
+
+        total = 0
+        by_slice: dict[str, int] = {}
+        for ticket_path in sorted(demotions_root.glob("*.json")):
+            try:
+                payload = json.loads(ticket_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            ticket = payload.get("ticket", {})
+            if not isinstance(ticket, dict):
+                continue
+            slice_id = str(ticket.get("slice_id", "") or "(unknown)")
+            by_slice[slice_id] = by_slice.get(slice_id, 0) + 1
+            total += 1
+
+        if not by_slice:
+            return PlannerMetric(
+                name="planner.demotions_per_slice",
+                raw=0.0,
+                score=1.0,
+                status="PASS",
+                detail="No parseable demotion tickets",
+            )
+
+        avg_demotions = total / len(by_slice)
+        top_slices = sorted(by_slice.items(), key=lambda item: item[1], reverse=True)[:3]
+        top_desc = ", ".join(f"{slice_id}:{count}" for slice_id, count in top_slices)
+        return PlannerMetric(
+            name="planner.demotions_per_slice",
+            raw=avg_demotions,
+            score=1.0,
+            status="PASS",
+            detail=f"avg={avg_demotions:.2f} across {len(by_slice)} slice(s); top={top_desc}",
         )
 
     def _compute_slice_aggregates(
@@ -825,6 +922,119 @@ class PlannerReporter:
                 mc = len(mc)
             counts.append(float(mc))
         return counts
+
+    @staticmethod
+    def _trace_capability(trace: Any) -> str:
+        """Resolve capability from decision key or request snapshot."""
+        decision_key = str(getattr(trace, "decision_key", "") or "")
+        if decision_key:
+            parts = decision_key.split(":")
+            if len(parts) > 1 and parts[1]:
+                return str(parts[1]).upper()
+        request = getattr(trace, "request", None)
+        if isinstance(request, dict):
+            cap = str(request.get("capability", "") or "")
+            if cap:
+                return cap.upper()
+        return ""
+
+    @classmethod
+    def _collect_out_of_scope_traces(cls, traces: list[Any]) -> tuple[int, list[str]]:
+        """Return (scoped PLAN trace count, out-of-scope trace refs)."""
+        scoped_plan_traces = 0
+        oos_refs: list[str] = []
+        for trace in traces:
+            if cls._trace_capability(trace) != "PLAN":
+                continue
+
+            artifacts = getattr(trace, "artifacts", None) or {}
+            outputs = artifacts.get("outputs", {}) or {}
+            if not isinstance(outputs, dict):
+                continue
+            intentions = outputs.get("intentions", []) or []
+            scope_files = set(outputs.get("scope_files", []) or [])
+            scope_functions = set(outputs.get("scope_functions", []) or [])
+
+            # If scope info is absent, this trace cannot be evaluated.
+            if not scope_files and not scope_functions:
+                continue
+            scoped_plan_traces += 1
+
+            for intention in intentions:
+                if not isinstance(intention, dict):
+                    continue
+                target_file = str(intention.get("file", "") or "")
+                target_fn = str(intention.get("function_name", "") or "")
+                out_of_scope = False
+                if scope_files and target_file and target_file not in scope_files:
+                    out_of_scope = True
+                if scope_functions and target_fn and target_fn not in scope_functions:
+                    out_of_scope = True
+                if out_of_scope:
+                    oos_refs.append(str(getattr(trace, "trace_id", "")))
+                    break
+        return scoped_plan_traces, oos_refs
+
+    @staticmethod
+    def _collect_under_spec_safety_counts(verdicts: list[Any]) -> tuple[int, int, list[str]]:
+        """Return (under_spec verdict count, false-unblock count, refs)."""
+        under_spec_total = 0
+        false_unblock_refs: list[str] = []
+        for verdict in verdicts:
+            capability = str(getattr(verdict, "capability", "") or "").lower()
+            if capability != "under_spec":
+                continue
+            under_spec_total += 1
+            failures = getattr(verdict, "hard_gate_failures", []) or []
+            for failure in failures:
+                if "false_unblock" in str(failure).lower():
+                    false_unblock_refs.append(
+                        getattr(verdict, "trace_id", "") or getattr(verdict, "decision_key", "")
+                    )
+                    break
+        return under_spec_total, len(false_unblock_refs), false_unblock_refs
+
+    @staticmethod
+    def _trace_tokens_and_latency(trace: Any) -> tuple[int, float]:
+        """Return aggregate token usage and latency for a trace."""
+
+        def _safe_int(value: Any) -> int:
+            try:
+                return max(int(value or 0), 0)
+            except (TypeError, ValueError):
+                return 0
+
+        def _safe_float(value: Any) -> float:
+            try:
+                return max(float(value or 0.0), 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        model_calls = getattr(trace, "model_calls", []) or []
+        tool_calls = getattr(trace, "tool_calls", []) or []
+
+        token_total = 0
+        model_latency_ms = 0.0
+        tool_latency_ms = 0.0
+
+        for call in model_calls:
+            if not isinstance(call, dict):
+                continue
+            token_total += _safe_int(call.get("tokens_in")) + _safe_int(call.get("tokens_out"))
+            model_latency_ms += _safe_float(call.get("duration_ms"))
+
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            token_total += _safe_int(call.get("tokens_in")) + _safe_int(call.get("tokens_out"))
+            tool_latency_ms += _safe_float(call.get("duration_ms"))
+
+        # Model-call duration is the authoritative decision wall-clock metric.
+        latency_ms = model_latency_ms if model_calls else tool_latency_ms
+        if latency_ms <= 0.0 and tool_latency_ms > 0.0:
+            latency_ms = tool_latency_ms
+
+        return token_total, latency_ms
 
     @staticmethod
     def _slice_id_for_record(record: Any) -> str:
@@ -948,17 +1158,46 @@ class PlannerReporter:
         for g in scorecard.hard_gates:
             lines.append(f"| {g.name} | {g.status} | {g.raw:.2f} | {g.detail} |")
 
+        stable_signals = [
+            signal
+            for signal in scorecard.soft_signals
+            if signal.name in _STABLE_COMPARISON_METRIC_NAMES
+        ]
+        other_signals = [
+            signal
+            for signal in scorecard.soft_signals
+            if signal.name not in _STABLE_COMPARISON_METRIC_NAMES
+        ]
+
         lines.extend(
             [
                 "",
-                "## Soft Signals",
+                "## Stable Comparison Metrics",
+                "",
+                "| Metric | Status | Score | Raw | Detail |",
+                "|--------|--------|-------|-----|--------|",
+            ]
+        )
+        for signal in stable_signals:
+            lines.append(
+                f"| {signal.name} | {signal.status} | {signal.score:.2f} | "
+                f"{signal.raw:.2f} | {signal.detail} |"
+            )
+
+        lines.extend(
+            [
+                "",
+                "## Additional Soft Signals",
                 "",
                 "| Signal | Status | Score | Raw | Detail |",
                 "|--------|--------|-------|-----|--------|",
             ]
         )
-        for s in scorecard.soft_signals:
-            lines.append(f"| {s.name} | {s.status} | {s.score:.2f} | {s.raw:.2f} | {s.detail} |")
+        for signal in other_signals:
+            lines.append(
+                f"| {signal.name} | {signal.status} | {signal.score:.2f} | "
+                f"{signal.raw:.2f} | {signal.detail} |"
+            )
 
         lines.extend(
             [

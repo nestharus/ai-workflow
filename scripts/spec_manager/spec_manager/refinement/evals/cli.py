@@ -486,6 +486,11 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     p_pl_replay = planner_sub.add_parser("replay", help="Replay a planner decision")
     p_pl_replay.add_argument("trace_id", help="Trace ID to replay")
     p_pl_replay.add_argument(
+        "--model-config",
+        default="",
+        help="Model configuration override for replayed planner call",
+    )
+    p_pl_replay.add_argument(
         "--override",
         help="Path to override YAML/JSON (mapping with optional inputs/outputs keys)",
     )
@@ -501,10 +506,17 @@ def setup_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         "--workspace", default=".", help="Workspace root (where traces are stored)"
     )
 
-    # eval planner trace summarize
-    p_pl_summary = planner_sub.add_parser("summarize", help="Summarize traces for a run")
+    # eval planner trace summarize-run
+    p_pl_summary = planner_sub.add_parser("summarize-run", help="Summarize traces for a run")
     p_pl_summary.add_argument("--run-id", required=True, help="Run ID to summarize")
     p_pl_summary.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    # eval planner trace timeline
+    p_pl_timeline = planner_sub.add_parser("timeline", help="Generate planner timeline HTML")
+    p_pl_timeline.add_argument("--run-id", required=True, help="Run ID to visualize")
+    p_pl_timeline.add_argument(
         "--workspace", default=".", help="Workspace root (where traces are stored)"
     )
 
@@ -823,6 +835,7 @@ def cmd_planner_replay(args: argparse.Namespace) -> int:
         workspace_root=workspace,
         mode="replay",
         replay_trace_id=args.trace_id,
+        model_config=args.model_config,
         override_path=Path(args.override) if args.override else None,
     )
     harness = PlannerEvalHarness(workspace)
@@ -839,6 +852,295 @@ def cmd_planner_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _planner_trace_parts(trace: object) -> tuple[str, str, str, int]:
+    decision_key = str(getattr(trace, "decision_key", "") or "")
+    parts = decision_key.split(":") if decision_key else []
+    layer = parts[0] if len(parts) > 0 else "unknown"
+    capability = parts[1] if len(parts) > 1 else "unknown"
+    slice_id = parts[2] if len(parts) > 2 else "unknown"
+    iteration = 0
+    if len(parts) > 3:
+        try:
+            iteration = int(parts[3])
+        except (TypeError, ValueError):
+            iteration = 0
+    return layer, capability, slice_id, iteration
+
+
+def _planner_trace_outputs(trace: object) -> dict[str, object]:
+    artifacts = getattr(trace, "artifacts", {}) or {}
+    outputs = artifacts.get("outputs")
+    if isinstance(outputs, dict):
+        return outputs
+    override_outputs = artifacts.get("override_outputs")
+    if isinstance(override_outputs, dict):
+        return override_outputs
+    return {}
+
+
+def _planner_trace_decision_field(trace: object, field: str) -> object:
+    decision = getattr(trace, "decision", {}) or {}
+    if not isinstance(decision, dict):
+        return None
+    return decision.get(field)
+
+
+def _planner_trace_tokens_latency(trace: object) -> tuple[int, float]:
+    def _safe_int(value: object) -> int:
+        try:
+            return max(int(value or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _safe_float(value: object) -> float:
+        try:
+            return max(float(value or 0.0), 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    model_calls = getattr(trace, "model_calls", []) or []
+    tool_calls = getattr(trace, "tool_calls", []) or []
+
+    tokens_total = 0
+    model_latency_ms = 0.0
+    tool_latency_ms = 0.0
+
+    for call in model_calls:
+        if not isinstance(call, dict):
+            continue
+        tokens_total += _safe_int(call.get("tokens_in")) + _safe_int(call.get("tokens_out"))
+        model_latency_ms += _safe_float(call.get("duration_ms"))
+
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        tokens_total += _safe_int(call.get("tokens_in")) + _safe_int(call.get("tokens_out"))
+        tool_latency_ms += _safe_float(call.get("duration_ms"))
+
+    latency_ms = model_latency_ms if model_calls else tool_latency_ms
+    if latency_ms <= 0.0 and tool_latency_ms > 0.0:
+        latency_ms = tool_latency_ms
+    return tokens_total, latency_ms
+
+
+def _planner_call_sequence(
+    calls: list[dict[str, object]],
+    *,
+    fields: tuple[str, ...],
+) -> list[dict[str, object]]:
+    sequence: list[dict[str, object]] = []
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        sequence.append({field: call.get(field) for field in fields})
+    return sequence
+
+
+def _first_sequence_mismatch(
+    left: list[dict[str, object]],
+    right: list[dict[str, object]],
+) -> int:
+    max_len = max(len(left), len(right))
+    for idx in range(max_len):
+        if idx >= len(left) or idx >= len(right):
+            return idx
+        if left[idx] != right[idx]:
+            return idx
+    return -1
+
+
+def _planner_diff_payload(trace_a: object, trace_b: object) -> dict[str, object]:
+    import json
+
+    outputs_a = _planner_trace_outputs(trace_a)
+    outputs_b = _planner_trace_outputs(trace_b)
+    output_keys = sorted(set(outputs_a) | set(outputs_b))
+
+    output_changes = []
+    changed_keys: list[str] = []
+    for key in output_keys:
+        left = outputs_a.get(key)
+        right = outputs_b.get(key)
+        changed = json.dumps(left, sort_keys=True, default=str) != json.dumps(
+            right, sort_keys=True, default=str
+        )
+        if changed:
+            changed_keys.append(key)
+        output_changes.append(
+            {
+                "key": key,
+                "changed": changed,
+                "a": left,
+                "b": right,
+            }
+        )
+
+    assumptions_a = _planner_trace_decision_field(trace_a, "assumptions")
+    assumptions_b = _planner_trace_decision_field(trace_b, "assumptions")
+    assumptions_list_a = assumptions_a if isinstance(assumptions_a, list) else []
+    assumptions_list_b = assumptions_b if isinstance(assumptions_b, list) else []
+    assumptions_set_a = {str(item) for item in assumptions_list_a}
+    assumptions_set_b = {str(item) for item in assumptions_list_b}
+
+    confidence_a = _planner_trace_decision_field(trace_a, "confidence")
+    confidence_b = _planner_trace_decision_field(trace_b, "confidence")
+    confidence_a_num = float(confidence_a) if isinstance(confidence_a, (int, float)) else None
+    confidence_b_num = float(confidence_b) if isinstance(confidence_b, (int, float)) else None
+    confidence_delta = None
+    if confidence_a_num is not None and confidence_b_num is not None:
+        confidence_delta = confidence_b_num - confidence_a_num
+
+    model_sequence_a = _planner_call_sequence(
+        getattr(trace_a, "model_calls", []) or [],
+        fields=(
+            "agent_name",
+            "model",
+            "prompt_hash",
+            "output_hash",
+            "duration_ms",
+            "tokens_in",
+            "tokens_out",
+        ),
+    )
+    model_sequence_b = _planner_call_sequence(
+        getattr(trace_b, "model_calls", []) or [],
+        fields=(
+            "agent_name",
+            "model",
+            "prompt_hash",
+            "output_hash",
+            "duration_ms",
+            "tokens_in",
+            "tokens_out",
+        ),
+    )
+    tool_sequence_a = _planner_call_sequence(
+        getattr(trace_a, "tool_calls", []) or [],
+        fields=("tool_name", "inputs_hash", "output_summary", "duration_ms"),
+    )
+    tool_sequence_b = _planner_call_sequence(
+        getattr(trace_b, "tool_calls", []) or [],
+        fields=("tool_name", "inputs_hash", "output_summary", "duration_ms"),
+    )
+
+    model_mismatch = _first_sequence_mismatch(model_sequence_a, model_sequence_b)
+    tool_mismatch = _first_sequence_mismatch(tool_sequence_a, tool_sequence_b)
+
+    return {
+        "trace_a": {
+            "trace_id": getattr(trace_a, "trace_id", ""),
+            "decision_key": getattr(trace_a, "decision_key", ""),
+            "status": getattr(trace_a, "status", ""),
+        },
+        "trace_b": {
+            "trace_id": getattr(trace_b, "trace_id", ""),
+            "decision_key": getattr(trace_b, "decision_key", ""),
+            "status": getattr(trace_b, "status", ""),
+        },
+        "status": {
+            "match": str(getattr(trace_a, "status", "")) == str(getattr(trace_b, "status", "")),
+            "a": getattr(trace_a, "status", ""),
+            "b": getattr(trace_b, "status", ""),
+        },
+        "decision_outputs": {
+            "changed_keys": changed_keys,
+            "change_count": len(changed_keys),
+            "entries": output_changes,
+        },
+        "confidence": {
+            "a": confidence_a_num,
+            "b": confidence_b_num,
+            "delta": confidence_delta,
+            "match": confidence_a_num == confidence_b_num,
+        },
+        "assumptions": {
+            "a": assumptions_list_a,
+            "b": assumptions_list_b,
+            "only_in_a": sorted(assumptions_set_a - assumptions_set_b),
+            "only_in_b": sorted(assumptions_set_b - assumptions_set_a),
+            "match": assumptions_list_a == assumptions_list_b,
+        },
+        "model_call_sequence": {
+            "match": model_mismatch < 0,
+            "first_mismatch_index": model_mismatch,
+            "count_a": len(model_sequence_a),
+            "count_b": len(model_sequence_b),
+            "a": model_sequence_a,
+            "b": model_sequence_b,
+        },
+        "tool_call_sequence": {
+            "match": tool_mismatch < 0,
+            "first_mismatch_index": tool_mismatch,
+            "count_a": len(tool_sequence_a),
+            "count_b": len(tool_sequence_b),
+            "a": tool_sequence_a,
+            "b": tool_sequence_b,
+        },
+    }
+
+
+def _planner_diff_markdown(payload: dict[str, object]) -> str:
+    trace_a = payload.get("trace_a", {})
+    trace_b = payload.get("trace_b", {})
+    status = payload.get("status", {})
+    outputs = payload.get("decision_outputs", {})
+    confidence = payload.get("confidence", {})
+    assumptions = payload.get("assumptions", {})
+    model_sequence = payload.get("model_call_sequence", {})
+    tool_sequence = payload.get("tool_call_sequence", {})
+
+    changed_keys = outputs.get("changed_keys", [])
+    if not isinstance(changed_keys, list):
+        changed_keys = []
+
+    lines = [
+        "# Planner Trace Diff",
+        "",
+        f"- Trace A: `{trace_a.get('trace_id', '')}`",
+        f"- Trace B: `{trace_b.get('trace_id', '')}`",
+        "",
+        "## Decision Outputs",
+        "",
+        f"- Changed keys: {len(changed_keys)}",
+        f"- Keys: {', '.join(str(key) for key in changed_keys) if changed_keys else '(none)'}",
+        "",
+        "## Status",
+        "",
+        f"- Match: {status.get('match', False)}",
+        f"- A: `{status.get('a', '')}`",
+        f"- B: `{status.get('b', '')}`",
+        "",
+        "## Confidence",
+        "",
+        f"- Match: {confidence.get('match', False)}",
+        f"- A: {confidence.get('a', None)}",
+        f"- B: {confidence.get('b', None)}",
+        f"- Delta (B-A): {confidence.get('delta', None)}",
+        "",
+        "## Assumptions",
+        "",
+        f"- Match: {assumptions.get('match', False)}",
+        f"- Only in A: {', '.join(assumptions.get('only_in_a', [])) or '(none)'}",
+        f"- Only in B: {', '.join(assumptions.get('only_in_b', [])) or '(none)'}",
+        "",
+        "## Model Call Sequence",
+        "",
+        f"- Match: {model_sequence.get('match', False)}",
+        f"- Count A: {model_sequence.get('count_a', 0)}",
+        f"- Count B: {model_sequence.get('count_b', 0)}",
+        f"- First mismatch index: {model_sequence.get('first_mismatch_index', -1)}",
+        "",
+        "## Tool Call Sequence",
+        "",
+        f"- Match: {tool_sequence.get('match', False)}",
+        f"- Count A: {tool_sequence.get('count_a', 0)}",
+        f"- Count B: {tool_sequence.get('count_b', 0)}",
+        f"- First mismatch index: {tool_sequence.get('first_mismatch_index', -1)}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def cmd_planner_diff(args: argparse.Namespace) -> int:
     """Diff two planner traces."""
     import json
@@ -846,57 +1148,413 @@ def cmd_planner_diff(args: argparse.Namespace) -> int:
     from spec_manager.refinement.evals.planner.trace_loader import load_trace
 
     workspace = Path(args.workspace)
-    a = load_trace(workspace, args.trace_a)
-    b = load_trace(workspace, args.trace_b)
+    trace_a = load_trace(workspace, args.trace_a)
+    trace_b = load_trace(workspace, args.trace_b)
 
-    print(f"Trace A: {a.trace_id} ({a.status})")
-    print(f"Trace B: {b.trace_id} ({b.status})")
-    print(f"Status: {'SAME' if a.status == b.status else 'DIFFERENT'}")
+    payload = _planner_diff_payload(trace_a, trace_b)
+    run_a = str((trace_a.request or {}).get("run_id", "") or "")
+    run_b = str((trace_b.request or {}).get("run_id", "") or "")
+    run_id = run_a if run_a and run_a == run_b else (run_a or run_b or "cross-run")
+    out_dir = (
+        workspace / "reports" / "pdd" / run_id / "planner_diffs" / f"{args.trace_a}__{args.trace_b}"
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Diff outputs
-    a_out = a.artifacts.get("outputs", {})
-    b_out = b.artifacts.get("outputs", {})
-    all_keys = sorted(set(list(a_out.keys()) + list(b_out.keys())))
+    json_path = out_dir / "diff.json"
+    md_path = out_dir / "diff.md"
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    md_path.write_text(_planner_diff_markdown(payload), encoding="utf-8")
 
-    for key in all_keys:
-        a_val = json.dumps(a_out.get(key), sort_keys=True)
-        b_val = json.dumps(b_out.get(key), sort_keys=True)
-        status = "SAME" if a_val == b_val else "DIFF"
-        print(f"  {key}: {status}")
-
-    print(f"\nModel calls: A={len(a.model_calls)}, B={len(b.model_calls)}")
-    print(f"Tool calls: A={len(a.tool_calls)}, B={len(b.tool_calls)}")
+    changed = ((payload.get("decision_outputs") or {}).get("change_count")) or 0
+    status_match = ((payload.get("status") or {}).get("match")) or False
+    print(f"Trace A: {trace_a.trace_id}")
+    print(f"Trace B: {trace_b.trace_id}")
+    print(f"Status match: {status_match}")
+    print(f"Decision output changed keys: {changed}")
+    print(f"Diff markdown: {md_path}")
+    print(f"Diff JSON: {json_path}")
 
     return 0
 
 
-def cmd_planner_summarize(args: argparse.Namespace) -> int:
-    """Summarize planner traces for a run."""
-    from spec_manager.refinement.evals.planner.trace_loader import (
-        load_traces_for_run,
-        trace_stats,
-    )
+def cmd_planner_summarize_run(args: argparse.Namespace) -> int:
+    """Summarize planner traces for a run and write markdown report."""
+    from spec_manager.refinement.evals.planner.trace_loader import load_traces_for_run
 
     workspace = Path(args.workspace)
     traces = load_traces_for_run(workspace, args.run_id)
-    stats = trace_stats(traces)
 
-    print(f"Run: {args.run_id}")
-    print(f"Total traces: {stats['total_traces']}")
-    print("\nBy capability:")
-    for cap, count in sorted(stats.get("by_capability", {}).items()):
-        print(f"  {cap}: {count}")
-    print("\nBy layer:")
-    for layer, count in sorted(stats.get("by_layer", {}).items()):
-        print(f"  {layer}: {count}")
-    print("\nBy status:")
-    for status, count in sorted(stats.get("by_status", {}).items()):
-        print(f"  {status}: {count}")
-    print(f"\nModel calls total: {stats.get('model_calls_total', 0)}")
-    print(f"Tool calls total: {stats.get('tool_calls_total', 0)}")
-    print(f"Errors: {stats.get('error_count', 0)}")
-    print(f"Overridden: {stats.get('overridden_count', 0)}")
+    reports_dir = workspace / "reports" / "pdd" / args.run_id
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = reports_dir / "planner_traces_summary.md"
 
+    calls_by_capability: dict[str, dict[str, float]] = {}
+    failure_clusters: dict[str, dict[str, object]] = {}
+    expensive: list[dict[str, object]] = []
+
+    for trace in traces:
+        _layer, capability, slice_id, iteration = _planner_trace_parts(trace)
+        capability_key = capability or "unknown"
+        agg = calls_by_capability.setdefault(
+            capability_key,
+            {
+                "decisions": 0.0,
+                "model_calls": 0.0,
+                "tool_calls": 0.0,
+                "tokens": 0.0,
+                "latency_ms": 0.0,
+            },
+        )
+
+        model_calls = len(getattr(trace, "model_calls", []) or [])
+        tool_calls = len(getattr(trace, "tool_calls", []) or [])
+        tokens, latency_ms = _planner_trace_tokens_latency(trace)
+        agg["decisions"] += 1.0
+        agg["model_calls"] += float(model_calls)
+        agg["tool_calls"] += float(tool_calls)
+        agg["tokens"] += float(tokens)
+        agg["latency_ms"] += latency_ms
+
+        status = str(getattr(trace, "status", "") or "")
+        if status.upper() != "OK":
+            cluster_key = f"{capability_key}:{status or 'UNKNOWN'}"
+            cluster = failure_clusters.setdefault(
+                cluster_key,
+                {"count": 0, "sample_trace_ids": []},
+            )
+            cluster["count"] = int(cluster["count"]) + 1
+            sample = cluster["sample_trace_ids"]
+            if isinstance(sample, list) and len(sample) < 5:
+                sample.append(str(getattr(trace, "trace_id", "")))
+
+        expensive.append(
+            {
+                "trace_id": str(getattr(trace, "trace_id", "")),
+                "decision_key": str(getattr(trace, "decision_key", "")),
+                "capability": capability_key,
+                "slice_id": slice_id,
+                "iteration": iteration,
+                "model_calls": model_calls,
+                "tool_calls": tool_calls,
+                "tokens": tokens,
+                "latency_ms": latency_ms,
+            }
+        )
+
+    expensive.sort(
+        key=lambda row: (
+            float(row.get("tokens", 0)),
+            float(row.get("latency_ms", 0.0)),
+            int(row.get("model_calls", 0)) + int(row.get("tool_calls", 0)),
+        ),
+        reverse=True,
+    )
+    top_expensive = expensive[:20]
+
+    lines = [
+        f"# Planner Trace Summary -- Run {args.run_id}",
+        "",
+        f"Total traces: {len(traces)}",
+        "",
+        "## Calls Per Capability",
+        "",
+        (
+            "| Capability | Decisions | Model Calls | Tool Calls | "
+            "Avg Tokens/Decision | Avg Latency (ms) |"
+        ),
+        "|------------|-----------|-------------|------------|---------------------|------------------|",
+    ]
+
+    for capability, agg in sorted(calls_by_capability.items()):
+        decisions = int(agg["decisions"])
+        avg_tokens = (agg["tokens"] / decisions) if decisions else 0.0
+        avg_latency = (agg["latency_ms"] / decisions) if decisions else 0.0
+        lines.append(
+            f"| {capability} | {decisions} | {int(agg['model_calls'])} | "
+            f"{int(agg['tool_calls'])} | {avg_tokens:.1f} | {avg_latency:.1f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Failure Clusters",
+            "",
+            "| Cluster | Count | Sample Trace IDs |",
+            "|---------|-------|------------------|",
+        ]
+    )
+    if failure_clusters:
+        for cluster_name, cluster in sorted(
+            failure_clusters.items(),
+            key=lambda item: int(item[1]["count"]),
+            reverse=True,
+        ):
+            samples = cluster.get("sample_trace_ids", [])
+            sample_text = (
+                ", ".join(str(sample) for sample in samples) if isinstance(samples, list) else ""
+            )
+            lines.append(f"| {cluster_name} | {cluster['count']} | {sample_text or '(none)'} |")
+    else:
+        lines.append("| (none) | 0 | |")
+
+    lines.extend(
+        [
+            "",
+            "## Top Expensive Decisions",
+            "",
+            (
+                "| Trace ID | Capability | Slice | Iteration | "
+                "Model Calls | Tool Calls | Tokens | Latency (ms) |"
+            ),
+            "|----------|------------|-------|-----------|-------------|------------|--------|--------------|",
+        ]
+    )
+    for row in top_expensive:
+        lines.append(
+            f"| {row['trace_id']} | {row['capability']} | {row['slice_id']} | {row['iteration']} | "
+            f"{row['model_calls']} | {row['tool_calls']} | {row['tokens']} | "
+            f"{row['latency_ms']:.1f} |"
+        )
+
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Summary report written: {summary_path}")
+    print(f"Traces summarized: {len(traces)}")
+
+    return 0
+
+
+def cmd_planner_timeline(args: argparse.Namespace) -> int:
+    """Generate planner timeline HTML for a run."""
+    import json
+
+    from spec_manager.refinement.evals.planner.trace_loader import load_traces_for_run
+
+    workspace = Path(args.workspace)
+    traces = load_traces_for_run(workspace, args.run_id)
+    reports_dir = workspace / "reports" / "pdd" / args.run_id
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    timeline_path = reports_dir / "planner_timeline.html"
+
+    rows = []
+    for trace in traces:
+        layer, capability, slice_id, iteration = _planner_trace_parts(trace)
+        rows.append(
+            {
+                "trace_id": str(getattr(trace, "trace_id", "")),
+                "layer": layer,
+                "capability": capability,
+                "slice_id": slice_id,
+                "iteration": iteration,
+                "status": str(getattr(trace, "status", "") or ""),
+                "model_calls": len(getattr(trace, "model_calls", []) or []),
+                "tool_calls": len(getattr(trace, "tool_calls", []) or []),
+                "trace_path": f"../../../analysis/planner_traces/{getattr(trace, 'trace_id', '')}/",
+            }
+        )
+
+    rows_json = json.dumps(rows, sort_keys=True)
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planner Timeline - {args.run_id}</title>
+  <style>
+    :root {{
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --line: #d8dde8;
+      --text: #1d2a3d;
+      --muted: #5b6880;
+      --accent: #0f6ecf;
+    }}
+    body {{
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 0% 0%, #e9f3ff 0, var(--bg) 45%);
+      color: var(--text);
+    }}
+    main {{
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 12px 24px;
+    }}
+    .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 6px 24px rgba(33, 42, 62, 0.08);
+      overflow: hidden;
+    }}
+    .header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .header h1 {{
+      margin: 0;
+      font-size: 20px;
+    }}
+    .controls {{
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted);
+    }}
+    select {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 4px 8px;
+      background: #fff;
+      color: var(--text);
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }}
+    thead th {{
+      text-align: left;
+      padding: 10px 12px;
+      background: #f0f4fa;
+      border-bottom: 1px solid var(--line);
+      color: #24344d;
+    }}
+    tbody td {{
+      border-bottom: 1px solid #edf1f7;
+      padding: 9px 12px;
+      vertical-align: middle;
+    }}
+    tbody tr {{
+      cursor: pointer;
+    }}
+    tbody tr:hover {{
+      background: #f6fbff;
+    }}
+    .heat {{
+      text-align: center;
+      font-weight: 600;
+      border-radius: 6px;
+    }}
+    .status {{
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }}
+    .status.ok {{ color: #1a8f43; }}
+    .status.error {{ color: #d03f2b; }}
+    .hint {{
+      padding: 8px 16px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <div class="header">
+        <h1>Planner Timeline: {args.run_id}</h1>
+        <div class="controls">
+          <label for="sortKey">Sort</label>
+          <select id="sortKey">
+            <option value="slice_id">slice</option>
+            <option value="capability">capability</option>
+            <option value="layer">layer</option>
+            <option value="model_calls">model calls</option>
+            <option value="tool_calls">tool calls</option>
+          </select>
+          <select id="sortDir">
+            <option value="asc">asc</option>
+            <option value="desc">desc</option>
+          </select>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Trace</th>
+            <th>Layer</th>
+            <th>Capability</th>
+            <th>Slice</th>
+            <th>Iter</th>
+            <th>Status</th>
+            <th>Model Calls</th>
+            <th>Tool Calls</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="hint">Click a row to open the trace directory.</div>
+    </div>
+  </main>
+  <script>
+    const rows = {rows_json};
+    const rowsNode = document.getElementById("rows");
+    const sortKey = document.getElementById("sortKey");
+    const sortDir = document.getElementById("sortDir");
+    const maxModel = Math.max(1, ...rows.map((r) => Number(r.model_calls || 0)));
+    const maxTool = Math.max(1, ...rows.map((r) => Number(r.tool_calls || 0)));
+
+    function heat(value, max, hue) {{
+      const ratio = Math.max(0, Math.min(1, Number(value || 0) / max));
+      const alpha = 0.12 + ratio * 0.6;
+      return `hsla(${{hue}}, 75%, 45%, ${{alpha}})`;
+    }}
+
+    function compare(a, b, key, dir) {{
+      const left = a[key];
+      const right = b[key];
+      if (typeof left === "number" && typeof right === "number") {{
+        return dir === "asc" ? left - right : right - left;
+      }}
+      const l = String(left ?? "");
+      const r = String(right ?? "");
+      return dir === "asc" ? l.localeCompare(r) : r.localeCompare(l);
+    }}
+
+    function render() {{
+      const key = sortKey.value;
+      const dir = sortDir.value;
+      const sorted = [...rows].sort((a, b) => compare(a, b, key, dir));
+      rowsNode.innerHTML = "";
+      for (const row of sorted) {{
+        const tr = document.createElement("tr");
+        tr.onclick = () => {{
+          window.location.href = row.trace_path;
+        }};
+        const statusClass = String(row.status || "").toLowerCase() === "ok" ? "ok" : "error";
+        tr.innerHTML = `
+          <td><code>${{row.trace_id}}</code></td>
+          <td>${{row.layer}}</td>
+          <td>${{row.capability}}</td>
+          <td>${{row.slice_id}}</td>
+          <td>${{row.iteration}}</td>
+          <td class="status ${{statusClass}}">${{row.status || "(none)"}}</td>
+          <td
+            class="heat"
+            style="background:${{heat(row.model_calls, maxModel, 210)}}"
+          >${{row.model_calls}}</td>
+          <td
+            class="heat"
+            style="background:${{heat(row.tool_calls, maxTool, 25)}}"
+          >${{row.tool_calls}}</td>
+        `;
+        rowsNode.appendChild(tr);
+      }}
+    }}
+    sortKey.addEventListener("change", render);
+    sortDir.addEventListener("change", render);
+    render();
+  </script>
+</body>
+</html>
+"""
+    timeline_path.write_text(html, encoding="utf-8")
+    print(f"Timeline report written: {timeline_path}")
+    print(f"Traces visualized: {len(rows)}")
     return 0
 
 
@@ -1254,7 +1912,8 @@ def handle_eval_command(args: argparse.Namespace) -> int:
             "show": cmd_planner_show,
             "replay": cmd_planner_replay,
             "diff": cmd_planner_diff,
-            "summarize": cmd_planner_summarize,
+            "summarize-run": cmd_planner_summarize_run,
+            "timeline": cmd_planner_timeline,
             "export-gt": cmd_planner_export_gt,
         }
         return planner_commands[args.planner_command](args)

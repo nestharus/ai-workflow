@@ -1363,13 +1363,11 @@ class PlannerEvalHarness:
             return {}
 
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            try:
-                import yaml
-            except ImportError as exc:
-                raise ValueError("YAML override parsing requires PyYAML") from exc
-            parsed = yaml.safe_load(raw)
+            import yaml
+        except ImportError as exc:
+            raise ValueError("YAML override parsing requires PyYAML") from exc
+
+        parsed = yaml.safe_load(raw)
 
         if parsed is None:
             return {}

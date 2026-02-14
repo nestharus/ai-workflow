@@ -1118,7 +1118,8 @@ def cmd_planner(args: argparse.Namespace) -> int:
         cmd_planner_list,
         cmd_planner_replay,
         cmd_planner_show,
-        cmd_planner_summarize,
+        cmd_planner_summarize_run,
+        cmd_planner_timeline,
     )
 
     if args.planner_surface_command != "trace":
@@ -1130,7 +1131,8 @@ def cmd_planner(args: argparse.Namespace) -> int:
         "show": cmd_planner_show,
         "replay": cmd_planner_replay,
         "diff": cmd_planner_diff,
-        "summarize-run": cmd_planner_summarize,
+        "summarize-run": cmd_planner_summarize_run,
+        "timeline": cmd_planner_timeline,
     }
     handler = commands.get(args.planner_trace_command)
     if handler is None:
@@ -1523,6 +1525,11 @@ def main() -> int:
     p_trace_replay = planner_trace_sub.add_parser("replay", help="Replay a planner decision")
     p_trace_replay.add_argument("trace_id", help="Trace ID to replay")
     p_trace_replay.add_argument(
+        "--model-config",
+        default="",
+        help="Model configuration override for replayed planner call",
+    )
+    p_trace_replay.add_argument(
         "--override",
         help="Path to override YAML/JSON (mapping with optional inputs/outputs keys)",
     )
@@ -1543,6 +1550,15 @@ def main() -> int:
     )
     p_trace_summary.add_argument("--run-id", required=True, help="Run ID to summarize")
     p_trace_summary.add_argument(
+        "--workspace", default=".", help="Workspace root (where traces are stored)"
+    )
+
+    p_trace_timeline = planner_trace_sub.add_parser(
+        "timeline",
+        help="Generate planner timeline HTML",
+    )
+    p_trace_timeline.add_argument("--run-id", required=True, help="Run ID to visualize")
+    p_trace_timeline.add_argument(
         "--workspace", default=".", help="Workspace root (where traces are stored)"
     )
 
