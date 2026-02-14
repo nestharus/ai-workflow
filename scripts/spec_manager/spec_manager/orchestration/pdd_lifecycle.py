@@ -971,8 +971,9 @@ class PddLifecycle:
                     for comp in data.get("components", []):
                         comp_id = comp.get("component_id", comp.get("id", ""))
                         if comp_id:
+                            files_raw = comp.get("files", [])
+                            files = [str(path) for path in files_raw if isinstance(path, str)]
                             # Determine worktree path from component's files
-                            files = comp.get("files", [])
                             wt_path = str(self.manager.structure.spec_snapshot_dir)
                             if files:
                                 first_file = Path(files[0])
@@ -980,11 +981,40 @@ class PddLifecycle:
                                     wt_path = str(
                                         self.manager.structure.spec_snapshot_dir / first_file.parent
                                     )
+                            owned_entrypoints_raw = comp.get("owned_entrypoints", [])
+                            pins_consumed_raw = comp.get("pins_consumed", [])
+                            upstream_raw = comp.get("upstream", [])
+                            downstream_raw = comp.get("downstream", [])
                             slice_refs.append(
                                 SliceRef(
                                     slice_id=f"arch-{comp_id}",
                                     layer=layer,
+                                    library_id=str(comp_id),
                                     worktree_path=wt_path,
+                                    metadata={
+                                        "component_id": str(comp_id),
+                                        "owned_entrypoints": [
+                                            str(item)
+                                            for item in owned_entrypoints_raw
+                                            if isinstance(item, str)
+                                        ],
+                                        "pins_consumed": [
+                                            str(item)
+                                            for item in pins_consumed_raw
+                                            if isinstance(item, str)
+                                        ],
+                                        "upstream": [
+                                            str(item)
+                                            for item in upstream_raw
+                                            if isinstance(item, str)
+                                        ],
+                                        "downstream": [
+                                            str(item)
+                                            for item in downstream_raw
+                                            if isinstance(item, str)
+                                        ],
+                                        "files": files,
+                                    },
                                 )
                             )
                 except (json.JSONDecodeError, OSError) as exc:
@@ -1354,7 +1384,7 @@ class PddLifecycle:
     def _architectural_refinement(self) -> dict[str, Any]:
         """Architectural refinement: service decomposition, event topology.
 
-        Proposes architectural candidates, identifies issues, and emits
+        Produces a canonical component manifest, identifies issues, and emits
         :class:`DemotionTicket` instances for findings that require changes
         at lower layers.
 
@@ -1408,14 +1438,18 @@ class PddLifecycle:
 
         prompt = (
             "## TASK\n\n"
-            "Given the following promotion evidence, propose 3-5 architecture candidates.\n"
-            "For each candidate, describe: components, communication patterns,\n"
-            "deployment model, and tradeoffs.\n\n"
-            "Also identify architectural issues indicated by the evidence that need fixing.\n"
-            "For each issue, include: severity (BLOCKER/MAJOR/MINOR), file, description.\n\n"
+            "Given the following promotion evidence, produce a canonical L2 component manifest.\n\n"
             "Return JSON with keys:\n"
-            "- 'candidates': array of architecture proposals\n"
+            "- 'components': array of component records\n"
             "- 'issues': array of architectural issues found\n\n"
+            "Each component record must include:\n"
+            "- component_id (string)\n"
+            "- owned_entrypoints (array[string])\n"
+            "- pins_consumed (array[string])\n"
+            "- upstream (array[string])\n"
+            "- downstream (array[string])\n"
+            "- files (array[string])\n\n"
+            "Issues should include: severity (BLOCKER/MAJOR/MINOR), file, description.\n\n"
             + "\n\n---\n\n".join(evidence_section)
         )
 
@@ -1434,11 +1468,50 @@ class PddLifecycle:
             )
             cleaned = _strip_code_fences(output)
             data = json.loads(_extract_json_payload(cleaned))
-            candidates = data.get("candidates", [])
+            components = data.get("components", [])
             issues = data.get("issues", [])
 
-            # Write proposals to disk
-            self._write_run_report("architecture_proposals.json", data)
+            normalized_components: list[dict[str, Any]] = []
+            for raw_comp in components if isinstance(components, list) else []:
+                if not isinstance(raw_comp, dict):
+                    continue
+                component_id = str(raw_comp.get("component_id") or raw_comp.get("id") or "").strip()
+                if not component_id:
+                    continue
+
+                normalized_components.append(
+                    {
+                        "component_id": component_id,
+                        "owned_entrypoints": [
+                            str(item)
+                            for item in (raw_comp.get("owned_entrypoints") or [])
+                            if isinstance(item, str)
+                        ],
+                        "pins_consumed": [
+                            str(item)
+                            for item in (raw_comp.get("pins_consumed") or [])
+                            if isinstance(item, str)
+                        ],
+                        "upstream": [
+                            str(item)
+                            for item in (raw_comp.get("upstream") or [])
+                            if isinstance(item, str)
+                        ],
+                        "downstream": [
+                            str(item)
+                            for item in (raw_comp.get("downstream") or [])
+                            if isinstance(item, str)
+                        ],
+                        "files": [
+                            str(item)
+                            for item in (raw_comp.get("files") or [])
+                            if isinstance(item, str)
+                        ],
+                    }
+                )
+
+            manifest_payload = {"components": normalized_components}
+            self._write_run_report("component_manifest.json", manifest_payload)
 
             # Emit DemotionTickets for architectural issues
             tickets: list[dict[str, Any]] = []
@@ -1458,8 +1531,8 @@ class PddLifecycle:
                 self._write_run_report("architecture_demotion_tickets.json", tickets)
 
             return {
-                "candidates_proposed": len(candidates),
-                "proposals_path": self._run_report_relpath("architecture_proposals.json"),
+                "component_count": len(normalized_components),
+                "component_manifest_path": self._run_report_relpath("component_manifest.json"),
                 "demotion_tickets": len(tickets),
             }
         except Exception as exc:

@@ -1,15 +1,10 @@
-"""Promotion gate orchestrator.
-
-Wires all gate checks into a single orchestrator and integrates with
-the existing compliance module.
-"""
+"""Promotion gate orchestrator."""
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
-
-# Conditional imports for entity coverage gate
 from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.algorithmic_gates import (
@@ -20,8 +15,14 @@ from spec_manager.compliance.promotion.algorithmic_gates import (
     check_store_monogamy,
 )
 from spec_manager.compliance.promotion.architectural_quality import (
+    check_arch_drift_pass,
+    check_config_externalization,
+    check_edge_realization,
+    check_event_handler_coverage,
     check_function_recomposition,
     check_no_inlined_atom_logic,
+    check_no_orphan_components,
+    check_pin_consumption_coverage,
 )
 from spec_manager.compliance.promotion.config import (
     GateId,
@@ -33,6 +34,7 @@ from spec_manager.compliance.promotion.introduction_checker import (
     check_introduced_algorithm_specs,
 )
 from spec_manager.compliance.promotion.pin_coverage import (
+    PinCoverageReport,
     build_pin_coverage_report,
     check_pin_coverage,
 )
@@ -42,6 +44,7 @@ from spec_manager.compliance.promotion.provenance import (
 )
 from spec_manager.compliance.promotion.result import (
     GateCheckResult,
+    GateStatus,
     PromotionReport,
 )
 from spec_manager.compliance.promotion.test_pin_gate import (
@@ -56,19 +59,7 @@ if TYPE_CHECKING:
 
 
 class LayerPromotionGate:
-    """Orchestrates all promotion gate checks.
-
-    Usage:
-        config = PromotionGateConfig.default()
-        gate = LayerPromotionGate(config, pin_registry)
-        report = gate.run_all_checks()
-        if report.passed:
-            # Safe to promote to architectural branch
-            ...
-        else:
-            for blocker in report.blockers:
-                print(f"BLOCKED: {blocker.gate_id}: {blocker.summary}")
-    """
+    """Orchestrates all promotion gate checks."""
 
     def __init__(
         self,
@@ -79,24 +70,9 @@ class LayerPromotionGate:
         entities_artifact: EntitiesArtifact | None = None,
         algorithmic_analyzed: list[Any] | None = None,
         architectural_analyzed: list[Any] | None = None,
+        gap_inventory: list[dict[str, Any]] | None = None,
+        component_manifest_path: Path | None = None,
     ) -> None:
-        """Initialize the promotion gate.
-
-        Args:
-            config: Gate configuration.
-            pin_registry: PinFunctionRegistry for pin coverage checks.
-                If None, pin-related gates are skipped with a warning.
-            provenance_registry_path: Path to the provenance registry JSON.
-                If None, provenance gate is skipped with a warning.
-            evidence_index: EvidenceIndex for entity coverage checks.
-                If None, entity coverage gate is skipped with a warning.
-            entities_artifact: EntitiesArtifact for explicit entity-atom linkage.
-                Optional even when evidence_index is provided.
-            algorithmic_analyzed: Pre-loaded AnalyzedFile list for algorithmic files.
-                When provided, gates skip file I/O and use these directly.
-            architectural_analyzed: Pre-loaded AnalyzedFile list for architectural files.
-                When provided, gates skip file I/O and use these directly.
-        """
         self._config = config
         self._pin_registry = pin_registry
         self._provenance_registry_path = provenance_registry_path
@@ -105,331 +81,333 @@ class LayerPromotionGate:
         self._project_root = Path(config.project_root)
         self._algorithmic_analyzed = algorithmic_analyzed
         self._architectural_analyzed = architectural_analyzed
+        self._gap_inventory = gap_inventory
+        self._component_manifest_path_override = component_manifest_path
 
     def run_all_checks(self) -> PromotionReport:
-        """Run all enabled gate checks and produce a promotion report.
-
-        Gate execution order:
-        1. Algorithmic layer gates (comments, stubs, tests, call graph, stores)
-        2. Pin coverage check
-        3. Introduced algorithm spec check
-        4. Provenance completeness check
-        5. Architectural quality checks (inlined logic, recomposition)
-
-        Returns:
-            PromotionReport with all gate results.
-        """
+        """Run all enabled gate checks and produce a promotion report."""
         start = time.monotonic()
-        results: list[GateCheckResult] = []
-
-        # 1. Algorithmic layer gates
         algorithmic_files = self._resolve_files(self._config.algorithmic_roots)
-        algo_analyzed = self._algorithmic_analyzed
-        arch_analyzed = self._architectural_analyzed
-
-        for gate_id, runner in [
-            (
-                GateId.NO_REMAINING_COMMENTS,
-                lambda: self._run_comments(algorithmic_files, algo_analyzed),
-            ),
-            (GateId.NO_STUB_FUNCTIONS, lambda: self._run_stubs(algorithmic_files, algo_analyzed)),
-            (GateId.ALL_TESTS_PASS, lambda: self._run_tests()),
-            (
-                GateId.CALL_GRAPH_CONNECTED,
-                lambda: self._run_call_graph(algorithmic_files, algo_analyzed),
-            ),
-            (
-                GateId.STORE_MONOGAMY,
-                lambda: self._run_store_monogamy(algorithmic_files, algo_analyzed),
-            ),
-        ]:
-            gate_spec = self._config.get_gate(gate_id)
-            if gate_spec.enabled:
-                results.append(runner())
-
-        # 2. Pin coverage check
         architectural_files = self._resolve_files(self._config.architectural_roots)
-        pin_coverage_report = None
 
-        gate_spec = self._config.get_gate(GateId.PIN_COVERAGE)
-        if gate_spec.enabled:
-            if self._pin_registry is not None:
-                result = check_pin_coverage(
-                    self._pin_registry,
-                    architectural_files,
-                    gate_spec,
-                    analyzed=arch_analyzed,
-                )
-                results.append(result)
-                pin_coverage_report = build_pin_coverage_report(
-                    self._pin_registry,
-                    architectural_files,
-                    analyzed=arch_analyzed,
-                )
-            else:
-                results.append(
-                    self._skip_gate(
-                        GateId.PIN_COVERAGE, gate_spec, "PinFunctionRegistry not provided"
-                    )
-                )
+        component_manifest_path, component_manifest = self._load_component_manifest()
+        pin_coverage_report: PinCoverageReport | None = None
 
-        # 3. Introduced algorithm spec check
-        gate_spec = self._config.get_gate(GateId.INTRODUCED_ALGORITHM_SPECS)
-        if gate_spec.enabled:
-            if self._pin_registry is not None and pin_coverage_report is not None:
-                results.append(
-                    check_introduced_algorithm_specs(
-                        pin_coverage_report,
-                        architectural_files,
-                        gate_spec,
-                        analyzed=arch_analyzed,
-                    )
-                )
-            else:
-                results.append(
-                    self._skip_gate(
-                        GateId.INTRODUCED_ALGORITHM_SPECS,
-                        gate_spec,
-                        "PinFunctionRegistry not provided",
-                    )
-                )
-
-        # 4. Provenance completeness check
-        gate_spec = self._config.get_gate(GateId.PROVENANCE_COMPLETE)
-        if gate_spec.enabled:
-            if self._pin_registry is not None:
-                provenance_registry = self._load_provenance()
-                results.append(
-                    check_provenance_complete(self._pin_registry, provenance_registry, gate_spec)
-                )
-            else:
-                results.append(
-                    self._skip_gate(
-                        GateId.PROVENANCE_COMPLETE, gate_spec, "PinFunctionRegistry not provided"
-                    )
-                )
-
-        # 5. Architectural quality checks
-        gate_spec = self._config.get_gate(GateId.NO_INLINED_ATOM_LOGIC)
-        if gate_spec.enabled:
-            if self._pin_registry is not None:
-                results.append(
-                    check_no_inlined_atom_logic(
-                        self._pin_registry,
-                        architectural_files,
-                        algorithmic_files,
-                        gate_spec,
-                        analyzed_arch=arch_analyzed,
-                        analyzed_algo=algo_analyzed,
-                    )
-                )
-            else:
-                results.append(
-                    self._skip_gate(
-                        GateId.NO_INLINED_ATOM_LOGIC, gate_spec, "PinFunctionRegistry not provided"
-                    )
-                )
-
-        gate_spec = self._config.get_gate(GateId.FUNCTION_RECOMPOSITION)
-        if gate_spec.enabled:
-            if self._pin_registry is not None:
-                results.append(
-                    check_function_recomposition(
-                        self._pin_registry,
-                        architectural_files,
-                        gate_spec,
-                        analyzed_arch=arch_analyzed,
-                    )
-                )
-            else:
-                results.append(
-                    self._skip_gate(
-                        GateId.FUNCTION_RECOMPOSITION, gate_spec, "PinFunctionRegistry not provided"
-                    )
-                )
-
-        # 6. Test-pin alignment check
-        gate_spec = self._config.get_gate(GateId.TEST_PIN_ALIGNMENT)
-        if gate_spec.enabled:
-            if self._pin_registry is not None:
-                test_roots = [
-                    self._project_root / r for r in gate_spec.params.get("test_roots", ["tests/"])
-                ]
-                baseline_path = self._project_root / ".spec" / "test_pin_baselines.json"
-                results.append(
-                    check_test_pin_alignment_gate(
-                        self._pin_registry, test_roots, baseline_path, gate_spec
-                    )
-                )
-            else:
-                results.append(
-                    self._skip_gate(
-                        GateId.TEST_PIN_ALIGNMENT, gate_spec, "PinFunctionRegistry not provided"
-                    )
-                )
-
-        # 7. Entity coverage check
-        gate_spec = self._config.get_gate(GateId.ENTITY_COVERAGE)
-        if gate_spec.enabled:
-            if self._evidence_index is not None:
-                from spec_manager.compliance.coverage.gate import check_entity_coverage
-
-                results.append(
-                    check_entity_coverage(
-                        self._evidence_index,
-                        self._atom_registry_for_coverage(),
-                        gate_spec,
-                        self._entities_artifact,
-                    )
-                )
-            else:
-                results.append(
-                    self._skip_gate(GateId.ENTITY_COVERAGE, gate_spec, "EvidenceIndex not provided")
-                )
+        results: list[GateCheckResult] = []
+        for gate_id in GateId:
+            gate_spec = self._config.get_gate(gate_id)
+            if not gate_spec.enabled:
+                continue
+            result, pin_coverage_report = self._execute_gate(
+                gate_id=gate_id,
+                gate_spec=gate_spec,
+                algorithmic_files=algorithmic_files,
+                architectural_files=architectural_files,
+                component_manifest_path=component_manifest_path,
+                component_manifest=component_manifest,
+                pin_coverage_report=pin_coverage_report,
+            )
+            results.append(result)
 
         total_duration = (time.monotonic() - start) * 1000
         return self._build_report(results, total_duration)
 
     def run_single_check(self, gate_id: GateId) -> GateCheckResult:
-        """Run a single gate check by ID.
-
-        Args:
-            gate_id: Which gate to run.
-
-        Returns:
-            GateCheckResult for the specified gate.
-        """
+        """Run a single gate check by ID."""
         gate_spec = self._config.get_gate(gate_id)
         algorithmic_files = self._resolve_files(self._config.algorithmic_roots)
         architectural_files = self._resolve_files(self._config.architectural_roots)
+        component_manifest_path, component_manifest = self._load_component_manifest()
 
-        runners: dict[GateId, Any] = {
-            GateId.NO_REMAINING_COMMENTS: lambda: check_no_remaining_comments(
-                algorithmic_files, gate_spec
-            ),
-            GateId.NO_STUB_FUNCTIONS: lambda: check_no_stub_functions(algorithmic_files, gate_spec),
-            GateId.ALL_TESTS_PASS: lambda: check_all_tests_pass(
-                self._config.test_command, self._project_root, gate_spec
-            ),
-            GateId.CALL_GRAPH_CONNECTED: lambda: check_call_graph_connected(
-                algorithmic_files, self._project_root, gate_spec
-            ),
-            GateId.STORE_MONOGAMY: lambda: check_store_monogamy(
-                algorithmic_files, self._project_root, gate_spec
-            ),
-            GateId.PIN_COVERAGE: lambda: check_pin_coverage(
-                self._pin_registry, architectural_files, gate_spec
-            )
-            if self._pin_registry
-            else self._skip_gate(
-                GateId.PIN_COVERAGE, gate_spec, "PinFunctionRegistry not provided"
-            ),
-            GateId.INTRODUCED_ALGORITHM_SPECS: lambda: self._run_introduction_check(
-                architectural_files, gate_spec
-            ),
-            GateId.NO_INLINED_ATOM_LOGIC: lambda: check_no_inlined_atom_logic(
-                self._pin_registry, architectural_files, algorithmic_files, gate_spec
-            )
-            if self._pin_registry
-            else self._skip_gate(
-                GateId.NO_INLINED_ATOM_LOGIC, gate_spec, "PinFunctionRegistry not provided"
-            ),
-            GateId.FUNCTION_RECOMPOSITION: lambda: check_function_recomposition(
-                self._pin_registry, architectural_files, gate_spec
-            )
-            if self._pin_registry
-            else self._skip_gate(
-                GateId.FUNCTION_RECOMPOSITION, gate_spec, "PinFunctionRegistry not provided"
-            ),
-            GateId.PROVENANCE_COMPLETE: lambda: check_provenance_complete(
-                self._pin_registry, self._load_provenance(), gate_spec
-            )
-            if self._pin_registry
-            else self._skip_gate(
-                GateId.PROVENANCE_COMPLETE, gate_spec, "PinFunctionRegistry not provided"
-            ),
-            GateId.ENTITY_COVERAGE: lambda: self._run_entity_coverage(gate_spec),
-            GateId.TEST_PIN_ALIGNMENT: lambda: self._run_test_pin_alignment(gate_spec),
-        }
-
-        return runners[gate_id]()
-
-    def _run_comments(
-        self,
-        algorithmic_files: list[Path],
-        analyzed: list[Any] | None = None,
-    ) -> GateCheckResult:
-        gate_spec = self._config.get_gate(GateId.NO_REMAINING_COMMENTS)
-        return check_no_remaining_comments(algorithmic_files, gate_spec, analyzed=analyzed)
-
-    def _run_stubs(
-        self,
-        algorithmic_files: list[Path],
-        analyzed: list[Any] | None = None,
-    ) -> GateCheckResult:
-        gate_spec = self._config.get_gate(GateId.NO_STUB_FUNCTIONS)
-        return check_no_stub_functions(algorithmic_files, gate_spec, analyzed=analyzed)
-
-    def _run_tests(self) -> GateCheckResult:
-        gate_spec = self._config.get_gate(GateId.ALL_TESTS_PASS)
-        return check_all_tests_pass(self._config.test_command, self._project_root, gate_spec)
-
-    def _run_call_graph(
-        self,
-        algorithmic_files: list[Path],
-        analyzed: list[Any] | None = None,
-    ) -> GateCheckResult:
-        gate_spec = self._config.get_gate(GateId.CALL_GRAPH_CONNECTED)
-        return check_call_graph_connected(
-            algorithmic_files,
-            self._project_root,
-            gate_spec,
-            analyzed=analyzed,
+        result, _ = self._execute_gate(
+            gate_id=gate_id,
+            gate_spec=gate_spec,
+            algorithmic_files=algorithmic_files,
+            architectural_files=architectural_files,
+            component_manifest_path=component_manifest_path,
+            component_manifest=component_manifest,
+            pin_coverage_report=None,
         )
+        return result
 
-    def _run_store_monogamy(
+    def _execute_gate(
         self,
-        algorithmic_files: list[Path],
-        analyzed: list[Any] | None = None,
-    ) -> GateCheckResult:
-        gate_spec = self._config.get_gate(GateId.STORE_MONOGAMY)
-        return check_store_monogamy(
-            algorithmic_files,
-            self._project_root,
-            gate_spec,
-            analyzed=analyzed,
-        )
-
-    def _run_introduction_check(
-        self,
-        architectural_files: list[Path],
+        *,
+        gate_id: GateId,
         gate_spec: GateSpec,
-    ) -> GateCheckResult:
-        if self._pin_registry is None:
-            return self._skip_gate(
-                GateId.INTRODUCED_ALGORITHM_SPECS, gate_spec, "PinFunctionRegistry not provided"
+        algorithmic_files: list[Path],
+        architectural_files: list[Path],
+        component_manifest_path: Path | None,
+        component_manifest: dict[str, Any] | None,
+        pin_coverage_report: PinCoverageReport | None,
+    ) -> tuple[GateCheckResult, PinCoverageReport | None]:
+        """Dispatch one gate execution."""
+        if gate_id == GateId.NO_REMAINING_COMMENTS:
+            return (
+                check_no_remaining_comments(
+                    algorithmic_files,
+                    gate_spec,
+                    analyzed=self._algorithmic_analyzed,
+                    gap_inventory=self._gap_inventory,
+                ),
+                pin_coverage_report,
             )
-        pin_coverage = build_pin_coverage_report(self._pin_registry, architectural_files)
-        return check_introduced_algorithm_specs(pin_coverage, architectural_files, gate_spec)
+
+        if gate_id == GateId.NO_STUB_FUNCTIONS:
+            return (
+                check_no_stub_functions(
+                    algorithmic_files,
+                    gate_spec,
+                    analyzed=self._algorithmic_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.ALL_TESTS_PASS:
+            return (
+                check_all_tests_pass(self._config.test_command, self._project_root, gate_spec),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.CALL_GRAPH_CONNECTED:
+            return (
+                check_call_graph_connected(
+                    algorithmic_files,
+                    self._project_root,
+                    gate_spec,
+                    analyzed=self._algorithmic_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.STORE_MONOGAMY:
+            return (
+                check_store_monogamy(
+                    algorithmic_files,
+                    self._project_root,
+                    gate_spec,
+                    analyzed=self._algorithmic_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.PIN_COVERAGE:
+            if self._pin_registry is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "PinFunctionRegistry not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            result = check_pin_coverage(
+                self._pin_registry,
+                architectural_files,
+                gate_spec,
+                analyzed=self._architectural_analyzed,
+            )
+            pin_coverage_report = build_pin_coverage_report(
+                self._pin_registry,
+                architectural_files,
+                analyzed=self._architectural_analyzed,
+            )
+            return result, pin_coverage_report
+
+        if gate_id == GateId.INTRODUCED_ALGORITHM_SPECS:
+            if self._pin_registry is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "PinFunctionRegistry not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            if pin_coverage_report is None:
+                pin_coverage_report = build_pin_coverage_report(
+                    self._pin_registry,
+                    architectural_files,
+                    analyzed=self._architectural_analyzed,
+                )
+            return (
+                check_introduced_algorithm_specs(
+                    pin_coverage_report,
+                    architectural_files,
+                    gate_spec,
+                    analyzed=self._architectural_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.NO_INLINED_ATOM_LOGIC:
+            if self._pin_registry is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "PinFunctionRegistry not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return (
+                check_no_inlined_atom_logic(
+                    self._pin_registry,
+                    architectural_files,
+                    algorithmic_files,
+                    gate_spec,
+                    analyzed_arch=self._architectural_analyzed,
+                    analyzed_algo=self._algorithmic_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.FUNCTION_RECOMPOSITION:
+            if self._pin_registry is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "PinFunctionRegistry not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return (
+                check_function_recomposition(
+                    self._pin_registry,
+                    architectural_files,
+                    gate_spec,
+                    analyzed_arch=self._architectural_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.PIN_CONSUMPTION_COVERAGE:
+            if self._pin_registry is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "PinFunctionRegistry not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            if component_manifest is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "Component manifest not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return (
+                check_pin_consumption_coverage(self._pin_registry, component_manifest, gate_spec),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.EDGE_REALIZATION:
+            if component_manifest is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "Component manifest not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return check_edge_realization(component_manifest, gate_spec), pin_coverage_report
+
+        if gate_id == GateId.NO_ORPHAN_COMPONENTS:
+            if component_manifest is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "Component manifest not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return check_no_orphan_components(component_manifest, gate_spec), pin_coverage_report
+
+        if gate_id == GateId.EVENT_HANDLER_COVERAGE:
+            if component_manifest is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "Component manifest not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return check_event_handler_coverage(component_manifest, gate_spec), pin_coverage_report
+
+        if gate_id == GateId.CONFIG_EXTERNALIZATION:
+            return (
+                check_config_externalization(
+                    architectural_files,
+                    gate_spec,
+                    analyzed_arch=self._architectural_analyzed,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.ARCH_DRIFT_PASS:
+            return check_arch_drift_pass(component_manifest_path, gate_spec), pin_coverage_report
+
+        if gate_id == GateId.PROVENANCE_COMPLETE:
+            if self._pin_registry is None:
+                return (
+                    self._missing_evidence_gate(
+                        gate_id,
+                        gate_spec,
+                        "PinFunctionRegistry not provided",
+                    ),
+                    pin_coverage_report,
+                )
+            return (
+                check_provenance_complete(
+                    self._pin_registry,
+                    self._load_provenance(),
+                    gate_spec,
+                ),
+                pin_coverage_report,
+            )
+
+        if gate_id == GateId.ENTITY_COVERAGE:
+            return self._run_entity_coverage(gate_spec), pin_coverage_report
+
+        if gate_id == GateId.TEST_PIN_ALIGNMENT:
+            return self._run_test_pin_alignment(gate_spec), pin_coverage_report
+
+        return self._not_implemented_gate(gate_id, gate_spec), pin_coverage_report
 
     def _run_test_pin_alignment(self, gate_spec: GateSpec) -> GateCheckResult:
-        """Run test-pin alignment gate check."""
         if self._pin_registry is None:
-            return self._skip_gate(
-                GateId.TEST_PIN_ALIGNMENT, gate_spec, "PinFunctionRegistry not provided"
+            return self._missing_evidence_gate(
+                GateId.TEST_PIN_ALIGNMENT,
+                gate_spec,
+                "PinFunctionRegistry not provided",
             )
         test_roots = [
-            self._project_root / r for r in gate_spec.params.get("test_roots", ["tests/"])
+            self._project_root / root for root in gate_spec.params.get("test_roots", ["tests/"])
         ]
         baseline_path = self._project_root / ".spec" / "test_pin_baselines.json"
         return check_test_pin_alignment_gate(
-            self._pin_registry, test_roots, baseline_path, gate_spec
+            self._pin_registry,
+            test_roots,
+            baseline_path,
+            gate_spec,
         )
 
     def _run_entity_coverage(self, gate_spec: GateSpec) -> GateCheckResult:
-        """Run entity coverage gate check."""
         if self._evidence_index is None:
-            return self._skip_gate(GateId.ENTITY_COVERAGE, gate_spec, "EvidenceIndex not provided")
+            return self._missing_evidence_gate(
+                GateId.ENTITY_COVERAGE,
+                gate_spec,
+                "EvidenceIndex not provided",
+            )
+
         from spec_manager.compliance.coverage.gate import check_entity_coverage
 
         return check_entity_coverage(
@@ -440,11 +418,6 @@ class LayerPromotionGate:
         )
 
     def _atom_registry_for_coverage(self) -> AtomRegistry:
-        """Build a minimal AtomRegistry for entity coverage checks.
-
-        Returns an empty registry. The caller should provide a real
-        ``AtomRegistry`` via dependency injection if atom data is available.
-        """
         from spec_manager.branches.atoms import AtomRegistry as _AtomRegistry
         from spec_manager.branches.layout import BranchLayout
 
@@ -457,14 +430,6 @@ class LayerPromotionGate:
         return ProvenanceRegistry()
 
     def _resolve_files(self, roots: list[str]) -> list[Path]:
-        """Resolve directory roots to source file lists.
-
-        Args:
-            roots: Directory paths relative to project root.
-
-        Returns:
-            List of source files found in the directories.
-        """
         from spec_manager.core.language import source_rglob
 
         files: list[Path] = []
@@ -474,49 +439,74 @@ class LayerPromotionGate:
                 files.extend(source_rglob(root_path))
         return files
 
+    def _load_component_manifest(self) -> tuple[Path | None, dict[str, Any] | None]:
+        """Load component manifest from explicit path or run reports."""
+        path = self._component_manifest_path_override
+        if path is None:
+            direct = self._project_root / "component_manifest.json"
+            if direct.exists():
+                path = direct
+            else:
+                report_candidates = sorted(
+                    (self._project_root / "reports" / "pdd").glob("*/component_manifest.json"),
+                    key=lambda item: item.stat().st_mtime,
+                    reverse=True,
+                )
+                if report_candidates:
+                    path = report_candidates[0]
+
+        if path is None or not path.exists():
+            return None, None
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return path, None
+
+        if not isinstance(payload, dict):
+            return path, None
+        return path, payload
+
     @staticmethod
-    def _skip_gate(
+    def _missing_evidence_gate(
         gate_id: GateId,
         gate_spec: GateSpec,
         reason: str,
     ) -> GateCheckResult:
-        """Create a skipped gate result with an advisory warning."""
         return GateCheckResult(
             gate_id=gate_id.value,
-            passed=True,
             mode=GateMode.ADVISORY.value,
+            status=GateStatus.STALE_EVIDENCE,
             score=0.0,
-            findings=[{"skipped": True, "reason": reason}],
-            summary=f"Gate skipped: {reason}",
+            findings=[{"reason": reason, "configured_mode": gate_spec.mode.value}],
+            summary=f"Gate blocked by missing evidence: {reason}",
             duration_ms=0.0,
         )
 
     @staticmethod
-    def _build_report(
-        results: list[GateCheckResult],
-        total_duration_ms: float,
-    ) -> PromotionReport:
-        """Build the final report from individual results.
+    def _not_implemented_gate(gate_id: GateId, gate_spec: GateSpec) -> GateCheckResult:
+        return GateCheckResult(
+            gate_id=gate_id.value,
+            mode=GateMode.ADVISORY.value,
+            status=GateStatus.AMBIGUOUS,
+            score=0.0,
+            findings=[{"reason": "gate_not_implemented", "configured_mode": gate_spec.mode.value}],
+            summary=f"Gate '{gate_id.value}' is not implemented",
+            duration_ms=0.0,
+        )
 
-        Separates blockers (REQUIRED mode + failed) from warnings
-        (ADVISORY mode + failed). Sets passed=True only if zero blockers.
-
-        Args:
-            results: All gate check results.
-            total_duration_ms: Total wall-clock time.
-
-        Returns:
-            PromotionReport.
-        """
+    @staticmethod
+    def _build_report(results: list[GateCheckResult], total_duration_ms: float) -> PromotionReport:
         blockers: list[GateCheckResult] = []
         warnings: list[GateCheckResult] = []
 
         for result in results:
-            if not result.passed:
-                if result.mode == GateMode.REQUIRED.value:
-                    blockers.append(result)
-                else:
-                    warnings.append(result)
+            if result.passed:
+                continue
+            if result.mode == GateMode.REQUIRED.value:
+                blockers.append(result)
+            else:
+                warnings.append(result)
 
         return PromotionReport(
             passed=len(blockers) == 0,

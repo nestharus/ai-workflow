@@ -1,12 +1,4 @@
-"""Algorithmic layer gate checks for promotion gating.
-
-Implements the five algorithmic layer cleanliness gates:
-1. No remaining comments
-2. No stub functions
-3. All tests pass
-4. Call graph connected
-5. Store monogamy
-"""
+"""Algorithmic layer gate checks for promotion gating."""
 
 from __future__ import annotations
 
@@ -15,15 +7,15 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from spec_manager.branches.gap_detection import scan_comments, scan_stubs
+from spec_manager.branches.gap_detection import scan_stubs
 from spec_manager.compliance.promotion.call_graph import (
     CallGraphEdge,
     StrategyRegistry,
     build_call_graph,
 )
 from spec_manager.compliance.promotion.config import GateId, GateSpec
-from spec_manager.compliance.promotion.result import GateCheckResult
-from spec_manager.projection.lineage.builder import scan_imports_from_files
+from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
+from spec_manager.core.code_analysis import infer_adjacency_signals
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
@@ -33,63 +25,73 @@ def check_no_remaining_comments(
     algorithmic_files: list[Path],
     gate_spec: GateSpec,
     analyzed: list[AnalyzedFile] | None = None,
+    gap_inventory: list[dict[str, Any]] | None = None,
 ) -> GateCheckResult:
-    """Gate: No remaining comments in algorithmic code.
+    """Gate: no unresolved spec comments in the authoritative gap inventory."""
+    del algorithmic_files, analyzed  # Legacy inputs; gate now uses gap inventory evidence only.
 
-    Scans algorithmic files for comments inside function bodies.
-    In algorithmic code, every comment is an unimplemented spec element.
-
-    When *analyzed* is provided, uses pre-loaded SourceAnalysis data
-    instead of reading files and scanning independently.
-
-    Args:
-        algorithmic_files: Python files in the algorithmic layer.
-        gate_spec: Gate configuration (mode, threshold).
-        analyzed: Pre-loaded file analyses (optional).
-
-    Returns:
-        GateCheckResult with passed=True only if zero spec comments found.
-    """
     start = time.monotonic()
-    all_findings: list[dict[str, Any]] = []
+    inventory = gap_inventory
+    if inventory is None:
+        raw_inventory = gate_spec.params.get("gap_inventory")
+        if isinstance(raw_inventory, list):
+            inventory = [item for item in raw_inventory if isinstance(item, dict)]
 
-    if analyzed is not None:
-        for af in analyzed:
-            for comment in af.analysis.comments:
-                all_findings.append(
-                    {
-                        "file_path": af.path,
-                        "line": comment.line,
-                        "text": comment.text,
-                        "enclosing_function": comment.enclosing_function,
-                    }
-                )
-    else:
-        for f in algorithmic_files:
-            gaps = scan_comments(f)
-            for gap in gaps:
-                all_findings.append(
-                    {
-                        "file_path": gap.file_path,
-                        "line": gap.line,
-                        "text": gap.text,
-                        "enclosing_function": gap.enclosing_function,
-                    }
-                )
+    if inventory is None:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.NO_REMAINING_COMMENTS.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[
+                {
+                    "reason": "gap_inventory_missing",
+                    "message": "NO_REMAINING_COMMENTS requires gap inventory evidence",
+                }
+            ],
+            summary="Gap inventory not provided for NO_REMAINING_COMMENTS",
+            duration_ms=duration,
+        )
 
-    passed = len(all_findings) == 0
+    expected_kinds = {
+        str(item).strip()
+        for item in gate_spec.params.get(
+            "comment_gap_kinds",
+            ["SPEC_COMMENT_UNIMPLEMENTED", "executable_comment"],
+        )
+        if str(item).strip()
+    }
+
+    findings: list[dict[str, Any]] = []
+    for gap in inventory:
+        raw_kind = gap.get("kind") or gap.get("gap_type") or gap.get("type")
+        kind = str(raw_kind).strip() if raw_kind is not None else ""
+        if kind not in expected_kinds:
+            continue
+        findings.append(
+            {
+                "kind": kind,
+                "file": gap.get("file") or (gap.get("location") or {}).get("file"),
+                "description": gap.get("description", ""),
+                "span": gap.get("span", {}),
+            }
+        )
+
+    passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000
 
     return GateCheckResult(
         gate_id=GateId.NO_REMAINING_COMMENTS.value,
         passed=passed,
         mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
         score=1.0 if passed else 0.0,
-        findings=all_findings,
+        findings=findings,
         summary=(
-            "No spec comments found in algorithmic code"
+            "Gap inventory contains no unresolved spec-comment gaps"
             if passed
-            else f"Found {len(all_findings)} spec comment(s) in algorithmic code"
+            else f"Gap inventory contains {len(findings)} unresolved spec-comment gap(s)"
         ),
         duration_ms=duration,
     )
@@ -100,20 +102,7 @@ def check_no_stub_functions(
     gate_spec: GateSpec,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
-    """Gate: No stub functions in algorithmic code.
-
-    Scans algorithmic files for stub functions (pass, ..., raise NotImplementedError).
-
-    When *analyzed* is provided, uses pre-loaded SourceAnalysis data.
-
-    Args:
-        algorithmic_files: Python files in the algorithmic layer.
-        gate_spec: Gate configuration.
-        analyzed: Pre-loaded file analyses (optional).
-
-    Returns:
-        GateCheckResult with passed=True only if zero stubs found.
-    """
+    """Gate: No stub functions in algorithmic code."""
     start = time.monotonic()
     all_findings: list[dict[str, Any]] = []
 
@@ -130,8 +119,8 @@ def check_no_stub_functions(
                         }
                     )
     else:
-        for f in algorithmic_files:
-            stubs = scan_stubs(f)
+        for file_path in algorithmic_files:
+            stubs = scan_stubs(file_path)
             for stub in stubs:
                 all_findings.append(
                     {
@@ -149,6 +138,7 @@ def check_no_stub_functions(
         gate_id=GateId.NO_STUB_FUNCTIONS.value,
         passed=passed,
         mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
         score=1.0 if passed else 0.0,
         findings=all_findings,
         summary=(
@@ -165,19 +155,7 @@ def check_all_tests_pass(
     project_root: Path,
     gate_spec: GateSpec,
 ) -> GateCheckResult:
-    """Gate: All algorithmic-level tests pass.
-
-    Runs the configured test command via subprocess.
-    Captures stdout/stderr for the report.
-
-    Args:
-        test_command: Command to execute (e.g., ["pytest", "tests/algorithmic/"]).
-        project_root: Working directory for test execution.
-        gate_spec: Gate configuration.
-
-    Returns:
-        GateCheckResult with passed=True if return code is 0.
-    """
+    """Gate: all algorithmic tests pass."""
     start = time.monotonic()
     timeout_seconds = gate_spec.params.get("timeout_seconds", 300)
 
@@ -215,6 +193,7 @@ def check_all_tests_pass(
         gate_id=GateId.ALL_TESTS_PASS.value,
         passed=passed,
         mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
         score=1.0 if passed else 0.0,
         findings=findings,
         summary=(
@@ -224,6 +203,51 @@ def check_all_tests_pass(
     )
 
 
+def _resolve_entrypoints(nodes: set[str], raw_entrypoints: list[str]) -> set[str]:
+    """Resolve configured entrypoint names to graph node ids."""
+    resolved: set[str] = set()
+    if not nodes:
+        return resolved
+
+    for entry in raw_entrypoints:
+        candidate = entry.strip()
+        if not candidate:
+            continue
+        if candidate in nodes:
+            resolved.add(candidate)
+            continue
+
+        short = candidate.rsplit(".", 1)[-1]
+        matches = {node for node in nodes if node.rsplit(".", 1)[-1] == short}
+        if len(matches) == 1:
+            resolved.update(matches)
+            continue
+
+        if candidate.endswith(".*"):
+            prefix = candidate[:-2]
+            resolved.update(node for node in nodes if node.startswith(prefix))
+
+    return resolved
+
+
+def _forward_reachable(entrypoints: set[str], edges: list[CallGraphEdge]) -> set[str]:
+    """Compute directed reachability from entrypoints."""
+    adjacency: dict[str, set[str]] = {}
+    for edge in edges:
+        adjacency.setdefault(edge.caller, set()).add(edge.callee)
+
+    reachable = set(entrypoints)
+    frontier = set(entrypoints)
+    while frontier:
+        current = frontier.pop()
+        for nxt in adjacency.get(current, set()):
+            if nxt in reachable:
+                continue
+            reachable.add(nxt)
+            frontier.add(nxt)
+    return reachable
+
+
 def check_call_graph_connected(
     algorithmic_files: list[Path],
     project_root: Path,
@@ -231,148 +255,157 @@ def check_call_graph_connected(
     analyzed: list[AnalyzedFile] | None = None,
     registry: StrategyRegistry | None = None,
 ) -> GateCheckResult:
-    """Gate: Call graph has no orphaned algorithms.
-
-    Checks for disconnected components above the configured minimum size.
-
-    When *analyzed* is provided, uses pre-loaded analyses instead of
-    reading files.
-
-    gate_spec.params:
-        - min_component_size (int, default 2): Minimum component size to flag.
-        - ignore_patterns (list[str]): Function name patterns to exclude.
-        - entry_points (list[str]): Function names or dotted paths treated as external
-          execution roots when extraction misses dynamic dispatch.
-
-    Args:
-        algorithmic_files: Python files to analyze.
-        project_root: For module path resolution.
-        gate_spec: Gate configuration.
-        analyzed: Pre-loaded file analyses (optional).
-
-    Returns:
-        GateCheckResult with findings for each disconnected component.
-    """
+    """Gate: every target node is reachable from declared entrypoints."""
     start = time.monotonic()
-    min_component_size = gate_spec.params.get("min_component_size", 2)
-    ignore_patterns: list[str] = gate_spec.params.get("ignore_patterns", [])
-    entry_points: list[str] = gate_spec.params.get("entry_points", [])
+    entry_points = [
+        str(item)
+        for item in gate_spec.params.get("entry_points", [])
+        if isinstance(item, str) and item.strip()
+    ]
+    target_nodes_raw = [
+        str(item)
+        for item in gate_spec.params.get("pin_function_nodes", [])
+        if isinstance(item, str) and item.strip()
+    ]
+    min_confidence = float(gate_spec.params.get("min_confidence", 0.6))
+
     graph_result = build_call_graph(
         algorithmic_files=algorithmic_files,
         project_root=project_root,
         analyzed=analyzed,
         registry=registry,
     )
-    findings = _find_disconnected_components(
-        nodes=graph_result.nodes,
-        edges=graph_result.edges,
-        ignore_patterns=ignore_patterns,
-        entry_points=entry_points,
-        min_component_size=min_component_size,
-    )
 
-    passed = len(findings) == 0
+    if not graph_result.nodes:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.CALL_GRAPH_CONNECTED.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": "empty_call_graph"}],
+            summary="Call graph evidence unavailable",
+            duration_ms=duration,
+        )
+
+    resolved_entrypoints = _resolve_entrypoints(graph_result.nodes, entry_points)
+    if not resolved_entrypoints:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.CALL_GRAPH_CONNECTED.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.AMBIGUOUS,
+            score=0.0,
+            findings=[
+                {
+                    "reason": "entrypoints_missing_or_unresolved",
+                    "configured_entry_points": entry_points,
+                }
+            ],
+            summary="Entry points are required to assess call reachability",
+            duration_ms=duration,
+        )
+
+    high_conf_edges = [edge for edge in graph_result.edges if edge.confidence >= min_confidence]
+    low_conf_edges = [edge for edge in graph_result.edges if edge.confidence < min_confidence]
+
+    reachable = _forward_reachable(resolved_entrypoints, high_conf_edges)
+
+    if target_nodes_raw:
+        resolved_targets = _resolve_entrypoints(graph_result.nodes, target_nodes_raw)
+    else:
+        resolved_targets = set(graph_result.nodes)
+
+    if not resolved_targets:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.CALL_GRAPH_CONNECTED.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.AMBIGUOUS,
+            score=0.0,
+            findings=[{"reason": "target_nodes_unresolved", "targets": target_nodes_raw}],
+            summary="Target nodes are unresolved for reachability assessment",
+            duration_ms=duration,
+        )
+
+    missing = sorted(node for node in resolved_targets if node not in reachable)
+    if not missing:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.CALL_GRAPH_CONNECTED.value,
+            passed=True,
+            mode=gate_spec.mode.value,
+            status=GateStatus.PASSED,
+            score=1.0,
+            findings=[],
+            summary="All target nodes are reachable from configured entrypoints",
+            duration_ms=duration,
+        )
+
+    ambiguous_edges = [
+        {
+            "caller": edge.caller,
+            "callee": edge.callee,
+            "confidence": edge.confidence,
+        }
+        for edge in low_conf_edges
+        if edge.caller in reachable and edge.callee in missing
+    ]
+    status = GateStatus.AMBIGUOUS if ambiguous_edges else GateStatus.FAILED
+
+    findings: list[dict[str, Any]] = [
+        {
+            "missing_targets": missing,
+            "resolved_entrypoints": sorted(resolved_entrypoints),
+            "reachable_count": len(reachable),
+            "target_count": len(resolved_targets),
+            "min_confidence": min_confidence,
+        }
+    ]
+    if ambiguous_edges:
+        findings.append({"low_confidence_edges": ambiguous_edges})
+
+    coverage = len(resolved_targets) - len(missing)
+    score = coverage / len(resolved_targets) if resolved_targets else 0.0
     duration = (time.monotonic() - start) * 1000
 
     return GateCheckResult(
         gate_id=GateId.CALL_GRAPH_CONNECTED.value,
-        passed=passed,
         mode=gate_spec.mode.value,
-        score=1.0 if passed else max(0.0, 1.0 - len(findings) * 0.1),
+        status=status,
+        score=score,
         findings=findings,
         summary=(
-            "Call graph is fully connected"
-            if passed
-            else f"Found {len(findings)} disconnected component(s) in call graph"
+            "Some targets may be reachable only via low-confidence edges"
+            if status == GateStatus.AMBIGUOUS
+            else f"{len(missing)} target node(s) are unreachable from entrypoints"
         ),
         duration_ms=duration,
     )
 
 
-def _find_disconnected_components(
-    nodes: set[str],
-    edges: list[CallGraphEdge],
-    ignore_patterns: list[str] | None,
-    entry_points: list[str] | None = None,
-    min_component_size: int = 2,
-) -> list[dict[str, Any]]:
-    """Find disconnected components from extracted graph data.
+def _slice_owner_for_edge(
+    *,
+    src_id: str,
+    file_path: Path,
+    project_root: Path,
+    vertical_depth: int,
+) -> str:
+    """Derive a slice owner key for a STORE_TOUCH edge."""
+    if src_id:
+        segments = [seg for seg in src_id.split(".") if seg]
+        if segments:
+            return ".".join(segments[: max(1, vertical_depth)])
 
-    Args:
-        nodes: Known function nodes from graph extraction.
-        edges: Call edges to evaluate for connectivity.
-        ignore_patterns: Optional name substrings excluded from findings.
-        entry_points: Optional external roots.
-        min_component_size: Minimum filtered component size to flag.
-    """
-    if not nodes:
-        return []
-    normalized_ignore_patterns = ignore_patterns or []
+    try:
+        rel = file_path.relative_to(project_root)
+    except ValueError:
+        rel = file_path
 
-    parent: dict[str, str] = {f: f for f in nodes}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        if a not in parent or b not in parent:
-            return
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for edge in edges:
-        union(edge.caller, edge.callee)
-
-    # Group by root
-    components: dict[str, list[str]] = {}
-    for func in nodes:
-        root = find(func)
-        components.setdefault(root, []).append(func)
-
-    # Only flag if there are multiple components (disconnected)
-    if len(components) <= 1:
-        return []
-
-    findings: list[dict[str, Any]] = []
-    normalized_entry_points = {
-        item.strip() for item in (entry_points or []) if isinstance(item, str) and item.strip()
-    }
-    protected_roots: set[str] = set()
-    for func_name in nodes:
-        short_name = func_name.rsplit(".", 1)[-1]
-        if func_name in normalized_entry_points or short_name in normalized_entry_points:
-            protected_roots.add(find(func_name))
-        for declared in normalized_entry_points:
-            if declared.endswith(".*") and func_name.startswith(declared[:-2]):
-                protected_roots.add(find(func_name))
-
-    # Legacy fallback when no entry points are declared.
-    if not protected_roots and components:
-        largest = sorted(components.values(), key=len, reverse=True)[0]
-        protected_roots.add(find(largest[0]))
-
-    # Sort components by size descending for deterministic findings.
-    sorted_components = sorted(components.values(), key=len, reverse=True)
-    for component in sorted_components:
-        component_root = find(component[0])
-        if component_root in protected_roots:
-            continue
-        filtered = [
-            name for name in component if not any(pat in name for pat in normalized_ignore_patterns)
-        ]
-        if len(filtered) >= min_component_size:
-            findings.append(
-                {
-                    "component_size": len(filtered),
-                    "functions": sorted(filtered),
-                }
-            )
-
-    return findings
+    parts = [part for part in rel.parts if part]
+    if not parts:
+        return str(rel)
+    return "/".join(parts[: max(1, vertical_depth)])
 
 
 def check_store_monogamy(
@@ -381,108 +414,107 @@ def check_store_monogamy(
     gate_spec: GateSpec,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
-    """Gate: Each store is accessed by only one vertical slice.
-
-    Scans algorithmic code for store access patterns and maps each store
-    to the vertical slice(s) that access it. Flags stores accessed by
-    multiple verticals.
-
-    Detection strategy:
-    1. Identify store definitions by convention (files in stores/ directories).
-    2. For each store, find all modules that import/reference it.
-    3. Map importing modules to their vertical slice (by directory structure).
-    4. Stores referenced by >1 vertical are violations.
-
-    gate_spec.params:
-        - store_patterns (list[str]): Glob patterns for store files.
-        - vertical_depth (int): Directory depth that defines a vertical boundary.
-
-    Args:
-        algorithmic_files: Python files to analyze.
-        project_root: Root directory.
-        gate_spec: Gate configuration.
-
-    Returns:
-        GateCheckResult with findings for each store monogamy violation.
-    """
+    """Gate: each store node should be touched by only one slice owner."""
     start = time.monotonic()
-    from spec_manager.core.language import SOURCE_EXTENSIONS
+    vertical_depth = int(gate_spec.params.get("vertical_depth", 2))
 
-    _default_store_patterns = [f"**/stores/*{ext}" for ext in sorted(SOURCE_EXTENSIONS)] + [
-        f"**/stores/**/*{ext}" for ext in sorted(SOURCE_EXTENSIONS)
-    ]
-    store_patterns: list[str] = gate_spec.params.get("store_patterns", _default_store_patterns)
-    vertical_depth: int = gate_spec.params.get("vertical_depth", 2)
-    findings: list[dict[str, Any]] = []
+    analyzed_by_path: dict[str, AnalyzedFile] = {}
+    if analyzed is not None:
+        analyzed_by_path = {Path(item.path).resolve().as_posix(): item for item in analyzed}
 
-    # Step 1: Identify store modules
-    store_files: set[Path] = set()
-    for pattern in store_patterns:
-        store_files.update(project_root.glob(pattern))
-    # Also add any algorithmic files that are in a "stores" directory
-    for f in algorithmic_files:
-        parts = f.parts
-        if "stores" in parts:
-            store_files.add(f)
+    store_owners: dict[str, set[str]] = {}
+    store_evidence: dict[str, list[dict[str, Any]]] = {}
 
-    if not store_files:
+    for file_path in algorithmic_files:
+        resolved = file_path.resolve().as_posix()
+        preloaded = analyzed_by_path.get(resolved)
+
+        if preloaded is not None:
+            source = preloaded.content
+            analysis = preloaded.analysis
+        else:
+            try:
+                source = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            analysis = None
+
+        spans: list[dict[str, Any]] = []
+        if analysis is not None:
+            for func in analysis.functions:
+                spans.append(
+                    {
+                        "id": func.qualified_name or func.name,
+                        "line_start": func.start_line,
+                        "line_end": func.end_line,
+                        "kind": "function",
+                    }
+                )
+
+        inferred = infer_adjacency_signals(
+            file_path=str(file_path),
+            source_text=source,
+            spans=spans,
+            requested={"STORE_TOUCH"},
+            workspace=project_root,
+        )
+        raw_edges = inferred.get("edges") if isinstance(inferred, dict) else []
+        if not isinstance(raw_edges, list):
+            continue
+
+        for edge in raw_edges:
+            if not isinstance(edge, dict):
+                continue
+            signal_type = str(edge.get("signal_type", "")).upper()
+            if signal_type != "STORE_TOUCH":
+                continue
+
+            src_id = str(edge.get("src_id", "")).strip()
+            store_id = str(edge.get("dst_id", "")).strip()
+            if not store_id:
+                continue
+
+            owner = _slice_owner_for_edge(
+                src_id=src_id,
+                file_path=file_path,
+                project_root=project_root,
+                vertical_depth=vertical_depth,
+            )
+            store_owners.setdefault(store_id, set()).add(owner)
+            store_evidence.setdefault(store_id, []).append(
+                {
+                    "owner": owner,
+                    "src_id": src_id,
+                    "file_path": str(file_path),
+                    "confidence": float(edge.get("confidence", 1.0) or 0.0),
+                }
+            )
+
+    if not store_owners:
         duration = (time.monotonic() - start) * 1000
         return GateCheckResult(
             gate_id=GateId.STORE_MONOGAMY.value,
             passed=True,
             mode=gate_spec.mode.value,
+            status=GateStatus.PASSED,
             score=1.0,
             findings=[],
-            summary="No store files found to check",
+            summary="No STORE_TOUCH edges found",
             duration_ms=duration,
         )
 
-    # Extract store module names from store files
-    store_modules: dict[str, Path] = {}
-    for sf in store_files:
-        # Use the stem as the store module name
-        module_name = sf.stem
-        from spec_manager.core.language import is_package_marker
-
-        if not is_package_marker(sf.name):
-            store_modules[module_name] = sf
-
-    # Step 2: For each algorithmic file, find store imports using evidence-based scanning
-    store_importers: dict[str, set[str]] = {name: set() for name in store_modules}
-
-    non_store_files = [f for f in algorithmic_files if f not in store_files]
-    import_records = scan_imports_from_files(non_store_files)
-
-    for record in import_records:
-        # Determine vertical slice for the importing file
-        try:
-            rel = Path(record.importer_file).relative_to(project_root)
-        except ValueError:
-            rel = Path(record.importer_file)
-        parts = rel.parts
-        vertical = "/".join(parts[:vertical_depth]) if len(parts) >= vertical_depth else str(rel)
-
-        # Check if the imported name matches a store module
-        if record.imported_name in store_modules:
-            store_importers[record.imported_name].add(vertical)
-
-        # Check if any part of the from-module path matches a store module
-        module_parts = record.imported_from_module.split(".")
-        for part in module_parts:
-            if part in store_modules:
-                store_importers[part].add(vertical)
-
-    # Step 3: Flag stores accessed by multiple verticals
-    for store_name, verticals in store_importers.items():
-        if len(verticals) > 1:
-            findings.append(
-                {
-                    "store_name": store_name,
-                    "store_file": str(store_modules[store_name]),
-                    "verticals": sorted(verticals),
-                    "vertical_count": len(verticals),
-                }
-            )
+    findings: list[dict[str, Any]] = []
+    for store_id, owners in sorted(store_owners.items()):
+        if len(owners) <= 1:
+            continue
+        findings.append(
+            {
+                "store_id": store_id,
+                "owners": sorted(owners),
+                "owner_count": len(owners),
+                "evidence": store_evidence.get(store_id, []),
+            }
+        )
 
     passed = len(findings) == 0
     duration = (time.monotonic() - start) * 1000
@@ -491,12 +523,13 @@ def check_store_monogamy(
         gate_id=GateId.STORE_MONOGAMY.value,
         passed=passed,
         mode=gate_spec.mode.value,
-        score=1.0 if passed else max(0.0, 1.0 - len(findings) * 0.2),
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
+        score=1.0 if passed else max(0.0, 1.0 - (len(findings) / max(1, len(store_owners)))),
         findings=findings,
         summary=(
-            "All stores are accessed by single vertical slices"
+            "Each store is touched by exactly one slice owner"
             if passed
-            else (f"Found {len(findings)} store(s) accessed by multiple vertical slices")
+            else f"Found {len(findings)} store(s) touched by multiple slice owners"
         ),
         duration_ms=duration,
     )

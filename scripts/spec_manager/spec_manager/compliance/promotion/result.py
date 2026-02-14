@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
+
+
+class GateStatus(Enum):
+    """Status for a gate outcome."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    AMBIGUOUS = "ambiguous"
+    STALE_EVIDENCE = "stale_evidence"
 
 
 @dataclass
@@ -14,8 +24,9 @@ class GateCheckResult:
 
     Attributes:
         gate_id: Which gate was checked.
-        passed: Whether the gate passed.
         mode: The configured mode (required/advisory).
+        status: Rich gate status (pass/fail/ambiguous/stale evidence).
+        passed: Compatibility boolean used by older callers/reports.
         score: Numeric score (0.0-1.0) where applicable.
         findings: Detailed findings from the check.
         summary: Human-readable summary.
@@ -23,12 +34,43 @@ class GateCheckResult:
     """
 
     gate_id: str
-    passed: bool
     mode: str
+    status: GateStatus | str | None = None
+    passed: bool | None = None
     score: float = 1.0
     findings: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
     duration_ms: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Normalize status/passed for backward compatibility."""
+        status_explicit = self.status is not None
+        passed_explicit = self.passed is not None
+
+        if isinstance(self.status, GateStatus):
+            status = self.status
+        elif isinstance(self.status, str):
+            try:
+                status = GateStatus(self.status)
+            except ValueError:
+                status = GateStatus.PASSED
+        elif self.passed is False:
+            status = GateStatus.FAILED
+        else:
+            status = GateStatus.PASSED
+        self.status = status
+
+        if not passed_explicit or status_explicit:
+            self.passed = self._status_counts_as_pass(status=self.status, mode=self.mode)
+        else:
+            self.passed = bool(self.passed)
+
+    @staticmethod
+    def _status_counts_as_pass(status: GateStatus, mode: str) -> bool:
+        """Map rich status to compatibility boolean for report plumbing."""
+        return status == GateStatus.PASSED or (
+            status == GateStatus.AMBIGUOUS and mode == "advisory"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -36,6 +78,7 @@ class GateCheckResult:
             "gate_id": self.gate_id,
             "passed": self.passed,
             "mode": self.mode,
+            "status": self.status.value,
             "score": self.score,
             "findings": self.findings,
             "summary": self.summary,

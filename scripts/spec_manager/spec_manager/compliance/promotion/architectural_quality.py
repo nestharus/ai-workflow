@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
-from spec_manager.compliance.promotion.result import GateCheckResult
+from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 from spec_manager.projection.lineage.builder import scan_imports_from_files
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
@@ -264,6 +264,7 @@ def check_no_inlined_atom_logic(
         gate_id=GateId.NO_INLINED_ATOM_LOGIC.value,
         passed=passed,
         mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
         score=1.0 if passed else 0.0,
         findings=all_findings,
         summary=(
@@ -419,12 +420,324 @@ def check_function_recomposition(
         gate_id=GateId.FUNCTION_RECOMPOSITION.value,
         passed=passed,
         mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
         score=1.0 if passed else max(0.0, 1.0 - len(findings) * 0.1),
         findings=findings,
         summary=(
             "Architectural functions correctly recompose atoms"
             if passed
             else f"Found {len(findings)} recomposition issue(s)"
+        ),
+        duration_ms=duration,
+    )
+
+
+def check_pin_consumption_coverage(
+    pin_registry: PinFunctionRegistry,
+    component_manifest: dict[str, Any],
+    gate_spec: GateSpec,
+) -> GateCheckResult:
+    """Gate: every in-scope pin is consumed by at least one component."""
+    start = time.monotonic()
+    in_scope_pins = {pf.pin_func_id for pf in pin_registry.pin_functions}
+    consumed: set[str] = set()
+
+    for component in component_manifest.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        for pin in component.get("pins_consumed", []):
+            if isinstance(pin, str) and pin.strip():
+                consumed.add(pin.strip())
+
+    missing = sorted(pin for pin in in_scope_pins if pin not in consumed)
+    findings = [{"pin_func_id": pin, "reason": "not_consumed_by_any_component"} for pin in missing]
+    passed = not missing
+    duration = (time.monotonic() - start) * 1000
+
+    return GateCheckResult(
+        gate_id=GateId.PIN_CONSUMPTION_COVERAGE.value,
+        passed=passed,
+        mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
+        score=(len(in_scope_pins) - len(missing)) / len(in_scope_pins) if in_scope_pins else 1.0,
+        findings=findings,
+        summary=(
+            "All in-scope pins are consumed by declared components"
+            if passed
+            else f"{len(missing)} pin(s) are not consumed by any declared component"
+        ),
+        duration_ms=duration,
+    )
+
+
+def check_edge_realization(
+    component_manifest: dict[str, Any],
+    gate_spec: GateSpec,
+) -> GateCheckResult:
+    """Gate: component interaction edges reference valid components."""
+    start = time.monotonic()
+    components = [
+        item for item in component_manifest.get("components", []) if isinstance(item, dict)
+    ]
+    component_ids = {
+        str(item.get("component_id", "")).strip()
+        for item in components
+        if str(item.get("component_id", "")).strip()
+    }
+
+    findings: list[dict[str, Any]] = []
+    for component in components:
+        cid = str(component.get("component_id", "")).strip()
+        for direction in ("upstream", "downstream"):
+            for dep in component.get(direction, []):
+                if not isinstance(dep, str):
+                    continue
+                dep_id = dep.strip()
+                if not dep_id:
+                    continue
+                if dep_id not in component_ids:
+                    findings.append(
+                        {
+                            "component_id": cid,
+                            "direction": direction,
+                            "missing_component_ref": dep_id,
+                        }
+                    )
+
+    has_relationships = any(
+        isinstance(component.get("upstream"), list) or isinstance(component.get("downstream"), list)
+        for component in components
+    )
+    duration = (time.monotonic() - start) * 1000
+    if not has_relationships:
+        return GateCheckResult(
+            gate_id=GateId.EDGE_REALIZATION.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": "component_manifest_missing_edge_data"}],
+            summary="Component manifest has no upstream/downstream edge evidence",
+            duration_ms=duration,
+        )
+
+    passed = not findings
+    return GateCheckResult(
+        gate_id=GateId.EDGE_REALIZATION.value,
+        passed=passed,
+        mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
+        score=1.0 if passed else 0.0,
+        findings=findings,
+        summary=(
+            "Component manifest edge references are valid"
+            if passed
+            else f"Found {len(findings)} invalid component edge reference(s)"
+        ),
+        duration_ms=duration,
+    )
+
+
+def check_no_orphan_components(
+    component_manifest: dict[str, Any],
+    gate_spec: GateSpec,
+) -> GateCheckResult:
+    """Gate: every component has at least one reachable entrypoint."""
+    start = time.monotonic()
+    findings: list[dict[str, Any]] = []
+
+    for component in component_manifest.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        component_id = str(component.get("component_id", "")).strip()
+        entrypoints = [
+            ep
+            for ep in component.get("owned_entrypoints", [])
+            if isinstance(ep, str) and ep.strip()
+        ]
+        if component_id and not entrypoints:
+            findings.append(
+                {
+                    "component_id": component_id,
+                    "reason": "missing_owned_entrypoints",
+                }
+            )
+
+    passed = not findings
+    duration = (time.monotonic() - start) * 1000
+    return GateCheckResult(
+        gate_id=GateId.NO_ORPHAN_COMPONENTS.value,
+        passed=passed,
+        mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
+        score=1.0 if passed else 0.0,
+        findings=findings,
+        summary=(
+            "Every component has at least one owned entrypoint"
+            if passed
+            else f"Found {len(findings)} orphan component(s) without entrypoints"
+        ),
+        duration_ms=duration,
+    )
+
+
+def check_event_handler_coverage(
+    component_manifest: dict[str, Any],
+    gate_spec: GateSpec,
+) -> GateCheckResult:
+    """Gate: each declared event should have at least one consumer."""
+    start = time.monotonic()
+    events = component_manifest.get("events")
+    if not isinstance(events, list):
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.EVENT_HANDLER_COVERAGE.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": "events_section_missing"}],
+            summary="Component manifest does not include event coverage evidence",
+            duration_ms=duration,
+        )
+
+    findings: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("event_id") or event.get("name") or "").strip()
+        consumers = [c for c in event.get("consumers", []) if isinstance(c, str) and c.strip()]
+        external_only = bool(event.get("external_only"))
+        if event_id and not consumers and not external_only:
+            findings.append({"event_id": event_id, "reason": "no_consumers"})
+
+    passed = not findings
+    duration = (time.monotonic() - start) * 1000
+    return GateCheckResult(
+        gate_id=GateId.EVENT_HANDLER_COVERAGE.value,
+        passed=passed,
+        mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
+        score=1.0 if passed else 0.0,
+        findings=findings,
+        summary=(
+            "All declared events have at least one consumer or are external-only"
+            if passed
+            else f"Found {len(findings)} event(s) without consumers"
+        ),
+        duration_ms=duration,
+    )
+
+
+def check_config_externalization(
+    architectural_files: list[Path],
+    gate_spec: GateSpec,
+    analyzed_arch: list[AnalyzedFile] | None = None,
+) -> GateCheckResult:
+    """Gate: environment/config should be injected rather than hardcoded."""
+    start = time.monotonic()
+    assignment_re = re.compile(r"\\b(API_KEY|TOKEN|SECRET|PASSWORD|HOST|URL)\\b\\s*=\\s*['\\\"]")
+
+    analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed_arch is not None:
+        for af in analyzed_arch:
+            analyzed_lookup[af.path] = af
+
+    findings: list[dict[str, Any]] = []
+    for file_path in architectural_files:
+        af = analyzed_lookup.get(str(file_path))
+        if af is not None:
+            source = af.content
+        else:
+            try:
+                source = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        for idx, line in enumerate(source.splitlines(), start=1):
+            if assignment_re.search(line):
+                findings.append(
+                    {
+                        "file_path": str(file_path),
+                        "line": idx,
+                        "snippet": line.strip()[:200],
+                    }
+                )
+
+    passed = not findings
+    duration = (time.monotonic() - start) * 1000
+    return GateCheckResult(
+        gate_id=GateId.CONFIG_EXTERNALIZATION.value,
+        passed=passed,
+        mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.FAILED,
+        score=1.0 if passed else 0.0,
+        findings=findings,
+        summary=(
+            "No obvious hardcoded runtime config values detected"
+            if passed
+            else f"Found {len(findings)} potential hardcoded config assignment(s)"
+        ),
+        duration_ms=duration,
+    )
+
+
+def check_arch_drift_pass(
+    component_manifest_path: Path | None,
+    gate_spec: GateSpec,
+) -> GateCheckResult:
+    """Gate: detect stale architecture evidence from content identity mismatch."""
+    start = time.monotonic()
+    expected_hash = str(gate_spec.params.get("expected_manifest_hash", "")).strip()
+    if component_manifest_path is None or not component_manifest_path.exists():
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.ARCH_DRIFT_PASS.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": "component_manifest_missing"}],
+            summary="Component manifest is missing; cannot evaluate architecture drift",
+            duration_ms=duration,
+        )
+    if not expected_hash:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.ARCH_DRIFT_PASS.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": "expected_manifest_hash_missing"}],
+            summary="Expected architecture evidence hash not provided",
+            duration_ms=duration,
+        )
+
+    try:
+        raw = component_manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        duration = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.ARCH_DRIFT_PASS.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": f"manifest_read_error:{type(exc).__name__}"}],
+            summary="Failed reading component manifest for drift assessment",
+            duration_ms=duration,
+        )
+
+    current_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    passed = current_hash == expected_hash
+    duration = (time.monotonic() - start) * 1000
+
+    return GateCheckResult(
+        gate_id=GateId.ARCH_DRIFT_PASS.value,
+        passed=passed,
+        mode=gate_spec.mode.value,
+        status=GateStatus.PASSED if passed else GateStatus.STALE_EVIDENCE,
+        score=1.0 if passed else 0.0,
+        findings=[] if passed else [{"expected_hash": expected_hash, "current_hash": current_hash}],
+        summary=(
+            "Architecture evidence hash matches current manifest"
+            if passed
+            else "Architecture evidence hash mismatch (stale evidence)"
         ),
         duration_ms=duration,
     )

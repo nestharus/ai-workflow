@@ -1,8 +1,4 @@
-"""Introduced algorithm spec checker for layer promotion gating.
-
-Verifies that infrastructure algorithms (retry, circuit breaking, etc.) that
-have no algorithmic origin carry their own spec comments.
-"""
+"""Introduced algorithm spec checker for layer promotion gating."""
 
 from __future__ import annotations
 
@@ -13,13 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.pin_coverage import PinCoverageReport
-from spec_manager.compliance.promotion.result import GateCheckResult
+from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
 from spec_manager.core.code_analysis import SourceAnalysis, analyze_source
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
 
-# Category classification heuristics based on function name patterns
 _CATEGORY_PATTERNS: list[tuple[list[str], str]] = [
     (["retry", "backoff"], "retry"),
     (["circuit", "breaker"], "circuit_breaker"),
@@ -35,18 +30,7 @@ _CATEGORY_PATTERNS: list[tuple[list[str], str]] = [
 
 @dataclass
 class IntroducedAlgorithm:
-    """An architectural algorithm with no algorithmic origin.
-
-    Attributes:
-        function_name: Qualified name of the introduced function.
-        file_path: File where the function is defined.
-        line_start: First line.
-        line_end: Last line.
-        has_spec_comments: Whether the function body contains spec comments.
-        spec_comment_count: Number of spec comments found.
-        has_docstring: Whether it has a docstring.
-        category: Classification of the introduced algorithm type.
-    """
+    """An architectural algorithm with no algorithmic origin."""
 
     function_name: str
     file_path: str
@@ -56,10 +40,10 @@ class IntroducedAlgorithm:
     spec_comment_count: int = 0
     has_docstring: bool = False
     category: str = "unknown"
+    introduction_confidence: float = 1.0
 
 
 def _classify_category(function_name: str, file_path: str) -> str:
-    """Classify the category of an introduced algorithm by name/path heuristics."""
     lower_name = function_name.lower()
     lower_path = file_path.lower()
     combined = f"{lower_name} {lower_path}"
@@ -68,7 +52,6 @@ def _classify_category(function_name: str, file_path: str) -> str:
         if any(kw in combined for kw in keywords):
             return category
 
-    # Default based on path
     if "infrastructure" in lower_path:
         return "infrastructure"
 
@@ -77,31 +60,13 @@ def _classify_category(function_name: str, file_path: str) -> str:
 
 def _count_spec_comments_from_analysis(
     analysis: SourceAnalysis,
-    func_name: str,
     start_line: int,
     end_line: int,
 ) -> int:
-    """Count spec-style comments in a function using analyze_source() data.
-
-    Uses the comments already extracted by analyze_source() and filters them
-    to the function's line range.
-
-    Args:
-        analysis: SourceAnalysis containing all comments for the file.
-        func_name: Name of the enclosing function.
-        start_line: First line of the function.
-        end_line: Last line of the function.
-
-    Returns:
-        Count of spec-style comments in the function body.
-    """
     count = 0
     for comment in analysis.comments:
-        # Filter to comments within the function's line range
         if comment.line < start_line or comment.line > end_line:
             continue
-        # Also accept comments matched by enclosing_function
-        # Skip shebangs, encodings, type comments, and blank comments
         text = comment.text.strip()
         if text and not text.startswith("!") and "coding" not in text and "type:" not in text:
             count += 1
@@ -113,52 +78,34 @@ def find_introduced_algorithms(
     architectural_files: list[Path],
     analyzed: list[AnalyzedFile] | None = None,
 ) -> list[IntroducedAlgorithm]:
-    """Find all introduced algorithms in the architectural layer.
-
-    An introduced algorithm is a function/method in the architectural layer
-    that has no pin-function import (identified via PinCoverageReport).
-
-    For each introduced algorithm:
-    1. Analyze the file to extract the function body.
-    2. Scan the body for spec comments.
-    3. Classify the algorithm category by heuristics.
-
-    Args:
-        pin_coverage: Coverage report identifying introduction locations.
-        architectural_files: Architectural files to scan.
-
-    Returns:
-        List of IntroducedAlgorithm with spec status.
-    """
-    # Build set of introduction locations from pin coverage report
-    introduction_locations: dict[str, dict[str, Any]] = {}
+    """Find introduced algorithms from pin coverage block-level evidence."""
+    introductions_by_file: dict[str, list[dict[str, Any]]] = {}
     for item in pin_coverage.items:
-        if item.is_introduction:
-            introduction_locations[item.arch_location] = {
-                "file_path": item.arch_file_path,
-                "line": item.arch_line,
+        if not item.is_introduction:
+            continue
+        introductions_by_file.setdefault(item.arch_file_path, []).append(
+            {
+                "line_start": item.arch_line,
+                "line_end": item.arch_line_end,
+                "location": item.arch_location,
+                "confidence": item.introduction_confidence,
             }
+        )
 
-    if not introduction_locations:
+    if not introductions_by_file:
         return []
 
-    results: list[IntroducedAlgorithm] = []
-
-    # Group introduction locations by file
-    file_locations: dict[str, list[tuple[str, int]]] = {}
-    for loc, info in introduction_locations.items():
-        fp = info["file_path"]
-        file_locations.setdefault(fp, []).append((loc, info["line"]))
-
-    # Build analyzed lookup
     analyzed_lookup: dict[str, AnalyzedFile] = {}
     if analyzed is not None:
         for af in analyzed:
             analyzed_lookup[af.path] = af
 
+    results: list[IntroducedAlgorithm] = []
+
     for arch_file in architectural_files:
         file_str = str(arch_file)
-        if file_str not in file_locations:
+        intro_entries = introductions_by_file.get(file_str)
+        if not intro_entries:
             continue
 
         af = analyzed_lookup.get(file_str)
@@ -170,27 +117,43 @@ def find_introduced_algorithms(
             except (OSError, UnicodeDecodeError):
                 continue
             analysis = analyze_source(source, file_str)
-        location_lines = {line for _, line in file_locations[file_str]}
 
-        for func in analysis.functions:
-            if func.start_line not in location_lines:
-                continue
+        for intro in intro_entries:
+            start_line = int(intro.get("line_start", 0) or 0)
+            end_line = int(intro.get("line_end", start_line) or start_line)
+            confidence = float(intro.get("confidence", 1.0) or 0.0)
+            matching_func = None
+            for func in analysis.functions:
+                if func.start_line == start_line and func.end_line == end_line:
+                    matching_func = func
+                    break
+                if func.start_line == start_line:
+                    matching_func = func
+                    break
 
-            spec_count = _count_spec_comments_from_analysis(
-                analysis, func.name, func.start_line, func.end_line
-            )
-            category = _classify_category(func.qualified_name, file_str)
+            if matching_func is None:
+                function_name = str(intro.get("location") or f"{file_str}:{start_line}")
+                has_docstring = False
+            else:
+                function_name = matching_func.qualified_name or matching_func.name
+                has_docstring = bool(matching_func.has_docstring)
+                start_line = matching_func.start_line
+                end_line = matching_func.end_line
+
+            spec_count = _count_spec_comments_from_analysis(analysis, start_line, end_line)
+            category = _classify_category(function_name, file_str)
 
             results.append(
                 IntroducedAlgorithm(
-                    function_name=func.qualified_name,
+                    function_name=function_name,
                     file_path=file_str,
-                    line_start=func.start_line,
-                    line_end=func.end_line,
+                    line_start=start_line,
+                    line_end=end_line,
                     has_spec_comments=spec_count > 0,
                     spec_comment_count=spec_count,
-                    has_docstring=func.has_docstring,
+                    has_docstring=has_docstring,
                     category=category,
+                    introduction_confidence=max(0.0, min(1.0, confidence)),
                 )
             )
 
@@ -203,32 +166,17 @@ def check_introduced_algorithm_specs(
     gate_spec: GateSpec,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
-    """Gate: Introduced algorithms must have spec comments.
-
-    Per design doc Section 12: "architectural algorithms (retry, circuit
-    breaking) that have no algorithmic origin must have their own spec
-    comments (they are their own mini algorithmic layer for infrastructure)."
-
-    gate_spec.params:
-        - require_docstring (bool, default True): Also require docstrings.
-        - min_spec_comments (int, default 1): Minimum spec comments required.
-
-    Args:
-        pin_coverage: PinCoverageReport from pin_coverage.py.
-        architectural_files: Architectural layer files.
-        gate_spec: Gate configuration.
-
-    Returns:
-        GateCheckResult with findings for each introduced algorithm
-        missing spec comments.
-    """
+    """Gate: introduced algorithms should include local spec documentation."""
     start = time.monotonic()
-    require_docstring = gate_spec.params.get("require_docstring", True)
-    min_spec_comments = gate_spec.params.get("min_spec_comments", 1)
+    require_docstring = bool(gate_spec.params.get("require_docstring", True))
+    min_spec_comments = int(gate_spec.params.get("min_spec_comments", 1))
+    confidence_threshold = float(gate_spec.params.get("introduction_confidence_threshold", 0.75))
 
     introduced = find_introduced_algorithms(pin_coverage, architectural_files, analyzed=analyzed)
 
-    findings: list[dict[str, Any]] = []
+    strict_findings: list[dict[str, Any]] = []
+    uncertain_findings: list[dict[str, Any]] = []
+
     for algo in introduced:
         issues: list[str] = []
         if algo.spec_comment_count < min_spec_comments:
@@ -238,39 +186,62 @@ def check_introduced_algorithm_specs(
         if require_docstring and not algo.has_docstring:
             issues.append("Missing docstring")
 
-        if issues:
-            findings.append(
-                {
-                    "function_name": algo.function_name,
-                    "file_path": algo.file_path,
-                    "line_start": algo.line_start,
-                    "line_end": algo.line_end,
-                    "category": algo.category,
-                    "issues": issues,
-                    "spec_comment_count": algo.spec_comment_count,
-                    "has_docstring": algo.has_docstring,
-                }
-            )
+        payload = {
+            "function_name": algo.function_name,
+            "file_path": algo.file_path,
+            "line_start": algo.line_start,
+            "line_end": algo.line_end,
+            "category": algo.category,
+            "issues": issues,
+            "spec_comment_count": algo.spec_comment_count,
+            "has_docstring": algo.has_docstring,
+            "introduction_confidence": algo.introduction_confidence,
+        }
 
-    passed = len(findings) == 0
-    duration = (time.monotonic() - start) * 1000
+        if algo.introduction_confidence < confidence_threshold:
+            uncertain_findings.append(payload)
+            continue
+
+        if issues:
+            strict_findings.append(payload)
+
+    if strict_findings:
+        status = GateStatus.FAILED
+    elif uncertain_findings:
+        status = GateStatus.AMBIGUOUS
+    else:
+        status = GateStatus.PASSED
+
+    findings: list[dict[str, Any]] = []
+    if strict_findings:
+        findings.append({"violations": strict_findings})
+    if uncertain_findings:
+        findings.append({"uncertain_introductions": uncertain_findings})
 
     total_introduced = len(introduced)
-    compliant = total_introduced - len(findings)
+    compliant = total_introduced - len(strict_findings)
+    score = (compliant / total_introduced) if total_introduced > 0 else 1.0
+    duration = (time.monotonic() - start) * 1000
+
+    if status == GateStatus.PASSED:
+        summary = f"All {total_introduced} introduced algorithm(s) have required specs"
+    elif status == GateStatus.AMBIGUOUS:
+        summary = (
+            "Introduction classification is uncertain for some blocks; "
+            "manual review required before strict enforcement"
+        )
+    else:
+        summary = (
+            f"{len(strict_findings)} of {total_introduced} introduced algorithm(s) "
+            "missing required specs"
+        )
 
     return GateCheckResult(
         gate_id=GateId.INTRODUCED_ALGORITHM_SPECS.value,
-        passed=passed,
         mode=gate_spec.mode.value,
-        score=(compliant / total_introduced) if total_introduced > 0 else 1.0,
+        status=status,
+        score=score,
         findings=findings,
-        summary=(
-            f"All {total_introduced} introduced algorithm(s) have required specs"
-            if passed
-            else (
-                f"{len(findings)} of {total_introduced} introduced algorithm(s) "
-                f"missing required specs"
-            )
-        ),
+        summary=summary,
         duration_ms=duration,
     )

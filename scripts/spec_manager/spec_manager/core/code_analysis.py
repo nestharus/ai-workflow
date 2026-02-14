@@ -311,3 +311,95 @@ def infer_code_signals(
 
     _signal_cache[cache_key] = copy.deepcopy(result)
     return result
+
+
+def infer_adjacency_signals(
+    *,
+    file_path: str,
+    source_text: str,
+    spans: list[dict[str, Any]] | None = None,
+    requested: set[str],
+    workspace: Path | None = None,
+) -> dict[str, Any]:
+    """Infer adjacency-style graph evidence for requested signal types.
+
+    This is a thin contract over ``infer_code_signals()`` that normalizes the
+    response into an ``edges`` list with ``signal_type/src_id/dst_id`` fields.
+    """
+    requested_upper = {item.strip().upper() for item in requested if item and item.strip()}
+    if not requested_upper:
+        return {"edges": [], "requested": []}
+
+    raw = infer_code_signals(
+        file_path=file_path,
+        source_text=source_text,
+        spans=spans,
+        requested=requested_upper,
+        workspace=workspace,
+    )
+    edges: list[dict[str, Any]] = []
+
+    # Accept either per-signal payloads or a flat "edges" payload.
+    for signal_type in requested_upper:
+        payload = raw.get(signal_type) or raw.get(signal_type.lower())
+        if isinstance(payload, dict):
+            payload_edges = payload.get("edges")
+            if isinstance(payload_edges, list):
+                for entry in payload_edges:
+                    if isinstance(entry, dict):
+                        edges.append(dict(entry))
+        elif isinstance(payload, list):
+            for entry in payload:
+                if isinstance(entry, dict):
+                    edges.append(dict(entry))
+
+    raw_edges = raw.get("edges")
+    if isinstance(raw_edges, list):
+        for entry in raw_edges:
+            if isinstance(entry, dict):
+                edges.append(dict(entry))
+
+    normalized: list[dict[str, Any]] = []
+    for edge in edges:
+        signal_type = str(
+            edge.get("signal_type")
+            or edge.get("type")
+            or edge.get("facet")
+            or edge.get("kind")
+            or ""
+        ).strip()
+        signal_type = signal_type.upper() if signal_type else ""
+        if not signal_type:
+            # If source payload was keyed by signal, preserve it when absent.
+            signal_type = next(
+                (
+                    candidate
+                    for candidate in requested_upper
+                    if candidate in raw or candidate.lower() in raw
+                ),
+                "",
+            )
+        if signal_type and signal_type not in requested_upper:
+            continue
+
+        src_id = edge.get("src_id") or edge.get("caller") or edge.get("from")
+        dst_id = edge.get("dst_id") or edge.get("callee") or edge.get("to")
+        if not src_id or not dst_id:
+            continue
+
+        normalized.append(
+            {
+                "signal_type": signal_type,
+                "src_id": str(src_id),
+                "dst_id": str(dst_id),
+                "confidence": float(edge.get("confidence", 1.0) or 0.0),
+                "rationale_span": edge.get("rationale_span"),
+                "evidence": edge.get("evidence", {}),
+            }
+        )
+
+    return {
+        "edges": normalized,
+        "requested": sorted(requested_upper),
+        "raw": raw,
+    }

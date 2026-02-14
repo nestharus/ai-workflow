@@ -21,9 +21,18 @@ class GateMode(Enum):
     ADVISORY = "advisory"  # Failure produces warning but does not block
 
 
+class GateSeverity(Enum):
+    """Spec-level severity classification for each gate."""
+
+    BLOCKER = "blocker"
+    MAJOR = "major"
+    MINOR = "minor"
+
+
 class GateId(Enum):
     """Identifiers for each promotion gate check."""
 
+    # Additional evidence gates
     NO_REMAINING_COMMENTS = "no_remaining_comments"
     NO_STUB_FUNCTIONS = "no_stub_functions"
     ALL_TESTS_PASS = "all_tests_pass"
@@ -31,11 +40,53 @@ class GateId(Enum):
     STORE_MONOGAMY = "store_monogamy"
     PIN_COVERAGE = "pin_coverage"
     INTRODUCED_ALGORITHM_SPECS = "introduced_algorithm_specs"
+
+    # L2 primary gates
     NO_INLINED_ATOM_LOGIC = "no_inlined_atom_logic"
     FUNCTION_RECOMPOSITION = "function_recomposition"
+    PIN_CONSUMPTION_COVERAGE = "pin_consumption_coverage"
+    EDGE_REALIZATION = "edge_realization"
+    NO_ORPHAN_COMPONENTS = "no_orphan_components"
+    EVENT_HANDLER_COVERAGE = "event_handler_coverage"
+    CONFIG_EXTERNALIZATION = "config_externalization"
+    ARCH_DRIFT_PASS = "arch_drift_pass"
+
+    # Extended gates
     PROVENANCE_COMPLETE = "provenance_complete"
     ENTITY_COVERAGE = "entity_coverage"
     TEST_PIN_ALIGNMENT = "test_pin_alignment"
+
+
+def _default_severity(gate_id: GateId) -> GateSeverity:
+    """Return the spec-level default severity for a gate."""
+    mapping: dict[GateId, GateSeverity] = {
+        GateId.NO_INLINED_ATOM_LOGIC: GateSeverity.BLOCKER,
+        GateId.FUNCTION_RECOMPOSITION: GateSeverity.BLOCKER,
+        GateId.PIN_CONSUMPTION_COVERAGE: GateSeverity.MAJOR,
+        GateId.EDGE_REALIZATION: GateSeverity.MAJOR,
+        GateId.NO_ORPHAN_COMPONENTS: GateSeverity.MAJOR,
+        GateId.EVENT_HANDLER_COVERAGE: GateSeverity.MAJOR,
+        GateId.CONFIG_EXTERNALIZATION: GateSeverity.MINOR,
+        GateId.ARCH_DRIFT_PASS: GateSeverity.MAJOR,
+        GateId.NO_REMAINING_COMMENTS: GateSeverity.BLOCKER,
+        GateId.NO_STUB_FUNCTIONS: GateSeverity.BLOCKER,
+        GateId.ALL_TESTS_PASS: GateSeverity.MAJOR,
+        GateId.CALL_GRAPH_CONNECTED: GateSeverity.MAJOR,
+        GateId.STORE_MONOGAMY: GateSeverity.MAJOR,
+        GateId.PIN_COVERAGE: GateSeverity.MAJOR,
+        GateId.INTRODUCED_ALGORITHM_SPECS: GateSeverity.MAJOR,
+        GateId.PROVENANCE_COMPLETE: GateSeverity.MAJOR,
+        GateId.ENTITY_COVERAGE: GateSeverity.MINOR,
+        GateId.TEST_PIN_ALIGNMENT: GateSeverity.MINOR,
+    }
+    return mapping.get(gate_id, GateSeverity.MAJOR)
+
+
+def _default_mode_from_severity(severity: GateSeverity) -> GateMode:
+    """Map spec severity to enforcement mode."""
+    if severity == GateSeverity.MINOR:
+        return GateMode.ADVISORY
+    return GateMode.REQUIRED
 
 
 @dataclass
@@ -44,6 +95,7 @@ class GateSpec:
 
     Attributes:
         gate_id: Which gate this configures.
+        severity: Spec-level severity classification.
         mode: Whether failure blocks or warns.
         threshold: Optional numeric threshold (e.g., 0.0 for zero-tolerance,
             0.95 for 95% coverage). Interpretation depends on the gate.
@@ -52,10 +104,17 @@ class GateSpec:
     """
 
     gate_id: GateId
-    mode: GateMode = GateMode.REQUIRED
+    severity: GateSeverity | None = None
+    mode: GateMode | None = None
     threshold: float = 0.0
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.severity is None:
+            self.severity = _default_severity(self.gate_id)
+        if self.mode is None:
+            self.mode = _default_mode_from_severity(self.severity)
 
 
 @dataclass
@@ -102,16 +161,15 @@ class PromotionGateConfig:
 
     @classmethod
     def default(cls) -> PromotionGateConfig:
-        """Create default configuration with all gates required."""
+        """Create default configuration with severity-driven defaults."""
         config = cls()
         for gate_id in GateId:
             config.gates[gate_id] = GateSpec(gate_id=gate_id)
-        # Tests and call graph connectivity are advisory by default
-        # (projects may not have tests or may have legitimately disconnected components)
+        # Tests and call graph connectivity are advisory by default.
         config.gates[GateId.ALL_TESTS_PASS].mode = GateMode.ADVISORY
         config.gates[GateId.CALL_GRAPH_CONNECTED].mode = GateMode.ADVISORY
-        # Entity coverage is advisory by default (new gate, not blocking)
+        # Entity coverage is advisory by default (new gate, not blocking).
         config.gates[GateId.ENTITY_COVERAGE].mode = GateMode.ADVISORY
-        # Test-pin alignment is advisory by default (early warning signal)
+        # Test-pin alignment is advisory by default (early warning signal).
         config.gates[GateId.TEST_PIN_ALIGNMENT].mode = GateMode.ADVISORY
         return config

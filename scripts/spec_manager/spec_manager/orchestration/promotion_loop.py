@@ -277,6 +277,7 @@ class SliceRef:
     layer: Layer = "l1"
     library_id: str = ""
     worktree_path: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
