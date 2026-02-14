@@ -148,6 +148,7 @@ class ImplementationRef:
     patch_path: str = ""
     result_path: str = ""
     applied_edits: list[dict[str, Any]] = field(default_factory=list)
+    gap_inventory: list[dict[str, Any]] = field(default_factory=list)
     pin_proposals: list[dict[str, Any]] = field(default_factory=list)
     edge_proposals: list[dict[str, Any]] = field(default_factory=list)
     under_spec_events: list[dict[str, Any]] = field(default_factory=list)

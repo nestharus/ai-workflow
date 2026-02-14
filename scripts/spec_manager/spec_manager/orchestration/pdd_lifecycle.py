@@ -49,6 +49,7 @@ Worktree support::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -62,6 +63,11 @@ if TYPE_CHECKING:
     from spec_manager.vcs.worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_text(content: str) -> str:
+    """Return stable SHA256 digest for content."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 # Maps each layer to its typed refinement method name.
@@ -1225,26 +1231,53 @@ class PddLifecycle:
             _strip_code_fences,
         )
 
-        code_files = self._gather_all_code()
+        evidence_rows = self._gather_latest_evidence()
+        if not evidence_rows:
+            code_files = self._gather_all_code()
+            if not code_files:
+                return {
+                    "note": (
+                        "No code found in spec_snapshot and no promotion "
+                        "evidence — skipping architectural refinement."
+                    )
+                }
+            evidence_rows = [
+                {
+                    "slice_id": rel_path,
+                    "layer": "l2",
+                    "file_hash": _hash_text(content),
+                    "manifest_file_count": 1,
+                    "open_gap_count": 0,
+                    "pin_count": 0,
+                    "edge_count": 0,
+                }
+                for rel_path, content in code_files.items()
+            ]
 
-        if not code_files:
-            return {"note": "No code found in spec_snapshot — skipping architectural refinement."}
-
-        lib_summaries: list[str] = []
-        for rel_path, content in code_files.items():
-            lib_summaries.append(f"## {rel_path}\n\n```python\n{content[:2000]}\n```")
+        evidence_section = []
+        for row in evidence_rows[:30]:
+            evidence_section.append(
+                "## Slice Evidence\n"
+                f"- slice_id: {row.get('slice_id', '')}\n"
+                f"- layer: {row.get('layer', '')}\n"
+                f"- file_hash: {row.get('file_hash', '')}\n"
+                f"- manifest_file_count: {row.get('manifest_file_count', 0)}\n"
+                f"- open_gap_count: {row.get('open_gap_count', 0)}\n"
+                f"- pin_count: {row.get('pin_count', 0)}\n"
+                f"- edge_count: {row.get('edge_count', 0)}\n"
+            )
 
         prompt = (
             "## TASK\n\n"
-            "Given the following code, propose 3-5 architecture candidates.\n"
+            "Given the following promotion evidence, propose 3-5 architecture candidates.\n"
             "For each candidate, describe: components, communication patterns,\n"
             "deployment model, and tradeoffs.\n\n"
-            "Also identify architectural issues in the current code that need fixing.\n"
+            "Also identify architectural issues indicated by the evidence that need fixing.\n"
             "For each issue, include: severity (BLOCKER/MAJOR/MINOR), file, description.\n\n"
             "Return JSON with keys:\n"
             "- 'candidates': array of architecture proposals\n"
             "- 'issues': array of architectural issues found\n\n"
-            + "\n\n---\n\n".join(lib_summaries)
+            + "\n\n---\n\n".join(evidence_section)
         )
 
         try:
@@ -1306,10 +1339,28 @@ class PddLifecycle:
             _strip_code_fences,
         )
 
-        all_specs = self._gather_all_code()
-
-        if not all_specs:
-            return {"note": "No code found in spec_snapshot — skipping code quality refinement."}
+        evidence_rows = self._gather_latest_evidence()
+        if not evidence_rows:
+            all_specs = self._gather_all_code()
+            if not all_specs:
+                return {
+                    "note": (
+                        "No code found in spec_snapshot and no promotion "
+                        "evidence — skipping code quality refinement."
+                    )
+                }
+            evidence_rows = [
+                {
+                    "slice_id": path,
+                    "layer": "l3",
+                    "file_hash": _hash_text(content),
+                    "manifest_file_count": 1,
+                    "open_gap_count": 0,
+                    "pin_count": 0,
+                    "edge_count": 0,
+                }
+                for path, content in all_specs.items()
+            ]
 
         reviewers = [
             "chatgpt-clarity-reviewer",
@@ -1320,15 +1371,16 @@ class PddLifecycle:
 
         all_findings: list[dict[str, Any]] = []
 
-        for file_path, code_content in all_specs.items():
+        for row in evidence_rows:
+            slice_id = row.get("slice_id", "")
             prompt = (
                 f"## TASK\n\n"
-                f"Review the following code for quality issues.\n"
+                f"Review the following promotion evidence for quality risks.\n"
                 f"For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
                 f"category (logic/architecture/style), and description.\n"
                 f"Return JSON with key 'findings' containing an array of issues.\n\n"
-                f"File: {file_path}\n\n"
-                f"```python\n{code_content[:4000]}\n```\n"
+                f"Evidence slice: {slice_id}\n\n"
+                f"Evidence:\n{json.dumps(row, indent=2)}\n"
             )
 
             for reviewer in reviewers:
@@ -1342,11 +1394,13 @@ class PddLifecycle:
                     data = json.loads(_extract_json_payload(cleaned))
                     findings = data.get("findings", [])
                     for finding in findings:
-                        finding["file"] = file_path
+                        finding["file"] = slice_id
                         finding["reviewer"] = reviewer
                     all_findings.extend(findings)
                 except Exception as exc:
-                    logger.warning("Reviewer %s failed for %s: %s", reviewer, file_path, exc)
+                    logger.warning(
+                        "Reviewer %s failed for evidence slice %s: %s", reviewer, slice_id, exc
+                    )
 
         # Write quality report
         self._write_run_report("code_quality_report.json", {"findings": all_findings})
@@ -1372,7 +1426,7 @@ class PddLifecycle:
             self._write_run_report("code_quality_demotion_tickets.json", tickets)
 
         return {
-            "files_reviewed": len(all_specs),
+            "files_reviewed": len(evidence_rows),
             "total_findings": len(all_findings),
             "report_path": "reports/code_quality_report.json",
             "demotion_tickets": len(tickets),
@@ -1411,10 +1465,27 @@ class PddLifecycle:
         findings: list[str] = []
 
         if check_artifacts:
-            # Verify evidence directories exist
-            slices_dir = run_dir / "slices"
-            if not slices_dir.exists() or not any(slices_dir.iterdir()):
+            bundle_paths = self._iter_bundle_paths()
+            if not bundle_paths:
                 findings.append("No evidence bundles found in slices directory")
+            else:
+                integrity_errors = 0
+                for bundle_path in bundle_paths:
+                    try:
+                        bundle_data = json.loads(bundle_path.read_text(encoding="utf-8"))
+                    except Exception as exc:
+                        findings.append(f"Unreadable evidence bundle: {bundle_path.name} ({exc})")
+                        integrity_errors += 1
+                        continue
+                    issues = self._bundle_integrity_issues(bundle_data)
+                    if issues:
+                        integrity_errors += 1
+                        parent_name = bundle_path.parent.name
+                        grandparent_name = bundle_path.parent.parent.name
+                        findings.append(f"{grandparent_name}/{parent_name}: {issues[0]}")
+                if integrity_errors > 0:
+                    findings.append(f"{integrity_errors} bundle(s) failed integrity checks")
+
             # Verify demotion ledger exists (it's OK if empty)
             demotions_dir = run_dir / "demotions"
             if not demotions_dir.exists():
@@ -1526,6 +1597,88 @@ class PddLifecycle:
         run_reports_dir = self.manager.structure.root / "reports" / "pdd" / self.manager.run_id
         run_reports_dir.mkdir(parents=True, exist_ok=True)
         (run_reports_dir / filename).write_text(content, encoding="utf-8")
+
+    def _iter_bundle_paths(self) -> list[Path]:
+        """List all per-iteration bundle.json artifacts for the active run."""
+        run_slices_dir = self.manager.workspace_path / ".pdd_runs" / self.manager.run_id / "slices"
+        if not run_slices_dir.exists():
+            return []
+        return sorted(run_slices_dir.glob("*/iter_*/bundle.json"))
+
+    def _bundle_integrity_issues(self, bundle_data: dict[str, Any]) -> list[str]:
+        """Return evidence integrity failures for one bundle payload."""
+        issues: list[str] = []
+        manifest_files = (bundle_data.get("manifest") or {}).get("files") or []
+        if not manifest_files:
+            issues.append("manifest.files missing")
+            return issues
+
+        for item in manifest_files:
+            if not item.get("path"):
+                issues.append("manifest file missing path")
+            if not item.get("sha256"):
+                issues.append("manifest file missing sha256")
+
+        material = "\n".join(
+            f"{item.get('path', '')}:{item.get('sha256', '')}"
+            for item in sorted(manifest_files, key=lambda x: x.get("path", ""))
+        )
+        expected_hash = _hash_text(material) if material else ""
+        diff_hash = (bundle_data.get("diff") or {}).get("content_hash") or ""
+        if expected_hash and diff_hash and expected_hash != diff_hash:
+            issues.append("diff.content_hash does not match manifest hash")
+
+        pins_snapshot = bundle_data.get("pins_snapshot") or {}
+        graph_snapshot = bundle_data.get("graph_snapshot") or {}
+        if not pins_snapshot.get("path"):
+            issues.append("pins_snapshot.path missing")
+        if not pins_snapshot.get("snapshot_hash"):
+            issues.append("pins_snapshot.snapshot_hash missing")
+        if not graph_snapshot.get("path"):
+            issues.append("graph_snapshot.path missing")
+        if not graph_snapshot.get("snapshot_hash"):
+            issues.append("graph_snapshot.snapshot_hash missing")
+
+        return issues
+
+    def _gather_latest_evidence(self) -> list[dict[str, Any]]:
+        """Load one latest bundle per slice and summarize key evidence fields."""
+        by_slice: dict[str, Path] = {}
+        for bundle_path in self._iter_bundle_paths():
+            slice_id = bundle_path.parent.parent.name
+            prev = by_slice.get(slice_id)
+            if prev is None or bundle_path.parent.name > prev.parent.name:
+                by_slice[slice_id] = bundle_path
+
+        rows: list[dict[str, Any]] = []
+        for slice_id, path in sorted(by_slice.items()):
+            try:
+                bundle_data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.debug("Skipping unreadable bundle %s: %s", path, exc)
+                continue
+
+            layer_hint = "l1"
+            if slice_id.startswith("arch-"):
+                layer_hint = "l2"
+            elif slice_id.startswith("cq-"):
+                layer_hint = "l3"
+            manifest_files = (bundle_data.get("manifest") or {}).get("files") or []
+            implementation = bundle_data.get("implementation") or {}
+            gaps = (bundle_data.get("gaps") or {}).get("open_gaps") or []
+            rows.append(
+                {
+                    "slice_id": slice_id,
+                    "layer": layer_hint,
+                    "file_hash": (bundle_data.get("diff") or {}).get("content_hash", ""),
+                    "manifest_file_count": len(manifest_files),
+                    "open_gap_count": len(gaps),
+                    "pin_count": len(implementation.get("pin_proposals") or []),
+                    "edge_count": len(implementation.get("edge_proposals") or []),
+                    "bundle_path": str(path),
+                }
+            )
+        return rows
 
     def _gather_library_content(self, lib_dir: Path) -> str:
         """Gather content for a library from its detail files.

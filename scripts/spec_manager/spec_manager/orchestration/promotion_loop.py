@@ -18,9 +18,7 @@ State machine (per slice)::
       ↓
     UNDER_SPEC_CHECK   (block-or-decide)
       ↓
-    ANALYZE            (P1 + P2 + analyze_source cache)
-      ↓
-    PROMOTE            (P4 + P5 + gates + RefinementEngine)
+    PROMOTE            (evidence integrity/completeness gates)
       ├─ if gates fail → DEMOTE → RESTART_ITER
       ↓
     INTEGRATE (CI)     (merge to parent + tick pipeline)
@@ -44,6 +42,8 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +54,67 @@ from spec_manager.orchestration.evidence import EvidenceBundle
 from spec_manager.orchestration.models import Layer
 
 logger = logging.getLogger(__name__)
+
+
+_SCAN_FALLBACK_KEY = "enable_gap_scanner_fallback"
+
+
+def _hash_bytes(content: bytes) -> str:
+    """Return stable SHA256 hex digest for content."""
+    return hashlib.sha256(content).hexdigest()
+
+
+def _hash_text(content: str) -> str:
+    """Return stable SHA256 hex digest for text."""
+    return _hash_bytes(content.encode("utf-8"))
+
+
+def _safe_rel(path: Path, root: Path) -> str:
+    """Return path relative to root, or best-effort fallback."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _location_span(
+    *,
+    start_line: Any = None,
+    end_line: Any = None,
+    start_col: Any = None,
+    end_col: Any = None,
+) -> dict[str, int]:
+    """Normalize location payload into an explicit span dict."""
+    span: dict[str, int] = {}
+    if isinstance(start_line, int) and start_line > 0:
+        span["start_line"] = start_line
+    if isinstance(end_line, int) and end_line > 0:
+        span["end_line"] = end_line
+    elif "start_line" in span:
+        span["end_line"] = span["start_line"]
+    if isinstance(start_col, int) and start_col >= 0:
+        span["start_col"] = start_col
+    if isinstance(end_col, int) and end_col >= 0:
+        span["end_col"] = end_col
+    return span
+
+
+def _normalize_gap_record(gap: dict[str, Any]) -> dict[str, Any]:
+    """Ensure every gap has explicit location/span metadata."""
+    location = gap.get("location", {}) or {}
+    span = gap.get("span", {}) or {}
+    normalized_span = _location_span(
+        start_line=span.get("start_line") or location.get("start_line"),
+        end_line=span.get("end_line") or location.get("end_line"),
+        start_col=span.get("start_col") or location.get("start_col"),
+        end_col=span.get("end_col") or location.get("end_col"),
+    )
+    file_path = gap.get("file", "") or location.get("file", "")
+    merged = dict(gap)
+    merged["file"] = file_path
+    merged["span"] = normalized_span
+    merged["location"] = {"file": file_path, **normalized_span}
+    return merged
 
 
 # ------------------------------------------------------------------
@@ -157,17 +218,35 @@ class CollectBaselineStep:
         if not slice_root.exists():
             return StepResult(status="FAIL", error=f"Slice root does not exist: {ctx.slice_root}")
 
-        # Collect manifest: list all source files + hashes
-        files = []
+        # Collect manifest: list all source files with content hashes.
+        files: list[dict[str, Any]] = []
         for p in sorted(slice_root.rglob("*")):
             if p.is_file() and not any(part.startswith(".") for part in p.parts):
-                files.append({"path": str(p.relative_to(slice_root))})
+                try:
+                    raw = p.read_bytes()
+                except OSError as exc:
+                    logger.debug("Baseline skip unreadable file %s: %s", p, exc)
+                    continue
+                rel_path = _safe_rel(p, slice_root)
+                files.append(
+                    {
+                        "path": rel_path,
+                        "sha256": _hash_bytes(raw),
+                        "size_bytes": len(raw),
+                    }
+                )
+
+        manifest_hash_input = "\n".join(
+            f"{f['path']}:{f.get('sha256', '')}" for f in sorted(files, key=lambda x: x["path"])
+        )
+        manifest_hash = _hash_text(manifest_hash_input) if files else ""
 
         bundle.manifest = ManifestRef(files=files)
         bundle.diff = DiffRef(
             base_commit=bundle.diff.base_commit,
-            head_commit="",
-            changed_files=[],
+            head_commit=manifest_hash,
+            changed_files=[f["path"] for f in files],
+            content_hash=manifest_hash,
         )
 
         # Save bundle
@@ -196,15 +275,61 @@ class GapExplorationStep:
             return self._explore_l3(ctx, bundle)
         return StepResult(status="OK")
 
+    @staticmethod
+    def _reuse_previous_gaps_if_fresh(
+        ctx: SliceContext, bundle: EvidenceBundle
+    ) -> list[dict[str, Any]] | None:
+        """Reuse previous iteration gaps if file hash is unchanged."""
+        if bundle.iteration <= 1:
+            return None
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        prev_bundle_path = (
+            workspace
+            / ".pdd_runs"
+            / bundle.run_id
+            / "slices"
+            / bundle.slice_id
+            / f"iter_{bundle.iteration - 1:03d}"
+            / "bundle.json"
+        )
+        if not prev_bundle_path.exists():
+            return None
+
+        try:
+            prev = EvidenceBundle.load(prev_bundle_path)
+        except Exception as exc:
+            logger.debug(
+                "Could not load previous bundle for gap reuse %s: %s", prev_bundle_path, exc
+            )
+            return None
+
+        if prev.diff.content_hash and prev.diff.content_hash == bundle.diff.content_hash:
+            return [dict(g) for g in (prev.gaps.open_gaps or [])]
+        return None
+
+    @staticmethod
+    def _normalize_gap(gap: dict[str, Any]) -> dict[str, Any]:
+        """Normalize prior gap evidence to span/location schema."""
+        return _normalize_gap_record(gap)
+
     def _explore_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L1: scan for spec comments and stub functions."""
+        """L1: prefer promotion evidence; scanner is fallback only."""
         from spec_manager.orchestration.evidence import GapReportRef
+
+        reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
+        if reused is not None:
+            bundle.gaps = GapReportRef(open_gaps=[self._normalize_gap(g) for g in reused])
+            return StepResult(status="OK")
+
+        allow_scan_fallback = bool(ctx.config.get(_SCAN_FALLBACK_KEY, False))
+        if not allow_scan_fallback:
+            bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
 
         slice_root = Path(ctx.slice_root)
         from spec_manager.core.language import source_rglob
 
         py_files = source_rglob(slice_root)
-
         if not py_files:
             bundle.gaps = GapReportRef(open_gaps=[])
             return StepResult(status="OK")
@@ -221,21 +346,30 @@ class GapExplorationStep:
                 config=ScanConfig(enable_comments=True, enable_stubs=True),
             )
 
-            gaps = []
+            gaps: list[dict[str, Any]] = []
             for ev in report.all_evidence:
+                span = _location_span(
+                    start_line=getattr(ev, "line_start", None) or getattr(ev, "start_line", None),
+                    end_line=getattr(ev, "line_end", None) or getattr(ev, "end_line", None),
+                    start_col=getattr(ev, "col_start", None) or getattr(ev, "start_col", None),
+                    end_col=getattr(ev, "col_end", None) or getattr(ev, "end_col", None),
+                )
+                location_file = getattr(ev, "location", "") or ""
                 gaps.append(
                     {
-                        "file": ev.location or "",
-                        "description": ev.description,
-                        "kind": ev.invariant_family,
+                        "file": location_file,
+                        "description": getattr(ev, "description", ""),
+                        "kind": getattr(ev, "invariant_family", "gap"),
+                        "span": span,
+                        "location": {"file": location_file, **span},
                     }
                 )
 
             bundle.gaps = GapReportRef(open_gaps=gaps)
         except Exception as exc:
-            logger.warning("L1 gap exploration failed: %s", exc, exc_info=True)
+            logger.warning("L1 fallback gap exploration failed: %s", exc, exc_info=True)
             bundle.gaps = GapReportRef(open_gaps=[])
-            return StepResult(status="RETRY", error=f"L1 gap exploration failed: {exc}")
+            return StepResult(status="RETRY", error=f"L1 fallback gap exploration failed: {exc}")
 
         return StepResult(status="OK")
 
@@ -256,6 +390,11 @@ class GapExplorationStep:
 
         if not slice_root or not slice_root.exists():
             bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
+
+        reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
+        if reused is not None:
+            bundle.gaps = GapReportRef(open_gaps=[self._normalize_gap(g) for g in reused])
             return StepResult(status="OK")
 
         # Gather code summaries from slice for LLM analysis
@@ -334,19 +473,29 @@ class GapExplorationStep:
                 data = json.loads(_extract_json_payload(cleaned))
 
                 for finding in data.get("findings", []):
+                    location = finding.get("location", {}) or {}
+                    span = _location_span(
+                        start_line=location.get("start_line"),
+                        end_line=location.get("end_line"),
+                        start_col=location.get("start_col"),
+                        end_col=location.get("end_col"),
+                    )
+                    file_path = location.get("file", "")
                     all_gaps.append(
                         {
                             "kind": f"l2_{dimension.lower()}_finding",
                             "reviewer": reviewer_name,
                             "dimension": dimension,
-                            "component_id": finding.get("location", {}).get("symbol", ""),
-                            "file": finding.get("location", {}).get("file", ""),
+                            "component_id": location.get("symbol", ""),
+                            "file": file_path,
                             "description": finding.get("evidence", ""),
                             "severity": finding.get("severity", "MINOR"),
                             "required_change_type": finding.get(
                                 "required_change_type", "wiring_only"
                             ),
                             "suggested_fix": finding.get("suggested_fix", ""),
+                            "span": span,
+                            "location": {"file": file_path, **span},
                         }
                     )
             except Exception as exc:
@@ -371,6 +520,11 @@ class GapExplorationStep:
 
         if not slice_root or not slice_root.exists():
             bundle.gaps = GapReportRef(open_gaps=[])
+            return StepResult(status="OK")
+
+        reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
+        if reused is not None:
+            bundle.gaps = GapReportRef(open_gaps=[self._normalize_gap(g) for g in reused])
             return StepResult(status="OK")
 
         # Gather code from slice — L3 slices are per-file (cq-{stem}),
@@ -449,6 +603,13 @@ class GapExplorationStep:
                     data = json.loads(_extract_json_payload(cleaned))
 
                     for finding in data.get("findings", []):
+                        location = finding.get("location", {}) or {}
+                        span = _location_span(
+                            start_line=location.get("start_line"),
+                            end_line=location.get("end_line"),
+                            start_col=location.get("start_col"),
+                            end_col=location.get("end_col"),
+                        )
                         all_gaps.append(
                             {
                                 "kind": "quality_finding",
@@ -460,6 +621,8 @@ class GapExplorationStep:
                                 "required_change_type": finding.get(
                                     "required_change_type", "refactor_only"
                                 ),
+                                "span": span,
+                                "location": {"file": file_path, **span},
                             }
                         )
                 except Exception as exc:
@@ -624,7 +787,7 @@ class ImplementStep:
     name = "IMPLEMENT"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Dispatch to layer-specific implementation."""
+        """Dispatch to layer-specific implementation and emit evidence atomically."""
         from spec_manager.orchestration.evidence import ImplementationRef
 
         # L1 runs even without intentions (uses gaps directly).
@@ -638,14 +801,244 @@ class ImplementStep:
             bundle.implementation = ImplementationRef()
             return StepResult(status="OK")
 
+        result: StepResult
         if ctx.layer == "l1":
-            return self._implement_l1(ctx, bundle, slice_root)
-        if ctx.layer == "l2":
-            return self._implement_l2(ctx, bundle, slice_root)
-        if ctx.layer == "l3":
-            return self._implement_l3(ctx, bundle, slice_root)
+            result = self._implement_l1(ctx, bundle, slice_root)
+        elif ctx.layer == "l2":
+            result = self._implement_l2(ctx, bundle, slice_root)
+        elif ctx.layer == "l3":
+            result = self._implement_l3(ctx, bundle, slice_root)
+        else:
+            result = StepResult(status="OK")
 
-        return StepResult(status="OK")
+        if result.status != "OK":
+            return result
+
+        try:
+            self._emit_transactional_evidence(ctx, bundle, slice_root)
+        except Exception as exc:
+            logger.warning("Failed to emit transactional evidence: %s", exc, exc_info=True)
+            return StepResult(
+                status="RETRY",
+                notes_path=result.notes_path,
+                error=f"Implementation evidence emission failed: {exc}",
+            )
+
+        return result
+
+    @staticmethod
+    def _collect_slice_hashes(slice_root: Path) -> list[dict[str, Any]]:
+        """Collect hash evidence for all non-hidden files in the slice."""
+        files: list[dict[str, Any]] = []
+        for file_path in sorted(slice_root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            if any(part.startswith(".") for part in file_path.parts):
+                continue
+            try:
+                raw = file_path.read_bytes()
+            except OSError as exc:
+                logger.debug("Skipping unreadable file for hash evidence %s: %s", file_path, exc)
+                continue
+            rel = _safe_rel(file_path, slice_root)
+            files.append(
+                {
+                    "path": rel,
+                    "sha256": _hash_bytes(raw),
+                    "size_bytes": len(raw),
+                }
+            )
+        return files
+
+    @staticmethod
+    def _canonical_edge_signal(signal_type: Any) -> str:
+        """Map implementation-specific edge types to evidence graph contract."""
+        if not isinstance(signal_type, str):
+            return "REFERENCE"
+        signal = signal_type.upper()
+        if signal in {"CALL"}:
+            return "CALL"
+        if signal in {"STORE_TOUCH"}:
+            return "STORE_TOUCH"
+        if signal in {"EVENT_EMIT", "EVENT_HANDLE", "EVENT"}:
+            return "EVENT"
+        return "REFERENCE"
+
+    @staticmethod
+    def _normalize_gap(gap: dict[str, Any]) -> dict[str, Any]:
+        """Ensure every gap has explicit location span metadata."""
+        location = gap.get("location", {}) or {}
+        span = gap.get("span", {}) or {}
+        normalized_span = _location_span(
+            start_line=span.get("start_line") or location.get("start_line"),
+            end_line=span.get("end_line") or location.get("end_line"),
+            start_col=span.get("start_col") or location.get("start_col"),
+            end_col=span.get("end_col") or location.get("end_col"),
+        )
+        file_path = gap.get("file", "") or location.get("file", "")
+        merged = dict(gap)
+        merged["file"] = file_path
+        merged["span"] = normalized_span
+        merged["location"] = {"file": file_path, **normalized_span}
+        return merged
+
+    @staticmethod
+    def _gaps_from_under_spec_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Project under-spec events into gap inventory records."""
+        gaps: list[dict[str, Any]] = []
+        for event in events:
+            span = _location_span(
+                start_line=(event.get("span") or {}).get("start_line"),
+                end_line=(event.get("span") or {}).get("end_line"),
+                start_col=(event.get("span") or {}).get("start_col"),
+                end_col=(event.get("span") or {}).get("end_col"),
+            )
+            file_path = event.get("file", "") or event.get("context", "")
+            gaps.append(
+                {
+                    "kind": "ambiguity_gap",
+                    "file": file_path,
+                    "description": event.get("question", "Under-specification event"),
+                    "severity": "BLOCKER",
+                    "required_change_type": "spec_change",
+                    "span": span,
+                    "location": {"file": file_path, **span},
+                }
+            )
+        return gaps
+
+    def _emit_transactional_evidence(
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        slice_root: Path,
+    ) -> None:
+        """Emit code+evidence artifacts as one promotion transaction."""
+        from spec_manager.orchestration.evidence import GraphDeltaRef
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        iteration_dir = bundle.iter_dir(workspace)
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+
+        file_hashes = self._collect_slice_hashes(slice_root)
+        manifest_hash_input = "\n".join(
+            f"{f['path']}:{f.get('sha256', '')}"
+            for f in sorted(file_hashes, key=lambda x: x["path"])
+        )
+        manifest_hash = _hash_text(manifest_hash_input) if file_hashes else ""
+
+        # Update manifest/diff to prove evidence aligns with exact file text.
+        bundle.manifest.files = file_hashes
+        bundle.diff.changed_files = [f["path"] for f in file_hashes]
+        bundle.diff.content_hash = manifest_hash
+        bundle.diff.head_commit = manifest_hash
+
+        file_hash_path = iteration_dir / "file_hashes.json"
+        file_hash_path.write_text(json.dumps(file_hashes, indent=2), encoding="utf-8")
+        bundle.manifest.path = file_hash_path.name
+
+        pin_deltas = bundle.implementation.pin_proposals or []
+        edge_deltas = bundle.implementation.edge_proposals or []
+
+        graph_deltas: list[GraphDeltaRef] = []
+        if pin_deltas:
+            pin_delta_path = iteration_dir / "pins.delta.json"
+            pin_delta_path.write_text(json.dumps(pin_deltas, indent=2), encoding="utf-8")
+            graph_deltas.append(
+                GraphDeltaRef(
+                    path=pin_delta_path.name,
+                    delta_type="pin_proposal",
+                    produced_by=self.name,
+                )
+            )
+        if edge_deltas:
+            canonical_edges = []
+            for edge in edge_deltas:
+                canonical_edges.append(
+                    {
+                        "src": edge.get("src", ""),
+                        "dst": edge.get("dst", ""),
+                        "signal_type": self._canonical_edge_signal(edge.get("signal_type")),
+                        "weight": edge.get("weight", 0.7),
+                    }
+                )
+            edge_delta_path = iteration_dir / "graph.delta.json"
+            edge_delta_path.write_text(json.dumps(canonical_edges, indent=2), encoding="utf-8")
+            graph_deltas.append(
+                GraphDeltaRef(
+                    path=edge_delta_path.name,
+                    delta_type="edge_proposal",
+                    produced_by=self.name,
+                )
+            )
+        bundle.graph_deltas = graph_deltas
+
+        pins_payload = {
+            "schema_version": "1",
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "file_hash": manifest_hash,
+            "pins": pin_deltas,
+        }
+        pins_payload_json = json.dumps(pins_payload, indent=2)
+        pins_path = iteration_dir / "pins.snapshot.json"
+        pins_path.write_text(pins_payload_json, encoding="utf-8")
+        bundle.pins_snapshot.path = pins_path.name
+        bundle.pins_snapshot.schema_version = pins_payload["schema_version"]
+        bundle.pins_snapshot.snapshot_hash = _hash_text(pins_payload_json)
+
+        graph_payload = {
+            "schema_version": "1",
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "file_hash": manifest_hash,
+            "edges": [
+                {
+                    "src": edge.get("src", ""),
+                    "dst": edge.get("dst", ""),
+                    "signal_type": self._canonical_edge_signal(edge.get("signal_type")),
+                    "weight": edge.get("weight", 0.7),
+                }
+                for edge in edge_deltas
+            ],
+        }
+        graph_payload_json = json.dumps(graph_payload, indent=2)
+        graph_path = iteration_dir / "graph.snapshot.json"
+        graph_path.write_text(graph_payload_json, encoding="utf-8")
+        bundle.graph_snapshot.path = graph_path.name
+        bundle.graph_snapshot.schema_version = graph_payload["schema_version"]
+        bundle.graph_snapshot.snapshot_hash = _hash_text(graph_payload_json)
+
+        explicit_gaps = [
+            self._normalize_gap(g)
+            for g in (bundle.implementation.gap_inventory or [])
+            if isinstance(g, dict)
+        ]
+        event_gaps = self._gaps_from_under_spec_events(
+            bundle.implementation.under_spec_events or []
+        )
+        if explicit_gaps or event_gaps:
+            gap_inventory = explicit_gaps + event_gaps
+        else:
+            gap_inventory = [self._normalize_gap(g) for g in bundle.gaps.open_gaps]
+        gap_path = iteration_dir / "gap_inventory.json"
+        gap_path.write_text(json.dumps(gap_inventory, indent=2), encoding="utf-8")
+        bundle.gaps.path = gap_path.name
+        bundle.gaps.open_gaps = gap_inventory
+
+        receipt = {
+            "transaction": "code_plus_evidence",
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "file_hash": manifest_hash,
+            "pins_snapshot": bundle.pins_snapshot.path,
+            "graph_snapshot": bundle.graph_snapshot.path,
+            "gap_inventory": bundle.gaps.path,
+            "graph_delta_count": len(bundle.graph_deltas),
+        }
+        receipt_path = iteration_dir / "promotion.receipt.json"
+        receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+        bundle.promotion.path = receipt_path.name
 
     def _implement_l1(
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
@@ -673,9 +1066,40 @@ class ImplementStep:
                 gap_report=bundle.gaps.open_gaps,
             )
 
+            gap_inventory = self._gaps_from_under_spec_events(run_result.under_spec_events)
+            if run_result.functions_skipped > 0:
+                gap_inventory.append(
+                    {
+                        "kind": "stub_gap",
+                        "file": "",
+                        "description": (
+                            f"{run_result.functions_skipped} function(s) were skipped during "
+                            "implementation and need follow-up."
+                        ),
+                        "severity": "MAJOR",
+                        "required_change_type": "behavior_change",
+                        "span": {},
+                        "location": {"file": ""},
+                    }
+                )
+            for err in run_result.errors:
+                file_path = err.get("file", "")
+                gap_inventory.append(
+                    {
+                        "kind": "ambiguity_gap",
+                        "file": file_path,
+                        "description": err.get("error", "Implementation error"),
+                        "severity": "BLOCKER",
+                        "required_change_type": "spec_change",
+                        "span": {},
+                        "location": {"file": file_path},
+                    }
+                )
+
             bundle.implementation = ImplementationRef(
                 patch_path=run_result.patch_path,
                 applied_edits=run_result.applied_edits,
+                gap_inventory=gap_inventory,
                 pin_proposals=run_result.pin_proposals,
                 edge_proposals=run_result.edge_proposals,
                 under_spec_events=run_result.under_spec_events,
@@ -727,8 +1151,14 @@ class ImplementStep:
             "- Refactor wiring to satisfy boundaries\n\n"
             "CONSTRAINT: Do NOT invent business logic. If the gap requires new logic,\n"
             "return it as an under_spec_event instead of implementing it.\n\n"
-            'Return JSON: {"edits": [{"file": ..., "description": ...}], '
-            '"under_spec_events": [{"question": ..., "context": ...}]}\n\n'
+            "Return JSON with keys:\n"
+            '- "edits": [{"file": ..., "description": ...}]\n'
+            '- "pin_proposals": [{"pin_id": ..., "fqn": ..., "file": ..., "span": {...}}]\n'
+            '- "edge_proposals": [{"src": ..., "dst": ..., '
+            '"signal_type": "CALL"|"STORE_TOUCH"|"EVENT"|"REFERENCE"}]\n'
+            '- "gap_inventory": [{"kind": "stub_gap"|"comment_gap"|"ambiguity_gap", "file": ..., '
+            '"description": ..., "span": {"start_line": N, "end_line": N}}]\n'
+            '- "under_spec_events": [{"question": ..., "context": ...}]\n\n'
             f"## PLAN\n{intentions_text}\n\n"
             "## CURRENT CODE\n\n" + "\n\n".join(code_summaries[:10])
         )
@@ -746,8 +1176,15 @@ class ImplementStep:
             cleaned = _strip_code_fences(output)
             data = json.loads(_extract_json_payload(cleaned))
 
+            gap_inventory = [self._normalize_gap(g) for g in data.get("gap_inventory", [])]
+            gap_inventory.extend(
+                self._gaps_from_under_spec_events(data.get("under_spec_events", []))
+            )
             bundle.implementation = ImplementationRef(
                 applied_edits=data.get("edits", []),
+                gap_inventory=gap_inventory,
+                pin_proposals=data.get("pin_proposals", []),
+                edge_proposals=data.get("edge_proposals", []),
                 under_spec_events=data.get("under_spec_events", []),
             )
 
@@ -802,8 +1239,14 @@ class ImplementStep:
             "resolve quality findings.\n\n"
             "CONSTRAINT: Do NOT change behavior. All refactors must be behavior-preserving.\n"
             "If a finding requires a logic change, return it as a demotion_needed item.\n\n"
-            'Return JSON: {"edits": [{"file": ..., "description": ...}], '
-            '"demotion_needed": [{"file": ..., "reason": ..., "target_layer": "L1"|"L2"}]}\n\n'
+            "Return JSON with keys:\n"
+            '- "edits": [{"file": ..., "description": ...}]\n'
+            '- "pin_proposals": [{"pin_id": ..., "fqn": ..., "file": ..., "span": {...}}]\n'
+            '- "edge_proposals": [{"src": ..., "dst": ..., '
+            '"signal_type": "CALL"|"STORE_TOUCH"|"EVENT"|"REFERENCE"}]\n'
+            '- "gap_inventory": [{"kind": "stub_gap"|"comment_gap"|"ambiguity_gap", "file": ..., '
+            '"description": ..., "span": {"start_line": N, "end_line": N}}]\n'
+            '- "demotion_needed": [{"file": ..., "reason": ..., "target_layer": "L1"|"L2"}]\n\n'
             f"## REFACTOR PLAN\n{intentions_text}\n\n"
             f"## FINDINGS TO ADDRESS\n{gaps_text}\n\n"
             "## CURRENT CODE\n\n" + "\n\n".join(code_summaries[:10])
@@ -827,14 +1270,21 @@ class ImplementStep:
             for d in data.get("demotion_needed", []):
                 under_spec.append(
                     {
+                        "kind": "NEEDS_PRODUCT_DECISION",
+                        "file": d.get("file", ""),
                         "question": f"Logic change required: {d.get('reason', '')}",
                         "context": d.get("file", ""),
                         "demotion_target": d.get("target_layer", "L1"),
                     }
                 )
 
+            gap_inventory = [self._normalize_gap(g) for g in data.get("gap_inventory", [])]
+            gap_inventory.extend(self._gaps_from_under_spec_events(under_spec))
             bundle.implementation = ImplementationRef(
                 applied_edits=data.get("edits", []),
+                gap_inventory=gap_inventory,
+                pin_proposals=data.get("pin_proposals", []),
+                edge_proposals=data.get("edge_proposals", []),
                 under_spec_events=under_spec,
             )
 
@@ -1187,234 +1637,156 @@ class AnalyzeStep:
 
 
 class PromoteStep:
-    """Run compliance gates — layer-aware.
+    """Run evidence-first compliance gates.
 
-    - L1: P4 + P5 + algorithmic/architectural gates via LayerPromotionGate
-    - L2: 8 architecture gates (NO_INLINED_ATOM_LOGIC, FUNCTION_RECOMPOSITION,
-      PIN_CONSUMPTION_COVERAGE, EDGE_REALIZATION, NO_ORPHAN_COMPONENTS,
-      EVENT_HANDLER_COVERAGE, CONFIG_EXTERNALIZATION, ARCH_DRIFT_PASS)
-    - L3: 5 code quality gates (ALL_QUALITY_REVIEWERS_PASS, NO_LOGIC_CHANGE,
-      NO_ARCH_BOUNDARY_VIOLATIONS, DRIFT_PASS, TESTS_PASS) + re-run reviewers
-
-    On failure:
-    - L1: DemotionTicket → L1
-    - L2: wiring-only fix → retry L2; needs new atom logic → demote to L1
-    - L3: refactor-only → retry L3; logic-affecting → demote to L1;
-      boundary-affecting → demote to L2
+    Promotion gates validate consistency and completeness of emitted evidence:
+    file hashes, gap spans, pin/graph snapshots, and graph delta signal types.
+    They do not re-evaluate source code directly on the normal path.
     """
 
     name = "PROMOTE"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Dispatch to layer-specific promotion gates."""
-        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
-
-        if not slice_root or not slice_root.exists():
+        has_evidence = bool(
+            bundle.manifest.files
+            or bundle.implementation.applied_edits
+            or bundle.implementation.pin_proposals
+            or bundle.implementation.edge_proposals
+            or bundle.gaps.open_gaps
+        )
+        if not has_evidence:
             return StepResult(status="OK")
 
         if ctx.layer == "l1":
-            return self._promote_l1(ctx, bundle, slice_root)
+            return self._promote_l1(ctx, bundle)
         if ctx.layer == "l2":
-            return self._promote_l2(ctx, bundle, slice_root)
+            return self._promote_l2(ctx, bundle)
         if ctx.layer == "l3":
-            return self._promote_l3(ctx, bundle, slice_root)
+            return self._promote_l3(ctx, bundle)
 
         return StepResult(status="OK")
 
-    def _promote_l1(
-        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
-    ) -> StepResult:
-        """L1: pin scan + compliance gates via LayerPromotionGate."""
-        pin_proposals = bundle.implementation.pin_proposals
-        edge_proposals = bundle.implementation.edge_proposals
-        registry = None
+    @staticmethod
+    def _expected_manifest_hash(bundle: EvidenceBundle) -> str:
+        """Compute stable manifest hash from manifest entries."""
+        if not bundle.manifest.files:
+            return ""
+        material = "\n".join(
+            f"{item.get('path', '')}:{item.get('sha256', '')}"
+            for item in sorted(bundle.manifest.files, key=lambda x: x.get("path", ""))
+        )
+        return _hash_text(material) if material else ""
 
-        try:
-            from spec_manager.pin_functions.orchestrator import (
-                PinFunctionOrchestrator,
-            )
+    def _validate_hash_consistency(self, bundle: EvidenceBundle) -> list[str]:
+        """Validate that evidence references match manifest hash state."""
+        failures: list[str] = []
+        if not bundle.manifest.files:
+            failures.append("Manifest missing files/hash entries")
+            return failures
 
-            orchestrator = PinFunctionOrchestrator(project_root=slice_root)
-            mode = "both" if (pin_proposals or edge_proposals) else "scan"
-            registry = orchestrator.scan(
-                mode=mode,
-                pin_proposals=pin_proposals,
-                edge_proposals=edge_proposals,
-            )
-            bundle.pins_snapshot.path = "pins.snapshot.json"
-            bundle.pins_snapshot.schema_version = registry.schema_version
+        expected = self._expected_manifest_hash(bundle)
+        if not expected:
+            failures.append("Manifest hash could not be computed")
+            return failures
 
-        except Exception as exc:
-            logger.warning("Pin function scan failed: %s", exc)
+        recorded = bundle.diff.content_hash
+        if recorded and recorded != expected:
+            failures.append("Diff content hash does not match manifest hash")
 
-        try:
-            from spec_manager.compliance.promotion.config import PromotionGateConfig
-            from spec_manager.compliance.promotion.evidence_loader import (
-                load_analyzed_files,
-            )
-            from spec_manager.compliance.promotion.orchestrator import (
-                LayerPromotionGate,
-            )
-            from spec_manager.orchestration.source_analysis_cache import (
-                SourceAnalysisCache,
-            )
+        if not bundle.pins_snapshot.path:
+            failures.append("Pin snapshot artifact missing")
+        if not bundle.pins_snapshot.snapshot_hash:
+            failures.append("Pin snapshot hash missing")
 
-            config = PromotionGateConfig.default()
-            config.project_root = str(slice_root)
+        if not bundle.graph_snapshot.path:
+            failures.append("Graph snapshot artifact missing")
+        if not bundle.graph_snapshot.snapshot_hash:
+            failures.append("Graph snapshot hash missing")
 
-            workspace = Path(ctx.workspace_root) if ctx.workspace_root else slice_root
-            cache = SourceAnalysisCache(workspace_root=workspace, run_id=ctx.run_id)
+        return failures
 
-            algo_files = self._resolve_files(config.algorithmic_roots, slice_root)
-            arch_files = self._resolve_files(config.architectural_roots, slice_root)
-            algo_analyzed = load_analyzed_files(algo_files, source_cache=cache)
-            arch_analyzed = load_analyzed_files(arch_files, source_cache=cache)
+    @staticmethod
+    def _validate_gap_spans(bundle: EvidenceBundle) -> list[str]:
+        """Ensure each open gap carries explicit location/span metadata."""
+        failures: list[str] = []
+        for idx, gap in enumerate(bundle.gaps.open_gaps):
+            if not isinstance(gap, dict):
+                failures.append(f"Gap {idx} is not a dict record")
+                continue
+            span = gap.get("span", {}) or {}
+            location = gap.get("location", {}) or {}
+            if not isinstance(span, dict) or not isinstance(location, dict):
+                failures.append(f"Gap {idx} has malformed span/location")
+                continue
+            if "file" not in location:
+                failures.append(f"Gap {idx} missing location.file")
+        return failures
 
-            gate = LayerPromotionGate(
-                config,
-                pin_registry=registry,
-                algorithmic_analyzed=algo_analyzed,
-                architectural_analyzed=arch_analyzed,
-            )
-            report = gate.run_all_checks()
+    def _validate_graph_evidence(self, bundle: EvidenceBundle) -> list[str]:
+        """Validate graph delta/snapshot consistency and signal taxonomy."""
+        failures: list[str] = []
+        allowed = {"CALL", "STORE_TOUCH", "EVENT", "REFERENCE"}
 
-            gates_data = []
-            for gr in report.gate_results:
-                gates_data.append(
-                    {
-                        "gate_id": gr.gate_id,
-                        "passed": gr.passed,
-                        "summary": gr.summary,
-                    }
-                )
-            bundle.gates.gates = gates_data
+        if bundle.implementation.edge_proposals and not bundle.graph_deltas:
+            failures.append("Edge proposals exist but graph delta artifacts are missing")
 
-            if not report.passed:
-                first_gate = report.blockers[0].gate_id if report.blockers else None
-                ticket = DemotionTicket(
-                    run_id=ctx.run_id,
-                    slice_id=ctx.slice_id,
-                    source="GATE_FAILURE",
-                    gate=first_gate,
-                    target_layer="L1",
-                    severity="BLOCKER",
-                    diagnosis=f"Gates failed: {[b.summary for b in report.blockers]}",
-                )
-                return StepResult(
-                    status="RETRY",
-                    emitted_tickets=[ticket],
-                    error="Promotion gates failed",
-                )
+        for edge in bundle.implementation.edge_proposals or []:
+            signal = self._canonical_edge_signal(edge.get("signal_type"))
+            if signal not in allowed:
+                failures.append(f"Unsupported edge signal type: {edge.get('signal_type')}")
 
-        except Exception as exc:
-            logger.warning("L1 promotion gates failed: %s", exc)
-            return StepResult(
-                status="RETRY",
-                emitted_tickets=[
-                    DemotionTicket(
-                        run_id=ctx.run_id,
-                        slice_id=ctx.slice_id,
-                        source="GATE_FAILURE",
-                        gate="L1_GATE_ERROR",
-                        target_layer="L1",
-                        severity="BLOCKER",
-                        diagnosis=f"L1 gate evaluation failed: {exc}",
-                    )
-                ],
-                error=f"L1 gate error: {exc}",
-            )
+        for delta in bundle.graph_deltas or []:
+            if not delta.path:
+                failures.append("Graph delta missing artifact path")
+            if delta.delta_type not in {"pin_proposal", "edge_proposal", "merge"}:
+                failures.append(f"Unknown graph delta type: {delta.delta_type}")
 
-        return StepResult(status="OK")
+        return failures
 
-    def _promote_l2(
-        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
-    ) -> StepResult:
-        """L2: architecture compliance gates via LLM evaluation."""
-        import json
+    @staticmethod
+    def _to_gate(
+        gate_id: str, passed: bool, summary: str, required_change_type: str
+    ) -> dict[str, Any]:
+        """Build a gate entry for EvidenceBundle gates report."""
+        return {
+            "gate_id": gate_id,
+            "passed": passed,
+            "summary": summary,
+            "required_change_type": required_change_type,
+        }
 
-        from spec_manager.core.language import source_rglob
+    def _promote_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L1: verify evidence transaction integrity."""
+        failures = self._validate_hash_consistency(bundle)
+        failures.extend(self._validate_gap_spans(bundle))
+        failures.extend(self._validate_graph_evidence(bundle))
 
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
-
-        # Gather code for gate evaluation
-        code_summaries: list[str] = []
-        for py_file in source_rglob(slice_root):
-            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
-                try:
-                    content = py_file.read_text(encoding="utf-8")
-                    code_summaries.append(
-                        f"### {py_file.relative_to(slice_root)}\n```\n" + content[:1500] + "\n```"
-                    )
-                except (OSError, UnicodeDecodeError):
-                    continue
-
-        if not code_summaries:
-            return StepResult(status="OK")
-
-        l2_gates = [
-            "NO_INLINED_ATOM_LOGIC",
-            "FUNCTION_RECOMPOSITION",
-            "PIN_CONSUMPTION_COVERAGE",
-            "EDGE_REALIZATION",
-            "NO_ORPHAN_COMPONENTS",
-            "EVENT_HANDLER_COVERAGE",
-            "CONFIG_EXTERNALIZATION",
-            "ARCH_DRIFT_PASS",
+        bundle.gates.gates = [
+            self._to_gate(
+                "EVIDENCE_HASH_ALIGNMENT",
+                not any("hash" in f.lower() or "manifest" in f.lower() for f in failures),
+                "; ".join(f for f in failures if "hash" in f.lower() or "manifest" in f.lower())
+                or "Manifest and snapshot hashes are aligned",
+                "refactor_only",
+            ),
+            self._to_gate(
+                "GAP_SPAN_COMPLETENESS",
+                not any("gap" in f.lower() for f in failures),
+                "; ".join(f for f in failures if "gap" in f.lower())
+                or "Gap inventory includes location metadata",
+                "behavior_change",
+            ),
+            self._to_gate(
+                "GRAPH_EVIDENCE_COMPLETENESS",
+                not any("graph" in f.lower() or "edge" in f.lower() for f in failures),
+                "; ".join(f for f in failures if "graph" in f.lower() or "edge" in f.lower())
+                or "Graph evidence artifacts are complete",
+                "wiring_only",
+            ),
         ]
 
-        prompt = (
-            "## TASK\n"
-            "Evaluate this code against L2 (Architecture) compliance gates.\n"
-            "For each gate, determine PASS or FAIL with a brief explanation.\n\n"
-            "Gates to evaluate:\n"
-            + "\n".join(f"- {g}" for g in l2_gates)
-            + '\n\nReturn JSON: {"gates": [{"gate_id": ..., "passed": true/false, "summary": ..., '
-            '"required_change_type": "wiring_only"|"behavior_change"}]}\n\n'
-            "## CODE\n\n" + "\n\n".join(code_summaries[:12])
-        )
-
-        try:
-            from spec_manager.core.agent_utils import run_agent
-            from spec_manager.core.json_extraction import _extract_json_payload
-            from spec_manager.refinement.formats import _strip_code_fences
-
-            output = run_agent(
-                agent_name="opus-architecture-proposer",
-                prompt=prompt,
-                workspace=workspace,
-            )
-            cleaned = _strip_code_fences(output)
-            data = json.loads(_extract_json_payload(cleaned))
-
-            gates_data = data.get("gates", [])
-            bundle.gates.gates = gates_data
-
-            failed = [g for g in gates_data if not g.get("passed", True)]
-            if failed:
-                tickets = []
-                for g in failed:
-                    change_type = g.get("required_change_type", "wiring_only")
-                    target = "L1" if change_type == "behavior_change" else "L2"
-                    tickets.append(
-                        DemotionTicket(
-                            run_id=ctx.run_id,
-                            slice_id=ctx.slice_id,
-                            source="GATE_FAILURE",
-                            gate=g.get("gate_id"),
-                            origin_layer="L2",
-                            target_layer=target,
-                            severity="BLOCKER",
-                            diagnosis=g.get("summary", f"Gate {g.get('gate_id', '')} failed"),
-                        )
-                    )
-                return StepResult(
-                    status="RETRY",
-                    emitted_tickets=tickets,
-                    error=f"L2 gates failed: {[g.get('gate_id') for g in failed]}",
-                )
-
-        except Exception as exc:
-            logger.warning("L2 promotion gates failed: %s", exc)
+        if failures:
             return StepResult(
                 status="RETRY",
                 emitted_tickets=[
@@ -1422,27 +1794,79 @@ class PromoteStep:
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
                         source="GATE_FAILURE",
-                        gate="L2_GATE_PARSE_ERROR",
-                        origin_layer="L2",
-                        target_layer="L2",
+                        gate="EVIDENCE_INTEGRITY",
+                        target_layer="L1",
                         severity="BLOCKER",
-                        diagnosis=f"L2 gate evaluation failed to parse: {exc}",
+                        diagnosis="; ".join(failures),
                     )
                 ],
-                error=f"L2 gate parse error: {exc}",
+                error="L1 evidence integrity gate failed",
             )
-
         return StepResult(status="OK")
 
-    def _promote_l3(
-        self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
-    ) -> StepResult:
-        """L3: quality reviewers + diff-impact classifier."""
-        import json
+    def _promote_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L2: architecture gates over pin/graph evidence."""
+        failures = self._validate_hash_consistency(bundle)
+        failures.extend(self._validate_graph_evidence(bundle))
 
-        from spec_manager.core.language import source_rglob
+        bundle.gates.gates = [
+            self._to_gate(
+                "PIN_CONSUMPTION_EVIDENCE",
+                bool(bundle.pins_snapshot.path),
+                "Pin snapshot present" if bundle.pins_snapshot.path else "Pin snapshot missing",
+                "wiring_only",
+            ),
+            self._to_gate(
+                "EDGE_REALIZATION_EVIDENCE",
+                bool(bundle.graph_snapshot.path),
+                "Graph snapshot present"
+                if bundle.graph_snapshot.path
+                else "Graph snapshot missing",
+                "wiring_only",
+            ),
+            self._to_gate(
+                "ARCH_EVENT_COVERAGE_EVIDENCE",
+                bool(bundle.graph_snapshot.path),
+                "Graph snapshot available for event coverage checks"
+                if bundle.graph_snapshot.path
+                else "Missing graph snapshot for event coverage checks",
+                "wiring_only",
+            ),
+            self._to_gate(
+                "EVIDENCE_HASH_ALIGNMENT",
+                not any("hash" in f.lower() or "manifest" in f.lower() for f in failures),
+                "; ".join(f for f in failures if "hash" in f.lower() or "manifest" in f.lower())
+                or "Manifest and evidence hashes align",
+                "behavior_change",
+            ),
+        ]
 
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        failed_gates = [g for g in bundle.gates.gates if not g["passed"]]
+        if failed_gates:
+            tickets = []
+            for gate in failed_gates:
+                target = "L1" if gate["required_change_type"] == "behavior_change" else "L2"
+                tickets.append(
+                    DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="GATE_FAILURE",
+                        gate=gate["gate_id"],
+                        origin_layer="L2",
+                        target_layer=target,
+                        severity="BLOCKER",
+                        diagnosis=gate["summary"],
+                    )
+                )
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=tickets,
+                error=f"L2 evidence gates failed: {[g['gate_id'] for g in failed_gates]}",
+            )
+        return StepResult(status="OK")
+
+    def _promote_l3(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+        """L3: quality closure checks over emitted evidence."""
 
         # Check if there are still open quality gaps
         open_gaps = bundle.gaps.open_gaps
@@ -1497,125 +1921,71 @@ class PromoteStep:
                 error=f"L3: {len(quality_gaps)} quality findings still open",
             )
 
-        # Run diff-impact classifier to ensure no behavior change — scope to slice file
-        code_summaries: list[str] = []
-        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
-        for py_file in source_rglob(slice_root):
-            if target_stem and py_file.stem != target_stem:
-                continue
-            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
-                try:
-                    content = py_file.read_text(encoding="utf-8")
-                    code_summaries.append(
-                        f"### {py_file.relative_to(slice_root)}\n```\n" + content[:2000] + "\n```"
-                    )
-                except (OSError, UnicodeDecodeError):
-                    continue
+        failures = self._validate_hash_consistency(bundle)
+        failures.extend(self._validate_gap_spans(bundle))
 
-        if code_summaries:
-            prompt = (
-                "## TASK\n"
-                "Classify the impact of recent changes in this code.\n"
-                "Determine if changes are:\n"
-                "- refactor_only (behavior preserved)\n"
-                "- behavior_change (logic modified)\n"
-                "- wiring_only (architecture wiring changed)\n\n"
-                'Return JSON: {"impact": "refactor_only"|"behavior_change"|"wiring_only", '
-                '"confidence": 0-1, "evidence": "..."}\n\n'
-                "## CODE\n\n" + "\n\n".join(code_summaries[:10])
+        behavior_change_gaps = [
+            g
+            for g in bundle.implementation.gap_inventory
+            if g.get("required_change_type") == "behavior_change"
+        ]
+        wiring_edges = [
+            e
+            for e in bundle.implementation.edge_proposals
+            if self._canonical_edge_signal(e.get("signal_type")) != "REFERENCE"
+        ]
+
+        bundle.gates.gates = [
+            self._to_gate(
+                "NO_LOGIC_CHANGE_EVIDENCE",
+                not behavior_change_gaps,
+                "No behavior-change gaps in implementation evidence"
+                if not behavior_change_gaps
+                else f"{len(behavior_change_gaps)} behavior-change gap(s) reported",
+                "behavior_change",
+            ),
+            self._to_gate(
+                "NO_ARCH_BOUNDARY_VIOLATIONS_EVIDENCE",
+                not wiring_edges,
+                "No architecture wiring edges emitted in L3"
+                if not wiring_edges
+                else f"{len(wiring_edges)} architecture edge(s) emitted in L3",
+                "wiring_only",
+            ),
+            self._to_gate(
+                "EVIDENCE_HASH_ALIGNMENT",
+                not failures,
+                "; ".join(failures) if failures else "Evidence hashes align with current text",
+                "refactor_only",
+            ),
+        ]
+
+        failed = [gate for gate in bundle.gates.gates if not gate["passed"]]
+        if failed:
+            tickets = []
+            for gate in failed:
+                target = "L1" if gate["required_change_type"] == "behavior_change" else "L2"
+                if gate["required_change_type"] == "refactor_only":
+                    target = "L3"
+                tickets.append(
+                    DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="GATE_FAILURE",
+                        origin_layer="L3",
+                        target_layer=target,
+                        gate=gate["gate_id"],
+                        severity="BLOCKER" if target in {"L1", "L3"} else "MAJOR",
+                        diagnosis=gate["summary"],
+                    )
+                )
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=tickets,
+                error=f"L3 evidence gates failed: {[g['gate_id'] for g in failed]}",
             )
 
-            try:
-                from spec_manager.core.agent_utils import run_agent
-                from spec_manager.core.json_extraction import _extract_json_payload
-                from spec_manager.refinement.formats import _strip_code_fences
-
-                output = run_agent(
-                    agent_name="chatgpt-correctness-reviewer",
-                    prompt=prompt,
-                    workspace=workspace,
-                )
-                cleaned = _strip_code_fences(output)
-                data = json.loads(_extract_json_payload(cleaned))
-
-                impact = data.get("impact", "refactor_only")
-                if impact == "behavior_change":
-                    ticket = DemotionTicket(
-                        run_id=ctx.run_id,
-                        slice_id=ctx.slice_id,
-                        source="REVIEW",
-                        origin_layer="L3",
-                        target_layer="L1",
-                        severity="BLOCKER",
-                        diagnosis=(
-                            f"Diff-impact classifier: behavior change detected — "
-                            f"{data.get('evidence', '')}"
-                        ),
-                    )
-                    return StepResult(
-                        status="RETRY",
-                        emitted_tickets=[ticket],
-                        error="L3: NO_LOGIC_CHANGE gate failed",
-                    )
-                if impact == "wiring_only":
-                    ticket = DemotionTicket(
-                        run_id=ctx.run_id,
-                        slice_id=ctx.slice_id,
-                        source="REVIEW",
-                        origin_layer="L3",
-                        target_layer="L2",
-                        severity="MAJOR",
-                        diagnosis=(
-                            f"Diff-impact classifier: wiring change detected — "
-                            f"{data.get('evidence', '')}"
-                        ),
-                    )
-                    return StepResult(
-                        status="RETRY",
-                        emitted_tickets=[ticket],
-                        error="L3: NO_ARCH_BOUNDARY_VIOLATIONS gate failed",
-                    )
-
-                bundle.gates.gates = [
-                    {
-                        "gate_id": "DIFF_IMPACT_CLASSIFIER",
-                        "passed": True,
-                        "summary": f"Impact: {impact}, confidence: {data.get('confidence', 0)}",
-                    }
-                ]
-
-            except Exception as exc:
-                logger.warning("L3 diff-impact classifier failed: %s", exc)
-                return StepResult(
-                    status="RETRY",
-                    emitted_tickets=[
-                        DemotionTicket(
-                            run_id=ctx.run_id,
-                            slice_id=ctx.slice_id,
-                            source="GATE_FAILURE",
-                            gate="L3_DIFF_IMPACT_PARSE_ERROR",
-                            origin_layer="L3",
-                            target_layer="L3",
-                            severity="BLOCKER",
-                            diagnosis=f"L3 diff-impact classifier failed to parse: {exc}",
-                        )
-                    ],
-                    error=f"L3 diff-impact parse error: {exc}",
-                )
-
         return StepResult(status="OK")
-
-    @staticmethod
-    def _resolve_files(roots: list[str], project_root: Path) -> list[Path]:
-        """Resolve directory roots to Python file lists."""
-        from spec_manager.core.language import source_rglob
-
-        files: list[Path] = []
-        for root in roots:
-            root_path = project_root / root
-            if root_path.exists():
-                files.extend(source_rglob(root_path))
-        return files
 
 
 class IntegrateStep:
@@ -2104,7 +2474,6 @@ DEFAULT_STEPS: list[type] = [
     PlanStep,
     ImplementStep,
     CoordinateStep,
-    AnalyzeStep,
     PromoteStep,
     IntegrateStep,
     VerifyStep,
