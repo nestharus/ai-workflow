@@ -415,15 +415,12 @@ class _AgentPromptCallGraphStrategy(_CallGraphStrategy):
             )
 
             parsed = parser.parse(
-                site.prompt_text,
+                prompt_text=site.prompt_text,
                 function_index=function_index,
                 module_prefix=module_prefix,
                 caller=site.caller,
             )
-            if site.caller:
-                caller = site.caller
-            else:
-                caller = module_prefix or file_path.stem
+            caller = site.caller or (module_prefix or file_path.stem)
 
             for callee in sorted(parsed.resolved):
                 result.edges.append(
@@ -459,7 +456,7 @@ class _AgentPromptCallGraphStrategy(_CallGraphStrategy):
 class _NoopCallGraphStrategy(_CallGraphStrategy):
     """Fallback strategy for unknown/unsupported surfaces."""
 
-    def __init__(self, name: str, surface_signature: str):
+    def __init__(self, name: str, surface_signature: str) -> None:
         self.name = name
         self._surface_signature = surface_signature
 
@@ -470,7 +467,10 @@ class _NoopCallGraphStrategy(_CallGraphStrategy):
         project_root: Path,
         analyzed: SourceAnalysis,
     ) -> bool:
-        return _surface_signature(file_path, source, project_root) == self._surface_signature
+        return (
+            _surface_signature(file_path=file_path, source=source, project_root=project_root)
+            == self._surface_signature
+        )
 
     def extract(
         self,
@@ -495,7 +495,7 @@ class _AdaptiveTextAlignCallGraphStrategy(_CallGraphStrategy):
         surface_signature: str,
         parser_hint: str | None = None,
         aligner_prompt: str = "extractor",
-    ):
+    ) -> None:
         self.name = name
         self._surface_signature = surface_signature
         self._parser_hint = parser_hint
@@ -508,7 +508,10 @@ class _AdaptiveTextAlignCallGraphStrategy(_CallGraphStrategy):
         project_root: Path,
         analyzed: SourceAnalysis,
     ) -> bool:
-        return _surface_signature(file_path, source, project_root) == self._surface_signature
+        return (
+            _surface_signature(file_path=file_path, source=source, project_root=project_root)
+            == self._surface_signature
+        )
 
     def extract(
         self,
@@ -776,7 +779,7 @@ class _PromptJitParserStrategy(_PromptParserStrategy):
         regex_patterns: list[str] | None = None,
         json_fields: list[str] | None = None,
         confidence: float = 0.4,
-    ):
+    ) -> None:
         self.name = name
         self._parser_mode = parser_mode
         self._regex_patterns = regex_patterns or []
@@ -1009,7 +1012,10 @@ def _propose_call_graph_strategy(
     if registry.research_tool is not None:
         research_context = _query_research(
             registry.research_tool,
-            f"What call dispatch patterns are used in {file_path.suffix} files for agent invocations?",
+            (
+                f"What call dispatch patterns are used in {file_path.suffix} files "
+                f"for agent invocations?"
+            ),
         )
 
     prompt = (
@@ -1199,14 +1205,18 @@ def _create_jit_prompt_parser_strategy(
     if registry.research_tool is not None:
         research_context = _query_research(
             registry.research_tool,
-            f"What parser patterns work best for extracting call targets from prompts like: {prompt_text[:200]}",
+            (
+                f"What parser patterns work best for extracting call "
+                f"targets from prompts like: {prompt_text[:200]}"
+            ),
         )
 
     prompt = (
         "You are a call-edge parser strategy matcher.\n"
         "Do not infer any call edges.\n"
         "Return JSON only.\n"
-        "Given the following extracted prompt text, return a parser strategy for deterministic extraction:\n"
+        "Given the following extracted prompt text, return a parser strategy "
+        "for deterministic extraction:\n"
         "{\n"
         '  "parser_type": "json" | "directive" | "regex" | "fence_ast",\n'
         '  "regex_patterns": ["<regex>"] optional,\n'
@@ -1333,8 +1343,8 @@ def _query_research(research_tool: Any, question: str) -> str:
         result = research_tool.research(ResearchQuery(question=question, dimension="local"))
         if result.has_answer:
             return result.synthesis
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Research query failed: %s", exc)
     return ""
 
 
@@ -1412,9 +1422,8 @@ def _resolve_prompt_tokens(
 
 def _resolve_call_target(token: str, function_index: dict[str, set[str]]) -> str | None:
     exact = function_index.get(token)
-    if exact:
-        if len(exact) == 1:
-            return next(iter(exact))
+    if exact and len(exact) == 1:
+        return next(iter(exact))
 
     if "." in token:
         short = token.rsplit(".", 1)[-1]
@@ -1454,10 +1463,13 @@ def _collect_identifier_tokens_from_payload(
                 continue
             child_tokens = _collect_identifier_tokens_from_payload(value, target_fields)
             tokens |= child_tokens
-            if key_lower not in target_fields and isinstance(value, str):
-                if value.strip():
-                    if _CALL_NAME_TOKEN_RE.fullmatch(value.strip()):
-                        tokens.add(value.strip())
+            if (
+                key_lower not in target_fields
+                and isinstance(value, str)
+                and value.strip()
+                and _CALL_NAME_TOKEN_RE.fullmatch(value.strip())
+            ):
+                tokens.add(value.strip())
         return tokens
     return tokens
 
@@ -1692,7 +1704,7 @@ def _coerce_confidence(value: Any) -> float:
 
 
 def _hash_id(value: str) -> str:
-    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 def _extract_call_expression_name(expr: ast.AST) -> str | None:
@@ -1718,7 +1730,7 @@ def _extract_call_expression_name(expr: ast.AST) -> str | None:
 class _FunctionCollector(ast.NodeVisitor):
     """Collect function defs and indexes from AST."""
 
-    def __init__(self, module_prefix: str):
+    def __init__(self, module_prefix: str) -> None:
         self.module_prefix = module_prefix
         self.function_names: set[str] = set()
         self.function_short_index: dict[str, set[str]] = {}
@@ -1751,7 +1763,12 @@ class _FunctionCollector(ast.NodeVisitor):
         self._scope_stack.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
-        self.visit_FunctionDef(node)
+        """Handle async function definitions as regular functions."""
+        full = self._qualified(node.name)
+        self._register(full)
+        self._scope_stack.append(node.name)
+        self.generic_visit(node)
+        self._scope_stack.pop()
 
 
 class _CallVisitor(ast.NodeVisitor):
@@ -1763,7 +1780,7 @@ class _CallVisitor(ast.NodeVisitor):
         module_prefix: str,
         function_names: set[str],
         function_short_index: dict[str, set[str]],
-    ):
+    ) -> None:
         self.module_prefix = module_prefix
         self.function_full = set(function_names)
         self.function_short_index = function_short_index
@@ -1784,7 +1801,10 @@ class _CallVisitor(ast.NodeVisitor):
         self._scope_stack.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
-        self.visit_FunctionDef(node)
+        """Handle async function definitions as regular functions."""
+        self._scope_stack.append(node.name)
+        self.generic_visit(node)
+        self._scope_stack.pop()
 
     def visit_ClassDef(self, node: ast.ClassDef) -> Any:
         self._scope_stack.append(node.name)
@@ -1839,7 +1859,10 @@ class _RunAgentPromptCollector(ast.NodeVisitor):
         self._scope_stack.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
-        self.visit_FunctionDef(node)
+        """Handle async function definitions as regular functions."""
+        self._scope_stack.append(node.name)
+        self.generic_visit(node)
+        self._scope_stack.pop()
 
     def visit_ClassDef(self, node: ast.ClassDef) -> Any:
         self._scope_stack.append(node.name)

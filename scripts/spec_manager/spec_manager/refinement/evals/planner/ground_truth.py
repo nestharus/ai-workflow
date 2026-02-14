@@ -37,6 +37,23 @@ _ALLOWED_CAPABILITIES = frozenset(
     {"RESOLVE_SIGNAL", "GAP", "PLAN", "UNDER_SPEC", "INTEGRATION_ANALYSIS"}
 )
 _ALLOWED_LAYERS = frozenset({"l1", "l2", "l3", "any"})
+_PLAN_LAYER_REQUIRED_MATCH_FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
+    "l1": {
+        "function_name": ("function_name_any_of",),
+        "file": ("file_any_of",),
+    },
+    "l2": {
+        "component_id": ("component_id_any_of",),
+        "target_files": ("target_files_any_of",),
+        "pin_refs": ("pin_refs_any_of",),
+    },
+    "l3": {
+        "file": ("file_any_of",),
+        "function_span": ("function_span_any_of",),
+        "smell_type": ("smell_type_any_of",),
+        "behavior_preservation_check": ("behavior_preservation_check_any_of",),
+    },
+}
 
 try:
     import yaml
@@ -319,6 +336,189 @@ def _serialize(gt: PlannerGroundTruth) -> dict[str, Any]:
     return asdict(gt)
 
 
+def _is_populated(value: Any) -> bool:
+    """Return True when *value* represents a present, non-empty field."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
+
+
+def _validate_expected_for_capability(
+    *,
+    expected: dict[str, Any],
+    capability: str,
+    layer: str,
+    label: str,
+) -> list[str]:
+    """Validate capability-specific expected-shape contracts."""
+    errors: list[str] = []
+
+    if capability == "RESOLVE_SIGNAL":
+        should_resolve = expected.get("should_resolve")
+        if not isinstance(should_resolve, bool):
+            errors.append(f"{label}.should_resolve must be boolean")
+        answers_any_of = expected.get("answers_any_of")
+        if should_resolve:
+            if not isinstance(answers_any_of, list) or not answers_any_of:
+                errors.append(
+                    f"{label}.answers_any_of must be a non-empty list when should_resolve=true"
+                )
+        elif answers_any_of is not None and not isinstance(answers_any_of, list):
+            errors.append(f"{label}.answers_any_of must be a list when present")
+        return errors
+
+    if capability == "GAP":
+        for key in ("must_find", "must_not_find"):
+            atoms = expected.get(key)
+            if not isinstance(atoms, list):
+                errors.append(f"{label}.{key} must be a list")
+                continue
+            for atom_idx, atom in enumerate(atoms):
+                if not isinstance(atom, dict):
+                    errors.append(f"{label}.{key}[{atom_idx}] must be a mapping")
+        return errors
+
+    if capability == "PLAN":
+        must_include = expected.get("must_include")
+        must_not_include = expected.get("must_not_include")
+        if not isinstance(must_include, list):
+            errors.append(f"{label}.must_include must be a list")
+            return errors
+        if not isinstance(must_not_include, list):
+            errors.append(f"{label}.must_not_include must be a list")
+            return errors
+
+        required_fields = _PLAN_LAYER_REQUIRED_MATCH_FIELDS.get(layer)
+        for atom_idx, atom in enumerate(must_include):
+            atom_label = f"{label}.must_include[{atom_idx}]"
+            if not isinstance(atom, dict):
+                errors.append(f"{atom_label} must be a mapping")
+                continue
+            match = atom.get("match")
+            if not isinstance(match, dict):
+                errors.append(f"{atom_label}.match must be a mapping")
+                continue
+            if required_fields is None:
+                continue
+            for canonical_name, candidate_keys in required_fields.items():
+                if any(_is_populated(match.get(candidate)) for candidate in candidate_keys):
+                    continue
+                expected_keys = ", ".join(candidate_keys)
+                errors.append(
+                    f"{atom_label}.match missing required {canonical_name} "
+                    f"(expected one of: {expected_keys})"
+                )
+
+        for atom_idx, atom in enumerate(must_not_include):
+            atom_label = f"{label}.must_not_include[{atom_idx}]"
+            if not isinstance(atom, dict):
+                errors.append(f"{atom_label} must be a mapping")
+                continue
+            match = atom.get("match")
+            if not isinstance(match, dict):
+                errors.append(f"{atom_label}.match must be a mapping")
+        return errors
+
+    if capability == "UNDER_SPEC":
+        events = expected.get("events")
+        if not isinstance(events, list):
+            errors.append(f"{label}.events must be a list")
+            return errors
+        if not events:
+            errors.append(f"{label}.events must contain at least one event")
+            return errors
+
+        for event_idx, event in enumerate(events):
+            event_label = f"{label}.events[{event_idx}]"
+            if not isinstance(event, dict):
+                errors.append(f"{event_label} must be a mapping")
+                continue
+            event_id = event.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                errors.append(f"{event_label}.event_id must be a non-empty string")
+            should_block = event.get("should_block")
+            if not isinstance(should_block, bool):
+                errors.append(f"{event_label}.should_block must be boolean")
+                continue
+
+            if should_block:
+                patterns = event.get("required_question_patterns")
+                if not isinstance(patterns, list) or not patterns:
+                    errors.append(
+                        f"{event_label}.required_question_patterns must be a non-empty list "
+                        "when should_block=true"
+                    )
+                elif any(not isinstance(p, str) or not p.strip() for p in patterns):
+                    errors.append(
+                        f"{event_label}.required_question_patterns entries must be "
+                        "non-empty strings"
+                    )
+            else:
+                required_keys = event.get("required_constraint_keys")
+                answer_type = event.get("answer_type")
+                has_required_keys = isinstance(required_keys, list) and any(
+                    isinstance(k, str) and bool(k.strip()) for k in required_keys
+                )
+                has_answer_type = isinstance(answer_type, str) and bool(answer_type.strip())
+                if required_keys is not None and not isinstance(required_keys, list):
+                    errors.append(
+                        f"{event_label}.required_constraint_keys must be a list when present"
+                    )
+                if (
+                    required_keys is not None
+                    and isinstance(required_keys, list)
+                    and any(not isinstance(k, str) or not k.strip() for k in required_keys)
+                ):
+                    errors.append(
+                        f"{event_label}.required_constraint_keys entries must be non-empty strings"
+                    )
+                if answer_type is not None and not isinstance(answer_type, str):
+                    errors.append(f"{event_label}.answer_type must be a string when present")
+                if not has_required_keys and not has_answer_type:
+                    errors.append(
+                        f"{event_label} must define required_constraint_keys "
+                        "or answer_type when should_block=false"
+                    )
+        return errors
+
+    if capability == "INTEGRATION_ANALYSIS":
+        for key in (
+            "must_include_risks",
+            "must_not_include_risks",
+            "must_include_edges",
+            "must_not_include_edges",
+        ):
+            items = expected.get(key)
+            if not isinstance(items, list):
+                errors.append(f"{label}.{key} must be a list")
+                continue
+            for item_idx, item in enumerate(items):
+                item_label = f"{label}.{key}[{item_idx}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{item_label} must be a mapping")
+                    continue
+                if key.endswith("_risks"):
+                    description = item.get("description")
+                    if not isinstance(description, str) or not description.strip():
+                        errors.append(f"{item_label}.description must be a non-empty string")
+                    continue
+                has_description = isinstance(item.get("description"), str) and bool(
+                    item.get("description", "").strip()
+                )
+                has_source_target = _is_populated(item.get("source")) and _is_populated(
+                    item.get("target")
+                )
+                if not has_description and not has_source_target:
+                    errors.append(f"{item_label} must include description or source+target fields")
+        return errors
+
+    return errors
+
+
 def _validate_ground_truth(gt: PlannerGroundTruth) -> None:
     """Validate semantic constraints for loaded planner ground truth."""
     errors: list[str] = []
@@ -390,6 +590,15 @@ def _validate_ground_truth(gt: PlannerGroundTruth) -> None:
 
         if not isinstance(case.expected, dict):
             errors.append(f"{label}: expected must be a mapping")
+        else:
+            errors.extend(
+                _validate_expected_for_capability(
+                    expected=case.expected,
+                    capability=case.capability,
+                    layer=case.layer,
+                    label=f"{label}.expected",
+                )
+            )
 
     if errors:
         formatted = "\n".join(f"- {err}" for err in errors)

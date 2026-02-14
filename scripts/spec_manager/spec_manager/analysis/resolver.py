@@ -33,23 +33,23 @@ def _cleanup_stale_references(content: str, deleted_lib: str) -> str:
 
     for line in lines:
         # Skip lines that are primarily about the deleted library
-        if re.search(rf"\b{deleted_lib}(\.md)?\b", line, re.IGNORECASE):
-            # Check if this is a comment/description line (not a section header)
-            if not line.strip().startswith("###"):
-                # Skip lines like "Additional algorithms that heavily reference algorithms.md"
-                # or "Merged from algorithms"
-                lower_line = line.lower()
-                if any(
-                    phrase in lower_line
-                    for phrase in [
-                        "merged from",
-                        "reference " + deleted_lib.lower(),
-                        "references " + deleted_lib.lower(),
-                        "heavily reference",
-                        "additional " + deleted_lib.lower(),
-                    ]
-                ):
-                    continue
+        if re.search(
+            rf"\b{deleted_lib}(\.md)?\b", line, re.IGNORECASE
+        ) and not line.strip().startswith("###"):
+            # Skip lines like "Additional algorithms that heavily reference algorithms.md"
+            # or "Merged from algorithms"
+            lower_line = line.lower()
+            if any(
+                phrase in lower_line
+                for phrase in [
+                    "merged from",
+                    "reference " + deleted_lib.lower(),
+                    "references " + deleted_lib.lower(),
+                    "heavily reference",
+                    "additional " + deleted_lib.lower(),
+                ]
+            ):
+                continue
         cleaned_lines.append(line)
 
     return "\n".join(cleaned_lines)
@@ -163,8 +163,9 @@ def resolve_merge(
     # Add sections from source that don't already exist in target
     # This prevents duplicates when merging
     sections_added = 0
-    for id_value, section in source_result.sections.items():
-        if id_value in target_result.sections:
+    for section in source_result.sections.values():
+        section_id = section.id_value
+        if section_id in target_result.sections:
             # Section already exists in target, skip to avoid duplicates
             continue
         sections_added += 1
@@ -197,7 +198,9 @@ def resolve_merge(
     return ResolutionAction(
         action="merge",
         success=True,
-        description=f"Merged {source_lib} ({len(source_result.sections)} sections) into {target_lib}",
+        description=(
+            f"Merged {source_lib} ({len(source_result.sections)} sections) into {target_lib}"
+        ),
         files_modified=[str(target_path)],
         files_deleted=[str(source_path)],
     )
@@ -267,7 +270,7 @@ def resolve_split(
     new_content += f"Split from {library}.\n\n"
     new_content += "---\n\n"
 
-    for id_value, section in sections_to_move.items():
+    for section in sections_to_move.values():
         new_content += section.full_content
         new_content += "\n\n---\n\n"
 
@@ -275,7 +278,6 @@ def resolve_split(
     source_lines = source_path.read_text(encoding="utf-8").split("\n")
     kept_content = []
     skip_until_separator = False
-    current_section_id = None
 
     for line in source_lines:
         # Detect section start
@@ -284,7 +286,6 @@ def resolve_split(
             for id_value in sections_to_move:
                 if f"([={id_value}])" in line or f"[={id_value}]" in line:
                     skip_until_separator = True
-                    current_section_id = id_value
                     break
             else:
                 skip_until_separator = False
@@ -292,7 +293,6 @@ def resolve_split(
         elif line.strip() == "---":
             if skip_until_separator:
                 skip_until_separator = False
-                current_section_id = None
             else:
                 kept_content.append(line)
         elif not skip_until_separator:
@@ -377,7 +377,7 @@ def resolve_move_ids(
     target_content = target_path.read_text(encoding="utf-8").rstrip()
     target_content += "\n\n---\n\n"
 
-    for id_value, section in sections_to_move.items():
+    for section in sections_to_move.values():
         target_content += section.full_content
         target_content += "\n\n---\n\n"
 
@@ -463,52 +463,49 @@ def resolve_suggestions(
 
     # Apply each suggestion
     for suggestion in high_confidence:
-        if suggestion.action == "merge":
-            if len(suggestion.libraries) >= 2:
-                action = resolve_merge(
-                    suggestion.libraries[0],
-                    suggestion.libraries[1],
-                    libraries_dir,
-                    registry,
-                )
-                result.actions.append(action)
-                if action.success:
-                    result.total_applied += 1
-                else:
-                    result.total_failed += 1
+        if suggestion.action == "merge" and len(suggestion.libraries) >= 2:
+            action = resolve_merge(
+                suggestion.libraries[0],
+                suggestion.libraries[1],
+                libraries_dir,
+                registry,
+            )
+            result.actions.append(action)
+            if action.success:
+                result.total_applied += 1
+            else:
+                result.total_failed += 1
 
-        elif suggestion.action == "split":
-            if len(suggestion.libraries) >= 1 and suggestion.ids:
-                # Generate split name from first library + category hint
-                source_lib = suggestion.libraries[0]
-                new_lib = f"{source_lib}_split"
-                action = resolve_split(
-                    source_lib,
-                    new_lib,
-                    suggestion.ids,
-                    libraries_dir,
-                    registry,
-                )
-                result.actions.append(action)
-                if action.success:
-                    result.total_applied += 1
-                else:
-                    result.total_failed += 1
+        elif suggestion.action == "split" and len(suggestion.libraries) >= 1 and suggestion.ids:
+            # Generate split name from first library + category hint
+            source_lib = suggestion.libraries[0]
+            new_lib = f"{source_lib}_split"
+            action = resolve_split(
+                source_lib,
+                new_lib,
+                suggestion.ids,
+                libraries_dir,
+                registry,
+            )
+            result.actions.append(action)
+            if action.success:
+                result.total_applied += 1
+            else:
+                result.total_failed += 1
 
-        elif suggestion.action == "move_ids":
-            if len(suggestion.libraries) >= 2 and suggestion.ids:
-                action = resolve_move_ids(
-                    suggestion.libraries[1],  # From target
-                    suggestion.libraries[0],  # To source
-                    suggestion.ids,
-                    libraries_dir,
-                    registry,
-                )
-                result.actions.append(action)
-                if action.success:
-                    result.total_applied += 1
-                else:
-                    result.total_failed += 1
+        elif suggestion.action == "move_ids" and len(suggestion.libraries) >= 2 and suggestion.ids:
+            action = resolve_move_ids(
+                suggestion.libraries[1],  # From target
+                suggestion.libraries[0],  # To source
+                suggestion.ids,
+                libraries_dir,
+                registry,
+            )
+            result.actions.append(action)
+            if action.success:
+                result.total_applied += 1
+            else:
+                result.total_failed += 1
 
     # Save updated registry if any changes were made
     if result.total_applied > 0:
