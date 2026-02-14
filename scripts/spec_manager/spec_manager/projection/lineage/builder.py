@@ -1,7 +1,7 @@
-"""Lineage builder: bridges import records to lineage table.
+"""Lineage builder: consumes inferred import/adjacency signals.
 
-Infers ProjectionLineageEdge entries from import relationships
-and classifies transformation types based on architectural patterns.
+Lineage assembly should use pre-inferred graph evidence rather than
+performing language-specific parsing/classification at build time.
 """
 
 from __future__ import annotations
@@ -9,11 +9,11 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.code_analysis import analyze_source
+from spec_manager.core.code_analysis import analyze_source, infer_code_signals
 from spec_manager.projection.lineage.table import ProjectionLineageTable
 from spec_manager.schemas.pin_functions import ProjectionType
 
@@ -42,6 +42,10 @@ class RawImportRecord:
     imported_name: str
     imported_from_module: str
     line_no: int = 0
+    signal_type: str = "import_edge"
+    transformation_hint: str | None = None
+    confidence: float = 1.0
+    details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -51,6 +55,10 @@ class RawImportRecord:
             "imported_name": self.imported_name,
             "imported_from_module": self.imported_from_module,
             "line_no": self.line_no,
+            "signal_type": self.signal_type,
+            "transformation_hint": self.transformation_hint,
+            "confidence": self.confidence,
+            "details": dict(self.details),
         }
 
     @classmethod
@@ -61,7 +69,13 @@ class RawImportRecord:
             importer_location=data["importer_location"],
             imported_name=data["imported_name"],
             imported_from_module=data["imported_from_module"],
-            line_no=data.get("line_no", 0),
+            line_no=_coerce_int(data.get("line_no", 0)),
+            signal_type=str(data.get("signal_type", "import_edge")),
+            transformation_hint=(
+                str(data["transformation_hint"]) if data.get("transformation_hint") else None
+            ),
+            confidence=_coerce_confidence(data.get("confidence", 1.0), default=1.0),
+            details=data.get("details", {}) if isinstance(data.get("details"), dict) else {},
         )
 
 
@@ -71,8 +85,9 @@ def scan_imports_from_directory(
 ) -> list[RawImportRecord]:
     """Scan all Python files in a directory for import statements.
 
-    Uses regex patterns to extract import relationships without
-    requiring language-specific AST parsing.
+    Primary path uses ``infer_code_signals(requested={"import_edges"})``.
+    Regex extraction remains only as a fallback migration path when no
+    inferred edge data is returned.
 
     Args:
         root_dir: Root directory to scan.
@@ -125,7 +140,7 @@ def scan_imports_from_files(file_paths: list[Path]) -> list[RawImportRecord]:
 def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
     """Scan a single source file for import statements.
 
-    Uses regex patterns to extract import relationships.
+    Uses inferred import-edge signals first, then regex fallback.
 
     Args:
         file_path: Path to source file.
@@ -138,10 +153,102 @@ def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
     except UnicodeDecodeError:
         return []
 
+    inferred_records = _scan_file_imports_from_signals(file_path, source)
+    if inferred_records:
+        return inferred_records
+
+    return _scan_file_imports_with_regex(file_path, source)
+
+
+def _scan_file_imports_from_signals(file_path: Path, source: str) -> list[RawImportRecord]:
+    """Scan imports by consuming inferred code-signal facets."""
+    signal_payload = infer_code_signals(
+        file_path=str(file_path),
+        source_text=source,
+        spans=[],
+        requested={"import_edges"},
+    )
+    if not isinstance(signal_payload, dict):
+        return []
+
+    records: list[RawImportRecord] = []
+    for edge in _extract_import_edges(signal_payload):
+        record = _import_record_from_edge(edge, str(file_path))
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def _extract_import_edges(signal_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract import-like edges from a signal payload."""
+    for key in ("import_edges", "lineage_edges"):
+        value = signal_payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+
+    value = signal_payload.get("edges")
+    if isinstance(value, list):
+        return [
+            item
+            for item in value
+            if isinstance(item, dict)
+            and str(item.get("signal_type", "")).lower()
+            in {"import", "import_edge", "reference", "reference_edge"}
+        ]
+
+    facets = signal_payload.get("facets")
+    if isinstance(facets, dict):
+        value = facets.get("import_edges")
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+
+    return []
+
+
+def _import_record_from_edge(edge: dict[str, Any], default_file: str) -> RawImportRecord | None:
+    """Normalize one inferred edge dictionary into a RawImportRecord."""
+    imported_name = str(
+        edge.get("imported_name")
+        or edge.get("import_name")
+        or edge.get("dst_name")
+        or edge.get("target_name")
+        or ""
+    ).strip()
+    if not imported_name:
+        return None
+
+    importer_file = str(edge.get("importer_file") or edge.get("source_file") or default_file)
+    importer_location = str(
+        edge.get("importer_location") or edge.get("src_id") or f"{importer_file}:module-level"
+    )
+    imported_from_module = str(
+        edge.get("imported_from_module")
+        or edge.get("from_module")
+        or edge.get("module")
+        or edge.get("src_module")
+        or ""
+    )
+
+    details = edge.get("details")
+    return RawImportRecord(
+        importer_file=importer_file,
+        importer_location=importer_location,
+        imported_name=imported_name,
+        imported_from_module=imported_from_module,
+        line_no=_coerce_int(edge.get("line_no") or edge.get("line") or edge.get("line_start")),
+        signal_type=str(edge.get("signal_type", "import_edge")),
+        transformation_hint=(str(edge["transformation"]) if edge.get("transformation") else None)
+        or (str(edge["projection_type"]) if edge.get("projection_type") else None),
+        confidence=_coerce_confidence(edge.get("confidence"), default=1.0),
+        details=details if isinstance(details, dict) else {},
+    )
+
+
+def _scan_file_imports_with_regex(file_path: Path, source: str) -> list[RawImportRecord]:
+    """Fallback import scan for migration/test-double scenarios."""
     records: list[RawImportRecord] = []
     file_str = str(file_path)
 
-    # Build a line-number lookup: map character offset -> line number
     line_starts: list[int] = [0]
     for i, ch in enumerate(source):
         if ch == "\n":
@@ -177,6 +284,7 @@ def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
                     imported_name=name,
                     imported_from_module=module,
                     line_no=lineno,
+                    details={"fallback": "regex"},
                 )
             )
 
@@ -199,10 +307,28 @@ def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
                     imported_name=name,
                     imported_from_module=tokens[0],
                     line_no=lineno,
+                    details={"fallback": "regex"},
                 )
             )
 
     return records
+
+
+def _coerce_int(value: Any) -> int:
+    """Best-effort integer parsing."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_confidence(value: Any, *, default: float) -> float:
+    """Best-effort confidence parsing with [0, 1] clamp."""
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = default
+    return max(0.0, min(1.0, confidence))
 
 
 @dataclass
@@ -245,25 +371,8 @@ class AtomDefinition:
         )
 
 
-# Patterns that suggest event handler architecture
-_EVENT_HANDLER_BASES = {"EventHandler", "Handler", "MessageHandler", "Consumer"}
-_EVENT_HANDLER_DECORATORS = {"on_event", "subscribe", "handles", "event_handler"}
-
-# Patterns that suggest middleware architecture
-_MIDDLEWARE_BASES = {"Middleware", "BaseMiddleware"}
-_MIDDLEWARE_DECORATORS = {"middleware", "use_middleware"}
-
-# Patterns that suggest retry/resilience wrappers
-_RETRY_DECORATORS = {"retry", "retryable", "circuit_breaker", "resilient", "backoff"}
-
-
 class LineageBuilder:
-    """Builds ProjectionLineageTable from import records and atom definitions.
-
-    Analyzes import relationships to determine how atoms are projected
-    into architectural locations, classifying transformations based on
-    patterns found in the importing code.
-    """
+    """Builds ProjectionLineageTable from import-edge evidence and atoms."""
 
     def __init__(
         self,
@@ -273,11 +382,6 @@ class LineageBuilder:
         self.import_records = import_records
         self.atoms = atoms
         self._atoms_by_function: dict[str, AtomDefinition] = {a.function_name: a for a in atoms}
-        self._atoms_by_module: dict[str, list[AtomDefinition]] = {}
-        for atom in atoms:
-            self._atoms_by_module.setdefault(atom.module_path, []).append(atom)
-        # Cache for handler pattern detection per file
-        self._handler_pattern_cache: dict[str, str | None] = {}
 
     def build_lineage(self) -> ProjectionLineageTable:
         """Build lineage table by matching imports against known atoms.
@@ -316,131 +420,51 @@ class LineageBuilder:
                     )
             else:
                 record, atom = atom_imports[0]
-                transformation, confidence = self._classify_transformation(
-                    record, atom, record.importer_file
-                )
+                transformation, confidence = _projection_from_record(record)
                 table.add_edge(
                     from_unit=atom.atom_id,
                     to_unit=record.importer_location,
                     transformation=transformation,
                     confidence=confidence,
-                    details={"import_line": record.line_no},
+                    details={"import_line": record.line_no, **record.details},
                 )
 
         return table
 
-    def _classify_transformation(
-        self,
-        record: RawImportRecord,
-        atom: AtomDefinition,
-        importer_context: str,
-    ) -> tuple[ProjectionType, float]:
-        """Classify the transformation type and assign confidence.
 
-        Classification rules:
-        - Direct import + direct call: PASS_THROUGH, confidence=1.0
-        - Import in event handler class: EVENT_BRIDGE, confidence=0.9
-        - Import in middleware class: MIDDLEWARE_WRAP, confidence=0.9
-        - Import in retry/resilience wrapper: RETRY_DECORATE, confidence=0.9
-        - Default (no pattern match): PASS_THROUGH, confidence=1.0
+def _projection_from_record(record: RawImportRecord) -> tuple[ProjectionType, float]:
+    """Map inferred signal metadata to projection type + confidence."""
+    hint = (record.transformation_hint or "").strip().lower()
+    signal = (record.signal_type or "").strip().lower()
+    confidence = _coerce_confidence(record.confidence, default=1.0)
 
-        Args:
-            record: The import record.
-            atom: The matched atom definition.
-            importer_context: File path of the importing module.
+    hint_mapping = {
+        "event_bridge": ProjectionType.EVENT_BRIDGE,
+        "event_handler": ProjectionType.EVENT_BRIDGE,
+        "middleware_wrap": ProjectionType.MIDDLEWARE_WRAP,
+        "middleware": ProjectionType.MIDDLEWARE_WRAP,
+        "retry_decorate": ProjectionType.RETRY_DECORATE,
+        "retry": ProjectionType.RETRY_DECORATE,
+        "smear": ProjectionType.SMEAR,
+        "pass_through": ProjectionType.PASS_THROUGH,
+    }
+    if hint in hint_mapping:
+        return hint_mapping[hint], confidence
 
-        Returns:
-            Tuple of (transformation_type, confidence).
-        """
-        pattern = self._detect_handler_pattern(importer_context)
+    signal_mapping = {
+        "event_edge": ProjectionType.EVENT_BRIDGE,
+        "event": ProjectionType.EVENT_BRIDGE,
+        "middleware_edge": ProjectionType.MIDDLEWARE_WRAP,
+        "middleware": ProjectionType.MIDDLEWARE_WRAP,
+        "retry_edge": ProjectionType.RETRY_DECORATE,
+        "retry": ProjectionType.RETRY_DECORATE,
+        "smear_edge": ProjectionType.SMEAR,
+        "smear": ProjectionType.SMEAR,
+    }
+    if signal in signal_mapping:
+        return signal_mapping[signal], confidence
 
-        pattern_mapping = {
-            "event_handler": (ProjectionType.EVENT_BRIDGE, 0.9),
-            "middleware": (ProjectionType.MIDDLEWARE_WRAP, 0.9),
-            "retry": (ProjectionType.RETRY_DECORATE, 0.9),
-        }
-        if pattern in pattern_mapping:
-            return pattern_mapping[pattern]
-
-        # Default: direct import = pass_through
-        return ProjectionType.PASS_THROUGH, 1.0
-
-    def _detect_handler_pattern(self, file_path: str) -> str | None:
-        """Detect if a file follows event handler, middleware, or retry patterns.
-
-        Uses regex for class base detection and analyze_source for
-        decorator pattern detection.
-
-        Args:
-            file_path: Path to the source file to analyze.
-
-        Returns:
-            Pattern name ("event_handler", "middleware", "retry") or None.
-        """
-        if file_path in self._handler_pattern_cache:
-            return self._handler_pattern_cache[file_path]
-
-        result = self._analyze_handler_pattern(file_path)
-        self._handler_pattern_cache[file_path] = result
-        return result
-
-    def _analyze_handler_pattern(self, file_path: str) -> str | None:
-        """Detect handler patterns using analyze_source and simple line parsing.
-
-        Uses analyze_source for function/decorator detection and simple
-        line parsing for class base class detection (class bases are not
-        part of RawFunctionInfo).
-
-        Args:
-            file_path: Path to the source file.
-
-        Returns:
-            Pattern name ("event_handler", "middleware", "retry") or None.
-        """
-        path = Path(file_path)
-        if not path.exists():
-            return None
-
-        try:
-            source = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            return None
-
-        # --- Check class base classes via line parsing ---
-        from spec_manager.core.language import CLASS_KEYWORDS
-
-        for line in source.splitlines():
-            stripped = line.strip()
-            if (
-                any(stripped.startswith(kw) for kw in CLASS_KEYWORDS)
-                and "(" in stripped
-                and stripped.endswith(":")
-            ):
-                # Extract base classes from "class Foo(Base1, Base2):"
-                paren_start = stripped.index("(")
-                paren_end = stripped.rindex(")")
-                bases_str = stripped[paren_start + 1 : paren_end]
-                bases = [b.strip().rsplit(".", 1)[-1] for b in bases_str.split(",")]
-                for base_name in bases:
-                    if base_name in _EVENT_HANDLER_BASES:
-                        return "event_handler"
-                    if base_name in _MIDDLEWARE_BASES:
-                        return "middleware"
-
-        # --- Check decorators via analyze_source ---
-        analysis = analyze_source(source, file_path)
-        for func in analysis.functions:
-            for dec in func.decorators:
-                # Extract the simple name from dotted or call decorators
-                dec_name = dec.rsplit(".", 1)[-1].split("(")[0]
-                if dec_name in _EVENT_HANDLER_DECORATORS:
-                    return "event_handler"
-                if dec_name in _MIDDLEWARE_DECORATORS:
-                    return "middleware"
-                if dec_name in _RETRY_DECORATORS:
-                    return "retry"
-
-        return None
+    return ProjectionType.PASS_THROUGH, confidence
 
 
 def compute_signature_hash(file_path: str, function_name: str) -> str | None:

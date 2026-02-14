@@ -1,16 +1,16 @@
-"""Language-agnostic source code analysis via LLM.
+"""Language-agnostic source code analysis and signal inference via LLM.
 
-Replaces Python-specific ast/tokenize parsing with LLM-based structural
-analysis. All code structure extraction (function boundaries, comments,
-stub detection) goes through this module.
+This module provides:
+- ``analyze_source()`` for stable structural analysis (functions/comments).
+- ``infer_code_signals()`` for on-demand semantic facets (edges/signals).
 
-The module calls the ``pdd-code-analyzer`` agent and caches results by
-content hash so repeated analysis of the same file is free.
+Both paths use content-aware caching to avoid repeated LLM calls.
 """
 
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -66,6 +66,7 @@ class SourceAnalysis:
 
     functions: list[RawFunctionInfo] = field(default_factory=list)
     comments: list[RawCommentInfo] = field(default_factory=list)
+    facets: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -73,11 +74,13 @@ class SourceAnalysis:
 # ---------------------------------------------------------------------------
 
 _analysis_cache: dict[str, SourceAnalysis] = {}
+_signal_cache: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
 
 
 def clear_cache() -> None:
     """Clear the analysis cache (useful in tests)."""
     _analysis_cache.clear()
+    _signal_cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +89,9 @@ def clear_cache() -> None:
 
 # Default analyzer is set at module level to allow test injection
 _default_analyzer: Callable[[str, str, Path | None], SourceAnalysis] | None = None
+_default_signal_inferer: (
+    Callable[[str, str, list[dict[str, Any]], set[str], Path | None], dict[str, Any]] | None
+) = None
 
 
 def _call_llm_analyzer(
@@ -119,6 +125,45 @@ def _call_llm_analyzer(
     return _parse_analysis_response(raw_output)
 
 
+def _call_llm_signal_inferer(
+    file_path: str,
+    source_text: str,
+    spans: list[dict[str, Any]],
+    requested: set[str],
+    workspace: Path | None,
+) -> dict[str, Any]:
+    """Call the code analyzer agent for request-driven signal facets."""
+    from spec_manager.core.agent_utils import run_agent
+
+    ws = workspace or Path.cwd()
+    requested_list = sorted(requested)
+    spans_json = json.dumps(spans, ensure_ascii=True)
+    requested_json = json.dumps(requested_list, ensure_ascii=True)
+
+    prompt_lines = [
+        "Infer code signals for the requested facets and return JSON only.",
+        "The response must be a JSON object keyed by requested facet names.",
+        "",
+        f"File: {file_path}",
+        f"Requested facets: {requested_json}",
+        f"Spans (optional): {spans_json}",
+        "",
+        "Source:",
+        "```",
+        source_text,
+        "```",
+    ]
+    prompt = "\n".join(prompt_lines)
+
+    raw_output = run_agent(
+        agent_name="pdd-code-analyzer",
+        prompt=prompt,
+        workspace=ws,
+    )
+
+    return _parse_signals_response(raw_output)
+
+
 def _parse_analysis_response(raw_output: str) -> SourceAnalysis:
     """Parse the JSON response from the code analyzer agent."""
     cleaned = _strip_code_fences(raw_output)
@@ -138,6 +183,30 @@ def _parse_analysis_response(raw_output: str) -> SourceAnalysis:
         return SourceAnalysis()
 
     return _dict_to_source_analysis(data)
+
+
+def _parse_signals_response(raw_output: str) -> dict[str, Any]:
+    """Parse signal-facet JSON from agent output."""
+    cleaned = _strip_code_fences(raw_output)
+
+    data: dict[str, Any] | None = None
+    try:
+        loaded = json.loads(cleaned)
+        if isinstance(loaded, dict):
+            data = loaded
+    except (json.JSONDecodeError, ValueError):
+        extracted = _extract_json_payload(cleaned)
+        if extracted:
+            with contextlib.suppress(json.JSONDecodeError, ValueError):
+                loaded = json.loads(extracted)
+                if isinstance(loaded, dict):
+                    data = loaded
+
+    if data is None:
+        logger.error("Failed to parse code signal response: %s", raw_output[:200])
+        return {}
+
+    return data
 
 
 def _dict_to_source_analysis(data: dict[str, Any]) -> SourceAnalysis:
@@ -175,7 +244,9 @@ def _dict_to_source_analysis(data: dict[str, Any]) -> SourceAnalysis:
             )
         )
 
-    return SourceAnalysis(functions=functions, comments=comments)
+    raw_facets = data.get("facets")
+    facets = raw_facets if isinstance(raw_facets, dict) else {}
+    return SourceAnalysis(functions=functions, comments=comments, facets=facets)
 
 
 def analyze_source(
@@ -206,4 +277,37 @@ def analyze_source(
     result = analyzer(content, filepath, workspace)
 
     _analysis_cache[content_hash] = result
+    return result
+
+
+def infer_code_signals(
+    *,
+    file_path: str,
+    source_text: str,
+    spans: list[dict[str, Any]] | None = None,
+    requested: set[str],
+    workspace: Path | None = None,
+) -> dict[str, Any]:
+    """Infer request-driven code signal facets for a source file.
+
+    Cache key is ``(file_hash, requested_facets)`` so different facet requests
+    for the same file are cached independently.
+    """
+    if not requested:
+        return {}
+
+    requested_key = tuple(sorted(requested))
+    file_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+    cache_key = (file_hash, requested_key)
+
+    cached = _signal_cache.get(cache_key)
+    if cached is not None:
+        return copy.deepcopy(cached)
+
+    inferer = _default_signal_inferer or _call_llm_signal_inferer
+    result = inferer(file_path, source_text, spans or [], requested, workspace)
+    if not isinstance(result, dict):
+        result = {}
+
+    _signal_cache[cache_key] = copy.deepcopy(result)
     return result
