@@ -286,5 +286,7 @@ class GitVcs:
                 for j in range(i + 1, min(i + 4, len(lines))):
                     if lines[j].startswith("branch "):
                         ref = lines[j][7:]
-                        return ref.split("/")[-1]
+                        if ref.startswith("refs/heads/"):
+                            return ref[len("refs/heads/") :]
+                        return ref
         return None

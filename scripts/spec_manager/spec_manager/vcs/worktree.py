@@ -19,7 +19,6 @@ Branch naming convention::
     ...
     pdd/<run_id>/<layer>/slice/<slice_id>/<nonce>
 
-Backward-compatible: ``setup()`` still works for single-layer usage.
 """
 
 from __future__ import annotations
@@ -68,15 +67,6 @@ class WorktreeManager:
         self.run_id = run_id
         self.worktrees_base = worktrees_base or (workspace_root / ".worktrees")
 
-        # Legacy branch names (backward compat)
-        self._root_branch = f"pdd/{run_id}/root"
-        self._clean_branch = f"pdd/{run_id}/clean"
-        self._root_path = self.worktrees_base / f"{run_id}-root"
-        self._clean_path = self.worktrees_base / f"{run_id}-clean"
-
-        # Track active library worktrees: lib_id → Path (legacy)
-        self._library_worktrees: dict[str, Path] = {}
-
         # Multi-layer state
         self._layer_worktrees: dict[Layer, dict[Lane, Path]] = {}
         self._layer_branches: dict[Layer, dict[Lane, str]] = {}
@@ -85,90 +75,6 @@ class WorktreeManager:
         self._slice_worktrees: dict[str, Path] = {}  # slice_id → Path
         self._base_ref: str = "HEAD"
         self._layers_initialized: bool = False
-
-    # ------------------------------------------------------------------
-    # Legacy Public API (backward compatible)
-    # ------------------------------------------------------------------
-
-    def setup(self) -> dict[str, Any]:
-        """Create the root (dirty) and clean worktrees.
-
-        This is the legacy single-layer setup.  For multi-layer, use
-        :meth:`setup_layers`.
-
-        Returns:
-            Dict with ``root_path`` and ``clean_path``.
-        """
-        self.worktrees_base.mkdir(parents=True, exist_ok=True)
-        start = self.vcs.get_current_branch() or "HEAD"
-
-        ok, err = self.vcs.create_worktree(self._root_path, self._root_branch, start_point=start)
-        if not ok:
-            raise RuntimeError(f"Failed to create root worktree: {err}")
-        logger.info("Created root worktree at %s", self._root_path)
-
-        ok, err = self.vcs.create_worktree(self._clean_path, self._clean_branch, start_point=start)
-        if not ok:
-            raise RuntimeError(f"Failed to create clean worktree: {err}")
-        logger.info("Created clean worktree at %s", self._clean_path)
-
-        return {
-            "root_path": str(self._root_path),
-            "clean_path": str(self._clean_path),
-        }
-
-    def create_library_worktree(self, lib_id: str) -> Path:
-        """Create a grandchild worktree for a specific library (legacy).
-
-        For multi-layer, use :meth:`create_slice_worktree`.
-        """
-        if lib_id in self._library_worktrees:
-            raise RuntimeError(f"Library worktree already exists for '{lib_id}'")
-
-        branch = f"pdd/{self.run_id}/lib/{lib_id}"
-        path = self.worktrees_base / f"{self.run_id}-lib-{lib_id}"
-        start = self._root_branch
-
-        ok, err = self.vcs.create_worktree(path, branch, start_point=start)
-        if not ok:
-            raise RuntimeError(f"Failed to create worktree for library '{lib_id}': {err}")
-
-        self._library_worktrees[lib_id] = path
-        logger.info("Created library worktree for '%s' at %s", lib_id, path)
-        return path
-
-    def promote_library(self, lib_id: str) -> dict[str, Any]:
-        """Promote a library's work into the clean worktree (legacy)."""
-        if lib_id not in self._library_worktrees:
-            raise RuntimeError(f"No worktree found for library '{lib_id}'")
-
-        lib_branch = f"pdd/{self.run_id}/lib/{lib_id}"
-        ok, err = self.vcs.merge(self._clean_path, lib_branch)
-        if not ok:
-            raise RuntimeError(f"Failed to promote library '{lib_id}' to clean worktree: {err}")
-
-        logger.info("Promoted library '%s' to clean worktree", lib_id)
-        return {"lib_id": lib_id, "promoted": True}
-
-    def rebase_root_on_clean(self) -> dict[str, Any]:
-        """Rebase the dirty root worktree onto the clean sibling (legacy)."""
-        ok, err = self.vcs.rebase(self._root_path, self._clean_branch)
-        if not ok:
-            raise RuntimeError(f"Failed to rebase root onto clean: {err}")
-
-        logger.info("Rebased root worktree onto clean worktree")
-        return {"rebased": True}
-
-    def get_library_worktree(self, lib_id: str) -> Path | None:
-        """Return the worktree path for a library, or ``None``."""
-        return self._library_worktrees.get(lib_id)
-
-    def list_worktrees(self) -> list[dict[str, Any]]:
-        """List all active library worktrees."""
-        return [
-            {"lib_id": lib_id, "path": str(path)}
-            for lib_id, path in sorted(self._library_worktrees.items())
-        ]
 
     # ------------------------------------------------------------------
     # Multi-layer setup
@@ -322,6 +228,11 @@ class WorktreeManager:
         full_id = f"{layer}:{slice_id}"
         if full_id in self._slice_worktrees:
             raise RuntimeError(f"Slice worktree already exists for '{full_id}'")
+        active_layer = self.compute_active_layer()
+        if layer != active_layer:
+            raise RuntimeError(
+                f"Cannot create slice worktree for '{full_id}': active layer is '{active_layer}'"
+            )
 
         nonce = uuid.uuid4().hex[:6]
         branch = f"pdd/{self.run_id}/{layer}/slice/{slice_id}/{nonce}"
@@ -756,15 +667,6 @@ class WorktreeManager:
                 errors.append({"worktree": f"slice/{full_id}", "error": err})
         self._slice_worktrees.clear()
 
-        # Remove library worktrees (legacy)
-        for lib_id, path in list(self._library_worktrees.items()):
-            ok, err = self.vcs.remove_worktree(path)
-            if ok:
-                removed.append(f"lib/{lib_id}")
-            else:
-                errors.append({"worktree": f"lib/{lib_id}", "error": err})
-        self._library_worktrees.clear()
-
         # Remove layer worktrees (clean first, then dirty)
         for layer in reversed(LAYER_ORDER):
             for lane in ("clean", "dirty"):
@@ -778,41 +680,12 @@ class WorktreeManager:
         self._layer_worktrees.clear()
         self._layer_branches.clear()
 
-        # Remove legacy worktrees
-        if self.vcs.worktree_exists(self._clean_path):
-            ok, err = self.vcs.remove_worktree(self._clean_path)
-            if ok:
-                removed.append("clean")
-            else:
-                errors.append({"worktree": "clean", "error": err})
-
-        if self.vcs.worktree_exists(self._root_path):
-            ok, err = self.vcs.remove_worktree(self._root_path)
-            if ok:
-                removed.append("root")
-            else:
-                errors.append({"worktree": "root", "error": err})
-
         # Clear candidate refs
         for layer in LAYER_ORDER:
             self.vcs.delete_ref(self.candidate_ref(layer))
 
         logger.info("Cleanup complete: removed %d worktrees", len(removed))
         return {"removed": removed, "errors": errors}
-
-    # ------------------------------------------------------------------
-    # Properties (legacy compat)
-    # ------------------------------------------------------------------
-
-    @property
-    def root_path(self) -> Path:
-        """Path to the root (dirty) worktree (legacy)."""
-        return self._root_path
-
-    @property
-    def clean_path(self) -> Path:
-        """Path to the clean sibling worktree (legacy)."""
-        return self._clean_path
 
     # ------------------------------------------------------------------
     # Internal helpers

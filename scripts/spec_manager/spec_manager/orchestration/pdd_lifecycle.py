@@ -415,7 +415,7 @@ class PddLifecycle:
             l1_result, approval = self._run_l1_with_approval()
             pass_outcome["l1"] = l1_result
             pass_outcome["approval"] = approval
-            self._record_git_ref(f"pdd/{self.manager.run_id}/l1-approved")
+            self._record_git_tag(f"pdd/{self.manager.run_id}/l1-approved")
             state_mgr.update_state(
                 layers_completed=["l1"],
                 phase="l1_l2_transition",
@@ -479,6 +479,8 @@ class PddLifecycle:
             self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
             if self.mode == "interactive":
                 pass_outcome["l2_checkpoint"] = self._request_l2_checkpoint(pass_outcome["l2"])
+                if bool(pass_outcome["l2_checkpoint"].get("approved", False)):
+                    self._record_git_tag(f"pdd/{self.manager.run_id}/l2-approved")
             l2_termination = (
                 pass_outcome["l2"].get("layer_termination")
                 if isinstance(pass_outcome["l2"], dict)
@@ -776,7 +778,7 @@ class PddLifecycle:
             state_mgr.update_state(phase="blocked_merge_tag")
             return results
 
-        self._record_git_ref(f"pdd/{self.manager.run_id}/release")
+        self._record_git_tag(f"pdd/{self.manager.run_id}/final")
 
         state_mgr.update_state(phase="done")
 
@@ -1309,7 +1311,7 @@ class PddLifecycle:
 
         source_branch = ""
         target_branch = vcs.get_current_branch(self.manager.workspace_path) or "HEAD"
-        release_branch = f"pdd/{self.manager.run_id}/release"
+        release_branch = f"pdd/{self.manager.run_id}/final"
         release_target_sha = ""
 
         merged = False
@@ -1354,7 +1356,7 @@ class PddLifecycle:
                         branch_err or f"Failed to create release branch '{release_branch}'"
                     )
 
-        tag_name = f"pdd/{self.manager.run_id}/release"
+        tag_name = f"pdd/{self.manager.run_id}/final"
         tag_ok = False
         tag_error = ""
         if merged or release_branch_created:
@@ -1372,7 +1374,7 @@ class PddLifecycle:
                     tag_result = vcs.create_tag(
                         tag_name,
                         tag_target,
-                        message=f"PDD release for run {self.manager.run_id}",
+                        message=f"PDD final approval for run {self.manager.run_id}",
                     )
                     if isinstance(tag_result, tuple) and len(tag_result) == 2:
                         tag_ok, tag_error = bool(tag_result[0]), str(tag_result[1])
@@ -3060,7 +3062,7 @@ class PddLifecycle:
         writes metadata to the run directory for pipeline timeline auditing.
 
         Args:
-            ref_name: Ref name (e.g., ``pdd/<run_id>/l1-approved``).
+            ref_name: Ref name (e.g., ``pdd/<run_id>/base``).
 
         Returns:
             True when the git ref was created/updated successfully.
@@ -3112,6 +3114,70 @@ class PddLifecycle:
             )
 
         return ref_created
+
+    def _record_git_tag(self, tag_name: str) -> bool:
+        """Record a git tag milestone for the run and create a real git tag."""
+        head_sha = self._read_git_sha()
+        tag_created = False
+        tag_error = ""
+
+        vcs = self.worktree_manager.vcs if self.worktree_manager else None
+        if vcs is None:
+            try:
+                from spec_manager.vcs.operations import GitVcs
+
+                vcs = GitVcs(repo_root=self.manager.workspace_path)
+            except Exception as exc:
+                tag_error = f"Unable to initialize VCS helper: {exc}"
+
+        if not head_sha:
+            tag_error = tag_error or "Unable to resolve HEAD SHA"
+        elif vcs is not None:
+            existing_tag_sha = vcs.rev_parse(f"refs/tags/{tag_name}")
+            if existing_tag_sha:
+                if existing_tag_sha == head_sha:
+                    tag_created = True
+                else:
+                    tag_error = (
+                        f"Tag '{tag_name}' exists at {existing_tag_sha}, expected {head_sha}"
+                    )
+            else:
+                try:
+                    tag_result = vcs.create_tag(
+                        tag_name,
+                        head_sha,
+                        message=f"PDD milestone tag for run {self.manager.run_id}",
+                    )
+                    if isinstance(tag_result, tuple) and len(tag_result) == 2:
+                        ok, err = tag_result
+                    else:
+                        ok, err = False, f"Unexpected create_tag return value: {tag_result!r}"
+                except Exception as exc:
+                    ok, err = False, str(exc)
+                tag_created = bool(ok)
+                tag_error = str(err)
+
+            if not tag_created:
+                logger.warning("Failed to create git tag '%s': %s", tag_name, tag_error)
+
+        import time
+
+        if hasattr(self, "_state_mgr"):
+            refs_dir = self._state_mgr.run_dir / "refs"
+            refs_dir.mkdir(parents=True, exist_ok=True)
+            tag_data = {
+                "tag": tag_name,
+                "run_id": self.manager.run_id,
+                "timestamp": time.time(),
+                "head_sha": head_sha or "",
+                "git_tag_created": tag_created,
+                "git_tag_error": tag_error,
+            }
+            (refs_dir / f"{tag_name.replace('/', '_')}.json").write_text(
+                json.dumps(tag_data, indent=2), encoding="utf-8"
+            )
+
+        return tag_created
 
     def _resolve_demotion_slice_root(self, file_hint: str) -> Path:
         """Resolve best-effort slice root for demotion ticket materialization."""
