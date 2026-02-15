@@ -13,6 +13,7 @@ this module structures the data and delegates.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -71,6 +72,23 @@ _ARCH_FILE_GLOBS: list[str] = [
     "**/entrypoints.yml",
     "**/wiring.yaml",
     "**/wiring.yml",
+    "**/event_handlers.yaml",
+    "**/event_handlers.yml",
+    "**/event_handlers.json",
+    "**/handlers.yaml",
+    "**/handlers.yml",
+    "**/handlers.json",
+    "**/routes.yaml",
+    "**/routes.yml",
+    "**/routes.json",
+    "**/*architecture*.yaml",
+    "**/*architecture*.yml",
+    "**/*architecture*.json",
+    "**/*arch*.yaml",
+    "**/*arch*.yml",
+    "**/*arch*.json",
+    "**/*handler*.py",
+    "**/*route*.py",
 ]
 
 _ARCH_FILE_BASENAMES = frozenset(
@@ -83,7 +101,29 @@ _ARCH_FILE_BASENAMES = frozenset(
         "entrypoints.yml",
         "wiring.yaml",
         "wiring.yml",
+        "event_handlers.yaml",
+        "event_handlers.yml",
+        "event_handlers.json",
+        "handlers.yaml",
+        "handlers.yml",
+        "handlers.json",
+        "routes.yaml",
+        "routes.yml",
+        "routes.json",
     }
+)
+
+_ARCH_FILE_HINT_EXTS = frozenset({".yaml", ".yml", ".json", ".toml", ".py", ".md", ".txt"})
+_ARCH_FILE_HINT_TOKENS = (
+    "manifest",
+    "registry",
+    "entrypoint",
+    "wiring",
+    "handler",
+    "route",
+    "architecture",
+    "arch",
+    "pin",
 )
 
 
@@ -116,6 +156,17 @@ def _discover_arch_files(*, workspace_root: Path | None, scope_roots: list[Path]
                     found.append(str(match.relative_to(workspace_root)))
                 else:
                     found.append(str(match.relative_to(scope_root)))
+
+        for match in sorted(scope_root.rglob("*")):
+            if not match.is_file():
+                continue
+            if not _looks_like_arch_file_ref(str(match)):
+                continue
+            if workspace_root is not None and _is_relative_to(match, workspace_root):
+                found.append(str(match.relative_to(workspace_root)))
+            else:
+                found.append(str(match.relative_to(scope_root)))
+
     # Deduplicate while preserving order.
     seen: set[str] = set()
     unique: list[str] = []
@@ -158,7 +209,13 @@ def _looks_like_arch_file_ref(value: Any) -> bool:
         return False
     normalized = text.replace("\\", "/")
     basename = normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
-    return basename in _ARCH_FILE_BASENAMES
+    if basename in _ARCH_FILE_BASENAMES:
+        return True
+    suffix = Path(basename).suffix.lower()
+    if suffix not in _ARCH_FILE_HINT_EXTS:
+        return False
+    basename_lower = basename.lower()
+    return any(token in basename_lower for token in _ARCH_FILE_HINT_TOKENS)
 
 
 def _extract_arch_file_refs_from_integration_payload(payload: Any) -> list[str]:
@@ -209,6 +266,158 @@ def _extract_arch_file_refs_from_integration_payload(payload: Any) -> list[str]:
         seen.add(ref)
         deduped.append(ref)
     return deduped
+
+
+def _coerce_json_payload(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if hasattr(raw, "to_dict") and callable(raw.to_dict):
+        payload = raw.to_dict()
+        if isinstance(payload, dict):
+            return payload
+
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            return payload
+    except json.JSONDecodeError:
+        pass
+
+    for block in re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL):
+        try:
+            payload = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+    json_like = _extract_first_json_object(text)
+    if not json_like:
+        return None
+    try:
+        payload = json.loads(json_like)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _extract_first_json_object(text: str) -> str:
+    start = text.find("{")
+    if start < 0:
+        return ""
+
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        ch = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return ""
+
+
+def _normalize_topology_graph(
+    payload: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
+    if payload is None:
+        return [], [], [], []
+
+    graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else payload
+
+    raw_nodes = graph.get("nodes", [])
+    raw_edges = graph.get("edges", [])
+    if not isinstance(raw_nodes, list):
+        raw_nodes = []
+    if not isinstance(raw_edges, list):
+        raw_edges = []
+
+    allowed_node_kinds = {"component", "pin", "edge", "handler", "route"}
+    allowed_edge_kinds = {"provides", "consumes", "wired_to", "declared_in"}
+
+    nodes: list[dict[str, Any]] = []
+    node_ids: set[str] = set()
+    for index, row in enumerate(raw_nodes):
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind", row.get("type", "")) or "").strip().lower()
+        if kind not in allowed_node_kinds:
+            continue
+
+        node_id = str(row.get("id", "") or "").strip()
+        if not node_id:
+            name = str(row.get("name", row.get("label", "")) or "").strip()
+            node_id = f"{kind}:{name or index}"
+        if node_id in node_ids:
+            continue
+        node_ids.add(node_id)
+
+        normalized = {
+            "id": node_id,
+            "kind": kind,
+            "name": str(row.get("name", row.get("label", "")) or "").strip(),
+            "file": str(row.get("file", row.get("path", "")) or "").strip().replace("\\", "/"),
+        }
+        for field in ("component", "pin", "handler", "route", "metadata"):
+            if field in row:
+                normalized[field] = row[field]
+        nodes.append(normalized)
+
+    edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    for row in raw_edges:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind", row.get("type", "")) or "").strip().lower()
+        if kind not in allowed_edge_kinds:
+            continue
+        source = str(row.get("source", "") or "").strip()
+        target = str(row.get("target", "") or "").strip()
+        if not source or not target:
+            continue
+        if source not in node_ids or target not in node_ids:
+            continue
+        marker = (source, target, kind)
+        if marker in seen_edges:
+            continue
+        seen_edges.add(marker)
+        edges.append({"source": source, "target": target, "kind": kind})
+
+    arch_files: list[str] = []
+    raw_arch_files = graph.get("arch_files", payload.get("arch_files", []))
+    if isinstance(raw_arch_files, list):
+        for ref in raw_arch_files:
+            text = str(ref).strip()
+            if text:
+                arch_files.append(text)
+
+    issues: list[str] = []
+    if not nodes:
+        issues.append("No topology nodes were produced from architecture discovery input.")
+    if not edges:
+        issues.append("No topology edges were produced from architecture discovery input.")
+
+    return nodes, edges, arch_files, issues
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +471,7 @@ class L2LayerResearchAdapter:
         self._resolve_under_spec_fn = resolve_under_spec_fn
         self._resolve_signal_fn = resolve_signal_fn
 
-    def run_agent(self, prompt: str) -> str:
+    def run_agent(self, prompt: str, *, ctx: Any | None = None, hint: str = "") -> str:
         question = str(prompt or "").strip()
         if not question or self._research_tool is None:
             return ""
@@ -273,8 +482,16 @@ class L2LayerResearchAdapter:
             if hasattr(self._research_tool, "research"):
                 from spec_manager.planner.tools.research_tool import ResearchQuery
 
+                layer_context = self._build_research_context(ctx, hint)
                 result = self._research_tool.research(
-                    ResearchQuery(question=question, dimension="layer")
+                    ResearchQuery(
+                        question=question,
+                        context=layer_context,
+                        dimension="auto",
+                        layer="l2",
+                        slice_id=self._slice_id_from_ctx(ctx),
+                        hints={"hint": hint} if hint else {},
+                    )
                 )
                 synthesis = str(getattr(result, "synthesis", "") or "").strip()
                 if synthesis:
@@ -287,6 +504,27 @@ class L2LayerResearchAdapter:
         except Exception:
             logger.debug("L2 research query failed", exc_info=True)
         return ""
+
+    @staticmethod
+    def _slice_id_from_ctx(ctx: Any | None) -> str:
+        if ctx is None:
+            return ""
+        return str(getattr(ctx, "slice_id", "") or "").strip()
+
+    @staticmethod
+    def _build_research_context(ctx: Any | None, hint: str) -> str:
+        if ctx is None:
+            return hint
+        mode = str(getattr(ctx, "mode", "") or "").strip().lower()
+        run_id = str(getattr(ctx, "run_id", "") or "").strip()
+        context_parts = ["layer=l2"]
+        if mode:
+            context_parts.append(f"mode={mode}")
+        if run_id:
+            context_parts.append(f"run_id={run_id}")
+        if hint:
+            context_parts.append(f"hint={hint}")
+        return " ".join(context_parts)
 
     def resolve_from_constraints(self, ctx: Any, question: str) -> str:
         if not question or self._constraints_tool is None:
@@ -396,7 +634,7 @@ class L2Planner:
         return discovery
 
     def _discover_impl(self, ctx: Any) -> dict[str, Any]:
-        """Route slice-scoped architecture artifacts into a discovery summary."""
+        """Route slice-scoped architecture artifacts into a topology graph."""
         workspace_root, scope_roots = self._resolve_discovery_roots(ctx)
         routed_arch_files = _discover_arch_files(
             workspace_root=workspace_root,
@@ -414,30 +652,48 @@ class L2Planner:
         if not routed_arch_files:
             discovery_issues.append(
                 "No architecture manifest files were discovered in scoped roots "
-                "(component_manifest/pins_registry/entrypoints/wiring)."
+                "(component_manifest/pins_registry/entrypoints/handlers/routes/wiring)."
             )
 
-        if self._integration_tool is None:
-            discovery_issues.append("No integration tool is configured for L2 artifact routing.")
-        else:
-            try:
-                enriched: Any
-                if callable(self._integration_tool):
-                    enriched = self._integration_tool(
-                        workspace_root=str(workspace_root) if workspace_root is not None else "",
-                        scope_roots=[str(root) for root in scope_roots],
-                        arch_files=routed_arch_files,
-                    )
-                elif hasattr(self._integration_tool, "build_graph"):
-                    discovery_issues.append(
-                        "Integration tool exposes build_graph but no artifact-routing payload; "
-                        "derived topology is ignored by SEC-105 design."
-                    )
-                    enriched = None
-                else:
-                    enriched = None
+        topology_payload = self._derive_arch_topology(
+            workspace_root=workspace_root,
+            scope_roots=scope_roots,
+            arch_files=routed_arch_files,
+        )
+        nodes, edges, payload_arch_files, topology_issues = _normalize_topology_graph(
+            topology_payload
+        )
 
-                integration_refs = _extract_arch_file_refs_from_integration_payload(enriched)
+        topology["nodes"] = nodes
+        topology["edges"] = edges
+        discovery_issues.extend(topology_issues)
+
+        merged_payload_arch_files = [
+            _normalize_arch_file_ref(
+                ref,
+                workspace_root=workspace_root,
+                scope_roots=scope_roots,
+            )
+            for ref in payload_arch_files
+        ]
+        normalized_payload_arch_files = [ref for ref in merged_payload_arch_files if ref]
+        for ref in normalized_payload_arch_files:
+            if ref not in topology["arch_files"]:
+                topology["arch_files"].append(ref)
+        if normalized_payload_arch_files:
+            topology["integration_artifact_refs"] = normalized_payload_arch_files
+
+        if topology_payload is None and self._integration_tool is None:
+            discovery_issues.append("No integration tool is configured for L2 topology discovery.")
+        elif topology_payload is None:
+            discovery_issues.append(
+                "Integration tool returned no topology payload for L2 discovery."
+            )
+        elif topology_payload is not None:
+            try:
+                integration_refs = _extract_arch_file_refs_from_integration_payload(
+                    topology_payload
+                )
                 merged_refs = [
                     _normalize_arch_file_ref(
                         ref,
@@ -453,12 +709,17 @@ class L2Planner:
                 topology["integration_artifact_refs"] = normalized_refs
             except Exception:
                 logger.warning(
-                    "L2 integration_tool failed during artifact routing",
+                    "L2 integration_tool failed during architecture topology extraction",
                     exc_info=True,
                 )
                 discovery_issues.append(
-                    "Integration tool failed during architecture artifact routing."
+                    "Integration tool failed during architecture topology extraction."
                 )
+
+        if routed_arch_files and not topology["nodes"]:
+            discovery_issues.append(
+                "Architecture files were discovered but topology nodes were not produced."
+            )
 
         topology["discovery_status"] = "ready" if not discovery_issues else "incomplete"
         topology["discovery_issues"] = discovery_issues
@@ -556,6 +817,178 @@ class L2Planner:
             _append_root(workspace_root)
 
         return workspace_root, roots
+
+    def _derive_arch_topology(
+        self,
+        *,
+        workspace_root: Path | None,
+        scope_roots: list[Path],
+        arch_files: list[str],
+    ) -> dict[str, Any] | None:
+        if self._integration_tool is None:
+            return None
+
+        arch_artifacts = self._load_arch_artifacts(
+            arch_files=arch_files,
+            workspace_root=workspace_root,
+            scope_roots=scope_roots,
+        )
+        payload = {
+            "task": "l2_discovery_topology",
+            "layer": "l2",
+            "workspace_root": str(workspace_root) if workspace_root is not None else "",
+            "scope_roots": [str(root) for root in scope_roots],
+            "arch_files": arch_artifacts,
+        }
+        prompt = (
+            "Produce strict JSON topology with keys: nodes, edges, arch_files. "
+            "Node kinds: component|pin|edge|handler|route. "
+            "Edge kinds: provides|consumes|wired_to|declared_in."
+        )
+
+        raw: Any = None
+        tool = self._integration_tool
+        try:
+            if callable(tool):
+                for kwargs in (
+                    {"task": "l2_discovery_topology", "prompt": prompt, "payload": payload},
+                    {"prompt": prompt, "payload": payload},
+                    {"payload": payload},
+                    {"query": prompt},
+                ):
+                    try:
+                        raw = tool(**kwargs)
+                        break
+                    except TypeError:
+                        continue
+                if raw is None:
+                    raw = tool(prompt)
+            elif hasattr(tool, "discover_architecture_topology"):
+                raw = tool.discover_architecture_topology(payload)
+            elif hasattr(tool, "discover"):
+                raw = tool.discover(payload)
+            elif hasattr(tool, "build_graph"):
+                absolute_paths = [
+                    str(candidate)
+                    for ref in arch_files
+                    for candidate in self._resolve_arch_ref_paths(
+                        ref,
+                        workspace_root=workspace_root,
+                        scope_roots=scope_roots,
+                    )
+                ]
+                raw = self._coerce_integration_graph_payload(
+                    tool.build_graph(absolute_paths), arch_files
+                )
+        except Exception:
+            logger.warning("L2 integration tool failed during topology derivation", exc_info=True)
+            return None
+
+        payload_dict = _coerce_json_payload(raw)
+        if payload_dict is None:
+            return None
+        if "arch_files" not in payload_dict:
+            payload_dict["arch_files"] = list(arch_files)
+        return payload_dict
+
+    @staticmethod
+    def _load_arch_artifacts(
+        *,
+        arch_files: list[str],
+        workspace_root: Path | None,
+        scope_roots: list[Path],
+    ) -> list[dict[str, str]]:
+        artifacts: list[dict[str, str]] = []
+        for ref in arch_files:
+            candidate_paths = L2Planner._resolve_arch_ref_paths(
+                ref,
+                workspace_root=workspace_root,
+                scope_roots=scope_roots,
+            )
+            if not candidate_paths:
+                artifacts.append({"path": ref, "content": ""})
+                continue
+            loaded = False
+            for candidate in candidate_paths:
+                try:
+                    content = candidate.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                artifacts.append({"path": ref, "content": content[:16000]})
+                loaded = True
+                break
+            if not loaded:
+                artifacts.append({"path": ref, "content": ""})
+        return artifacts
+
+    @staticmethod
+    def _coerce_integration_graph_payload(graph: Any, arch_files: list[str]) -> dict[str, Any]:
+        payload: dict[str, Any]
+        if hasattr(graph, "to_dict") and callable(graph.to_dict):
+            payload = graph.to_dict()
+        elif isinstance(graph, dict):
+            payload = dict(graph)
+        else:
+            payload = {"nodes": [], "edges": []}
+
+        raw_nodes = payload.get("nodes", [])
+        raw_edges = payload.get("edges", [])
+        if not isinstance(raw_nodes, list):
+            raw_nodes = []
+        if not isinstance(raw_edges, list):
+            raw_edges = []
+
+        node_kind_map = {"component": "component", "pin": "pin", "edge": "edge"}
+        edge_kind_map = {
+            "provides": "provides",
+            "consumes": "consumes",
+            "wired_to": "wired_to",
+            "depends_on": "consumes",
+            "declared_in": "declared_in",
+        }
+
+        nodes: list[dict[str, Any]] = []
+        for index, row in enumerate(raw_nodes):
+            if not isinstance(row, dict):
+                continue
+            raw_kind = str(row.get("kind", row.get("type", "")) or "").strip().lower()
+            kind = node_kind_map.get(raw_kind)
+            if not kind:
+                continue
+            node_id = str(row.get("id", row.get("node_id", "")) or "").strip()
+            if not node_id:
+                node_id = f"{kind}:{index}"
+            nodes.append(
+                {
+                    "id": node_id,
+                    "kind": kind,
+                    "name": str(row.get("name", row.get("label", "")) or "").strip(),
+                    "file": str(row.get("file", "") or "").strip(),
+                }
+            )
+
+        node_ids = {node["id"] for node in nodes}
+        edges: list[dict[str, Any]] = []
+        for row in raw_edges:
+            if not isinstance(row, dict):
+                continue
+            raw_kind = str(row.get("kind", row.get("type", "")) or "").strip().lower()
+            kind = edge_kind_map.get(raw_kind)
+            if not kind:
+                continue
+            source = str(row.get("source", "") or "").strip()
+            target = str(row.get("target", "") or "").strip()
+            if not source or not target:
+                continue
+            if source not in node_ids or target not in node_ids:
+                continue
+            edges.append({"source": source, "target": target, "kind": kind})
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "arch_files": list(arch_files),
+        }
 
     @staticmethod
     def _build_gap_intentions(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -960,7 +1393,11 @@ class L2Planner:
                 continue
 
             # Strategy 3: shared research lookup.
-            answer = self.layer_research_adapter.run_agent(question)
+            answer = self.layer_research_adapter.run_agent(
+                question,
+                ctx=ctx,
+                hint="under_spec",
+            )
             if answer:
                 resolved_constraints[constraint_key] = answer
                 continue
@@ -1216,7 +1653,11 @@ class L2Planner:
             return None
 
         signal_text = signal if isinstance(signal, str) else getattr(signal, "text", str(signal))
-        result = self.layer_research_adapter.run_agent(str(signal_text))
+        result = self.layer_research_adapter.run_agent(
+            str(signal_text),
+            ctx=ctx,
+            hint="signal",
+        )
         if result:
             return {
                 "resolved": True,

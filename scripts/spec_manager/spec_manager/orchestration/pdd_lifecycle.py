@@ -247,8 +247,10 @@ class PddLifecycle:
             except Exception as exc:
                 logger.debug("Could not build research coordinator: %s", exc)
 
+        constraints_tool = ConstraintsTool(workspace_root=self.manager.workspace_path)
         research_tool = ResearchTool(
             evidence_searcher=evidence_searcher,
+            constraints_tool=constraints_tool,
             steering_script=steering_script,
             research_coordinator=research_coordinator,
             workspace=self.manager.workspace_path,
@@ -263,7 +265,6 @@ class PddLifecycle:
             source_cache=source_cache,
             workspace=self.manager.workspace_path,
         )
-        constraints_tool = ConstraintsTool(workspace_root=self.manager.workspace_path)
 
         return GeneralPlanner(
             workspace_root=self.manager.workspace_path,

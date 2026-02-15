@@ -8,6 +8,7 @@ and produces function-level implementation intentions.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -20,30 +21,44 @@ logger = logging.getLogger(__name__)
 class L1DiscoveryRouter:
     """Discovers L1 code-as-spec skeleton topology for a slice."""
 
+    def __init__(self, discovery_tool: Any = None, fallback_discovery_tool: Any = None) -> None:
+        self._discovery_tool = discovery_tool
+        self._fallback_discovery_tool = fallback_discovery_tool
+
     def discover(self, ctx: Any) -> dict[str, Any]:
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
         if slice_root is None or not slice_root.exists():
             logger.warning("L1 discover: slice_root missing or does not exist (%s)", ctx.slice_root)
-            return {"nodes": [], "edges": [], "file_index": {}}
+            return {"nodes": [], "edges": [], "file_index": {}, "discovery_issues": []}
 
         files = _collect_slice_files(slice_root)
         if not files:
-            return {"nodes": [], "edges": [], "file_index": {}}
+            return {"nodes": [], "edges": [], "file_index": {}, "discovery_issues": []}
 
-        nodes: list[dict[str, Any]] = []
-        edges: list[dict[str, Any]] = []
+        raw_graph = _run_l1_discovery_tool(
+            files=files,
+            discovery_tool=self._discovery_tool,
+        )
+        if raw_graph is None and self._fallback_discovery_tool is not None:
+            raw_graph = _run_l1_discovery_tool(
+                files=files,
+                discovery_tool=self._fallback_discovery_tool,
+            )
+        nodes, edges, discovery_issues = _normalize_l1_discovery_graph(raw_graph, files)
+
         file_index: dict[str, list[str]] = {}
-
-        for rel_path, content in files.items():
-            file_nodes, file_edges = _parse_skeleton_file(rel_path, content)
-            nodes.extend(file_nodes)
-            edges.extend(file_edges)
-            file_index[rel_path] = [n["id"] for n in file_nodes]
+        for rel_path in files:
+            file_index[rel_path] = []
+        for node in nodes:
+            rel_path = str(node.get("file", "")).strip()
+            if rel_path:
+                file_index.setdefault(rel_path, []).append(str(node.get("id", "")))
 
         return {
             "nodes": nodes,
             "edges": edges,
             "file_index": file_index,
+            "discovery_issues": discovery_issues,
         }
 
 
@@ -55,7 +70,7 @@ class L1LayerResearchAdapter:
         self._constraints_tool = constraints_tool
 
     def run_agent(self, prompt: str) -> str:
-        return self._query_text(prompt, dimension="layer")
+        return self._query_text(prompt)
 
     def resolve_under_spec(
         self,
@@ -114,7 +129,7 @@ class L1LayerResearchAdapter:
                 continue
 
             # Strategy 3: unified research tool lookup.
-            research_answer = self._query_text(question or target, dimension="layer")
+            research_answer = self._query_text(question or target, ctx=ctx, hint="under_spec")
             if research_answer:
                 resolved.append(
                     {
@@ -152,7 +167,7 @@ class L1LayerResearchAdapter:
         if not target:
             return None
 
-        answer = self._query_text(target, dimension="layer")
+        answer = self._query_text(target, ctx=ctx, hint="signal")
         if not answer:
             return None
         return {
@@ -177,7 +192,7 @@ class L1LayerResearchAdapter:
             logger.debug("L1 constraints tool failed for question=%s", question, exc_info=True)
         return ""
 
-    def _query_text(self, question: str, *, dimension: str) -> str:
+    def _query_text(self, question: str, *, ctx: Any | None = None, hint: str = "") -> str:
         prompt = str(question or "").strip()
         if not prompt or self._research_tool is None:
             return ""
@@ -190,8 +205,16 @@ class L1LayerResearchAdapter:
             if hasattr(self._research_tool, "research"):
                 from spec_manager.planner.tools.research_tool import ResearchQuery
 
+                layer_context = self._build_research_context(ctx, hint)
                 result = self._research_tool.research(
-                    ResearchQuery(question=prompt, dimension=dimension)
+                    ResearchQuery(
+                        question=prompt,
+                        context=layer_context,
+                        dimension="auto",
+                        layer="l1",
+                        slice_id=self._slice_id_from_ctx(ctx),
+                        hints={"hint": hint} if hint else {},
+                    )
                 )
                 synthesis = str(getattr(result, "synthesis", "") or "").strip()
                 if synthesis:
@@ -205,6 +228,27 @@ class L1LayerResearchAdapter:
         except Exception:
             logger.debug("L1 research query failed", exc_info=True)
         return ""
+
+    @staticmethod
+    def _slice_id_from_ctx(ctx: Any | None) -> str:
+        if ctx is None:
+            return ""
+        return str(getattr(ctx, "slice_id", "") or "").strip()
+
+    @staticmethod
+    def _build_research_context(ctx: Any | None, hint: str) -> str:
+        if ctx is None:
+            return hint
+        mode = str(getattr(ctx, "mode", "") or "").strip().lower()
+        run_id = str(getattr(ctx, "run_id", "") or "").strip()
+        context_parts = ["layer=l1"]
+        if mode:
+            context_parts.append(f"mode={mode}")
+        if run_id:
+            context_parts.append(f"run_id={run_id}")
+        if hint:
+            context_parts.append(f"hint={hint}")
+        return " ".join(context_parts)
 
 
 class L1SkeletonPlanner:
@@ -377,7 +421,10 @@ class L1Planner:
             research_tool=research_tool,
             constraints_tool=constraints_tool,
         )
-        self.discovery_router = L1DiscoveryRouter()
+        self.discovery_router = L1DiscoveryRouter(
+            discovery_tool=integration_tool,
+            fallback_discovery_tool=research_tool,
+        )
         self.skeleton_planner = L1SkeletonPlanner(
             research_adapter=self.layer_research_adapter,
             constraints_store_adapter=constraints_store_adapter,
@@ -638,18 +685,19 @@ def _emit_trace_event(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_TEXT_SUFFIXES = frozenset({".py", ".md", ".txt", ".yaml", ".yml", ".toml", ".json", ".rst"})
+_L1_NODE_KINDS = frozenset({"function", "class", "spec_comment_block"})
+_L1_EDGE_KINDS = frozenset({"declares", "mentions", "calls"})
 
 
 def _collect_slice_files(root: Path) -> dict[str, str]:
-    """Return ``{relative_path: content}`` for readable text files under *root*."""
+    """Return ``{relative_path: content}`` for readable text-like files under *root*."""
     files: dict[str, str] = {}
     if not root.is_dir():
         return files
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        if path.suffix not in _TEXT_SUFFIXES:
+        if not _is_text_like_file(path):
             continue
         try:
             content = path.read_text(encoding="utf-8", errors="replace")
@@ -660,112 +708,231 @@ def _collect_slice_files(root: Path) -> dict[str, str]:
     return files
 
 
-def _parse_skeleton_file(
-    rel_path: str, content: str
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Lightweight structural scan of a skeleton file.
+def _is_text_like_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            sample = handle.read(4096)
+    except OSError:
+        return False
+    if b"\x00" in sample:
+        return False
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
-    Produces *nodes* (function / class / spec_comment_block) and *edges*
-    (declares / mentions) using simple line-based heuristics.  This is
-    intentionally NOT a language parser — real analysis is deferred to
-    LLM calls wired in later.
-    """
-    from spec_manager.core.language import CLASS_KEYWORDS, COMMENT_PREFIX, FUNCTION_KEYWORDS
 
-    comment_char = COMMENT_PREFIX.rstrip()  # e.g. "#"
+def _run_l1_discovery_tool(files: dict[str, str], discovery_tool: Any) -> dict[str, Any] | None:
+    if discovery_tool is None:
+        return None
 
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-    current_spec_block: list[str] | None = None
-    spec_block_start: int | None = None
+    file_payload = [
+        {"path": rel_path, "content": content[:12000]} for rel_path, content in files.items()
+    ]
+    prompt = (
+        "Produce a strict JSON object with keys 'nodes' and 'edges' for an L1 skeleton graph. "
+        "Nodes must have kind=function|class|spec_comment_block and include id/file. "
+        "Edges must have kind=declares|mentions|calls and include source/target. "
+        "Use best-effort pattern recognition only."
+    )
+    payload = {
+        "task": "l1_discovery",
+        "layer": "l1",
+        "files": file_payload,
+    }
 
-    for lineno, line in enumerate(content.splitlines(), start=1):
-        stripped = line.strip()
+    raw: Any = None
+    try:
+        if callable(discovery_tool):
+            for kwargs in (
+                {"task": "l1_discovery", "prompt": prompt, "payload": payload},
+                {"prompt": prompt, "payload": payload},
+                {"payload": payload},
+                {"query": prompt},
+            ):
+                try:
+                    raw = discovery_tool(**kwargs)
+                    break
+                except TypeError:
+                    continue
+            if raw is None:
+                raw = discovery_tool(prompt)
+        elif hasattr(discovery_tool, "discover_skeleton_graph"):
+            raw = discovery_tool.discover_skeleton_graph(payload)
+        elif hasattr(discovery_tool, "discover_l1_graph"):
+            raw = discovery_tool.discover_l1_graph(payload)
+        elif hasattr(discovery_tool, "discover"):
+            raw = discovery_tool.discover(payload)
+        elif hasattr(discovery_tool, "research"):
+            from spec_manager.planner.tools.research_tool import ResearchQuery
 
-        # Spec-comment blocks: contiguous lines starting with comment prefix
-        if stripped.startswith(comment_char) and not stripped.startswith("#!"):
-            if current_spec_block is None:
-                current_spec_block = []
-                spec_block_start = lineno
-            current_spec_block.append(stripped.lstrip("# "))
+            result = discovery_tool.research(
+                ResearchQuery(
+                    question=prompt,
+                    context=json.dumps(payload, ensure_ascii=True),
+                    dimension="auto",
+                    layer="l1",
+                    hints={"task": "l1_discovery"},
+                    max_results=1,
+                )
+            )
+            raw = getattr(result, "synthesis", result)
+    except Exception:
+        logger.warning("L1 discovery tool invocation failed", exc_info=True)
+        return None
+
+    return _coerce_json_payload(raw)
+
+
+def _coerce_json_payload(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if hasattr(raw, "to_dict") and callable(raw.to_dict):
+        payload = raw.to_dict()
+        if isinstance(payload, dict):
+            return payload
+
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            return payload
+    except json.JSONDecodeError:
+        pass
+
+    for block in re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL):
+        try:
+            payload = json.loads(block)
+        except json.JSONDecodeError:
             continue
+        if isinstance(payload, dict):
+            return payload
 
-        # Flush accumulated spec-comment block
-        if current_spec_block is not None:
-            block_id = f"{rel_path}:spec:{spec_block_start}"
-            nodes.append(
-                {
-                    "id": block_id,
-                    "kind": "spec_comment_block",
-                    "file": rel_path,
-                    "line": spec_block_start,
-                    "text": "\n".join(current_spec_block),
-                }
-            )
-            current_spec_block = None
-            spec_block_start = None
-
-        # Function definitions
-        if any(stripped.startswith(kw) for kw in FUNCTION_KEYWORDS):
-            matched_kw = next(kw for kw in FUNCTION_KEYWORDS if stripped.startswith(kw))
-            name = _extract_name(stripped, matched_kw)
-            node_id = f"{rel_path}:function:{name}"
-            spec_ref = (
-                nodes[-1]["id"] if nodes and nodes[-1]["kind"] == "spec_comment_block" else ""
-            )
-            nodes.append(
-                {
-                    "id": node_id,
-                    "kind": "function",
-                    "name": name,
-                    "file": rel_path,
-                    "line": lineno,
-                    "spec_comment_ref": spec_ref,
-                }
-            )
-            if spec_ref:
-                edges.append({"source": spec_ref, "target": node_id, "kind": "declares"})
-
-        # Class definitions
-        elif any(stripped.startswith(kw) for kw in CLASS_KEYWORDS):
-            matched_kw = next(kw for kw in CLASS_KEYWORDS if stripped.startswith(kw))
-            name = _extract_name(stripped, matched_kw)
-            node_id = f"{rel_path}:class:{name}"
-            nodes.append(
-                {
-                    "id": node_id,
-                    "kind": "class",
-                    "name": name,
-                    "file": rel_path,
-                    "line": lineno,
-                }
-            )
-
-    # Flush trailing spec-comment block
-    if current_spec_block is not None:
-        block_id = f"{rel_path}:spec:{spec_block_start}"
-        nodes.append(
-            {
-                "id": block_id,
-                "kind": "spec_comment_block",
-                "file": rel_path,
-                "line": spec_block_start,
-                "text": "\n".join(current_spec_block),
-            }
-        )
-
-    return nodes, edges
+    json_like = _extract_first_json_object(text)
+    if not json_like:
+        return None
+    try:
+        payload = json.loads(json_like)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
-def _extract_name(line: str, keyword: str) -> str:
-    """Pull the identifier immediately after *keyword* (``def `` or ``class ``)."""
-    rest = line[len(keyword) :]
-    name = ""
-    for ch in rest:
-        if ch in ("(", ":", " ", "\t"):
-            break
-        name += ch
-    return name
+def _extract_first_json_object(text: str) -> str:
+    start = text.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        ch = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return ""
+
+
+def _normalize_l1_discovery_graph(
+    raw_graph: dict[str, Any] | None,
+    files: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    issues: list[str] = []
+    if raw_graph is None:
+        return [], [], ["L1 discovery tool unavailable or returned no graph payload."]
+
+    graph = raw_graph["graph"] if isinstance(raw_graph.get("graph"), dict) else raw_graph
+
+    raw_nodes = graph.get("nodes", [])
+    raw_edges = graph.get("edges", [])
+    if not isinstance(raw_nodes, list):
+        raw_nodes = []
+    if not isinstance(raw_edges, list):
+        raw_edges = []
+
+    file_refs = set(files.keys())
+    nodes: list[dict[str, Any]] = []
+    node_ids: set[str] = set()
+    for idx, row in enumerate(raw_nodes):
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind", row.get("type", "")) or "").strip().lower()
+        if kind not in _L1_NODE_KINDS:
+            continue
+        file_ref = str(row.get("file", row.get("path", "")) or "").strip().replace("\\", "/")
+        if file_ref and file_ref not in file_refs:
+            continue
+        node_id = str(row.get("id", "") or "").strip()
+        if not node_id:
+            name_hint = str(row.get("name", "") or "").strip() or str(idx)
+            node_id = f"{file_ref or 'unknown'}:{kind}:{name_hint}"
+        if node_id in node_ids:
+            continue
+        node_ids.add(node_id)
+
+        normalized = {
+            "id": node_id,
+            "kind": kind,
+            "file": file_ref,
+            "name": str(row.get("name", "") or "").strip(),
+            "line": row.get("line"),
+        }
+        if kind == "spec_comment_block":
+            normalized["text"] = str(row.get("text", "") or "").strip()
+        spec_ref = str(row.get("spec_comment_ref", "") or "").strip()
+        if spec_ref:
+            normalized["spec_comment_ref"] = spec_ref
+        nodes.append(normalized)
+
+    edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    for row in raw_edges:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind", row.get("type", "")) or "").strip().lower()
+        if kind not in _L1_EDGE_KINDS:
+            continue
+        source = str(row.get("source", "") or "").strip()
+        target = str(row.get("target", "") or "").strip()
+        if not source or not target:
+            continue
+        if source not in node_ids or target not in node_ids:
+            continue
+        marker = (source, target, kind)
+        if marker in seen_edges:
+            continue
+        seen_edges.add(marker)
+        edges.append({"source": source, "target": target, "kind": kind})
+
+    if not nodes:
+        issues.append("L1 discovery produced no nodes from tool output.")
+
+    found_edge_kinds = {edge["kind"] for edge in edges}
+    for required in ("declares", "mentions", "calls"):
+        if required not in found_edge_kinds:
+            issues.append(f"L1 discovery output missing '{required}' edges.")
+
+    return nodes, edges, issues
 
 
 def _match_gap_to_node(
@@ -1094,9 +1261,9 @@ def _search_spec_catalog(
 ) -> dict[str, Any] | None:
     """Search for matching spec text in workspace slice files.
 
-    Scans .py and .md files under the workspace for spec comment blocks
-    that mention the needed artifact.  Returns a match dict on success,
-    None if nothing found.
+    Scans text-like files under the workspace for spec comment blocks that
+    mention the needed artifact. Returns a match dict on success, None if
+    nothing found.
     """
     # Prefer verbatim signal spec references when provided.
     for ref in spec_refs:
@@ -1125,7 +1292,7 @@ def _search_spec_catalog(
     for path in sorted(workspace_root.rglob("*")):
         if not path.is_file():
             continue
-        if path.suffix not in _TEXT_SUFFIXES:
+        if not _is_text_like_file(path):
             continue
         try:
             content = path.read_text(encoding="utf-8", errors="replace")

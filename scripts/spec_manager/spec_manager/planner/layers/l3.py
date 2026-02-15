@@ -27,7 +27,7 @@ class _L3IntentionPlannerStrategy:
 
     def run(self, session: Any) -> Any:
         graph = session.discovery.get("quality_graph", {})
-        smell_nodes = [n for n in graph.get("nodes", []) if n.get("type") == "smell"]
+        smell_nodes = [n for n in graph.get("nodes", []) if n.get("kind") == "smell"]
 
         intentions: list[dict[str, Any]] = []
         for gap in session.gaps:
@@ -87,42 +87,148 @@ class L3DiscoveryRouter:
 
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
+        node_ids: set[str] = set()
+        edge_markers: set[tuple[str, str, str]] = set()
+
+        def add_node(node: dict[str, Any]) -> None:
+            node_id = str(node.get("id", "")).strip()
+            if not node_id or node_id in node_ids:
+                return
+            node_ids.add(node_id)
+            nodes.append(node)
+
+        def add_edge(source: str, target: str, kind: str) -> None:
+            source_id = str(source).strip()
+            target_id = str(target).strip()
+            kind_id = str(kind).strip()
+            if not source_id or not target_id or not kind_id:
+                return
+            marker = (source_id, target_id, kind_id)
+            if marker in edge_markers:
+                return
+            edge_markers.add(marker)
+            edges.append({"source": source_id, "target": target_id, "kind": kind_id})
+
+        def ensure_file_node(path: str) -> str:
+            file_path = str(path or "").strip()
+            if not file_path:
+                return ""
+            node_id = f"file:{file_path}"
+            add_node({"id": node_id, "kind": "file", "path": file_path, "file": file_path})
+            return node_id
 
         for filepath in changed_files:
-            nodes.append({"id": filepath, "type": "file", "path": filepath})
+            ensure_file_node(filepath)
 
-        for receipt in quality_receipts:
-            smell_id = receipt.get("id", f"smell-{len(nodes)}")
-            nodes.append(
+        for index, receipt in enumerate(quality_receipts):
+            if not isinstance(receipt, dict):
+                continue
+            file_path = str(receipt.get("file", receipt.get("path", "")) or "").strip()
+            function_span = str(receipt.get("function_span", "") or "").strip()
+            file_node_id = ensure_file_node(file_path)
+
+            span_node_id = ""
+            if file_path and function_span:
+                span_node_id = f"function_span:{file_path}:{function_span}"
+                add_node(
+                    {
+                        "id": span_node_id,
+                        "kind": "function_span",
+                        "file": file_path,
+                        "function_span": function_span,
+                        "start_line": receipt.get("start_line"),
+                        "end_line": receipt.get("end_line"),
+                    }
+                )
+                add_edge(file_node_id, span_node_id, "contains")
+
+            smell_id = str(receipt.get("id", "") or "").strip() or f"smell:{file_path}:{index}"
+            add_node(
                 {
                     "id": smell_id,
-                    "type": "smell",
-                    "smell_type": receipt.get("smell_type", "unknown"),
-                    "file": receipt.get("file", ""),
-                    "function_span": receipt.get("function_span", ""),
+                    "kind": "smell",
+                    "smell_type": receipt.get("smell_type", receipt.get("category", "unknown")),
+                    "file": file_path,
+                    "function_span": function_span,
                     "severity": receipt.get("severity", "info"),
                 }
             )
-            if receipt.get("file"):
-                edges.append(
+            if span_node_id:
+                add_edge(span_node_id, smell_id, "contains")
+            elif file_node_id:
+                add_edge(file_node_id, smell_id, "contains")
+
+            risk_level = str(receipt.get("risk_level", receipt.get("risk", "")) or "").strip()
+            risk_reason = str(
+                receipt.get("risk_reason", receipt.get("rationale", "")) or ""
+            ).strip()
+            if risk_level or risk_reason:
+                risk_id = f"risk:{smell_id}"
+                add_node(
                     {
-                        "source": receipt["file"],
-                        "target": smell_id,
-                        "type": "contains",
+                        "id": risk_id,
+                        "kind": "risk",
+                        "level": risk_level or "unknown",
+                        "file": file_path,
+                        "function_span": function_span,
+                        "rationale": risk_reason,
                     }
                 )
+                add_edge(smell_id, risk_id, "impacts")
+
+        for index, diff in enumerate(diffs):
+            if not isinstance(diff, dict):
+                continue
+            source_file = str(
+                diff.get("file", diff.get("path", diff.get("source_file", diff.get("source", ""))))
+                or ""
+            ).strip()
+            source_file_id = ensure_file_node(source_file)
+
+            dependencies = diff.get("depends_on", diff.get("dependencies", []))
+            if not isinstance(dependencies, list):
+                dependencies = []
+            for dep in dependencies:
+                dep_id = ensure_file_node(str(dep))
+                if source_file_id and dep_id:
+                    add_edge(source_file_id, dep_id, "depends_on")
+
+            risk_level = str(diff.get("risk_level", diff.get("risk", "")) or "").strip()
+            risk_reason = str(diff.get("risk_reason", diff.get("summary", "")) or "").strip()
+            if risk_level or risk_reason:
+                risk_id = f"risk:diff:{index}"
+                add_node(
+                    {
+                        "id": risk_id,
+                        "kind": "risk",
+                        "level": risk_level or "unknown",
+                        "file": source_file,
+                        "rationale": risk_reason,
+                    }
+                )
+                if source_file_id:
+                    add_edge(source_file_id, risk_id, "impacts")
 
         if self._integration_tool is not None and diffs:
             try:
-                impact_data = self._integration_tool(diffs)
+                impact_data = (
+                    self._integration_tool(diffs) if callable(self._integration_tool) else []
+                )
                 for impact in impact_data if isinstance(impact_data, list) else []:
-                    edges.append(
-                        {
-                            "source": impact.get("source", ""),
-                            "target": impact.get("target", ""),
-                            "type": "impacts",
-                        }
-                    )
+                    if not isinstance(impact, dict):
+                        continue
+                    source_ref = str(
+                        impact.get("source", impact.get("source_file", "")) or ""
+                    ).strip()
+                    target_ref = str(
+                        impact.get("target", impact.get("target_file", "")) or ""
+                    ).strip()
+                    source_id = ensure_file_node(source_ref)
+                    target_id = ensure_file_node(target_ref)
+                    edge_kind = str(impact.get("kind", impact.get("type", "impacts")) or "").strip()
+                    edge_kind = "depends_on" if edge_kind.lower() == "depends_on" else "impacts"
+                    if source_id and target_id:
+                        add_edge(source_id, target_id, edge_kind)
             except Exception:
                 logger.warning("L3 discover: integration_tool failed", exc_info=True)
 
@@ -134,7 +240,7 @@ class L3DiscoveryRouter:
             },
             "evidence_summary": evidence_summary,
             "changed_file_count": len(changed_files),
-            "smell_count": sum(1 for n in nodes if n.get("type") == "smell"),
+            "smell_count": sum(1 for n in nodes if n.get("kind") == "smell"),
         }
 
 
@@ -240,14 +346,15 @@ class L3LayerResearchAdapter:
         self._constraints_tool = constraints_tool
 
     def run_agent(self, prompt: str) -> str:
-        return self._query_text(prompt, dimension="layer")
+        return self._query_text(prompt)
 
     def summarize_quality_evidence(self, changed_files: list[str], ctx: Any) -> dict[str, Any]:
         if not changed_files:
             return {}
         summary = self._query_text(
             f"Summarize quality evidence for changed files: {', '.join(changed_files[:20])}",
-            dimension="layer",
+            ctx=ctx,
+            hint="quality_summary",
         )
         if not summary:
             return {}
@@ -266,7 +373,7 @@ class L3LayerResearchAdapter:
         smell_nodes = {
             n.get("file", "") + "::" + n.get("function_span", ""): n
             for n in graph.get("nodes", [])
-            if n.get("type") == "smell"
+            if n.get("kind") == "smell"
         }
 
         resolved_constraints: dict[str, Any] = {}
@@ -304,7 +411,7 @@ class L3LayerResearchAdapter:
                 }
                 continue
 
-            research_answer = self._query_text(question, dimension="layer")
+            research_answer = self._query_text(question, ctx=ctx, hint="under_spec")
             if research_answer:
                 resolved_constraints[key or question] = {
                     "source": "research_tool",
@@ -340,7 +447,7 @@ class L3LayerResearchAdapter:
             logger.debug("L3 constraints tool failed", exc_info=True)
         return ""
 
-    def _query_text(self, question: str, *, dimension: str) -> str:
+    def _query_text(self, question: str, *, ctx: Any | None = None, hint: str = "") -> str:
         prompt = str(question or "").strip()
         if not prompt or self._research_tool is None:
             return ""
@@ -352,8 +459,16 @@ class L3LayerResearchAdapter:
             if hasattr(self._research_tool, "research"):
                 from spec_manager.planner.tools.research_tool import ResearchQuery
 
+                layer_context = self._build_research_context(ctx, hint)
                 result = self._research_tool.research(
-                    ResearchQuery(question=prompt, dimension=dimension)
+                    ResearchQuery(
+                        question=prompt,
+                        context=layer_context,
+                        dimension="auto",
+                        layer="l3",
+                        slice_id=self._slice_id_from_ctx(ctx),
+                        hints={"hint": hint} if hint else {},
+                    )
                 )
                 synthesis = str(getattr(result, "synthesis", "") or "").strip()
                 if synthesis:
@@ -361,6 +476,27 @@ class L3LayerResearchAdapter:
         except Exception:
             logger.debug("L3 research query failed", exc_info=True)
         return ""
+
+    @staticmethod
+    def _slice_id_from_ctx(ctx: Any | None) -> str:
+        if ctx is None:
+            return ""
+        return str(getattr(ctx, "slice_id", "") or "").strip()
+
+    @staticmethod
+    def _build_research_context(ctx: Any | None, hint: str) -> str:
+        if ctx is None:
+            return hint
+        mode = str(getattr(ctx, "mode", "") or "").strip().lower()
+        run_id = str(getattr(ctx, "run_id", "") or "").strip()
+        context_parts = ["layer=l3"]
+        if mode:
+            context_parts.append(f"mode={mode}")
+        if run_id:
+            context_parts.append(f"run_id={run_id}")
+        if hint:
+            context_parts.append(f"hint={hint}")
+        return " ".join(context_parts)
 
 
 class L3Planner:

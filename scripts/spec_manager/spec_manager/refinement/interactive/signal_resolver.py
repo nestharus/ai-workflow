@@ -52,6 +52,7 @@ class PlannerSignalResolver:
         use_research: bool = False,
     ) -> None:
         from spec_manager.planner.api import GeneralPlanner
+        from spec_manager.planner.tools.constraints_tool import ConstraintsTool
         from spec_manager.planner.tools.research_tool import ResearchTool
 
         ws = workspace or Path(".")
@@ -78,8 +79,10 @@ class PlannerSignalResolver:
             except Exception:
                 logger.debug("Could not create ResearchCoordinator")
 
+        constraints_tool = ConstraintsTool(workspace_root=ws)
         research_tool = ResearchTool(
             evidence_searcher=evidence_searcher,
+            constraints_tool=constraints_tool,
             research_coordinator=research_coordinator,
             steering_script=steering_script,
             workspace=ws,
