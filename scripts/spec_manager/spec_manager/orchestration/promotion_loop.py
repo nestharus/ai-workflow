@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from difflib import unified_diff
@@ -58,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 
 _DISABLE_L1_GAP_SCAN_KEY = "disable_l1_gap_scan"
+_QUALITY_RECEIPTS_FILENAME = "quality.receipts.json"
+_L3_REVIEWERS_CONFIG_KEY = "l3_reviewers"
 InteractionMode = Literal["interactive", "auto"]
 LifecycleRunMode = Literal["build", "qa", "architecture", "code_quality"]
 
@@ -273,6 +276,162 @@ def _read_json_file(path: Path) -> dict[str, Any] | list[Any] | None:
     if isinstance(loaded, dict | list):
         return loaded
     return None
+
+
+def _quality_receipts_iteration_path(
+    base: Path,
+    *,
+    run_id: str,
+    slice_id: str,
+    iteration: int,
+) -> Path:
+    """Return quality-receipt path for a specific slice iteration."""
+    return (
+        base
+        / ".pdd_runs"
+        / run_id
+        / "slices"
+        / slice_id
+        / f"iter_{iteration:03d}"
+        / _QUALITY_RECEIPTS_FILENAME
+    )
+
+
+def _normalize_receipt_status(raw: Any) -> str:
+    status = str(raw or "PASS").strip().upper()
+    return status if status in {"PASS", "FAIL"} else "FAIL"
+
+
+def _normalize_quality_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a quality receipt into canonical key fields."""
+    reviewer_id = str(
+        receipt.get("reviewer_id") or receipt.get("reviewer") or receipt.get("agent_name") or ""
+    ).strip()
+    dimension = str(receipt.get("dimension") or "").strip()
+    file_path = str(receipt.get("file") or receipt.get("target_file") or "").strip()
+    file_hash = str(receipt.get("file_hash") or receipt.get("content_hash") or "").strip()
+    status = _normalize_receipt_status(receipt.get("status"))
+    findings = [item for item in receipt.get("findings", []) if isinstance(item, dict)]
+    finding_count = receipt.get("finding_count")
+    if not isinstance(finding_count, int):
+        finding_count = len(findings)
+    merged = dict(receipt)
+    merged["reviewer_id"] = reviewer_id
+    merged["dimension"] = dimension
+    merged["file"] = file_path
+    merged["file_hash"] = file_hash
+    merged["status"] = status
+    merged["findings"] = findings
+    merged["finding_count"] = max(finding_count, 0)
+    merged["recorded_at"] = str(receipt.get("recorded_at") or _now_iso())
+    return merged
+
+
+def _quality_receipts_from_payload(
+    payload: dict[str, Any] | list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract normalized receipt list from JSON payload."""
+    raw: list[Any]
+    if isinstance(payload, dict):
+        raw = payload.get("receipts", [])
+    elif isinstance(payload, list):
+        raw = payload
+    else:
+        raw = []
+    return [_normalize_quality_receipt(item) for item in raw if isinstance(item, dict)]
+
+
+def _quality_receipt_key(receipt: dict[str, Any]) -> str:
+    return "::".join(
+        (
+            str(receipt.get("reviewer_id") or "").strip(),
+            str(receipt.get("file") or "").strip(),
+            str(receipt.get("file_hash") or "").strip(),
+        )
+    )
+
+
+def _latest_quality_receipts_by_key(receipts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Return latest receipt per reviewer/file/hash key."""
+    latest: dict[str, dict[str, Any]] = {}
+    for receipt in receipts:
+        key = _quality_receipt_key(receipt)
+        if not key.strip(":"):
+            continue
+        latest[key] = receipt
+    return latest
+
+
+def _configured_l3_review_pack(
+    config: dict[str, Any] | None,
+    *,
+    include_diff_impact: bool,
+) -> tuple[ReviewerSpec, ...]:
+    """Resolve configured L3 reviewers, falling back to default pack."""
+    default_pack = tuple(
+        reviewer
+        for reviewer in L3_REVIEW_PACK
+        if include_diff_impact or reviewer.dimension != "DIFF_IMPACT"
+    )
+    if not isinstance(config, dict):
+        return default_pack
+
+    configured = config.get(_L3_REVIEWERS_CONFIG_KEY)
+    if not isinstance(configured, list) or not configured:
+        return default_pack
+
+    selected_tokens = {str(item).strip().lower() for item in configured if str(item).strip()}
+    if not selected_tokens:
+        return default_pack
+
+    selected = [
+        reviewer
+        for reviewer in default_pack
+        if (
+            reviewer.reviewer_id.lower() in selected_tokens
+            or reviewer.dimension.lower() in selected_tokens
+            or reviewer.agent_name.lower() in selected_tokens
+        )
+    ]
+    return tuple(selected or default_pack)
+
+
+def _load_iteration_quality_receipts(
+    *,
+    evidence_root: Path,
+    bundle: EvidenceBundle,
+) -> list[dict[str, Any]]:
+    """Load quality receipts for the current iteration when available."""
+    path = bundle.iter_dir(evidence_root) / _QUALITY_RECEIPTS_FILENAME
+    return _quality_receipts_from_payload(_read_json_file(path))
+
+
+def _write_iteration_quality_receipts(
+    *,
+    ctx: SliceContext,
+    bundle: EvidenceBundle,
+    evidence_root: Path,
+    stage: str,
+    receipts: list[dict[str, Any]],
+) -> None:
+    """Persist normalized quality receipts for the current iteration."""
+    normalized = [_normalize_quality_receipt(item) for item in receipts if isinstance(item, dict)]
+    _write_iteration_json(
+        bundle,
+        evidence_root,
+        _QUALITY_RECEIPTS_FILENAME,
+        {
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "run_id": ctx.run_id,
+            "iteration": bundle.iteration,
+            "stage": stage,
+            "content_hash": bundle.diff.content_hash,
+            "receipts": normalized,
+        },
+    )
+    if _QUALITY_RECEIPTS_FILENAME not in bundle.manifest.generated_files:
+        bundle.manifest.generated_files.append(_QUALITY_RECEIPTS_FILENAME)
 
 
 def _run_component_manifest_path(workspace_root: Path, run_id: str) -> Path:
@@ -542,6 +701,43 @@ class CollectBaselineStep:
         }
         return inventory, pin_registry_summary
 
+    @staticmethod
+    def _snapshot_l3_quality_receipts(
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        *,
+        evidence_root: Path,
+    ) -> list[dict[str, Any]]:
+        """Snapshot prior L3 quality receipts into the current iteration."""
+        prior_receipts: list[dict[str, Any]] = []
+        copied_from_iteration = bundle.iteration - 1 if bundle.iteration > 1 else 0
+        if bundle.iteration > 1:
+            previous_path = _quality_receipts_iteration_path(
+                evidence_root,
+                run_id=bundle.run_id,
+                slice_id=bundle.slice_id,
+                iteration=bundle.iteration - 1,
+            )
+            prior_receipts = _quality_receipts_from_payload(_read_json_file(previous_path))
+
+        _write_iteration_json(
+            bundle,
+            evidence_root,
+            _QUALITY_RECEIPTS_FILENAME,
+            {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "run_id": ctx.run_id,
+                "iteration": bundle.iteration,
+                "copied_from_iteration": copied_from_iteration,
+                "content_hash": bundle.diff.content_hash,
+                "receipts": prior_receipts,
+            },
+        )
+        if _QUALITY_RECEIPTS_FILENAME not in bundle.manifest.generated_files:
+            bundle.manifest.generated_files.append(_QUALITY_RECEIPTS_FILENAME)
+        return prior_receipts
+
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Collect file hashes and diff from previous iteration."""
         from spec_manager.orchestration.evidence import DiffRef, ManifestRef
@@ -632,6 +828,18 @@ class CollectBaselineStep:
             content_hash=manifest_hash,
         )
 
+        quality_receipts_snapshot: dict[str, Any] = {}
+        if ctx.layer == "l3":
+            snapshot_receipts = self._snapshot_l3_quality_receipts(
+                ctx,
+                bundle,
+                evidence_root=evidence_root,
+            )
+            quality_receipts_snapshot = {
+                "path": _QUALITY_RECEIPTS_FILENAME,
+                "receipt_count": len(snapshot_receipts),
+            }
+
         _write_iteration_json(
             bundle,
             evidence_root,
@@ -642,6 +850,7 @@ class CollectBaselineStep:
                 "pin_registry_summary": bundle.manifest.pin_registry_summary,
                 "slice_patterns": bundle.manifest.slice_patterns,
                 "generated_files": bundle.manifest.generated_files,
+                "quality_receipts_snapshot": quality_receipts_snapshot,
             },
         )
         _write_iteration_json(
@@ -1172,8 +1381,7 @@ class GapExplorationStep:
                     anchor="promoted_pin_edge_evidence",
                     description="No promoted pins/edges were available in scope for this slice.",
                     expected=(
-                        "Promoted pins and edges should be loaded before L2 "
-                        "continuity analysis."
+                        "Promoted pins and edges should be loaded before L2 continuity analysis."
                     ),
                     severity="BLOCKER",
                 )
@@ -1252,16 +1460,14 @@ class GapExplorationStep:
                             anchor=f"component_manifest:{component_id}",
                             description=f"Manifest-declared component file is missing: {rel_path}",
                             expected=(
-                                "All component manifest files should exist in the "
-                                "slice baseline."
+                                "All component manifest files should exist in the slice baseline."
                             ),
                             severity="BLOCKER",
                         )
                     )
 
             if (topology_nodes or topology_edges) and (
-                component_id not in topology_component_ids
-                and component_id not in topology_node_ids
+                component_id not in topology_component_ids and component_id not in topology_node_ids
             ):
                 gaps.append(
                     self._l2_gap(
@@ -1269,13 +1475,10 @@ class GapExplorationStep:
                         component_id=component_id,
                         file_path=expected_files[0] if expected_files else "",
                         anchor=f"component:{component_id}",
-                        description=(
-                                "Manifest component is not represented in realized "
-                                "topology."
-                            ),
+                        description=("Manifest component is not represented in realized topology."),
                         expected=(
-                                "Every manifest component should appear in topology nodes/edges."
-                            ),
+                            "Every manifest component should appear in topology nodes/edges."
+                        ),
                         severity="MAJOR",
                     )
                 )
@@ -1306,8 +1509,7 @@ class GapExplorationStep:
                             file_path=expected_files[0] if expected_files else "",
                             anchor=entrypoint_id,
                             description=(
-                                "Expected entrypoint/handler is missing from realized "
-                                "architecture."
+                                "Expected entrypoint/handler is missing from realized architecture."
                             ),
                             expected=(
                                 "Manifest-owned entrypoints should be present in "
@@ -1447,17 +1649,20 @@ class GapExplorationStep:
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
 
         if not slice_root or not slice_root.exists():
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             return StepResult(status="OK")
 
-        reused = self._reuse_previous_gaps_if_fresh(ctx, bundle)
-        if reused is not None:
-            bundle.gaps = GapReportRef(
-                path="gaps.json", open_gaps=[self._normalize_gap(g) for g in reused]
-            )
-            return StepResult(status="OK")
+        staged_receipts = _load_iteration_quality_receipts(
+            evidence_root=evidence_root,
+            bundle=bundle,
+        )
+        latest_receipts = _latest_quality_receipts_by_key(staged_receipts)
 
         # Gather code from baseline manifest entries so review input is explicit
         # and upstream-owned rather than scanner-owned at review time.
@@ -1487,6 +1692,13 @@ class GapExplorationStep:
                     }
                 )
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=open_gaps)
+            _write_iteration_quality_receipts(
+                ctx=ctx,
+                bundle=bundle,
+                evidence_root=evidence_root,
+                stage="GAP_EXPLORATION",
+                receipts=list(latest_receipts.values()),
+            )
             return StepResult(status="OK")
 
         # Pattern library for review context
@@ -1494,15 +1706,37 @@ class GapExplorationStep:
 
         pattern_lib = PatternLibrary(library_path=self._pattern_library_path(workspace))
         strategy_candidates_recorded = 0
+        configured_reviewers = _configured_l3_review_pack(
+            ctx.config if isinstance(ctx.config, dict) else None,
+            include_diff_impact=False,
+        )
 
         all_gaps: list[dict[str, Any]] = []
 
         for file_path, code_content in code_files.items():
-            for reviewer in L3_REVIEW_PACK:
+            file_hash = _hash_text(code_content)
+            for reviewer in configured_reviewers:
+                receipt_key = "::".join((reviewer.reviewer_id, file_path, file_hash))
+                prior_receipt = latest_receipts.get(receipt_key)
+                if (
+                    prior_receipt
+                    and _normalize_receipt_status(prior_receipt.get("status")) == "PASS"
+                ):
+                    latest_receipts[receipt_key] = _normalize_quality_receipt(
+                        {
+                            **prior_receipt,
+                            "status": "PASS",
+                            "stage": "GAP_EXPLORATION",
+                            "validated_at": _now_iso(),
+                        }
+                    )
+                    continue
+
                 pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
                 reviewer_prompt = (
                     "## TASK\n"
                     "Review the following code for quality issues.\n"
+                    "Execution stage: GAP_EXPLORATION (pre-implementation).\n"
                     f"Objective: {reviewer.objective}\n"
                     "For each finding include: severity (BLOCKER/MAJOR/MINOR),\n"
                     "category (style/maintainability/logic/architecture/drift/diff-impact),\n"
@@ -1559,6 +1793,20 @@ class GapExplorationStep:
                                 "location": {"file": file_path, **span},
                             }
                         )
+                    latest_receipts[receipt_key] = _normalize_quality_receipt(
+                        {
+                            "reviewer_id": reviewer.reviewer_id,
+                            "agent_name": reviewer.agent_name,
+                            "dimension": reviewer.dimension,
+                            "file": file_path,
+                            "file_hash": file_hash,
+                            "status": "FAIL" if findings else "PASS",
+                            "finding_count": len(findings),
+                            "findings": findings,
+                            "stage": "GAP_EXPLORATION",
+                            "recorded_at": _now_iso(),
+                        }
+                    )
                 except Exception as exc:
                     logger.warning(
                         "L3 reviewer %s failed for %s: %s",
@@ -1583,6 +1831,30 @@ class GapExplorationStep:
                             "location": {"file": file_path},
                         }
                     )
+                    latest_receipts[receipt_key] = _normalize_quality_receipt(
+                        {
+                            "reviewer_id": reviewer.reviewer_id,
+                            "agent_name": reviewer.agent_name,
+                            "dimension": reviewer.dimension,
+                            "file": file_path,
+                            "file_hash": file_hash,
+                            "status": "FAIL",
+                            "finding_count": 1,
+                            "findings": [
+                                {
+                                    "description": (
+                                        f"Reviewer execution failed for "
+                                        f"{reviewer.reviewer_id}: {exc}"
+                                    ),
+                                    "severity": "BLOCKER",
+                                    "category": "review_execution",
+                                    "required_change_type": "refactor_only",
+                                }
+                            ],
+                            "stage": "GAP_EXPLORATION",
+                            "recorded_at": _now_iso(),
+                        }
+                    )
 
         if strategy_candidates_recorded:
             try:
@@ -1591,6 +1863,13 @@ class GapExplorationStep:
                 logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
 
         bundle.gaps = GapReportRef(path="gaps.json", open_gaps=all_gaps)
+        _write_iteration_quality_receipts(
+            ctx=ctx,
+            bundle=bundle,
+            evidence_root=evidence_root,
+            stage="GAP_EXPLORATION",
+            receipts=list(latest_receipts.values()),
+        )
         return StepResult(status="OK")
 
 
@@ -1751,28 +2030,110 @@ class PlanStep:
 
     @staticmethod
     def _plan_l3(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """L3: group findings by file, sequence smallest refactors first."""
-        # Group by file
-        by_file: dict[str, list[dict[str, Any]]] = {}
-        for gap in gaps:
-            f = gap.get("file", "unknown")
-            by_file.setdefault(f, []).append(gap)
+        """L3: group findings by function/span and sequence smallest safe refactors first."""
+        severity_order = {"MINOR": 0, "MAJOR": 1, "BLOCKER": 2}
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
 
-        intentions = []
-        for file_path, file_gaps in sorted(by_file.items()):
-            # Sort: MINOR first (smallest, safest refactors)
-            severity_order = {"MINOR": 0, "MAJOR": 1, "BLOCKER": 2}
-            file_gaps.sort(key=lambda g: severity_order.get(g.get("severity", "MINOR"), 0))
+        for raw_gap in gaps:
+            if not isinstance(raw_gap, dict):
+                continue
+            gap = _normalize_gap_record(raw_gap)
+            file_path = str(gap.get("file", "")).strip() or "unknown"
+            location = gap.get("location", {}) or {}
+            span = gap.get("span", {}) or {}
+            symbol = str(gap.get("function") or location.get("symbol") or "").strip()
+            start_line = span.get("start_line") if isinstance(span.get("start_line"), int) else 0
+            end_line = span.get("end_line") if isinstance(span.get("end_line"), int) else start_line
 
-            descriptions = [g.get("description", "") for g in file_gaps[:5]]
+            if symbol:
+                scope_key = f"function:{symbol}"
+            elif start_line > 0:
+                scope_key = f"span:{start_line}-{end_line or start_line}"
+            else:
+                scope_key = "file_scope"
+
+            grouped[(file_path, scope_key)].append(gap)
+
+        ordered_groups = sorted(
+            grouped.items(),
+            key=lambda item: (
+                min(
+                    severity_order.get(str(g.get("severity", "MINOR")).upper(), 1) for g in item[1]
+                ),
+                min(
+                    (
+                        (
+                            int((g.get("span", {}) or {}).get("end_line", 0))
+                            - int((g.get("span", {}) or {}).get("start_line", 0))
+                            + 1
+                        )
+                        for g in item[1]
+                        if isinstance((g.get("span", {}) or {}).get("start_line"), int)
+                    ),
+                    default=10_000,
+                ),
+                item[0][0],
+                item[0][1],
+            ),
+        )
+
+        intentions: list[dict[str, Any]] = []
+        for idx, ((file_path, scope_key), scope_gaps) in enumerate(ordered_groups, start=1):
+            ordered_scope_gaps = sorted(
+                scope_gaps,
+                key=lambda g: severity_order.get(str(g.get("severity", "MINOR")).upper(), 1),
+            )
+            first = ordered_scope_gaps[0]
+            span = first.get("span", {}) or {}
+            target_span = (
+                {
+                    "start_line": span.get("start_line"),
+                    "end_line": span.get("end_line"),
+                    "start_col": span.get("start_col"),
+                    "end_col": span.get("end_col"),
+                }
+                if span
+                else {}
+            )
+            target_function = ""
+            if scope_key.startswith("function:"):
+                target_function = scope_key.split(":", 1)[1]
+
+            descriptions = [
+                str(g.get("description") or "").strip()
+                for g in ordered_scope_gaps
+                if str(g.get("description") or "").strip()
+            ]
+            summary = "; ".join(descriptions[:4]) or "targeted clean-code refactor"
+            scope_label = target_function or scope_key.replace(":", " ")
+            acceptance_scope = f"{file_path} ({scope_label})"
             intentions.append(
                 {
-                    "gap_id": file_path,
+                    "intention_id": f"l3-intention-{idx}",
+                    "gap_id": f"{file_path}:{scope_key}",
                     "target_file": file_path,
-                    "approach": f"Refactor {len(file_gaps)} findings: {'; '.join(descriptions)}",
-                    "acceptance_criteria": "No behavior change, all reviewers pass",
+                    "target_function": target_function,
+                    "target_span": target_span,
+                    "approach": (
+                        f"Apply smallest-safe refactors for {len(scope_gaps)} finding(s): {summary}"
+                    ),
+                    "acceptance_criteria": (
+                        f"No behavior change within {acceptance_scope}; "
+                        "fresh quality reviewers report no findings for this scope; "
+                        "diff-impact classifier reports no logic/boundary impact."
+                    ),
                     "layer_constraint": "refactor_only",
-                    "finding_count": len(file_gaps),
+                    "required_change_type": "refactor_only",
+                    "finding_count": len(scope_gaps),
+                    "source_gaps": [
+                        {
+                            "kind": g.get("kind", ""),
+                            "severity": g.get("severity", "MINOR"),
+                            "description": g.get("description", ""),
+                            "span": g.get("span", {}),
+                        }
+                        for g in ordered_scope_gaps[:20]
+                    ],
                 }
             )
         return intentions
@@ -2031,6 +2392,9 @@ class ImplementStep:
         bundle.diff.content_hash = manifest_hash
         bundle.diff.head_commit = manifest_hash
         bundle.diff.path = "diff.json"
+        quality_receipts_snapshot: dict[str, Any] = {}
+        if _QUALITY_RECEIPTS_FILENAME in (bundle.manifest.generated_files or []):
+            quality_receipts_snapshot = {"path": _QUALITY_RECEIPTS_FILENAME}
         _write_iteration_json(
             bundle,
             evidence_root,
@@ -2041,6 +2405,7 @@ class ImplementStep:
                 "pin_registry_summary": bundle.manifest.pin_registry_summary,
                 "slice_patterns": bundle.manifest.slice_patterns,
                 "generated_files": bundle.manifest.generated_files,
+                "quality_receipts_snapshot": quality_receipts_snapshot,
             },
         )
         _write_iteration_json(
@@ -2395,28 +2760,46 @@ class ImplementStep:
             cleaned = _strip_code_fences(output)
             data = json.loads(_extract_json_payload(cleaned))
 
-            # Convert demotion_needed to under_spec_events for downstream processing
-            under_spec = []
-            for d in data.get("demotion_needed", []):
-                under_spec.append(
-                    {
-                        "kind": "NEEDS_PRODUCT_DECISION",
-                        "file": d.get("file", ""),
-                        "question": f"Logic change required: {d.get('reason', '')}",
-                        "context": d.get("file", ""),
-                        "demotion_target": d.get("target_layer", "L1"),
-                    }
+            demotion_tickets: list[DemotionTicket] = []
+            for item in data.get("demotion_needed", []):
+                if not isinstance(item, dict):
+                    continue
+                target_raw = str(item.get("target_layer", "L1")).strip().upper()
+                target = "L2" if target_raw == "L2" else "L1"
+                reason = (
+                    str(item.get("reason", "")).strip() or "L3 refactor requires lower-layer change"
+                )
+                file_path = str(item.get("file", "")).strip()
+                severity = str(item.get("severity", "")).strip().upper()
+                if severity not in {"BLOCKER", "MAJOR", "MINOR"}:
+                    severity = "BLOCKER" if target == "L1" else "MAJOR"
+                demotion_tickets.append(
+                    DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="IMPLEMENT",
+                        origin_layer="L3",
+                        target_layer=target,
+                        severity=severity,
+                        diagnosis=reason,
+                        failing_files=[file_path] if file_path else [],
+                    )
                 )
 
             gap_inventory = [self._normalize_gap(g) for g in data.get("gap_inventory", [])]
-            gap_inventory.extend(self._gaps_from_under_spec_events(under_spec))
             bundle.implementation = ImplementationRef(
                 applied_edits=data.get("edits", []),
                 gap_inventory=gap_inventory,
                 pin_proposals=data.get("pin_proposals", []),
                 edge_proposals=data.get("edge_proposals", []),
-                under_spec_events=under_spec,
+                under_spec_events=[],
             )
+            if demotion_tickets:
+                return StepResult(
+                    status="RETRY",
+                    emitted_tickets=demotion_tickets,
+                    error=f"L3 implementation emitted {len(demotion_tickets)} demotion ticket(s)",
+                )
 
         except Exception as exc:
             logger.warning("L3 implementation failed: %s", exc)
@@ -3000,6 +3383,34 @@ class AnalyzeStep:
         entries: list[dict[str, Any]] = []
         total_lines = 0
         total_functions = 0
+        previous_hashes: dict[str, str] = {}
+        if bundle.iteration > 1:
+            evidence_root = _evidence_base_path(
+                slice_root=ctx.slice_root,
+                workspace_root=ctx.workspace_root,
+            )
+            prev_bundle_path = _bundle_json_path(
+                evidence_root,
+                bundle.run_id,
+                bundle.slice_id,
+                bundle.iteration - 1,
+            )
+            if prev_bundle_path.exists():
+                try:
+                    previous_bundle = EvidenceBundle.load(prev_bundle_path)
+                    previous_hashes = {
+                        str(entry.get("path", "")).strip(): str(
+                            entry.get("content_hash", "")
+                        ).strip()
+                        for entry in (previous_bundle.source_index.entries or [])
+                        if isinstance(entry, dict) and str(entry.get("path", "")).strip()
+                    }
+                except Exception as exc:
+                    logger.debug("L3 analyze previous bundle load failed: %s", exc)
+
+        current_hashes: dict[str, str] = {}
+        duplicate_windows: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+        refactor_impact_candidates: list[dict[str, Any]] = []
         target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
 
         for py_file in source_rglob(slice_root):
@@ -3012,37 +3423,151 @@ class AnalyzeStep:
             try:
                 content = py_file.read_text(encoding="utf-8")
                 lines = content.split("\n")
-                # Simple function count (heuristic — actual analysis done by reviewers)
-                func_count = sum(
-                    1
-                    for line in lines
+                rel_path = str(py_file.relative_to(slice_root))
+                content_hash = _hash_text(content)
+                current_hashes[rel_path] = content_hash
+
+                function_lines = [
+                    line_number
+                    for line_number, line in enumerate(lines, start=1)
                     if any(line.strip().startswith(kw) for kw in FUNCTION_KEYWORDS)
+                ]
+                func_count = len(function_lines)
+                function_lengths: list[int] = []
+                for index, start_line in enumerate(function_lines):
+                    next_start = (
+                        function_lines[index + 1] - 1
+                        if index + 1 < len(function_lines)
+                        else len(lines)
+                    )
+                    function_lengths.append(max(next_start - start_line + 1, 1))
+
+                normalized_window_lines: list[tuple[int, str]] = []
+                for line_number, raw_line in enumerate(lines, start=1):
+                    token = raw_line.strip()
+                    if not token or token.startswith("#"):
+                        continue
+                    normalized_window_lines.append((line_number, "".join(token.split())))
+                for idx in range(0, max(len(normalized_window_lines) - 2, 0)):
+                    chunk = normalized_window_lines[idx : idx + 3]
+                    if len(chunk) < 3:
+                        continue
+                    signature = "\n".join(item[1] for item in chunk)
+                    if len(signature) < 40:
+                        continue
+                    key = _hash_text(signature)
+                    duplicate_windows[key].append((rel_path, chunk[0][0], chunk[-1][0]))
+
+                changed_from_previous = (
+                    previous_hashes.get(rel_path) != content_hash if previous_hashes else True
                 )
+                gap_candidates = [
+                    {
+                        "reason": str(gap.get("description", "")).strip()[:220],
+                        "severity": str(gap.get("severity", "MINOR")).upper(),
+                        "span": gap.get("span", {}),
+                    }
+                    for gap in (bundle.gaps.open_gaps or [])
+                    if isinstance(gap, dict) and str(gap.get("file", "")).strip() == rel_path
+                ]
+                if changed_from_previous:
+                    refactor_impact_candidates.append(
+                        {
+                            "file": rel_path,
+                            "reason": "content_hash_changed",
+                            "function_count": func_count,
+                            "candidate_spans": [
+                                item.get("span", {}) for item in gap_candidates[:5]
+                            ],
+                        }
+                    )
+
                 total_lines += len(lines)
                 total_functions += func_count
                 entries.append(
                     {
-                        "path": str(py_file.relative_to(slice_root)),
-                        "content_hash": _hash_text(content),
+                        "path": rel_path,
+                        "content_hash": content_hash,
                         "analysis": {
+                            "type": "l3_quality_metrics",
                             "metrics": {
                                 "lines": len(lines),
                                 "functions": func_count,
-                            }
+                                "max_function_length_lines": max(function_lengths)
+                                if function_lengths
+                                else 0,
+                                "avg_function_length_lines": (
+                                    round(sum(function_lengths) / len(function_lengths), 2)
+                                    if function_lengths
+                                    else 0.0
+                                ),
+                            },
+                            "diff_summary": {
+                                "changed_from_previous_iteration": changed_from_previous,
+                                "present_in_manifest_diff": rel_path
+                                in set(bundle.diff.changed_files or []),
+                            },
+                            "refactor_impact_candidates": gap_candidates[:10],
                         },
                     }
                 )
             except (OSError, UnicodeDecodeError):
                 continue
 
+        duplicate_hotspots = [
+            {
+                "occurrences": len(locations),
+                "locations": [f"{path}:{start}-{end}" for path, start, end in locations[:6]],
+            }
+            for locations in duplicate_windows.values()
+            if len(locations) > 1
+        ]
+        duplicate_hotspots.sort(key=lambda item: item["occurrences"], reverse=True)
+
+        current_paths = set(current_hashes)
+        previous_paths = set(previous_hashes)
+        changed_files = sorted(
+            path
+            for path in current_paths & previous_paths
+            if previous_hashes[path] != current_hashes[path]
+        )
+        added_files = sorted(current_paths - previous_paths)
+        removed_files = sorted(previous_paths - current_paths)
+        unchanged_count = len(current_paths & previous_paths) - len(changed_files)
+
+        entries.append(
+            {
+                "path": "__l3_analysis_summary__",
+                "content_hash": bundle.diff.content_hash,
+                "analysis": {
+                    "type": "l3_summary",
+                    "diff_summary": {
+                        "changed_files": changed_files,
+                        "added_files": added_files,
+                        "removed_files": removed_files,
+                        "unchanged_file_count": max(unchanged_count, 0),
+                        "manifest_changed_files": list(bundle.diff.changed_files or []),
+                    },
+                    "structural_metrics": {
+                        "total_files": len(current_hashes),
+                        "total_lines": total_lines,
+                        "total_functions": total_functions,
+                        "duplication_hotspots": duplicate_hotspots[:25],
+                    },
+                    "refactor_impact_candidates": refactor_impact_candidates[:40],
+                },
+            }
+        )
+
         bundle.source_index.entries = entries
         bundle.source_index.path = "source_analysis.index.json"
 
         logger.info(
-            "L3 analysis: %d files, %d lines, %d functions",
-            len(entries),
+            "L3 analysis: %d files, %d lines, %d functions, %d duplicate hotspots",
+            len(current_hashes),
             total_lines,
             total_functions,
+            len(duplicate_hotspots),
         )
 
         return StepResult(status="OK")
@@ -3748,8 +4273,7 @@ class PromoteStep:
                             f"Reviewer execution failed for {reviewer.reviewer_id}: {exc}"
                         ),
                         "expected": (
-                            "Reviewer must execute to evaluate architecture "
-                            "continuity readiness."
+                            "Reviewer must execute to evaluate architecture continuity readiness."
                         ),
                         "severity": "BLOCKER",
                         "required_change_type": reviewer.default_required_change_type,
@@ -3763,6 +4287,356 @@ class PromoteStep:
                 logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
 
         return findings_out
+
+    def _run_l3_quality_review_pack(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        slice_root: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Run configured L3 quality reviewers on post-implementation code."""
+        import json
+
+        from spec_manager.orchestration.pattern_library import PatternLibrary
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        pattern_lib = PatternLibrary(
+            library_path=GapExplorationStep._pattern_library_path(workspace)
+        )
+        strategy_candidates_recorded = 0
+        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
+        code_files, candidate_count = GapExplorationStep._load_review_files_from_manifest(
+            slice_root,
+            bundle,
+            target_stem=target_stem,
+        )
+        reviewers = _configured_l3_review_pack(
+            ctx.config if isinstance(ctx.config, dict) else None,
+            include_diff_impact=False,
+        )
+        findings_out: list[dict[str, Any]] = []
+        receipts: list[dict[str, Any]] = []
+
+        if not code_files and candidate_count > 0:
+            findings_out.append(
+                {
+                    "kind": "quality_review_input_unavailable",
+                    "file": "",
+                    "reviewer": "l3-review-pack",
+                    "agent_name": "",
+                    "dimension": "QUALITY",
+                    "description": "L3 review inputs declared in manifest could not be loaded.",
+                    "severity": "BLOCKER",
+                    "category": "review_execution",
+                    "required_change_type": "refactor_only",
+                    "span": {},
+                    "location": {"file": ""},
+                }
+            )
+            return findings_out, receipts
+
+        for file_path, code_content in code_files.items():
+            file_hash = _hash_text(code_content)
+            for reviewer in reviewers:
+                pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
+                reviewer_prompt = (
+                    "## TASK\n"
+                    "Review the following code for quality issues.\n"
+                    "Execution stage: PROMOTE (post-implementation quality closure).\n"
+                    f"Objective: {reviewer.objective}\n"
+                    "Return only unresolved findings.\n"
+                    "For each finding include: severity (BLOCKER/MAJOR/MINOR), "
+                    "category (style/maintainability/logic/architecture/drift), "
+                    "required_change_type (refactor_only/wiring_only/behavior_change), "
+                    "description, "
+                    "location {file,start_line,end_line,start_col,end_col}.\n"
+                    'Return JSON: {"findings": [...]}.\n\n'
+                    f"{pattern_section}\n\n"
+                    f"File: {file_path}\n\n"
+                    f"```\n{code_content[:4000]}\n```\n"
+                )
+                try:
+                    from spec_manager.core.agent_utils import run_agent
+                    from spec_manager.core.json_extraction import _extract_json_payload
+                    from spec_manager.refinement.formats import _strip_code_fences
+
+                    output = run_agent(
+                        agent_name=reviewer.agent_name,
+                        prompt=reviewer_prompt,
+                        workspace=workspace,
+                    )
+                    cleaned = _strip_code_fences(output)
+                    payload = json.loads(_extract_json_payload(cleaned))
+                    findings = [
+                        item for item in payload.get("findings", []) if isinstance(item, dict)
+                    ]
+                    strategy_candidates_recorded += GapExplorationStep._record_strategy_candidates(
+                        pattern_lib,
+                        dimension=reviewer.dimension,
+                        findings=findings,
+                    )
+                    for finding in findings:
+                        location = finding.get("location", {}) or {}
+                        span = _location_span(
+                            start_line=location.get("start_line"),
+                            end_line=location.get("end_line"),
+                            start_col=location.get("start_col"),
+                            end_col=location.get("end_col"),
+                        )
+                        findings_out.append(
+                            {
+                                "kind": "quality_finding",
+                                "file": file_path,
+                                "reviewer": reviewer.reviewer_id,
+                                "agent_name": reviewer.agent_name,
+                                "dimension": reviewer.dimension,
+                                "description": finding.get("description", ""),
+                                "severity": str(finding.get("severity", "MINOR")).upper(),
+                                "category": finding.get("category", reviewer.default_category),
+                                "required_change_type": finding.get(
+                                    "required_change_type",
+                                    reviewer.default_required_change_type,
+                                ),
+                                "span": span,
+                                "location": {"file": file_path, **span},
+                            }
+                        )
+                    receipts.append(
+                        _normalize_quality_receipt(
+                            {
+                                "reviewer_id": reviewer.reviewer_id,
+                                "agent_name": reviewer.agent_name,
+                                "dimension": reviewer.dimension,
+                                "file": file_path,
+                                "file_hash": file_hash,
+                                "status": "FAIL" if findings else "PASS",
+                                "finding_count": len(findings),
+                                "findings": findings,
+                                "stage": "PROMOTE",
+                                "recorded_at": _now_iso(),
+                            }
+                        )
+                    )
+                except Exception as exc:
+                    findings_out.append(
+                        {
+                            "kind": "quality_finding",
+                            "file": file_path,
+                            "reviewer": reviewer.reviewer_id,
+                            "agent_name": reviewer.agent_name,
+                            "dimension": reviewer.dimension,
+                            "description": (
+                                        f"Reviewer execution failed for "
+                                        f"{reviewer.reviewer_id}: {exc}"
+                                    ),
+                            "severity": "BLOCKER",
+                            "category": "review_execution",
+                            "required_change_type": "refactor_only",
+                            "span": {},
+                            "location": {"file": file_path},
+                        }
+                    )
+                    receipts.append(
+                        _normalize_quality_receipt(
+                            {
+                                "reviewer_id": reviewer.reviewer_id,
+                                "agent_name": reviewer.agent_name,
+                                "dimension": reviewer.dimension,
+                                "file": file_path,
+                                "file_hash": file_hash,
+                                "status": "FAIL",
+                                "finding_count": 1,
+                                "findings": [
+                                    {
+                                        "description": (
+                                            f"Reviewer execution failed for "
+                                                f"{reviewer.reviewer_id}: {exc}"
+                                        ),
+                                        "severity": "BLOCKER",
+                                        "category": "review_execution",
+                                        "required_change_type": "refactor_only",
+                                    }
+                                ],
+                                "stage": "PROMOTE",
+                                "recorded_at": _now_iso(),
+                            }
+                        )
+                    )
+
+        if strategy_candidates_recorded:
+            try:
+                pattern_lib.save()
+            except Exception as exc:
+                logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
+
+        return findings_out, receipts
+
+    def _run_l3_diff_impact_classifier(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        slice_root: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Classify post-refactor diff impact for demotion routing."""
+        import json
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        reviewers = _configured_l3_review_pack(
+            ctx.config if isinstance(ctx.config, dict) else None,
+            include_diff_impact=True,
+        )
+        classifier = next((r for r in reviewers if r.dimension == "DIFF_IMPACT"), None)
+        if classifier is None:
+            return [], []
+
+        target_stem = ctx.slice_id.removeprefix("cq-") if ctx.slice_id.startswith("cq-") else ""
+        code_files, _ = GapExplorationStep._load_review_files_from_manifest(
+            slice_root,
+            bundle,
+            target_stem=target_stem,
+        )
+        changed_set = {
+            str(path).strip() for path in (bundle.diff.changed_files or []) if str(path).strip()
+        }
+        if changed_set:
+            excerpt_order = [path for path in code_files if path in changed_set]
+        else:
+            excerpt_order = list(code_files)
+        excerpts = [
+            {"file": path, "content": code_files[path][:2500]}
+            for path in excerpt_order[:6]
+            if path in code_files
+        ]
+        analysis_summary = next(
+            (
+                entry.get("analysis", {})
+                for entry in (bundle.source_index.entries or [])
+                if isinstance(entry, dict) and entry.get("path") == "__l3_analysis_summary__"
+            ),
+            {},
+        )
+        prompt = (
+            "## TASK\n"
+            "Act as an L3 Diff-Impact Classifier.\n"
+            "Classify whether the post-refactor diff is logic-affecting or boundary-affecting.\n"
+            "Only return findings that require demotion routing.\n"
+            "impact_type meanings:\n"
+            "- logic: observable behavior or semantic logic changed (demote L1)\n"
+            "- boundary: architectural boundary/wiring changed (demote L2)\n"
+            "- none: behavior-preserving refactor\n"
+            'Return JSON: {"findings": [{"file": "...", "impact_type": "logic"|"boundary"|"none", '
+            '"severity": "BLOCKER"|"MAJOR"|"MINOR", "description": "...", "location": {...}}]}.\n\n'
+            "## EVIDENCE\n"
+            f"changed_files: {json.dumps(list(changed_set), indent=2)}\n"
+            f"plan_intentions: {json.dumps(bundle.plan.intentions[:20], indent=2)}\n"
+            f"applied_edits: {json.dumps(bundle.implementation.applied_edits[:40], indent=2)}\n"
+            f"edge_proposals: {json.dumps(bundle.implementation.edge_proposals[:40], indent=2)}\n"
+            f"analysis_summary: {json.dumps(analysis_summary, indent=2)}\n"
+            f"code_excerpts: {json.dumps(excerpts, indent=2)}\n"
+        )
+
+        findings_out: list[dict[str, Any]] = []
+        receipts: list[dict[str, Any]] = []
+        try:
+            from spec_manager.core.agent_utils import run_agent
+            from spec_manager.core.json_extraction import _extract_json_payload
+            from spec_manager.refinement.formats import _strip_code_fences
+
+            output = run_agent(
+                agent_name=classifier.agent_name,
+                prompt=prompt,
+                workspace=workspace,
+            )
+            cleaned = _strip_code_fences(output)
+            payload = json.loads(_extract_json_payload(cleaned))
+            findings = [item for item in payload.get("findings", []) if isinstance(item, dict)]
+            actionable_count = 0
+            for item in findings:
+                impact_type = str(item.get("impact_type", "none")).strip().lower()
+                if impact_type not in {"logic", "boundary", "none"}:
+                    impact_type = "none"
+                if impact_type == "none":
+                    continue
+                actionable_count += 1
+                file_path = str(item.get("file", "")).strip()
+                location = item.get("location", {}) or {}
+                span = _location_span(
+                    start_line=location.get("start_line"),
+                    end_line=location.get("end_line"),
+                    start_col=location.get("start_col"),
+                    end_col=location.get("end_col"),
+                )
+                findings_out.append(
+                    {
+                        "kind": "diff_impact_finding",
+                        "file": file_path,
+                        "reviewer": classifier.reviewer_id,
+                        "agent_name": classifier.agent_name,
+                        "dimension": classifier.dimension,
+                        "impact_type": impact_type,
+                        "description": str(item.get("description", "")).strip(),
+                        "severity": str(item.get("severity", "MAJOR")).upper(),
+                        "category": "diff-impact",
+                        "required_change_type": (
+                            "behavior_change" if impact_type == "logic" else "wiring_only"
+                        ),
+                        "span": span,
+                        "location": {"file": file_path, **span},
+                    }
+                )
+            receipts.append(
+                _normalize_quality_receipt(
+                    {
+                        "reviewer_id": classifier.reviewer_id,
+                        "agent_name": classifier.agent_name,
+                        "dimension": classifier.dimension,
+                        "file": "__diff__",
+                        "file_hash": bundle.diff.content_hash,
+                        "status": "FAIL" if actionable_count else "PASS",
+                        "finding_count": actionable_count,
+                        "findings": findings_out,
+                        "stage": "PROMOTE",
+                        "recorded_at": _now_iso(),
+                    }
+                )
+            )
+        except Exception as exc:
+            findings_out.append(
+                {
+                    "kind": "diff_impact_finding",
+                    "file": "",
+                    "reviewer": classifier.reviewer_id,
+                    "agent_name": classifier.agent_name,
+                    "dimension": classifier.dimension,
+                    "impact_type": "unknown",
+                    "description": f"Diff-impact classifier execution failed: {exc}",
+                    "severity": "BLOCKER",
+                    "category": "review_execution",
+                    "required_change_type": "refactor_only",
+                    "span": {},
+                    "location": {"file": ""},
+                }
+            )
+            receipts.append(
+                _normalize_quality_receipt(
+                    {
+                        "reviewer_id": classifier.reviewer_id,
+                        "agent_name": classifier.agent_name,
+                        "dimension": classifier.dimension,
+                        "file": "__diff__",
+                        "file_hash": bundle.diff.content_hash,
+                        "status": "FAIL",
+                        "finding_count": 1,
+                        "findings": findings_out,
+                        "stage": "PROMOTE",
+                        "recorded_at": _now_iso(),
+                    }
+                )
+            )
+
+        return findings_out, receipts
 
     def _promote_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L1: verify evidence transaction integrity."""
@@ -3972,43 +4846,85 @@ class PromoteStep:
         )
 
     def _promote_l3(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L3: quality closure checks over emitted evidence."""
+        """L3: rerun quality reviewers and diff-impact classifier for closure."""
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+        if not slice_root or not slice_root.exists():
+            return StepResult(status="RETRY", error="L3 PROMOTE missing slice root")
 
-        # Check if there are still open quality gaps
-        open_gaps = bundle.gaps.open_gaps
-        quality_gaps = [g for g in open_gaps if g.get("kind") == "quality_finding"]
-        diff_impact_gaps = [
-            g
-            for g in quality_gaps
-            if g.get("dimension") == "DIFF_IMPACT" or g.get("category") == "diff-impact"
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        quality_findings, quality_receipts = self._run_l3_quality_review_pack(
+            ctx=ctx,
+            bundle=bundle,
+            slice_root=slice_root,
+        )
+        diff_impact_findings, diff_receipts = self._run_l3_diff_impact_classifier(
+            ctx=ctx,
+            bundle=bundle,
+            slice_root=slice_root,
+        )
+        all_open_gaps = quality_findings + diff_impact_findings
+        bundle.gaps.open_gaps = [_normalize_gap_record(gap) for gap in all_open_gaps]
+        bundle.gaps.path = "gaps.json"
+
+        existing_receipts = _load_iteration_quality_receipts(
+            evidence_root=evidence_root,
+            bundle=bundle,
+        )
+        latest_receipts = _latest_quality_receipts_by_key(existing_receipts)
+        for receipt in quality_receipts + diff_receipts:
+            normalized = _normalize_quality_receipt(receipt)
+            latest_receipts[_quality_receipt_key(normalized)] = normalized
+        _write_iteration_quality_receipts(
+            ctx=ctx,
+            bundle=bundle,
+            evidence_root=evidence_root,
+            stage="PROMOTE",
+            receipts=list(latest_receipts.values()),
+        )
+
+        actionable_diff = [
+            finding
+            for finding in diff_impact_findings
+            if str(finding.get("impact_type", "")).strip().lower() in {"logic", "boundary"}
+        ]
+        unresolved_diff = [
+            finding
+            for finding in diff_impact_findings
+            if str(finding.get("impact_type", "")).strip().lower() not in {"logic", "boundary"}
         ]
 
         bundle.gates.gates = [
             self._to_gate(
                 "ALL_QUALITY_REVIEWERS_PASS",
-                not quality_gaps,
-                "No unresolved quality findings"
-                if not quality_gaps
-                else f"{len(quality_gaps)} quality finding(s) remain open",
+                not quality_findings,
+                "All post-implementation quality reviewers reported PASS"
+                if not quality_findings
+                else f"{len(quality_findings)} post-implementation quality finding(s) remain open",
                 "refactor_only",
             ),
             self._to_gate(
                 "DIFF_IMPACT_PASS",
-                not diff_impact_gaps,
-                "Diff-impact classifier reports behavior-preserving changes"
-                if not diff_impact_gaps
-                else f"{len(diff_impact_gaps)} diff-impact finding(s) indicate behavior risk",
+                not actionable_diff and not unresolved_diff,
+                "Diff-impact classifier reports behavior-preserving, boundary-preserving refactor"
+                if not actionable_diff and not unresolved_diff
+                else (
+                    f"{len(actionable_diff)} diff-impact finding(s) require demotion"
+                    if actionable_diff
+                    else f"{len(unresolved_diff)} diff-impact finding(s) unresolved"
+                ),
                 "behavior_change",
             ),
         ]
         bundle.gates.path = "gates.report.json"
 
-        if quality_gaps:
-            # Still have unresolved findings — not ready to promote
-            tickets = []
-            for g in quality_gaps:
-                cat = g.get("category", "style")
-                if cat in ("logic", "correctness"):
+        if quality_findings or actionable_diff or unresolved_diff:
+            tickets: list[DemotionTicket] = []
+            for finding in quality_findings:
+                category = str(finding.get("category", "style")).strip().lower()
+                if category in {"logic", "correctness"}:
                     tickets.append(
                         DemotionTicket(
                             run_id=ctx.run_id,
@@ -4016,12 +4932,14 @@ class PromoteStep:
                             source="REVIEW",
                             origin_layer="L3",
                             target_layer="L1",
-                            severity=g.get("severity", "MAJOR"),
-                            diagnosis=g.get("description", "Quality finding requires logic change"),
-                            failing_files=[g["file"]] if g.get("file") else [],
+                            severity=str(finding.get("severity", "MAJOR")).upper(),
+                            diagnosis=str(
+                                finding.get("description", "Quality finding requires logic change")
+                            ),
+                            failing_files=[finding["file"]] if finding.get("file") else [],
                         )
                     )
-                elif cat == "architecture":
+                elif category == "architecture":
                     tickets.append(
                         DemotionTicket(
                             run_id=ctx.run_id,
@@ -4029,27 +4947,54 @@ class PromoteStep:
                             source="REVIEW",
                             origin_layer="L3",
                             target_layer="L2",
-                            severity=g.get("severity", "MAJOR"),
-                            diagnosis=g.get("description", "Quality finding requires arch change"),
-                            failing_files=[g["file"]] if g.get("file") else [],
+                            severity=str(finding.get("severity", "MAJOR")).upper(),
+                            diagnosis=str(
+                                finding.get(
+                                    "description", "Quality finding requires architecture change"
+                                )
+                            ),
+                            failing_files=[finding["file"]] if finding.get("file") else [],
                         )
                     )
+            for finding in actionable_diff:
+                impact_type = str(finding.get("impact_type", "")).strip().lower()
+                target = "L1" if impact_type == "logic" else "L2"
+                severity = str(finding.get("severity", "BLOCKER")).upper()
+                if severity not in {"BLOCKER", "MAJOR", "MINOR"}:
+                    severity = "BLOCKER" if target == "L1" else "MAJOR"
+                tickets.append(
+                    DemotionTicket(
+                        run_id=ctx.run_id,
+                        slice_id=ctx.slice_id,
+                        source="DIFF_IMPACT",
+                        origin_layer="L3",
+                        target_layer=target,
+                        severity=severity,
+                        diagnosis=str(
+                            finding.get(
+                                "description",
+                                "Diff-impact classifier requires lower-layer handling.",
+                            )
+                        ),
+                        failing_files=[finding["file"]] if finding.get("file") else [],
+                    )
+                )
 
             if tickets:
-                error_msg = (
-                    f"L3: {len(quality_gaps)} quality findings unresolved "
-                    f"({len(tickets)} demotions)"
-                )
                 return StepResult(
                     status="RETRY",
                     emitted_tickets=tickets,
-                    error=error_msg,
+                    error=(
+                        f"L3 promote unresolved findings: quality={len(quality_findings)} "
+                        f"diff_impact={len(actionable_diff)} demotions={len(tickets)}"
+                    ),
                 )
-
-            # Non-demotion findings: retry to fix in L3
             return StepResult(
                 status="RETRY",
-                error=f"L3: {len(quality_gaps)} quality findings still open",
+                error=(
+                    f"L3 promote unresolved findings: quality={len(quality_findings)} "
+                    f"diff_impact_unresolved={len(unresolved_diff)}"
+                ),
             )
 
         failures = self._validate_hash_consistency(bundle)
@@ -4608,6 +5553,12 @@ class VerifyStep:
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
         verification_root = self._resolve_verification_root(ctx, workspace)
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+        iteration_dir.mkdir(parents=True, exist_ok=True)
         findings: list[dict[str, Any]] = []
         notes: dict[str, Any] = {
             "layer": ctx.layer,
@@ -4726,13 +5677,6 @@ class VerifyStep:
         if oversight_status == "FAIL":
             tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
             notes["findings"] = findings
-            iteration_dir = bundle.iter_dir(
-                _evidence_base_path(
-                    slice_root=ctx.slice_root,
-                    workspace_root=ctx.workspace_root,
-                )
-            )
-            iteration_dir.mkdir(parents=True, exist_ok=True)
             notes_path = iteration_dir / "verify.notes.json"
             notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
             bundle.verification.path = notes_path.name
@@ -4796,13 +5740,173 @@ class VerifyStep:
                 emit_finding(**f)
 
         elif ctx.layer == "l3":
+            slice_test_payload = (
+                _read_json_file(iteration_dir / bundle.tests.slice_path)
+                if bundle.tests.slice_path
+                else None
+            )
+            full_test_payload = (
+                _read_json_file(iteration_dir / bundle.tests.full_path)
+                if bundle.tests.full_path
+                else None
+            )
+            slice_test_result = (
+                slice_test_payload.get("result", {}) if isinstance(slice_test_payload, dict) else {}
+            )
+            full_test_result = (
+                full_test_payload.get("result", {}) if isinstance(full_test_payload, dict) else {}
+            )
+            if not isinstance(slice_test_result, dict) or not slice_test_result:
+                emit_finding(
+                    dimension="CORRECTNESS",
+                    category="logic",
+                    severity="BLOCKER",
+                    required_change_type="behavior_change",
+                    evidence="L3 verify missing SLICE test result receipt.",
+                    location={"file": ""},
+                    confidence=1.0,
+                )
+                slice_test_result = {}
+            elif not bool(slice_test_result.get("passed", False)):
+                emit_finding(
+                    dimension="CORRECTNESS",
+                    category="logic",
+                    severity="BLOCKER",
+                    required_change_type="behavior_change",
+                    evidence="L3 verify detected failing SLICE tests after integration.",
+                    location={"file": ""},
+                    confidence=1.0,
+                )
+
+            if (
+                isinstance(full_test_result, dict)
+                and full_test_result
+                and not bool(full_test_result.get("passed", False))
+            ):
+                    emit_finding(
+                        dimension="CORRECTNESS",
+                        category="logic",
+                        severity="BLOCKER",
+                        required_change_type="behavior_change",
+                        evidence="L3 verify detected failing FULL tests after integration.",
+                        location={"file": ""},
+                        confidence=1.0,
+                    )
+
+            reviewers = _configured_l3_review_pack(
+                ctx.config if isinstance(ctx.config, dict) else None,
+                include_diff_impact=False,
+            )
+            receipt_rows = _load_iteration_quality_receipts(
+                evidence_root=evidence_root,
+                bundle=bundle,
+            )
+            receipt_index = _latest_quality_receipts_by_key(receipt_rows)
+            pass_receipts = [
+                receipt
+                for receipt in receipt_index.values()
+                if _normalize_receipt_status(receipt.get("status")) == "PASS"
+            ]
+            manifest_hashes = {
+                str(item.get("path", "")).strip(): str(item.get("sha256", "")).strip()
+                for item in (bundle.manifest.files or [])
+                if isinstance(item, dict) and str(item.get("path", "")).strip()
+            }
+            receipt_hash_mismatches: list[str] = []
+            for receipt in pass_receipts:
+                file_path = str(receipt.get("file", "")).strip()
+                file_hash = str(receipt.get("file_hash", "")).strip()
+                if not file_path or not file_hash:
+                    continue
+                candidate = verification_root / file_path
+                if not candidate.exists() or not candidate.is_file():
+                    receipt_hash_mismatches.append(f"{file_path}:missing")
+                    continue
+                try:
+                    current_hash = _hash_text(candidate.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError):
+                    receipt_hash_mismatches.append(f"{file_path}:unreadable")
+                    continue
+                if current_hash != file_hash:
+                    receipt_hash_mismatches.append(file_path)
+
+            if receipt_hash_mismatches:
+                emit_finding(
+                    dimension="DRIFT",
+                    category="drift",
+                    severity="MAJOR",
+                    required_change_type="refactor_only",
+                    evidence=(
+                        "L3 verify found PASS quality receipts that do not match merged content "
+                        f"hashes for {len(receipt_hash_mismatches)} file(s)."
+                    ),
+                    location={"file": receipt_hash_mismatches[0].split(":", 1)[0]},
+                    confidence=1.0,
+                )
+
+            target_files = list(bundle.diff.changed_files or []) or list(manifest_hashes)
+            missing_pass_receipts: list[str] = []
+            for file_path in target_files:
+                expected_hash = manifest_hashes.get(file_path, "")
+                if not expected_hash:
+                    continue
+                for reviewer in reviewers:
+                    key = "::".join((reviewer.reviewer_id, file_path, expected_hash))
+                    receipt = receipt_index.get(key)
+                    if (
+                        receipt is None
+                        or _normalize_receipt_status(receipt.get("status")) != "PASS"
+                    ):
+                        missing_pass_receipts.append(f"{reviewer.reviewer_id}:{file_path}")
+
+            if missing_pass_receipts:
+                emit_finding(
+                    dimension="CLARITY",
+                    category="maintainability",
+                    severity="MAJOR",
+                    required_change_type="refactor_only",
+                    evidence=(
+                        "L3 verify missing PASS quality receipts for merged content "
+                        f"({len(missing_pass_receipts)} reviewer/file pair(s))."
+                    ),
+                    location={"file": target_files[0] if target_files else ""},
+                    confidence=0.9,
+                )
+
+            l3_evidence = {
+                "slice": {
+                    "run_id": bundle.run_id,
+                    "slice_id": bundle.slice_id,
+                    "iteration": bundle.iteration,
+                },
+                "tests": {
+                    "slice": slice_test_result,
+                    "full": full_test_result,
+                },
+                "quality_receipts": {
+                    "total_receipts": len(receipt_rows),
+                    "latest_receipts": len(receipt_index),
+                    "pass_receipts": len(pass_receipts),
+                    "missing_pass_pairs": missing_pass_receipts[:80],
+                    "hash_mismatches": receipt_hash_mismatches[:80],
+                },
+                "promotion": {
+                    "gates": list(bundle.gates.gates or []),
+                    "open_gaps": list(bundle.gaps.open_gaps or []),
+                },
+            }
+            notes["l3_evidence"] = l3_evidence
             prompt = (
                 "## TASK\n"
-                "Verify L3 clean-code post-integration:\n"
-                "- All quality findings resolved (closure)\n"
-                "- Changes are behavior-preserving (no logic change)\n"
-                "- No architectural boundary violations introduced\n"
-                "- No unplanned functionality (drift)\n"
+                "Verify L3 clean-code post-integration from concrete evidence:\n"
+                "- Tests pass after merge\n"
+                "- PASS quality receipts correspond to merged content hashes\n"
+                "- Reviewer closure holds (no unresolved quality findings)\n"
+                "- Governance/drift checks pass\n\n"
+                "Use only the evidence payload below. If a required check lacks evidence, emit a "
+                "finding for missing evidence.\n\n"
+                "## EVIDENCE_PAYLOAD\n"
+                f"{json.dumps(l3_evidence, indent=2)}\n\n"
                 'Return JSON: {"findings": [...]}.\n'
             )
             data = run_agent_json("pdd-l3-verifier", prompt)
@@ -4814,13 +5918,6 @@ class VerifyStep:
 
         # Persist verify notes
         notes["findings"] = findings
-        iteration_dir = bundle.iter_dir(
-            _evidence_base_path(
-                slice_root=ctx.slice_root,
-                workspace_root=ctx.workspace_root,
-            )
-        )
-        iteration_dir.mkdir(parents=True, exist_ok=True)
         notes_path = iteration_dir / "verify.notes.json"
         notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
         bundle.verification.path = notes_path.name
@@ -5483,6 +6580,9 @@ class PromotionLoop:
         )
 
         if bundle.manifest.files:
+            quality_receipts_snapshot: dict[str, Any] = {}
+            if _QUALITY_RECEIPTS_FILENAME in (bundle.manifest.generated_files or []):
+                quality_receipts_snapshot = {"path": _QUALITY_RECEIPTS_FILENAME}
             bundle.manifest.path = _write_iteration_json(
                 bundle,
                 evidence_root,
@@ -5493,6 +6593,7 @@ class PromotionLoop:
                     "pin_registry_summary": bundle.manifest.pin_registry_summary,
                     "slice_patterns": bundle.manifest.slice_patterns,
                     "generated_files": bundle.manifest.generated_files,
+                    "quality_receipts_snapshot": quality_receipts_snapshot,
                 },
             )
 
