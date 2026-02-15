@@ -276,7 +276,9 @@ class QuestionComposerStrategy:
         self._run_agent = run_agent
 
     def run(self, session: PlanningSession) -> PlanningSession:
-        if not session.ctx.get("interactive", False):
+        mode = str(session.ctx.get("mode", "auto")).strip().lower()
+        interactive = bool(session.ctx.get("interactive", False) or mode == "interactive")
+        if not interactive:
             return session
 
         if not session.under_spec_events:

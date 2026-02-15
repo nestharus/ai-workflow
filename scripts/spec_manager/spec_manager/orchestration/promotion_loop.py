@@ -2638,7 +2638,13 @@ class PlanStep:
             bundle_ref=bundle,
             metadata={"focus_targets": self._focus_targets(ctx)},
         )
-        return self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
+        plan_outputs = self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
+        intentions_raw = (
+            plan_outputs.get("intentions", []) if isinstance(plan_outputs, dict) else []
+        )
+        if not isinstance(intentions_raw, list):
+            return []
+        return [row for row in intentions_raw if isinstance(row, dict)]
 
     @staticmethod
     def _plan_l2(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:

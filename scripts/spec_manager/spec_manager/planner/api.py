@@ -1431,10 +1431,11 @@ class Planner:
 
     def plan_from_gaps(
         self, context: PlanningContext, gaps: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Generate plan intentions from a gap list.
+    ) -> dict[str, Any]:
+        """Generate a PLAN output payload from a gap list.
 
-        Returns a list of intention dicts (may be empty on NOOP).
+        Returns the full planner outputs dict (intentions plus any
+        strategy-pipeline artifacts such as decision_requirements).
         """
         req = PlanningRequest(
             capability="PLAN",
@@ -1442,7 +1443,9 @@ class Planner:
             inputs={"gaps": gaps},
         )
         result = self.plan(req)
-        return result.outputs.get("intentions", [])
+        if not isinstance(result.outputs, dict):
+            return {}
+        return dict(result.outputs)
 
     def resolve_under_spec(
         self, context: PlanningContext, events: list[dict[str, Any]]

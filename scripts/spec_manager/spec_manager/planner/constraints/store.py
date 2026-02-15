@@ -30,6 +30,7 @@ class Constraint:
         source: How the constraint was obtained.
         confidence: 0.0-1.0 (only relevant for auto-resolved).
         validated: Whether the constraint passed validation.
+        decision_type: Optional classifier that marks prior planner decisions.
     """
 
     constraint_id: str = ""
@@ -47,6 +48,7 @@ class Constraint:
     validated: bool = True
     dimension: str = "software"
     authority_required: str = "planner_ok"
+    decision_type: str = ""
     scope: str = ""
     applies_to_layers: list[str] = field(default_factory=list)
     status: str = "ACTIVE"
@@ -64,6 +66,7 @@ class Constraint:
             validated=d.get("validated", True),
             dimension=d.get("dimension", "software"),
             authority_required=d.get("authority_required", "planner_ok"),
+            decision_type=d.get("decision_type", ""),
             scope=d.get("scope", ""),
             applies_to_layers=d.get("applies_to_layers", []),
             status=d.get("status", "ACTIVE"),
@@ -81,6 +84,7 @@ class Constraint:
             "validated": self.validated,
             "dimension": self.dimension,
             "authority_required": self.authority_required,
+            "decision_type": self.decision_type,
             "scope": self.scope,
             "applies_to_layers": self.applies_to_layers,
             "status": self.status,

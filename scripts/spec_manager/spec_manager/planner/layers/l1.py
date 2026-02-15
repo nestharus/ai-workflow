@@ -138,13 +138,95 @@ class L1Planner:
                 )
 
         plan: dict[str, Any] = {"intentions": intentions}
+        if self._constraints_store_adapter is None:
+            return plan
+        if not _should_run_l1_planning_session(ctx, gaps):
+            return plan
 
-        if self._constraints_store_adapter is not None:
-            decision_requirements = _extract_decision_requirements(gaps)
-            if decision_requirements:
-                plan["decision_requirements"] = decision_requirements
-
+        pipeline_outputs = self._build_plan_via_strategies(ctx, gaps, discovery)
+        for key in (
+            "decision_requirements",
+            "new_constraints",
+            "under_spec_events",
+            "decision_outcomes",
+        ):
+            if key in pipeline_outputs:
+                plan[key] = pipeline_outputs[key]
         return plan
+
+    def _build_plan_via_strategies(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run the shared planning-session strategies for L1 decisions."""
+        from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
+        from spec_manager.planner.strategies.constraint_strategies import (
+            ConstraintCollectionStrategy,
+            ConstraintEnricherStrategy,
+            ImpactClassifierStrategy,
+            NonSoftwareChecklistStrategy,
+            ProblemFramerStrategy,
+            QuestionComposerStrategy,
+            TradeoffMapperStrategy,
+        )
+        from spec_manager.planner.strategies.protocol import PlanningSession, PlanningSessionRunner
+
+        workspace_root = Path(getattr(ctx, "workspace_root", "") or "")
+        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
+        metadata = getattr(ctx, "metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        triggers = _l1_pipeline_triggers(gaps)
+        touched_files_count = _coerce_positive_int(
+            metadata.get("touched_files_count", 0),
+            default=_estimate_touched_files(gaps),
+        )
+        session_ctx: dict[str, Any] = {
+            "layer": "L1",
+            "slice_id": getattr(ctx, "slice_id", ""),
+            "run_id": getattr(ctx, "run_id", "default"),
+            "workspace_root": str(workspace_root),
+            "mode": mode,
+            "interactive": mode == "interactive",
+            "touched_files_count": touched_files_count,
+            "introduces_external_dep": triggers["introduces_external_dep"]
+            or _coerce_bool(metadata.get("introduces_external_dep", False)),
+            "introduces_infra": triggers["introduces_infra"]
+            or _coerce_bool(metadata.get("introduces_infra", False)),
+            "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
+            "pipeline_triggers": list(triggers["trigger_labels"]),
+        }
+
+        session = PlanningSession(
+            ctx=session_ctx,
+            gaps=gaps,
+            discovery=discovery,
+        )
+        strategies = [
+            ImpactClassifierStrategy(),
+            ConstraintCollectionStrategy(workspace_root),
+            TradeoffMapperStrategy(workspace_root),
+            ProblemFramerStrategy(run_agent=self._research_tool),
+            ConstraintEnricherStrategy(run_agent=self._research_tool),
+            NonSoftwareChecklistStrategy(),
+            AuthorityDeciderStrategy(workspace_root),
+            QuestionComposerStrategy(run_agent=self._research_tool),
+        ]
+        runner = PlanningSessionRunner(strategies)
+        session = runner.run(session)
+
+        result: dict[str, Any] = {}
+        if session.decision_requirements:
+            result["decision_requirements"] = [dr.to_dict() for dr in session.decision_requirements]
+        if session.new_constraints:
+            result["new_constraints"] = [c.to_dict() for c in session.new_constraints]
+        if session.under_spec_events:
+            result["under_spec_events"] = session.under_spec_events
+        if session.decision_outcomes:
+            result["decision_outcomes"] = [o.to_dict() for o in session.decision_outcomes]
+        return result
 
     def resolve_under_spec(
         self,
@@ -163,6 +245,16 @@ class L1Planner:
         nodes = discovery.get("nodes", [])
         node_lookup = {n["id"]: n for n in nodes}
         func_nodes = [n for n in nodes if n.get("kind") == "function"]
+        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
+
+        if mode == "interactive":
+            questions = _compose_l1_interactive_questions(events, func_nodes, node_lookup)
+            return {
+                "blocked": bool(questions),
+                "questions": questions,
+                "resolved": [],
+                "constraints": {},
+            }
 
         resolved: list[dict[str, Any]] = []
         unresolved: list[dict[str, Any]] = []
@@ -1033,34 +1125,156 @@ def _create_expansion_work_item(
     }
 
 
-_SENSITIVE_KEYWORDS: dict[str, str] = {
-    "external": "Which external dependency should be used and why?",
-    "dependency": "Which external dependency should be used and why?",
-    "security": "What security approach should be adopted?",
-    "auth": "What authentication/authorization strategy should be used?",
-    "payment": "Which payment provider should be integrated?",
-    "encryption": "What encryption strategy should be used?",
-    "credential": "How should credentials be managed?",
-}
+_L1_EXTERNAL_DEP_KEYWORDS = (
+    "external dependency",
+    "third-party",
+    "third party",
+    "dependency",
+    "package",
+    "sdk",
+    "vendor",
+)
+_L1_INFRA_KEYWORDS = (
+    "storage",
+    "database",
+    "db",
+    "cache",
+    "concurrency",
+    "concurrent",
+    "async",
+    "thread",
+    "lock",
+    "race",
+    "parallel",
+    "io",
+    "i/o",
+    "network",
+    "socket",
+    "http",
+    "file system",
+    "filesystem",
+    "security",
+    "auth",
+    "authentication",
+    "authorization",
+    "encryption",
+    "credential",
+    "secret",
+    "token",
+)
 
 
-def _extract_decision_requirements(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract decision requirements from gaps with sensitive dimensions."""
-    requirements: list[dict[str, Any]] = []
-    seen_questions: set[str] = set()
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _normalize_mode(mode_value: Any) -> str:
+    mode = str(mode_value or "auto").strip().lower()
+    if mode == "interactive":
+        return "interactive"
+    return "auto"
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return max(default, 0)
+    return max(parsed, 0)
+
+
+def _estimate_touched_files(gaps: list[dict[str, Any]]) -> int:
+    files: set[str] = set()
     for gap in gaps:
-        description = (gap.get("description", "") or "").lower()
-        for keyword, question in _SENSITIVE_KEYWORDS.items():
-            if keyword in description and question not in seen_questions:
-                seen_questions.add(question)
-                requirements.append(
-                    {
-                        "question": question,
-                        "trigger": keyword,
-                        "gap_target": gap.get("target", ""),
-                    }
-                )
-    return requirements
+        file_value = gap.get("file")
+        if isinstance(file_value, str) and file_value.strip():
+            files.add(file_value.strip())
+        target_files = gap.get("target_files")
+        if isinstance(target_files, list):
+            for item in target_files:
+                text = str(item).strip()
+                if text:
+                    files.add(text)
+    return len(files)
+
+
+def _l1_pipeline_triggers(gaps: list[dict[str, Any]]) -> dict[str, Any]:
+    labels: set[str] = set()
+    for gap in gaps:
+        text_parts: list[str] = []
+        for key in ("target", "description", "summary", "kind", "approach"):
+            value = gap.get(key)
+            if isinstance(value, str) and value.strip():
+                text_parts.append(value.strip().lower())
+        for key in ("dependencies", "target_files", "pin_refs"):
+            value = gap.get(key)
+            if isinstance(value, list):
+                text_parts.extend(str(item).strip().lower() for item in value if str(item).strip())
+        gap_text = " ".join(text_parts)
+        if any(keyword in gap_text for keyword in _L1_EXTERNAL_DEP_KEYWORDS):
+            labels.add("external_dep")
+        if any(keyword in gap_text for keyword in _L1_INFRA_KEYWORDS):
+            labels.add("infra")
+    return {
+        "trigger_labels": sorted(labels),
+        "introduces_external_dep": "external_dep" in labels,
+        "introduces_infra": "infra" in labels,
+        "triggered": bool(labels),
+    }
+
+
+def _should_run_l1_planning_session(ctx: Any, gaps: list[dict[str, Any]]) -> bool:
+    metadata = getattr(ctx, "metadata", {})
+    if isinstance(metadata, dict):
+        if _coerce_bool(metadata.get("introduces_external_dep", False)):
+            return True
+        if _coerce_bool(metadata.get("introduces_infra", False)):
+            return True
+        if _coerce_bool(metadata.get("cross_library_contract", False)):
+            return True
+    return bool(_l1_pipeline_triggers(gaps)["triggered"])
+
+
+def _compose_l1_interactive_questions(
+    events: list[dict[str, Any]],
+    func_nodes: list[dict[str, Any]],
+    node_lookup: dict[str, dict[str, Any]],
+) -> list[str]:
+    questions: list[str] = []
+    for event in events:
+        target = str(event.get("target", "")).strip()
+        base_question = str(event.get("question", event.get("description", ""))).strip()
+        if not base_question and target:
+            base_question = f"What requirement should govern {target}?"
+        if not base_question:
+            base_question = "What requirement should govern this unresolved change?"
+
+        matched = _match_gap_to_node(target, func_nodes, node_lookup) if target else None
+        context_parts: list[str] = []
+        if matched:
+            name = str(matched.get("name", "")).strip()
+            file_name = str(matched.get("file", "")).strip()
+            if name and file_name:
+                context_parts.append(f"code target: {name} in {file_name}")
+            elif name:
+                context_parts.append(f"code target: {name}")
+            spec_ref = str(matched.get("spec_comment_ref", "")).strip()
+            if spec_ref:
+                context_parts.append(f"spec reference: {spec_ref}")
+
+        reason = str(event.get("reason", "")).strip()
+        if reason:
+            context_parts.append(f"why unresolved: {reason}")
+        if context_parts:
+            base_question = f"{base_question} Context: {'; '.join(context_parts)}."
+        questions.append(base_question)
+    return questions
 
 
 def _build_expansion(

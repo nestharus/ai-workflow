@@ -25,6 +25,38 @@ logger = logging.getLogger(__name__)
 _ToolFn = Callable[..., Any] | None
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _normalize_mode(mode_value: Any) -> str:
+    mode = str(mode_value or "auto").strip().lower()
+    if mode == "interactive":
+        return "interactive"
+    return "auto"
+
+
+def _estimate_touched_files(gaps: list[dict[str, Any]]) -> int:
+    files: set[str] = set()
+    for gap in gaps:
+        file_value = gap.get("file")
+        if isinstance(file_value, str) and file_value.strip():
+            files.add(file_value.strip())
+        target_files = gap.get("target_files")
+        if isinstance(target_files, list):
+            for item in target_files:
+                text = str(item).strip()
+                if text:
+                    files.add(text)
+    return len(files)
+
+
 # ---------------------------------------------------------------------------
 # Architecture topology helpers
 # ---------------------------------------------------------------------------
@@ -357,12 +389,22 @@ class L2Planner:
         from spec_manager.planner.strategies.protocol import PlanningSession, PlanningSessionRunner
 
         workspace_root = Path(getattr(ctx, "workspace_root", "") or "")
+        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
+        metadata = getattr(ctx, "metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
 
         session_ctx: dict[str, Any] = {
             "layer": "L2",
             "slice_id": getattr(ctx, "slice_id", ""),
             "run_id": getattr(ctx, "run_id", "default"),
             "workspace_root": str(workspace_root),
+            "mode": mode,
+            "interactive": mode == "interactive",
+            "touched_files_count": _estimate_touched_files(gaps),
+            "introduces_external_dep": _coerce_bool(metadata.get("introduces_external_dep", False)),
+            "introduces_infra": _coerce_bool(metadata.get("introduces_infra", False)),
+            "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
         }
 
         session = PlanningSession(
@@ -422,6 +464,14 @@ class L2Planner:
         3. If still unresolved, return ``blocked=True`` with questions
            for human input.
         """
+        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
+        if mode == "interactive":
+            questions = self._compose_interactive_under_spec_questions(events, discovery)
+            return {
+                "blocked": bool(questions),
+                "constraints": {},
+                "questions": questions,
+            }
 
         nodes = [n for n in discovery.get("nodes", []) if isinstance(n, dict)]
         edges = [e for e in discovery.get("edges", []) if isinstance(e, dict)]
@@ -477,6 +527,35 @@ class L2Planner:
             "constraints": resolved_constraints,
             "questions": remaining_questions,
         }
+
+    def _compose_interactive_under_spec_questions(
+        self,
+        events: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> list[str]:
+        """Build question-first under-spec prompts with topology context."""
+        nodes = [n for n in discovery.get("nodes", []) if isinstance(n, dict)]
+        edges = [e for e in discovery.get("edges", []) if isinstance(e, dict)]
+        questions: list[str] = []
+
+        for event in events:
+            event_id = str(event.get("id", event.get("event_id", ""))).strip()
+            base_question = str(event.get("question", event.get("description", ""))).strip()
+            if not base_question and event_id:
+                base_question = f"What requirement should resolve decision {event_id}?"
+            if not base_question:
+                base_question = "What requirement should resolve this architecture ambiguity?"
+
+            topology_context = self._resolve_event_from_topology(event, base_question, nodes, edges)
+            if topology_context:
+                questions.append(f"{base_question} Known topology: {topology_context}")
+                continue
+
+            questions.append(
+                f"{base_question} Missing topology detail: specify source/target components, "
+                "pins, or interfaces."
+            )
+        return questions
 
     @staticmethod
     def _resolve_event_from_topology(
