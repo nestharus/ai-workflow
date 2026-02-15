@@ -89,6 +89,8 @@ _LAYER_LIFECYCLE_MODE: dict[Layer, LifecycleRunMode] = {
 }
 
 _TERMINAL_SLICE_STATUSES = {"COMPLETE", "PROMOTED", "SKIPPED"}
+_LAYER_SEQUENCE: tuple[Layer, Layer, Layer] = ("l1", "l2", "l3")
+_LAYER_RANK: dict[str, int] = {layer: idx for idx, layer in enumerate(_LAYER_SEQUENCE)}
 
 
 class PddLifecycle:
@@ -367,6 +369,132 @@ class PddLifecycle:
             return Path(str(candidate))
         return None
 
+    def _propagate_clean_to_next_layer_result(self, from_layer: Layer) -> dict[str, Any]:
+        """Propagate clean->next dirty using merge first with rebase fallback."""
+        if not self.worktree_manager:
+            return {"success": True, "from_layer": from_layer, "error": "", "strategy": "noop"}
+
+        merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
+        merge_conflicts = [
+            self._normalize_conflict_path(path)
+            for path in (merge_prop.conflict_files or [])
+            if self._normalize_conflict_path(path)
+        ]
+        propagation: dict[str, Any] = {
+            "success": merge_prop.success,
+            "from_layer": merge_prop.from_layer,
+            "to_layer": merge_prop.to_layer,
+            "merge_sha": merge_prop.merge_sha,
+            "error": merge_prop.error,
+            "strategy": "merge",
+            "conflict_files": merge_conflicts,
+        }
+        if merge_prop.success:
+            return propagation
+
+        rebase_prop = self.worktree_manager.rebase_next_layer_dirty_onto_clean(from_layer)
+        rebase_conflicts = [
+            self._normalize_conflict_path(path)
+            for path in (rebase_prop.conflict_files or [])
+            if self._normalize_conflict_path(path)
+        ]
+        propagation["rebase_fallback"] = {
+            "success": rebase_prop.success,
+            "from_layer": rebase_prop.from_layer,
+            "to_layer": rebase_prop.to_layer,
+            "merge_sha": rebase_prop.merge_sha,
+            "error": rebase_prop.error,
+            "conflict_files": rebase_conflicts,
+        }
+        if rebase_prop.success:
+            combined_conflicts: list[str] = []
+            seen_conflicts: set[str] = set()
+            for path in merge_conflicts + rebase_conflicts:
+                if path and path not in seen_conflicts:
+                    seen_conflicts.add(path)
+                    combined_conflicts.append(path)
+            propagation.update(
+                {
+                    "success": True,
+                    "merge_sha": rebase_prop.merge_sha,
+                    "error": "",
+                    "strategy": "rebase_fallback",
+                    "merge_error": merge_prop.error,
+                    "conflict_files": combined_conflicts,
+                }
+            )
+            return propagation
+
+        merge_error = merge_prop.error or "merge propagation failed"
+        rebase_error = rebase_prop.error or "rebase fallback failed"
+        combined_conflicts: list[str] = []
+        seen_conflicts: set[str] = set()
+        for path in (
+            merge_conflicts
+            + rebase_conflicts
+            + self._extract_conflict_files_from_errors(merge_error, rebase_error)
+        ):
+            normalized = self._normalize_conflict_path(path)
+            if normalized and normalized not in seen_conflicts:
+                seen_conflicts.add(normalized)
+                combined_conflicts.append(normalized)
+        propagation.update(
+            {
+                "success": False,
+                "error": f"{merge_error}; {rebase_error}",
+                "strategy": "merge_then_rebase_fallback",
+                "merge_error": merge_error,
+                "rebase_error": rebase_error,
+                "conflict_files": combined_conflicts,
+            }
+        )
+        return propagation
+
+    def _lower_layer_demotion_targets(
+        self,
+        *,
+        current_layer: Layer,
+        tickets: list[dict[str, Any]],
+    ) -> list[str]:
+        """Return lower-layer targets from newly emitted demotion tickets."""
+        current_rank = _LAYER_RANK.get(str(current_layer), 0)
+        targets: set[str] = set()
+        for ticket in tickets:
+            target_layer = str(ticket.get("target_layer", "")).strip().lower()
+            target_rank = _LAYER_RANK.get(target_layer)
+            if target_rank is None:
+                continue
+            if target_rank < current_rank:
+                targets.add(target_layer)
+        return sorted(targets)
+
+    @staticmethod
+    def _ci_ticks_passed(slice_run: dict[str, Any]) -> bool:
+        """Return True when all CI ticks in a slice run succeeded."""
+        ci_ticks = slice_run.get("ci_ticks", [])
+        if not isinstance(ci_ticks, list):
+            return False
+        for tick in ci_ticks:
+            if not isinstance(tick, dict):
+                continue
+            if bool(tick.get("failed", False)):
+                return False
+        return True
+
+    def _cleanup_inactive_layer_slices(self, layer: Layer) -> dict[str, Any]:
+        """Cleanup inactive-layer slices unless unresolved demotions need intervention."""
+        if self.worktree_manager is None:
+            return {"skipped": True, "reason": "No worktree manager"}
+        pending_demotions = self._count_pending_demotions_for_layer(layer)
+        if pending_demotions > 0:
+            return {
+                "skipped": True,
+                "reason": f"{pending_demotions} unresolved demotion tickets target {layer.upper()}",
+                "pending_demotions": pending_demotions,
+            }
+        removed = self.worktree_manager.cleanup_layer_slices(layer)
+        return {"skipped": False, "removed": removed, "pending_demotions": 0}
+
     def _run_transition_investigator(
         self,
         *,
@@ -594,11 +722,71 @@ class PddLifecycle:
                     state_mgr.update_state(phase="blocked_pipeline_cap")
                     return results
                 continue
+
+            l1_l2_activation_gate: dict[str, Any] = {
+                "drained_baseline": {
+                    "passed": True,
+                    "note": "No worktree manager; drained-baseline gate not enforced",
+                }
+            }
+            if self.worktree_manager is not None:
+                drained_baseline = bool(self.worktree_manager.can_advance_layer("l1"))
+                l1_l2_activation_gate["drained_baseline"] = {
+                    "passed": drained_baseline,
+                    "error": (
+                        ""
+                        if drained_baseline
+                        else "Pipeline not drained for L1→L2 activation "
+                        "(requires l2/l3 dirty == clean)"
+                    ),
+                }
+                if not drained_baseline:
+                    pass_outcome["l2_blocked"] = True
+                    pass_outcome["l2_blocked_reason"] = str(
+                        l1_l2_activation_gate["drained_baseline"].get("error", "")
+                    )
+                    pass_outcome["l1_l2_activation_gate"] = l1_l2_activation_gate
+                    results.update(pass_outcome)
+                    results["pipeline_pass_history"].append(
+                        {
+                            "pass": pipeline_pass,
+                            "status": "retry",
+                            "reason": pass_outcome["l2_blocked_reason"],
+                        }
+                    )
+                    if pipeline_pass >= self.max_pipeline_passes:
+                        results["release_blocked"] = True
+                        results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
+                        state_mgr.update_state(phase="blocked_pipeline_cap")
+                        return results
+                    continue
+            pass_outcome["l1_l2_activation_gate"] = l1_l2_activation_gate
+
+            pass_outcome["l1_l2_global_verify"] = self._run_l1_l2_activation_verify()
+            if not bool(pass_outcome["l1_l2_global_verify"].get("passed", False)):
+                pass_outcome["l2_blocked"] = True
+                pass_outcome["l2_blocked_reason"] = "L1→L2 global verify checkpoint failed"
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "retry",
+                        "reason": pass_outcome["l2_blocked_reason"],
+                    }
+                )
+                if pipeline_pass >= self.max_pipeline_passes:
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
+                    state_mgr.update_state(phase="blocked_pipeline_cap")
+                    return results
+                continue
             state_mgr.update_state(
                 transitions_completed=["l1_l2"],
                 phase="l2",
                 active_layer="l2",
             )
+            if self.worktree_manager:
+                pass_outcome["l1_slice_cleanup"] = self._cleanup_inactive_layer_slices("l1")
 
             # L2: Architecture
             pass_outcome["l2"] = self._run_layer("l2")
@@ -618,7 +806,18 @@ class PddLifecycle:
                 and not l2_termination.get("passed", False)
             ):
                 pass_outcome["l3_blocked"] = True
-                pass_outcome["l3_blocked_reason"] = "L2 layer termination checks failed"
+                l2_pause = (
+                    pass_outcome["l2"].get("demotion_pause", {})
+                    if isinstance(pass_outcome["l2"], dict)
+                    else {}
+                )
+                if isinstance(l2_pause, dict) and bool(l2_pause.get("paused", False)):
+                    pass_outcome["l3_blocked_reason"] = str(
+                        l2_pause.get("reason")
+                        or "L2 creative work paused due to lower-layer demotion"
+                    )
+                else:
+                    pass_outcome["l3_blocked_reason"] = "L2 layer termination checks failed"
                 results.update(pass_outcome)
                 results["pipeline_pass_history"].append(
                     {
@@ -687,6 +886,8 @@ class PddLifecycle:
                 phase="l3",
                 active_layer="l3",
             )
+            if self.worktree_manager:
+                pass_outcome["l2_slice_cleanup"] = self._cleanup_inactive_layer_slices("l2")
 
             # L3: Clean Code
             pass_outcome["l3"] = self._run_layer("l3")
@@ -1258,22 +1459,22 @@ class PddLifecycle:
             logger.warning("Layer %s termination checks failed: %s", layer, checks)
         return checks
 
-    def _run_global_connectivity_check(self) -> dict[str, Any]:
+    def _run_global_connectivity_check(self, *, source_root: Path | None = None) -> dict[str, Any]:
         """Run global P6 connectivity check over clean-root code."""
         from spec_manager.analysis.adjacency.runner import (
             AdjacencyAnalysisConfig,
             run_adjacency_analysis,
         )
 
-        source_root = self.manager.workspace_path
-        if self.worktree_manager is not None:
+        effective_root = source_root or self.manager.workspace_path
+        if source_root is None and self.worktree_manager is not None:
             clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
             if clean_root is not None and Path(clean_root).exists():
-                source_root = clean_root
+                effective_root = clean_root
 
         try:
             report = run_adjacency_analysis(
-                AdjacencyAnalysisConfig(source_dirs=[source_root], spec_dirs=[source_root])
+                AdjacencyAnalysisConfig(source_dirs=[effective_root], spec_dirs=[effective_root])
             )
             disconnected = len(report.disconnected_warnings or [])
             return {
@@ -1282,13 +1483,13 @@ class PddLifecycle:
                 "total_edges": report.total_edges,
                 "num_components": report.num_components,
                 "disconnected_warnings": list(report.disconnected_warnings or []),
-                "source_root": str(source_root),
+                "source_root": str(effective_root),
             }
         except Exception as exc:
             logger.warning("Global connectivity check failed: %s", exc, exc_info=True)
-            return {"passed": False, "error": str(exc), "source_root": str(source_root)}
+            return {"passed": False, "error": str(exc), "source_root": str(effective_root)}
 
-    def _run_global_lineage_check(self) -> dict[str, Any]:
+    def _run_global_lineage_check(self, *, source_root: Path | None = None) -> dict[str, Any]:
         """Run global P7 lineage completeness check over clean-root code."""
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
@@ -1296,14 +1497,14 @@ class PddLifecycle:
             scan_imports_from_directory,
         )
 
-        source_root = self.manager.workspace_path
-        if self.worktree_manager is not None:
+        effective_root = source_root or self.manager.workspace_path
+        if source_root is None and self.worktree_manager is not None:
             clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
             if clean_root is not None and Path(clean_root).exists():
-                source_root = clean_root
+                effective_root = clean_root
 
         try:
-            import_records = scan_imports_from_directory(source_root)
+            import_records = scan_imports_from_directory(effective_root)
             atom_defs: list[AtomDefinition] = []
             branch_manager = getattr(self.manager, "branches", None)
             if branch_manager is not None:
@@ -1326,7 +1527,7 @@ class PddLifecycle:
                 return {
                     "passed": False,
                     "error": "No atoms available for lineage completeness check",
-                    "source_root": str(source_root),
+                    "source_root": str(effective_root),
                 }
             lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
             lineage_table = lineage_builder.build_lineage()
@@ -1339,18 +1540,18 @@ class PddLifecycle:
                 "known_atoms": len(known_atom_ids),
                 "orphan_atoms": len(orphan_atoms),
                 "orphan_atom_ids": sorted(orphan_atoms)[:50],
-                "source_root": str(source_root),
+                "source_root": str(effective_root),
             }
         except Exception as exc:
             logger.warning("Global lineage check failed: %s", exc, exc_info=True)
-            return {"passed": False, "error": str(exc), "source_root": str(source_root)}
+            return {"passed": False, "error": str(exc), "source_root": str(effective_root)}
 
-    def _run_clean_root_full_tests(self) -> dict[str, Any]:
+    def _run_clean_root_full_tests(self, *, source_root: Path | None = None) -> dict[str, Any]:
         """Run clean-root full test suite as a global termination gate."""
         from spec_manager.core.testing.registry import TestRunnerRegistry
 
-        root = self.manager.workspace_path
-        if self.worktree_manager is not None:
+        root = source_root or self.manager.workspace_path
+        if source_root is None and self.worktree_manager is not None:
             clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
             if clean_root is not None and Path(clean_root).exists():
                 root = clean_root
@@ -1367,6 +1568,34 @@ class PddLifecycle:
         except Exception as exc:
             logger.warning("Clean-root full suite failed: %s", exc, exc_info=True)
             return {"passed": False, "error": str(exc), "source_root": str(root)}
+
+    def _run_l1_l2_activation_verify(self) -> dict[str, Any]:
+        """Run global verify checkpoint before activating L2."""
+        source_root = self.manager.workspace_path
+        l1_clean_root = self._resolve_layer_worktree("l1", "clean")
+        if l1_clean_root is not None and l1_clean_root.exists():
+            source_root = l1_clean_root
+        else:
+            l2_clean_root = self._resolve_layer_worktree("l2", "clean")
+            if l2_clean_root is not None and l2_clean_root.exists():
+                source_root = l2_clean_root
+
+        connectivity = self._run_global_connectivity_check(source_root=source_root)
+        lineage = self._run_global_lineage_check(source_root=source_root)
+        full_tests = self._run_clean_root_full_tests(source_root=source_root)
+        checks = {
+            "p6_connectivity": bool(connectivity.get("passed", False)),
+            "p7_lineage": bool(lineage.get("passed", False)),
+            "clean_root_full_tests_pass": bool(full_tests.get("passed", False)),
+        }
+        return {
+            "passed": all(checks.values()),
+            "checks": checks,
+            "source_root": str(source_root),
+            "connectivity": connectivity,
+            "lineage": lineage,
+            "clean_root_full_tests": full_tests,
+        }
 
     def _ci_receipts_pass(self) -> dict[str, Any]:
         """Validate CI batch receipts for PASS status."""
@@ -1581,7 +1810,50 @@ class PddLifecycle:
         refinement_method = getattr(self, _LAYER_REFINEMENT[layer])
 
         # Entry refinement (typed per layer)
+        known_ticket_paths = self._snapshot_demotion_ticket_paths()
         results["entry_refinement"] = refinement_method()
+        entry_tickets = self._load_new_demotion_tickets(known_ticket_paths)
+        lower_targets = self._lower_layer_demotion_targets(
+            current_layer=layer,
+            tickets=entry_tickets,
+        )
+        if lower_targets:
+            results["demotion_pause"] = {
+                "paused": True,
+                "from_layer": layer,
+                "target_layers": lower_targets,
+                "ticket_count": len(entry_tickets),
+                "reason": (
+                    f"Entry refinement for {layer.upper()} emitted demotions to lower layer(s): "
+                    f"{', '.join(target.upper() for target in lower_targets)}"
+                ),
+            }
+            results["slices"] = {
+                "layer": layer,
+                "lifecycle_mode": lifecycle_mode,
+                "slices": [],
+                "all_complete": False,
+                "paused": True,
+            }
+            results["exit_refinement"] = {}
+            results["layer_termination"] = {
+                "passed": False,
+                "all_slices_terminal": False,
+                "non_terminal_slices": ["__demotion_pause__"],
+                "layer_clean": False,
+                "pending_demotions": self._count_pending_demotions_for_layer(layer),
+                "exit_refinement_clean": False,
+                "exit_refinement_demotions": len(entry_tickets),
+                "exit_refinement_error": True,
+                "demotion_pause": True,
+            }
+            results["all_complete"] = False
+            logger.info(
+                "Layer %s paused before slice work; demotions target lower layer(s): %s",
+                layer.upper(),
+                ", ".join(target.upper() for target in lower_targets),
+            )
+            return results
 
         # Per-slice work via PromotionLoop
         results["slices"] = self._run_slices_at_layer(layer, lifecycle_mode=lifecycle_mode)
@@ -1663,33 +1935,74 @@ class PddLifecycle:
             rework_mode = _LAYER_LIFECYCLE_MODE.get(from_layer, "build")
             target_slice_ids = sorted(focus_targets)
             if not target_slice_ids:
-                transition_stuck = True
-                round_result["rework"] = {
-                    "layer": from_layer,
-                    "lifecycle_mode": rework_mode,
-                    "slices": [],
-                    "all_complete": False,
-                    "note": "Demotions emitted without owning-slice targets for focused rework",
-                }
-                round_result["error"] = (
-                    "Transition demotions could not be mapped to owning slices for focused rework"
-                )
-                rework_rounds.append(round_result)
                 logger.warning(
                     "Transition %s→%s round %d/%d: demotions emitted but no owning "
-                    "slice targets were identified",
+                    "slice targets were identified; falling back to full-layer rework",
                     from_layer,
                     to_layer,
                     round_num,
                     max_rounds,
                 )
+                round_result["rework_scope"] = "full_layer_fallback_no_targets"
+                round_result["rework"] = self._run_slices_at_layer(
+                    from_layer,
+                    lifecycle_mode=rework_mode,
+                )
+            else:
+                round_result["rework_scope"] = "focused_slices"
+                round_result["rework"] = self._run_slices_at_layer(
+                    from_layer,
+                    lifecycle_mode=rework_mode,
+                    target_slice_ids=target_slice_ids,
+                    slice_focus_targets=focus_targets,
+                )
+            rework_result = round_result["rework"]
+            if not isinstance(rework_result, dict):
+                transition_stuck = True
+                round_result["error"] = "Transition rework did not produce a structured result"
+                rework_rounds.append(round_result)
                 break
-            round_result["rework"] = self._run_slices_at_layer(
-                from_layer,
-                lifecycle_mode=rework_mode,
-                target_slice_ids=target_slice_ids,
-                slice_focus_targets=focus_targets,
-            )
+
+            round_result["rework_ci_passed"] = self._ci_ticks_passed(rework_result)
+            if not bool(round_result["rework_ci_passed"]):
+                transition_stuck = True
+                round_result["error"] = (
+                    f"Transition {from_layer}→{to_layer} rework round {round_num} failed CI ticks"
+                )
+                rework_rounds.append(round_result)
+                logger.warning("%s", round_result["error"])
+                break
+
+            rework_layer_clean = True
+            if self.worktree_manager is not None:
+                rework_layer_clean = bool(self.worktree_manager.is_layer_clean(from_layer))
+            round_result["rework_layer_clean"] = rework_layer_clean
+            if not rework_layer_clean:
+                transition_stuck = True
+                round_result["error"] = (
+                    f"Transition {from_layer}→{to_layer} rework round {round_num} "
+                    f"did not restore {from_layer.upper()} to a fully clean state"
+                )
+                rework_rounds.append(round_result)
+                logger.warning("%s", round_result["error"])
+                break
+
+            if self.worktree_manager is not None:
+                repropagation = self._propagate_clean_to_next_layer_result(from_layer)
+                round_result["repropagation"] = repropagation
+                if not bool(repropagation.get("success", False)):
+                    transition_stuck = True
+                    round_result["error"] = (
+                        f"Transition {from_layer}→{to_layer} rework round {round_num} "
+                        f"failed to re-propagate {from_layer.upper()} clean"
+                    )
+                    rework_rounds.append(round_result)
+                    logger.warning(
+                        "%s: %s",
+                        round_result["error"],
+                        repropagation.get("error", ""),
+                    )
+                    break
             rework_rounds.append(round_result)
 
             if round_num == max_rounds and demotions > 0:
@@ -1743,233 +2056,135 @@ class PddLifecycle:
 
         # Propagate clean → next layer's dirty
         if self.worktree_manager:
-            rebase_prop = self.worktree_manager.rebase_next_layer_dirty_onto_clean(from_layer)
-            rebase_conflicts = [
-                self._normalize_conflict_path(path)
-                for path in (rebase_prop.conflict_files or [])
-                if self._normalize_conflict_path(path)
-            ]
-            propagation: dict[str, Any] = {
-                "success": rebase_prop.success,
-                "from_layer": rebase_prop.from_layer,
-                "to_layer": rebase_prop.to_layer,
-                "merge_sha": rebase_prop.merge_sha,
-                "error": rebase_prop.error,
-                "strategy": "rebase",
-                "conflict_files": rebase_conflicts,
-            }
-
-            if not rebase_prop.success:
-                merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
-                merge_conflicts = [
+            propagation = self._propagate_clean_to_next_layer_result(from_layer)
+            if not bool(propagation.get("success", False)):
+                merge_error = str(propagation.get("merge_error") or "merge propagation failed")
+                rebase_error = str(propagation.get("rebase_error") or "rebase fallback failed")
+                combined_conflicts = propagation.get("conflict_files", [])
+                if not isinstance(combined_conflicts, list):
+                    combined_conflicts = []
+                combined_conflicts = [
                     self._normalize_conflict_path(path)
-                    for path in (merge_prop.conflict_files or [])
+                    for path in combined_conflicts
                     if self._normalize_conflict_path(path)
                 ]
-                propagation["merge_fallback"] = {
-                    "success": merge_prop.success,
-                    "from_layer": merge_prop.from_layer,
-                    "to_layer": merge_prop.to_layer,
-                    "merge_sha": merge_prop.merge_sha,
-                    "error": merge_prop.error,
-                    "conflict_files": merge_conflicts,
-                }
-                if merge_prop.success:
-                    combined_conflicts: list[str] = []
-                    seen_conflicts: set[str] = set()
-                    for path in rebase_conflicts + merge_conflicts:
-                        if path and path not in seen_conflicts:
-                            seen_conflicts.add(path)
-                            combined_conflicts.append(path)
-                    propagation.update(
-                        {
-                            "success": True,
-                            "merge_sha": merge_prop.merge_sha,
-                            "error": "",
-                            "strategy": "merge_fallback",
-                            "rebase_error": rebase_prop.error,
-                            "conflict_files": combined_conflicts,
-                        }
-                    )
-                else:
-                    rebase_error = rebase_prop.error or "rebase propagation failed"
-                    merge_error = merge_prop.error or "merge fallback failed"
-                    combined_conflicts: list[str] = []
-                    seen_conflicts: set[str] = set()
-                    for path in (
-                        rebase_conflicts
-                        + merge_conflicts
-                        + self._extract_conflict_files_from_errors(rebase_error, merge_error)
-                    ):
-                        normalized = self._normalize_conflict_path(path)
-                        if normalized and normalized not in seen_conflicts:
-                            seen_conflicts.add(normalized)
-                            combined_conflicts.append(normalized)
-                    conflict_slice_ids = self._infer_conflict_slice_ids(
-                        to_layer, combined_conflicts
-                    )
-                    propagation["error"] = f"{rebase_error}; {merge_error}"
-                    propagation["conflict_files"] = combined_conflicts
+                conflict_slice_ids = self._infer_conflict_slice_ids(to_layer, combined_conflicts)
 
-                    conflict_report_name = (
-                        f"transition_{from_layer}_{to_layer}_propagation_conflict.json"
+                conflict_report_name = (
+                    f"transition_{from_layer}_{to_layer}_propagation_conflict.json"
+                )
+                conflict_report_payload = {
+                    "from_layer": from_layer,
+                    "to_layer": to_layer,
+                    "strategy": str(propagation.get("strategy", "merge_then_rebase_fallback")),
+                    "merge_error": merge_error,
+                    "rebase_error": rebase_error,
+                    "conflict_files": combined_conflicts,
+                    "affected_slices": conflict_slice_ids,
+                }
+                scope_assessment = self._assess_transition_conflict_scope(
+                    to_layer=to_layer,
+                    conflict_files=combined_conflicts,
+                    affected_slices=conflict_slice_ids,
+                )
+                conflict_report_payload["scope_assessment"] = scope_assessment
+                self._write_run_report(conflict_report_name, conflict_report_payload)
+                conflict_report_ref = self._run_report_relpath(conflict_report_name)
+                propagation["scope_assessment"] = scope_assessment
+
+                investigator_attempted = False
+                investigator_report_ref = ""
+                resolved_by_investigator = False
+                retry_payload: dict[str, Any] = {}
+
+                if bool(scope_assessment.get("llm_merge_allowed", False)):
+                    investigator_attempted = True
+
+                    def verify_propagation_recovery(
+                        _: int,
+                        __: dict[str, Any],
+                    ) -> tuple[bool, dict[str, Any]]:
+                        retry_propagation = self._propagate_clean_to_next_layer_result(from_layer)
+                        return bool(retry_propagation.get("success", False)), {
+                            "retry_propagation": retry_propagation
+                        }
+
+                    investigator_refs = [
+                        f"merge_error:{merge_error}",
+                        f"rebase_error:{rebase_error}",
+                        *[f"conflict_file:{path}" for path in combined_conflicts[:12]],
+                    ]
+                    investigator_report, investigator_report_ref = (
+                        self._run_transition_investigator(
+                            layer=to_layer,
+                            scope_id=f"transition_{from_layer}_{to_layer}_propagation_conflict",
+                            failure_refs=investigator_refs,
+                            failure_evidence=conflict_report_payload,
+                            investigator_budget=self.transition_investigator_budget,
+                            verify_callback=verify_propagation_recovery,
+                        )
                     )
-                    conflict_report_payload = {
-                        "from_layer": from_layer,
-                        "to_layer": to_layer,
-                        "strategy": "rebase_then_merge_fallback",
-                        "rebase_error": rebase_error,
-                        "merge_error": merge_error,
-                        "conflict_files": combined_conflicts,
-                        "affected_slices": conflict_slice_ids,
-                    }
-                    scope_assessment = self._assess_transition_conflict_scope(
+                    propagation["investigator_report_path"] = investigator_report_ref
+                    resolved_by_investigator = bool(investigator_report.get("fixed", False))
+                    if resolved_by_investigator:
+                        retry_payload = investigator_report.get("verification", {})
+                        retry_propagation = (
+                            retry_payload.get("retry_propagation", {})
+                            if isinstance(retry_payload, dict)
+                            else {}
+                        )
+                        propagation.update(
+                            {
+                                "success": bool(retry_propagation.get("success", False)),
+                                "error": str(retry_propagation.get("error", "")),
+                                "strategy": "investigator_recovery",
+                                "merge_sha": str(retry_propagation.get("merge_sha", "")).strip(),
+                                "conflict_files": list(retry_propagation.get("conflict_files", []))
+                                if isinstance(retry_propagation.get("conflict_files", []), list)
+                                else [],
+                            }
+                        )
+                        results["propagation_recovery"] = {
+                            "fixed": True,
+                            "investigator_report_path": investigator_report_ref,
+                            "verification": retry_payload,
+                        }
+
+                if not resolved_by_investigator:
+                    demotion_summary = self._emit_transition_conflict_demotions(
+                        from_layer=from_layer,
                         to_layer=to_layer,
                         conflict_files=combined_conflicts,
-                        affected_slices=conflict_slice_ids,
+                        merge_error=merge_error,
+                        rebase_error=rebase_error,
+                        evidence_ref=conflict_report_ref,
+                        investigator_report_ref=investigator_report_ref,
                     )
-                    conflict_report_payload["scope_assessment"] = scope_assessment
-                    self._write_run_report(conflict_report_name, conflict_report_payload)
-                    conflict_report_ref = self._run_report_relpath(conflict_report_name)
-                    propagation["scope_assessment"] = scope_assessment
+                    propagation["demotion_tickets"] = demotion_summary.get("demotion_tickets", 0)
+                    propagation["affected_slices"] = demotion_summary.get("affected_slices", [])
 
-                    investigator_attempted = False
-                    investigator_report_ref = ""
-                    resolved_by_investigator = False
-                    retry_payload: dict[str, Any] = {}
-
-                    if bool(scope_assessment.get("llm_merge_allowed", False)):
-                        investigator_attempted = True
-
-                        def verify_propagation_recovery(
-                            _: int,
-                            __: dict[str, Any],
-                        ) -> tuple[bool, dict[str, Any]]:
-                            if not self.worktree_manager:
-                                return False, {"error": "No worktree manager for propagation retry"}
-                            retry_rebase = self.worktree_manager.rebase_next_layer_dirty_onto_clean(
-                                from_layer
-                            )
-                            retry_payload_local: dict[str, Any] = {
-                                "retry_rebase": {
-                                    "success": bool(retry_rebase.success),
-                                    "error": str(retry_rebase.error or ""),
-                                    "merge_sha": retry_rebase.merge_sha,
-                                    "conflict_files": [
-                                        self._normalize_conflict_path(path)
-                                        for path in (retry_rebase.conflict_files or [])
-                                        if self._normalize_conflict_path(path)
-                                    ],
-                                }
-                            }
-                            if retry_rebase.success:
-                                return True, retry_payload_local
-
-                            retry_merge = self.worktree_manager.propagate_clean_to_next_layer(
-                                from_layer
-                            )
-                            retry_payload_local["retry_merge"] = {
-                                "success": bool(retry_merge.success),
-                                "error": str(retry_merge.error or ""),
-                                "merge_sha": retry_merge.merge_sha,
-                                "conflict_files": [
-                                    self._normalize_conflict_path(path)
-                                    for path in (retry_merge.conflict_files or [])
-                                    if self._normalize_conflict_path(path)
-                                ],
-                            }
-                            if retry_merge.success:
-                                return True, retry_payload_local
-                            return False, retry_payload_local
-
-                        investigator_refs = [
-                            f"rebase_error:{rebase_error}",
-                            f"merge_error:{merge_error}",
-                            *[f"conflict_file:{path}" for path in combined_conflicts[:12]],
-                        ]
-                        investigator_report, investigator_report_ref = (
-                            self._run_transition_investigator(
-                                layer=to_layer,
-                                scope_id=f"transition_{from_layer}_{to_layer}_propagation_conflict",
-                                failure_refs=investigator_refs,
-                                failure_evidence=conflict_report_payload,
-                                investigator_budget=self.transition_investigator_budget,
-                                verify_callback=verify_propagation_recovery,
-                            )
+                    results["propagation_conflict"] = {
+                        **conflict_report_payload,
+                        **demotion_summary,
+                        "conflict_report_path": conflict_report_ref,
+                        "investigator_report_path": investigator_report_ref,
+                        "investigator_attempted": investigator_attempted,
+                    }
+                    if not investigator_attempted:
+                        results["propagation_conflict"]["investigator_skipped_reason"] = (
+                            "Conflict scope not limited to non-ambiguous "
+                            "wiring_only/refactor_only regions."
                         )
-                        propagation["investigator_report_path"] = investigator_report_ref
-                        resolved_by_investigator = bool(investigator_report.get("fixed", False))
-                        if resolved_by_investigator:
-                            retry_payload = investigator_report.get("verification", {})
-                            retry_rebase = (
-                                retry_payload.get("retry_rebase", {})
-                                if isinstance(retry_payload, dict)
-                                else {}
-                            )
-                            retry_merge = (
-                                retry_payload.get("retry_merge", {})
-                                if isinstance(retry_payload, dict)
-                                else {}
-                            )
-                            winning = (
-                                retry_rebase
-                                if bool(retry_rebase.get("success", False))
-                                else retry_merge
-                            )
-                            propagation.update(
-                                {
-                                    "success": True,
-                                    "error": "",
-                                    "strategy": "investigator_recovery",
-                                    "merge_sha": str(winning.get("merge_sha", "")).strip(),
-                                    "conflict_files": list(winning.get("conflict_files", []))
-                                    if isinstance(winning.get("conflict_files", []), list)
-                                    else [],
-                                }
-                            )
-                            results["propagation_recovery"] = {
-                                "fixed": True,
-                                "investigator_report_path": investigator_report_ref,
-                                "verification": retry_payload,
-                            }
-
-                    if not resolved_by_investigator:
-                        demotion_summary = self._emit_transition_conflict_demotions(
-                            from_layer=from_layer,
-                            to_layer=to_layer,
-                            conflict_files=combined_conflicts,
-                            merge_error=merge_error,
-                            rebase_error=rebase_error,
-                            evidence_ref=conflict_report_ref,
-                            investigator_report_ref=investigator_report_ref,
-                        )
-                        propagation["demotion_tickets"] = demotion_summary.get(
-                            "demotion_tickets", 0
-                        )
-                        propagation["affected_slices"] = demotion_summary.get("affected_slices", [])
-
-                        results["propagation_conflict"] = {
-                            **conflict_report_payload,
-                            **demotion_summary,
-                            "conflict_report_path": conflict_report_ref,
-                            "investigator_report_path": investigator_report_ref,
-                            "investigator_attempted": investigator_attempted,
-                        }
-                        if not investigator_attempted:
-                            results["propagation_conflict"]["investigator_skipped_reason"] = (
-                                "Conflict scope not limited to non-ambiguous "
-                                "wiring_only/refactor_only regions."
-                            )
-                        results["governance_blocked"] = True
-                        results["escalation_required"] = True
-                        results["error"] = (
-                            f"Transition {from_layer}→{to_layer} blocked by unresolved propagation "
-                            f"conflicts: {propagation['error']}"
-                        )
+                    results["governance_blocked"] = True
+                    results["escalation_required"] = True
+                    results["error"] = (
+                        f"Transition {from_layer}→{to_layer} blocked by unresolved propagation "
+                        f"conflicts: {propagation['error']}"
+                    )
 
             results["propagation"] = propagation
 
-            # Downstream readiness CI: smoke test on the new dirty worktree
+            # Downstream readiness CI: smoke + baseline on the new dirty worktree
             if bool(propagation.get("success", False)):
                 readiness = self._run_readiness_ci(to_layer)
                 results["readiness_ci"] = readiness
@@ -4469,10 +4684,7 @@ class PddLifecycle:
     # ------------------------------------------------------------------
 
     def _run_readiness_ci(self, layer: Layer) -> dict[str, Any]:
-        """Run downstream readiness smoke on a layer's dirty worktree.
-
-        This is intentionally a Tier 0-only check for transition readiness.
-        Full layer tier enforcement happens at dirty→clean promotion time.
+        """Run downstream readiness smoke + baseline on a layer's dirty worktree.
 
         Args:
             layer: The layer whose dirty worktree to test.
@@ -4490,7 +4702,7 @@ class PddLifecycle:
             return {"passed": True, "note": f"No dirty worktree for {layer}"}
 
         runner = TierRunner(config=TierConfig(), cwd=dirty_path)
-        tier_results = runner.run_for_tiers(layer, [0])
+        tier_results = runner.run_for_tiers(layer, [0, 1])
         all_passed = all(r.passed for r in tier_results)
 
         result: dict[str, Any] = {
