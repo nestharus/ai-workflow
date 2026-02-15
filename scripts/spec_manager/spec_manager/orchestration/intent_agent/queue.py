@@ -12,7 +12,7 @@ Key behaviors:
     - Dedup: canonical_key → decision_requirement_id → semantic LLM
     - Batching: one question at a time default, batch ≤ 3 only when
       same domain concern + answering together reduces ambiguity
-    - Staleness: no blockers + not HIGH_RISK → STALE
+    - Staleness: no blockers → STALE
 """
 
 from __future__ import annotations
@@ -925,7 +925,7 @@ class QuestionQueue:
         layer_term = self._blocked_layer_criticality(item.blockers.blocked_layers)
         stale_penalty = 0.0
         stale_reason = ""
-        if not blocker_count and item.blockers.severity != "HIGH_RISK":
+        if not blocker_count:
             stale_penalty = 0.22
             stale_reason = "no remaining blocked_slices"
 
@@ -944,19 +944,6 @@ class QuestionQueue:
         )
         item.priority = {"score": score, "explanation": explanation}
         return score, explanation
-
-    @staticmethod
-    def _rank_signature(item: QuestionItem) -> tuple[Any, ...]:
-        return (
-            -item.priority.get("score", 0.0),
-            -len(item.blockers.blocked_slices),
-            -QuestionQueue._severity_tiebreak.get(item.blockers.severity, 0),
-            -QuestionQueue._scope_weight.get(item.scope_kind, 0.0),
-            -QuestionQueue._blocked_layer_criticality(item.blockers.blocked_layers),
-            -len(item.blockers.blocked_layers),
-            -len(item.blockers.blocked_steps),
-            item.canonical_key,
-        )
 
     def _sort_key(self, item: QuestionItem) -> tuple[Any, ...]:
         created_at = item.timestamps.get("created_at", "")
@@ -990,18 +977,6 @@ class QuestionQueue:
             tie_break_status = {"mode": "deterministic", "reason": "insufficient_candidates"}
             return ordered, tie_break_status
 
-        if len(top_candidates) > 0:
-            tie_signature = self._rank_signature(top_candidates[0])
-            tied_candidates = [
-                item for item in top_candidates if self._rank_signature(item) == tie_signature
-            ]
-        else:
-            tied_candidates = []
-
-        if len(tied_candidates) < 2:
-            tie_break_status = {"mode": "deterministic", "reason": "no_tie"}
-            return ordered, tie_break_status
-
         prompt_payload = {
             "items": [
                 {
@@ -1010,23 +985,40 @@ class QuestionQueue:
                     "scope_kind": item.scope_kind,
                     "taxonomy_type": item.taxonomy_type,
                     "score": item.priority.get("score", 0.0),
+                    "severity": item.blockers.severity,
+                    "blocked_slices": len(item.blockers.blocked_slices),
                 }
-                for item in tied_candidates
+                for item in top_candidates
             ],
         }
         prompt = (
-            "Re-order these candidate questions to minimize user burden "
-            "while maximizing planning progress.\n"
-            "Return a JSON array of the question_id values in priority order "
-            f"only.\n{json.dumps(prompt_payload)}"
+            "Which question unlocks the most progress with the least user burden?\n"
+            "Return JSON object with keys: ordered_question_ids (array of question_id in "
+            "priority order) and justification (short reason for the ordering).\n"
+            f"{json.dumps(prompt_payload)}"
         )
 
         try:
             raw = run_agent(prompt)
             text = raw.strip()
-            ordered_ids = json.loads(text)
-            if isinstance(ordered_ids, list):
-                id_to_item = {it.question_id: it for it in tied_candidates}
+            tie_break_response = json.loads(text)
+            if isinstance(tie_break_response, dict):
+                ordered_ids = tie_break_response.get("ordered_question_ids")
+                justification = str(tie_break_response.get("justification", "")).strip()
+                if not isinstance(ordered_ids, list):
+                    tie_break_status = {
+                        "mode": "deterministic",
+                        "reason": "llm_missing_ordered_question_ids",
+                    }
+                    return ordered, tie_break_status
+                if not justification:
+                    tie_break_status = {
+                        "mode": "deterministic",
+                        "reason": "llm_missing_justification",
+                    }
+                    return ordered, tie_break_status
+
+                id_to_item = {it.question_id: it for it in top_candidates}
                 ordered_top: list[QuestionItem] = []
                 used: set[str] = set()
                 for candidate_id in ordered_ids:
@@ -1037,15 +1029,20 @@ class QuestionQueue:
                     ordered_top.append(item)
                     used.add(candidate_key)
                 if used:
-                    for item in tied_candidates:
+                    for item in top_candidates:
                         if item.question_id not in used:
                             ordered_top.append(item)
-                    tied_ids = {it.question_id for it in tied_candidates}
-                    window_remainder = [
-                        item for item in ordered[:5] if item.question_id not in tied_ids
-                    ]
-                    tie_break_status = {"mode": "llm", "reason": "applied"}
-                    return ordered_top + window_remainder + ordered[5:], tie_break_status
+                    tie_break_status = {
+                        "mode": "llm",
+                        "reason": "applied",
+                        "ordered_question_ids": [item.question_id for item in ordered_top],
+                        "justification": justification,
+                    }
+                    logger.info(
+                        "Applied LLM tie-break ordering for top-priority questions",
+                        extra={"tie_break_status": tie_break_status},
+                    )
+                    return ordered_top + ordered[5:], tie_break_status
             tie_break_status = {"mode": "deterministic", "reason": "llm_no_usable_ids"}
         except Exception as exc:
             tie_break_status = {
