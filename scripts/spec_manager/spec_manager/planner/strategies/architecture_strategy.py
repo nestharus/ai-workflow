@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -186,11 +187,13 @@ class ArchitecturePlannerStrategy:
         arch_refs: list[str] = []
 
         # Load source artifacts based on scope
-        scope = dp.scope or ""
-        if scope.startswith("intra:"):
-            lib_name = scope.split(":", 1)[1] if ":" in scope else slice_id
-            source_artifacts = self._load_intra_artifacts(lib_name)
-        elif scope.startswith("inter:"):
+        scope = str(dp.scope or "").strip()
+        intra_scope = self._parse_intra_scope(scope)
+        inter_scope = self._parse_inter_scope(scope)
+        if intra_scope is not None:
+            lib_name, sub_scope = intra_scope
+            source_artifacts = self._load_intra_artifacts(lib_name, sub_scope=sub_scope)
+        elif inter_scope is not None:
             source_artifacts = self._load_inter_artifacts(scope)
 
         # Current arch state refs from routed discovery + scope artifacts
@@ -477,13 +480,16 @@ class ArchitecturePlannerStrategy:
             ],
         )
 
-    def _load_intra_artifacts(self, lib_name: str) -> dict[str, Any]:
+    def _load_intra_artifacts(self, lib_name: str, *, sub_scope: str = "") -> dict[str, Any]:
         """Load charter, constraints, and details for a single library."""
         artifacts: dict[str, Any] = {}
         lib_dir = self._workspace_root / "libraries" / lib_name
 
         if not lib_dir.exists():
             return artifacts
+
+        if sub_scope:
+            artifacts["scope_filter"] = {"intra_sub_scope": sub_scope}
 
         for name, key in [
             ("charter.md", "charter_text"),
@@ -493,7 +499,10 @@ class ArchitecturePlannerStrategy:
             path = lib_dir / name
             if path.exists():
                 try:
-                    artifacts[key] = path.read_text(encoding="utf-8")
+                    contents = path.read_text(encoding="utf-8")
+                    if sub_scope and not self._text_matches_scope_filter(contents, sub_scope):
+                        continue
+                    artifacts[key] = contents
                 except OSError:
                     # C03: Surface errors — missing artifact needs diagnosis
                     logger.warning(
@@ -510,9 +519,12 @@ class ArchitecturePlannerStrategy:
             path = lib_dir / arch_name
             if path.exists():
                 try:
-                    artifacts.setdefault("arch_files", {})[arch_name] = path.read_text(
-                        encoding="utf-8"
-                    )
+                    contents = path.read_text(encoding="utf-8")
+                    if sub_scope and not self._text_matches_scope_filter(
+                        f"{arch_name}\n{contents}", sub_scope
+                    ):
+                        continue
+                    artifacts.setdefault("arch_files", {})[arch_name] = contents
                 except OSError:
                     # C03: Surface errors — missing artifact needs diagnosis
                     logger.warning(
@@ -524,23 +536,92 @@ class ArchitecturePlannerStrategy:
     def _load_inter_artifacts(self, scope: str) -> dict[str, Any]:
         """Load artifacts for both sides of an inter-library interaction."""
         artifacts: dict[str, Any] = {}
+        parsed = self._parse_inter_scope(scope)
+        if parsed is None:
+            return artifacts
+        source_lib, target_lib, interaction_handle = parsed
+        artifacts["interaction_handle"] = interaction_handle
 
-        # Parse inter:<A>-><B>:<handle> or inter:<A>-><B>
-        parts = scope.replace("inter:", "", 1)
-        libs = []
-        if "->" in parts:
-            left, right = parts.split("->", 1)
-            libs.append(left.strip())
-            # right may have :<handle>
-            right_lib = right.split(":")[0].strip() if ":" in right else right.strip()
-            libs.append(right_lib)
-
-        for lib_name in libs:
+        for lib_name in (source_lib, target_lib):
             lib_artifacts = self._load_intra_artifacts(lib_name)
-            if lib_artifacts:
-                artifacts[lib_name] = lib_artifacts
+            filtered = self._filter_artifacts_for_interaction(lib_artifacts, interaction_handle)
+            if filtered:
+                artifacts[lib_name] = filtered
 
         return artifacts
+
+    @staticmethod
+    def _parse_intra_scope(scope: str) -> tuple[str, str] | None:
+        text = str(scope or "").strip()
+        if not text.startswith("intra:"):
+            return None
+        body = text.removeprefix("intra:").strip()
+        if not body:
+            return None
+        segments = [segment.strip() for segment in body.split(":")]
+        lib_name = segments[0] if segments else ""
+        if not lib_name or lib_name.upper() == "LIB":
+            return None
+        sub_scope = ":".join(segment for segment in segments[1:] if segment)
+        return lib_name, sub_scope
+
+    @staticmethod
+    def _parse_inter_scope(scope: str) -> tuple[str, str, str] | None:
+        text = str(scope or "").strip()
+        if not text.startswith("inter:"):
+            return None
+        body = text.removeprefix("inter:").strip()
+        if "->" not in body or ":" not in body:
+            return None
+        left, right = body.split("->", 1)
+        source_lib = left.strip()
+        target_part, handle_part = right.split(":", 1)
+        target_lib = target_part.strip()
+        interaction_handle = handle_part.strip()
+        if not source_lib or not target_lib or not interaction_handle:
+            return None
+        if source_lib.upper() == "LIB" or target_lib.upper() == "LIB":
+            return None
+        return source_lib, target_lib, interaction_handle
+
+    def _filter_artifacts_for_interaction(
+        self, artifacts: dict[str, Any], interaction_handle: str
+    ) -> dict[str, Any]:
+        if not artifacts:
+            return {}
+        filtered: dict[str, Any] = {}
+        scope_filter_raw = artifacts.get("scope_filter", {})
+        scope_filter = dict(scope_filter_raw) if isinstance(scope_filter_raw, dict) else {}
+        scope_filter["interaction_handle"] = interaction_handle
+        filtered["scope_filter"] = scope_filter
+
+        for key, value in artifacts.items():
+            if key == "scope_filter":
+                continue
+            if key == "arch_files" and isinstance(value, dict):
+                matches = {
+                    name: text
+                    for name, text in value.items()
+                    if self._text_matches_scope_filter(f"{name}\n{text}", interaction_handle)
+                }
+                if matches:
+                    filtered["arch_files"] = matches
+                continue
+            # Keep charter/constraints/details as baseline library context while
+            # narrowing architecture manifests to interaction-specific evidence.
+            filtered[key] = value
+        return filtered
+
+    @staticmethod
+    def _text_matches_scope_filter(text: str, scope_fragment: str) -> bool:
+        if not scope_fragment:
+            return True
+        expanded = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", scope_fragment)
+        tokens = [token for token in re.split(r"[^A-Za-z0-9]+", expanded.lower()) if token]
+        if not tokens:
+            return True
+        haystack = str(text).lower()
+        return all(token in haystack for token in tokens)
 
     # ------------------------------------------------------------------
     # Coordination: WorkItems + WaitGraph (Fixes 4, 6)

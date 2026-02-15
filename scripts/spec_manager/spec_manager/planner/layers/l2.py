@@ -14,7 +14,9 @@ this module structures the data and delegates.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
@@ -480,7 +482,8 @@ class L2Planner:
                     if lib_name:
                         _append_root(workspace_root / "libraries" / lib_name)
 
-        if not roots and workspace_root is not None:
+        # Treat workspace root as scoped only when no multi-library layout exists.
+        if not roots and workspace_root is not None and not (workspace_root / "libraries").exists():
             _append_root(workspace_root)
 
         return workspace_root, roots
@@ -824,10 +827,354 @@ class L2Planner:
         return None
 
     def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
-        """Triage a coordination signal.  L2 defers — returns NOOP."""
-        return {"action": "NOOP", "monitors": []}
+        """Triage a coordination signal into scoped architecture decision work."""
+        if not isinstance(signal, dict):
+            return {"action": "NOOP", "monitors": []}
+
+        inter_scope = _extract_inter_scope_from_signal(signal)
+        if inter_scope is None:
+            return {"action": "NOOP", "monitors": []}
+
+        summary = _extract_signal_summary(signal, scope=inter_scope)
+        trigger_refs = _collect_signal_trigger_refs(signal)
+        decision_hash = sha256(f"{inter_scope}|{summary}".encode()).hexdigest()[:12]
+        decision_id = f"DEC-{decision_hash}"
+        work_item_id = decision_id
+
+        target_slice = str(getattr(ctx, "slice_id", "") or "").strip()
+        if not target_slice:
+            target_slice = _parse_inter_scope_components(inter_scope)[0]
+        signal_id = str(signal.get("signal_id", "")).strip()
+
+        location = _extract_signal_location(signal)
+        routing_payload = _build_arch_decision_routing_payload(
+            work_item_id=work_item_id,
+            summary=summary,
+            owner_slice_id=target_slice,
+            scope=inter_scope,
+            trigger_refs=trigger_refs,
+            location=location,
+        )
+
+        existing_work_item_status = ""
+        if self._work_item_store is not None:
+            try:
+                from spec_manager.orchestration.coordination.work_items import (
+                    WorkItem,
+                    WorkItemLocation,
+                )
+
+                existing = self._work_item_store.get(work_item_id)
+                if existing is None:
+                    self._work_item_store.add(
+                        WorkItem(
+                            work_item_id=work_item_id,
+                            spec_text=summary,
+                            owner_slice_id=target_slice,
+                            status="NEW",
+                            kind="ARCH_DECISION",
+                            location=WorkItemLocation(
+                                file=location["file"],
+                                symbol=location["symbol"],
+                                line_hint=location["line_hint"],
+                            ),
+                            metadata={
+                                "scope": inter_scope,
+                                "trigger_refs": trigger_refs,
+                                "signal_id": signal_id,
+                            },
+                        )
+                    )
+                else:
+                    existing_work_item_status = str(getattr(existing, "status", "")).strip().upper()
+                    routing_payload = {}
+            except Exception:
+                logger.warning(
+                    "Failed to persist L2 ARCH_DECISION triage work item for scope %s",
+                    inter_scope,
+                    exc_info=True,
+                )
+
+        if existing_work_item_status in {"MERGED", "DONE"}:
+            return {
+                "action": "WAKE_IMMEDIATELY",
+                "monitors": [],
+                "routing": [],
+                "scope": inter_scope,
+                "why": "cross_boundary_decision_already_resolved",
+            }
+
+        monitor = {
+            "type": "work_item_done",
+            "work_item_id": work_item_id,
+            "required_status": "MERGED",
+            "kind": "work_item_status",
+            "signal_id": signal_id,
+            "run_id": str(getattr(ctx, "run_id", "") or "").strip(),
+            "timeout_seconds": 3600,
+        }
+        if routing_payload:
+            return {
+                "action": "ROUTE_AND_WAIT",
+                "routing": [routing_payload],
+                "monitors": [monitor],
+                "scope": inter_scope,
+                "why": "cross_boundary_evidence_requires_l2_decision",
+            }
+
+        return {
+            "action": "WAIT_ON_WORK_ITEM",
+            "routing": [],
+            "monitors": [monitor],
+            "scope": inter_scope,
+            "why": "cross_boundary_evidence_waiting_existing_l2_decision",
+        }
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _extract_inter_scope_from_signal(signal: dict[str, Any]) -> str | None:
+    for mapping in _walk_mappings(signal):
+        scope_candidate = _normalize_inter_scope(mapping.get("scope"))
+        if scope_candidate:
+            return scope_candidate
+
+    for mapping in _walk_mappings(signal):
+        source_lib, target_lib = _extract_library_pair(mapping)
+        if not source_lib or not target_lib or source_lib == target_lib:
+            continue
+        interaction_handle = _extract_interaction_handle(mapping)
+        if not interaction_handle:
+            continue
+        return f"inter:{source_lib}->{target_lib}:{interaction_handle}"
+
+    return None
+
+
+def _normalize_inter_scope(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text.startswith("inter:"):
+        return None
+    body = text.removeprefix("inter:").strip()
+    if "->" not in body or ":" not in body:
+        return None
+    source_part, remainder = body.split("->", 1)
+    target_part, handle_part = remainder.split(":", 1)
+    source_lib = _normalize_library_name(source_part)
+    target_lib = _normalize_library_name(target_part)
+    handle = _normalize_handle(handle_part)
+    if not source_lib or not target_lib or not handle:
+        return None
+    if source_lib == target_lib:
+        return None
+    return f"inter:{source_lib}->{target_lib}:{handle}"
+
+
+def _extract_library_pair(mapping: dict[str, Any]) -> tuple[str, str]:
+    pair_keys = (
+        ("source_library", "target_library"),
+        ("producer_library", "consumer_library"),
+        ("provider_library", "consumer_library"),
+        ("from_library", "to_library"),
+        ("source_lib", "target_lib"),
+    )
+    for source_key, target_key in pair_keys:
+        source_lib = _normalize_library_name(mapping.get(source_key))
+        target_lib = _normalize_library_name(mapping.get(target_key))
+        if source_lib and target_lib:
+            return source_lib, target_lib
+
+    for list_key in ("libraries", "library_ids", "focus_libraries"):
+        raw_value = mapping.get(list_key)
+        if not isinstance(raw_value, list):
+            continue
+        normalized = [_normalize_library_name(item) for item in raw_value]
+        libs = [lib for lib in normalized if lib]
+        if len(libs) >= 2:
+            return libs[0], libs[1]
+
+    return "", ""
+
+
+def _extract_interaction_handle(mapping: dict[str, Any]) -> str:
+    preferred_keys = (
+        "interaction_handle",
+        "event_name",
+        "contract_name",
+        "pin_mismatch",
+        "pin_id",
+        "pin_ref",
+        "import_path",
+        "import_symbol",
+        "call_symbol",
+        "call_name",
+        "event",
+        "contract",
+        "pin",
+        "edge_id",
+        "event_id",
+    )
+    for key in preferred_keys:
+        handle = _normalize_handle(mapping.get(key))
+        if handle:
+            return handle
+    return ""
+
+
+def _normalize_library_name(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    token = text.replace("\\", "/")
+    if token.lower().startswith("libraries/"):
+        parts = [part for part in token.split("/") if part]
+        if len(parts) >= 2:
+            token = parts[1]
+    elif "/" in token:
+        token = token.rsplit("/", 1)[-1]
+    token = token.strip()
+    if not token:
+        return ""
+    lowered = token.lower()
+    if lowered in {"lib", "library", "libraries", "unknown", "tbd"}:
+        return ""
+    return token
+
+
+def _normalize_handle(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered in {"interaction", "handle", "unknown", "tbd", "todo"}:
+        return ""
+    compact = re.sub(r"\s+", "_", text)
+    compact = re.sub(r"[^A-Za-z0-9._:/#-]+", "_", compact)
+    compact = compact.strip("._:/#-")
+    return compact
+
+
+def _walk_mappings(value: Any) -> list[dict[str, Any]]:
+    queue: list[Any] = [value]
+    mappings: list[dict[str, Any]] = []
+    while queue:
+        item = queue.pop(0)
+        if isinstance(item, dict):
+            mappings.append(item)
+            queue.extend(item.values())
+            continue
+        if isinstance(item, list):
+            queue.extend(item)
+    return mappings
+
+
+def _parse_inter_scope_components(scope: str) -> tuple[str, str, str]:
+    body = str(scope).removeprefix("inter:")
+    source_part, remainder = body.split("->", 1)
+    target_part, handle_part = remainder.split(":", 1)
+    return source_part.strip(), target_part.strip(), handle_part.strip()
+
+
+def _extract_signal_summary(signal: dict[str, Any], *, scope: str) -> str:
+    need = signal.get("need", {})
+    if isinstance(need, dict):
+        for key in ("summary", "reason", "artifact_key"):
+            text = str(need.get(key, "")).strip()
+            if text:
+                return text
+
+    payload = signal.get("payload", {})
+    if isinstance(payload, dict):
+        under_spec_event = payload.get("under_spec_event")
+        if isinstance(under_spec_event, dict):
+            text = str(
+                under_spec_event.get("question", under_spec_event.get("description", ""))
+            ).strip()
+            if text:
+                return text
+    question = str(signal.get("question", "")).strip()
+    if question:
+        return question
+    return f"Resolve cross-library architecture decision for {scope}"
+
+
+def _extract_signal_location(signal: dict[str, Any]) -> dict[str, Any]:
+    spec_refs = signal.get("spec_refs", [])
+    if isinstance(spec_refs, list):
+        for row in spec_refs:
+            if not isinstance(row, dict):
+                continue
+            file_hint = str(row.get("source_file", "")).strip()
+            symbol = str(row.get("source_symbol", "")).strip()
+            try:
+                line_hint = int(row.get("source_line_hint", 0) or 0)
+            except (TypeError, ValueError):
+                line_hint = 0
+            if file_hint or symbol:
+                return {"file": file_hint, "symbol": symbol, "line_hint": line_hint}
+    return {"file": "", "symbol": "", "line_hint": 0}
+
+
+def _collect_signal_trigger_refs(signal: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    spec_refs = signal.get("spec_refs", [])
+    if isinstance(spec_refs, list):
+        for row in spec_refs:
+            if not isinstance(row, dict):
+                continue
+            source_file = str(row.get("source_file", "")).strip()
+            line_hint = str(row.get("source_line_hint", "")).strip()
+            if source_file and line_hint:
+                refs.append(f"{source_file}:{line_hint}")
+            elif source_file:
+                refs.append(source_file)
+            spec_text = str(row.get("spec_text", "")).strip()
+            if spec_text:
+                refs.append(spec_text[:200])
+
+    for mapping in _walk_mappings(signal):
+        for key in ("trigger_evidence", "evidence_refs", "event_id", "pin_ref", "pin_id"):
+            value = mapping.get(key)
+            if isinstance(value, str) and value.strip():
+                refs.append(value.strip())
+            elif isinstance(value, list):
+                refs.extend(str(item).strip() for item in value if str(item).strip())
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        deduped.append(ref)
+    return deduped
+
+
+def _build_arch_decision_routing_payload(
+    *,
+    work_item_id: str,
+    summary: str,
+    owner_slice_id: str,
+    scope: str,
+    trigger_refs: list[str],
+    location: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "work_item_id": work_item_id,
+        "spec_text": summary,
+        "owner_slice_id": owner_slice_id,
+        "status": "NEW",
+        "kind": "ARCH_DECISION",
+        "location": {
+            "file": str(location.get("file", "")).strip(),
+            "symbol": str(location.get("symbol", "")).strip(),
+            "line_hint": int(location.get("line_hint", 0) or 0),
+        },
+        "metadata": {
+            "scope": scope,
+            "trigger_refs": trigger_refs,
+        },
+    }

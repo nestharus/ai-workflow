@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -129,7 +130,6 @@ class DecisionPointDetector:
 
         assert self._run_agent is not None
         raw_output = self._run_agent(prompt)
-
         return _parse_detection_output(raw_output, slice_id)
 
     def _detect_heuristic(
@@ -164,13 +164,22 @@ class DecisionPointDetector:
         points: list[DecisionPoint] = []
 
         for gap in gaps:
-            desc = gap.get("description", "") + " " + gap.get("target", "")
+            description = str(gap.get("description", "")).strip()
+            target = str(gap.get("target", "")).strip()
+            desc = f"{description} {target}".strip()
             if any(kw in desc.lower() for kw in arch_keywords):
+                scope = _derive_gap_scope(gap, default_library=slice_id)
+                if not scope:
+                    logger.debug("Skipping architecture gap with unresolved scope: %s", gap)
+                    continue
+                trigger_evidence = _coerce_trigger_evidence(gap.get("trigger_evidence"))
+                if not trigger_evidence and target:
+                    trigger_evidence = [target]
                 point = DecisionPoint(
                     decision_id=f"DEC-{uuid.uuid4().hex[:8]}",
-                    scope=gap.get("scope", "intra:LIB"),
-                    description=gap.get("description", ""),
-                    trigger_evidence=[gap.get("target", "")],
+                    scope=scope,
+                    description=description or target,
+                    trigger_evidence=trigger_evidence,
                     impact=ImpactClassification(
                         impact="MEDIUM",
                         blast_radius="SLICE",
@@ -254,7 +263,11 @@ Evidence references:
 {evidence_text}
 
 Identify architecture decisions that need to be made. For each, provide:
-- scope: the scope of the decision (intra:LIB, inter:A->B, system)
+- scope: the scope of the decision, using only:
+  - intra:<LIB>
+  - intra:<LIB>:<refinement>
+  - inter:<LIB_A>-><LIB_B>:<interaction_handle>
+  Inter scopes must include an evidence-backed interaction handle.
 - description: what needs to be decided
 - trigger_evidence: which evidence triggered this
 - impact: LOW/MEDIUM/HIGH
@@ -283,14 +296,31 @@ def _parse_detection_output(raw: str, slice_id: str) -> list[DecisionPoint]:
     for item in parsed:
         if not isinstance(item, dict):
             continue
+
+        scope = _normalize_scope(item.get("scope"), default_library=slice_id)
+        if scope is None:
+            logger.debug("Discarding decision with invalid scope: %s", item.get("scope"))
+            continue
+
+        description = str(item.get("description", "")).strip()
+        if not description:
+            continue
+
+        impact = str(item.get("impact", "MEDIUM")).strip().upper() or "MEDIUM"
+        if impact not in {"LOW", "MEDIUM", "HIGH"}:
+            impact = "MEDIUM"
+        blast_radius = str(item.get("blast_radius", "SLICE")).strip().upper() or "SLICE"
+        if blast_radius not in {"LOCAL", "SLICE", "CROSS_SLICE", "SYSTEM"}:
+            blast_radius = "SLICE"
+
         point = DecisionPoint(
             decision_id=f"DEC-{uuid.uuid4().hex[:8]}",
-            scope=item.get("scope", "intra:LIB"),
-            description=item.get("description", ""),
-            trigger_evidence=list(item.get("trigger_evidence", [])),
+            scope=scope,
+            description=description,
+            trigger_evidence=_coerce_trigger_evidence(item.get("trigger_evidence")),
             impact=ImpactClassification(
-                impact=item.get("impact", "MEDIUM"),
-                blast_radius=item.get("blast_radius", "SLICE"),
+                impact=impact,
+                blast_radius=blast_radius,
             ),
             owner_slice_id=slice_id,
             status="OPEN",
@@ -298,3 +328,174 @@ def _parse_detection_output(raw: str, slice_id: str) -> list[DecisionPoint]:
         points.append(point)
 
     return points
+
+
+def _derive_gap_scope(gap: dict[str, Any], *, default_library: str) -> str | None:
+    explicit_scope = _normalize_scope(gap.get("scope"), default_library=default_library)
+    if explicit_scope is not None:
+        return explicit_scope
+
+    inter_scope = _extract_inter_scope_from_gap(gap)
+    if inter_scope is not None:
+        return inter_scope
+
+    library = _normalize_library(default_library)
+    if not library:
+        for key in (
+            "owner_slice_id",
+            "slice_id",
+            "library",
+            "library_id",
+            "lib_id",
+            "lib",
+            "component_id",
+            "target",
+        ):
+            library = _normalize_library(gap.get(key))
+            if library:
+                break
+    if not library:
+        return None
+    return f"intra:{library}"
+
+
+def _extract_inter_scope_from_gap(gap: dict[str, Any]) -> str | None:
+    lib_pairs = (
+        ("source_library", "target_library"),
+        ("producer_library", "consumer_library"),
+        ("provider_library", "consumer_library"),
+        ("from_library", "to_library"),
+        ("source_lib", "target_lib"),
+    )
+    for source_key, target_key in lib_pairs:
+        source_lib = _normalize_library(gap.get(source_key))
+        target_lib = _normalize_library(gap.get(target_key))
+        if not source_lib or not target_lib or source_lib == target_lib:
+            continue
+        handle = _extract_interaction_handle(gap)
+        if handle:
+            return f"inter:{source_lib}->{target_lib}:{handle}"
+    return None
+
+
+def _extract_interaction_handle(gap: dict[str, Any]) -> str:
+    for key in (
+        "interaction_handle",
+        "event_name",
+        "contract_name",
+        "pin_mismatch",
+        "pin_id",
+        "pin_ref",
+        "import_path",
+        "import_symbol",
+        "call_symbol",
+        "call_name",
+        "event",
+        "contract",
+    ):
+        handle = _normalize_handle(gap.get(key))
+        if handle:
+            return handle
+    return ""
+
+
+def _coerce_trigger_evidence(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        refs = [str(item).strip() for item in value if str(item).strip()]
+        # Preserve order, remove duplicates.
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for ref in refs:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            deduped.append(ref)
+        return deduped
+    return []
+
+
+def _normalize_scope(scope: Any, *, default_library: str = "") -> str | None:
+    raw = str(scope or "").strip()
+    if not raw:
+        library = _normalize_library(default_library)
+        return f"intra:{library}" if library else None
+
+    if raw.startswith("intra:"):
+        intra_body = raw.removeprefix("intra:")
+        return _normalize_intra_scope(intra_body)
+
+    if raw.startswith("inter:"):
+        inter_body = raw.removeprefix("inter:")
+        return _normalize_inter_scope(inter_body)
+
+    return None
+
+
+def _normalize_intra_scope(scope_body: str) -> str | None:
+    body = str(scope_body).strip()
+    if not body:
+        return None
+    segments = [segment.strip() for segment in body.split(":")]
+    library = _normalize_library(segments[0] if segments else "")
+    if not library:
+        return None
+    refinement = ":".join(segment for segment in segments[1:] if segment.strip())
+    if not refinement:
+        return f"intra:{library}"
+    return f"intra:{library}:{refinement}"
+
+
+def _normalize_inter_scope(scope_body: str) -> str | None:
+    body = str(scope_body).strip()
+    if "->" not in body:
+        return None
+    left, right = body.split("->", 1)
+    source_lib = _normalize_library(left)
+    if ":" not in right:
+        return None
+    right_lib, handle_value = right.split(":", 1)
+    target_lib = _normalize_library(right_lib)
+    handle = _normalize_handle(handle_value)
+    if not source_lib or not target_lib or not handle:
+        return None
+    if source_lib == target_lib:
+        return None
+    return f"inter:{source_lib}->{target_lib}:{handle}"
+
+
+def _normalize_library(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    token = text.replace("\\", "/")
+    if token.lower().startswith("libraries/"):
+        parts = [part for part in token.split("/") if part]
+        if len(parts) >= 2:
+            token = parts[1]
+    elif "/" in token:
+        token = token.rsplit("/", 1)[-1]
+    token = token.strip()
+    if not token:
+        return ""
+    lowered = token.lower()
+    if lowered in {"lib", "library", "libraries", "unknown", "tbd"}:
+        return ""
+    return token
+
+
+def _normalize_handle(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered in {"interaction", "handle", "unknown", "tbd", "todo"}:
+        return ""
+    compact = re.sub(r"\s+", "_", text)
+    compact = re.sub(r"[^A-Za-z0-9._:/#-]+", "_", compact)
+    compact = compact.strip("._:/#-")
+    return compact
