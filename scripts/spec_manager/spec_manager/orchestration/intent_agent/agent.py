@@ -53,6 +53,8 @@ from spec_manager.orchestration.intent_agent.queue import (
     QuestionItem,
     QuestionOrigin,
     QuestionQueue,
+    ReassessPlannerSignal,
+    ReassessQuestionKeySignal,
     UserPrompt,
 )
 from spec_manager.orchestration.intent_agent.signals import (
@@ -71,6 +73,7 @@ from spec_manager.orchestration.intent_agent.state import (
     FrameAssumption,
     IntentEventLog,
     IntentSessionState,
+    ResumeProgressSummaryProjection,
     save_answer,
 )
 from spec_manager.orchestration.intent_agent.taxonomy import (
@@ -367,10 +370,11 @@ class IntentAgentOrchestrator:
         self, question_id: str, source: str, reason: str, details: dict[str, Any] | None = None
     ) -> None:
         if self._state is not None:
-            bucket = self._state.question_queue_state.setdefault(
-                "unaskable_question_ids",
-                [],
-            )
+            queue_state = self._state.question_queue_state
+            bucket = queue_state._passthrough_fields.setdefault("unaskable_question_ids", [])
+            if not isinstance(bucket, list):
+                bucket = []
+                queue_state._passthrough_fields["unaskable_question_ids"] = bucket
             if question_id not in bucket:
                 bucket.append(question_id)
 
@@ -460,6 +464,110 @@ class IntentAgentOrchestrator:
         if isinstance(value, list):
             return [item.strip() for item in (str(item).strip() for item in value) if item.strip()]
         return []
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "y", "on"}
+        return False
+
+    @staticmethod
+    def _sanitize_event_token(value: str) -> str:
+        token = "".join(ch if (ch.isalnum() or ch in {"_", "-", "."}) else "_" for ch in value)
+        token = token.strip("_.-")
+        return token[:64]
+
+    def _record_presented_action(
+        self,
+        action: dict[str, Any],
+        *,
+        suppressed: bool,
+        mode: str,
+    ) -> None:
+        if self._event_log is None:
+            return
+        action_kind = self._coerce_str(action.get("action"))
+        if action_kind not in {"ask", "ask_batch"}:
+            return
+        question_ids = self._coerce_str_list(action.get("question_ids"))
+        if not question_ids:
+            fallback_id = self._coerce_str(action.get("question_id"))
+            if fallback_id:
+                question_ids = [fallback_id]
+        self._event_log.append(
+            "question_presented",
+            {
+                "action": action_kind,
+                "question_ids": question_ids,
+                "suppressed": suppressed,
+                "mode": mode,
+            },
+        )
+
+    def _record_auto_mode_unknown(self, action: dict[str, Any]) -> None:
+        if self._state is None:
+            return
+        question_ids = self._coerce_str_list(action.get("question_ids"))
+        if not question_ids:
+            fallback_id = self._coerce_str(action.get("question_id"))
+            if fallback_id:
+                question_ids = [fallback_id]
+        if not question_ids:
+            return
+        queue_state = self._state.question_queue_state
+        unknowns = queue_state._passthrough_fields.setdefault("auto_mode_unknowns", [])
+        if not isinstance(unknowns, list):
+            unknowns = []
+            queue_state._passthrough_fields["auto_mode_unknowns"] = unknowns
+        seen_ids = {
+            str(record.get("question_id", "")).strip()
+            for record in unknowns
+            if isinstance(record, dict)
+        }
+        now = datetime.now(UTC).isoformat()
+        for question_id in question_ids:
+            if question_id in seen_ids:
+                continue
+            item = self._queue.get_item(question_id) if self._queue is not None else None
+            unknowns.append(
+                {
+                    "question_id": question_id,
+                    "canonical_key": item.canonical_key if item is not None else "",
+                    "taxonomy_type": item.taxonomy_type if item is not None else "",
+                    "severity": item.blockers.severity if item is not None else "",
+                    "reason": "auto mode suppresses user prompts",
+                    "recorded_at": now,
+                }
+            )
+            seen_ids.add(question_id)
+
+    def _finalize_prompt_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        action_kind = self._coerce_str(action.get("action"))
+        if action_kind not in {"ask", "ask_batch"}:
+            return action
+        if not self.is_auto_mode:
+            self._record_presented_action(action, suppressed=False, mode=self._mode)
+            return action
+
+        self._record_auto_mode_unknown(action)
+        self._record_presented_action(action, suppressed=True, mode=self._mode)
+
+        question_ids = self._coerce_str_list(action.get("question_ids"))
+        if not question_ids:
+            question_id = self._coerce_str(action.get("question_id"))
+            if question_id:
+                question_ids = [question_id]
+
+        return {
+            "action": "wait",
+            "reason": "auto_mode_prompt_suppressed",
+            "suppressed_action": action_kind,
+            "question_ids": question_ids,
+        }
 
     def _sync_alignment_invariants(self, trigger: dict[str, Any]) -> None:
         if self._state is None:
@@ -776,26 +884,23 @@ class IntentAgentOrchestrator:
                     closed_constraint_ids.append(item.question_id)
                     closed_constraint_dims.update(dimensions)
 
-        self._state.question_queue_state.update(
-            {
-                "open_ids": open_ids,
-                "closed_ids": closed_ids,
-                "stale_ids": stale_ids,
-                "open_constraint_question_ids": open_constraint_ids,
-                "closed_constraint_question_ids": closed_constraint_ids,
-                "open_constraint_dimensions": sorted(open_constraint_dims),
-                "closed_constraint_dimensions": sorted(closed_constraint_dims),
-            }
+        queue_state = self._state.question_queue_state
+        queue_state.open_ids = open_ids
+        queue_state.closed_ids = closed_ids
+        queue_state.stale_ids = stale_ids
+        queue_state._passthrough_fields["open_constraint_question_ids"] = open_constraint_ids
+        queue_state._passthrough_fields["closed_constraint_question_ids"] = closed_constraint_ids
+        queue_state._passthrough_fields["open_constraint_dimensions"] = sorted(open_constraint_dims)
+        queue_state._passthrough_fields["closed_constraint_dimensions"] = sorted(
+            closed_constraint_dims
         )
+        queue_state._passthrough_fields.setdefault("unaskable_question_ids", [])
+        queue_state._passthrough_fields.setdefault("skeleton_input_signature", "")
 
-        self._state.question_queue_state.setdefault(
-            "unaskable_question_ids",
-            [],
-        )
-        self._state.question_queue_state.setdefault(
-            "skeleton_input_signature",
-            "",
-        )
+        # Active batch metadata is only valid while the anchor question remains OPEN.
+        active_batch_id = self._coerce_str(queue_state.active_batch_id)
+        if active_batch_id and active_batch_id not in open_ids:
+            queue_state.active_batch_id = ""
 
     def _skeleton_input_signature(self) -> str:
         if self._state is None:
@@ -805,14 +910,28 @@ class IntentAgentOrchestrator:
         signature = {
             "restatement": pf.current_restatement,
             "goals": sorted(set(pf.goals)),
-            "open_ids": sorted(qs.get("open_ids", [])),
-            "closed_ids": sorted(qs.get("closed_ids", [])),
-            "open_constraint_question_ids": sorted(qs.get("open_constraint_question_ids", [])),
-            "closed_constraint_question_ids": sorted(qs.get("closed_constraint_question_ids", [])),
-            "open_constraint_dimensions": sorted(qs.get("open_constraint_dimensions", [])),
-            "closed_constraint_dimensions": sorted(qs.get("closed_constraint_dimensions", [])),
-            "open_count": len(qs.get("open_ids", [])),
-            "closed_count": len(qs.get("closed_ids", [])),
+            "open_ids": sorted(qs.open_ids),
+            "closed_ids": sorted(qs.closed_ids),
+            "open_constraint_question_ids": sorted(
+                self._coerce_str_list(
+                    qs._passthrough_fields.get("open_constraint_question_ids", []),
+                )
+            ),
+            "closed_constraint_question_ids": sorted(
+                self._coerce_str_list(
+                    qs._passthrough_fields.get("closed_constraint_question_ids", [])
+                )
+            ),
+            "open_constraint_dimensions": sorted(
+                self._coerce_str_list(qs._passthrough_fields.get("open_constraint_dimensions", []))
+            ),
+            "closed_constraint_dimensions": sorted(
+                self._coerce_str_list(
+                    qs._passthrough_fields.get("closed_constraint_dimensions", []),
+                )
+            ),
+            "open_count": len(qs.open_ids),
+            "closed_count": len(qs.closed_ids),
         }
         return json.dumps(signature, sort_keys=True)
 
@@ -835,17 +954,439 @@ class IntentAgentOrchestrator:
             "risk_flags": list(pf.risk_flags),
         }
         queue_state = self._state.question_queue_state
-        if not should_produce_skeleton(frame_dict, queue_state):
+        queue_state_dict = queue_state.to_dict()
+        if not should_produce_skeleton(frame_dict, queue_state_dict):
             return None
 
         signature = self._skeleton_input_signature()
-        last_signature = queue_state.get("skeleton_input_signature", "")
+        last_signature = self._coerce_str(
+            queue_state._passthrough_fields.get("skeleton_input_signature", ""),
+        )
         if force or self._state.skeleton_state.revision == 0 or signature != last_signature:
             produced = self.produce_skeleton()
-            queue_state["skeleton_input_signature"] = signature
+            queue_state._passthrough_fields["skeleton_input_signature"] = signature
             return produced
 
         return None
+
+    @staticmethod
+    def _dedupe_ordered(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        return deduped
+
+    def _planner_update_type_counts(self, updates: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for update in updates:
+            event_kind = self._coerce_str(
+                update.get("event_kind", update.get("type", "unknown")),
+                "unknown",
+            ).lower()
+            counts[event_kind] = counts.get(event_kind, 0) + 1
+        return counts
+
+    def _slice_progress_from_updates(
+        self,
+        updates: list[dict[str, Any]],
+    ) -> tuple[list[str], dict[str, int]]:
+        slice_ids: set[str] = set()
+        status_counts: dict[str, int] = {}
+
+        for update in updates:
+            for slice_id in self._coerce_update_ids(update.get("slice_id", "")):
+                slice_ids.add(slice_id)
+            for slice_id in self._coerce_update_ids(update.get("slice_ids", [])):
+                slice_ids.add(slice_id)
+
+            raw_status = self._coerce_str(update.get("slice_status", ""))
+            if raw_status:
+                normalized = raw_status.upper()
+                status_counts[normalized] = status_counts.get(normalized, 0) + 1
+
+            raw_statuses = update.get("slice_statuses")
+            if isinstance(raw_statuses, list):
+                for entry in raw_statuses:
+                    if isinstance(entry, dict):
+                        entry_slice_id = self._coerce_str(entry.get("slice_id"))
+                        if entry_slice_id:
+                            slice_ids.add(entry_slice_id)
+                        entry_status = self._coerce_str(entry.get("status"))
+                        if entry_status:
+                            normalized = entry_status.upper()
+                            status_counts[normalized] = status_counts.get(normalized, 0) + 1
+                    elif isinstance(entry, str) and entry.strip():
+                        normalized = entry.strip().upper()
+                        status_counts[normalized] = status_counts.get(normalized, 0) + 1
+
+            status_map = update.get("slice_status_by_id")
+            if isinstance(status_map, dict):
+                for raw_slice_id, raw_status_value in status_map.items():
+                    slice_id = self._coerce_str(raw_slice_id)
+                    if slice_id:
+                        slice_ids.add(slice_id)
+                    status_text = self._coerce_str(raw_status_value)
+                    if status_text:
+                        normalized = status_text.upper()
+                        status_counts[normalized] = status_counts.get(normalized, 0) + 1
+
+        return sorted(slice_ids), status_counts
+
+    def _build_resume_progress_summary(
+        self,
+        updates: list[dict[str, Any]],
+        reassessment: dict[str, Any],
+    ) -> ResumeProgressSummaryProjection:
+        planner_update_types = self._planner_update_type_counts(updates)
+        slice_ids, slice_status_counts = self._slice_progress_from_updates(updates)
+
+        action_counts: dict[str, int] = {}
+        for action in reassessment.get("actions", []):
+            if not isinstance(action, dict):
+                continue
+            action_kind = self._coerce_str(action.get("action"), "KEEP").upper()
+            if not action_kind:
+                action_kind = "KEEP"
+            action_counts[action_kind] = action_counts.get(action_kind, 0) + 1
+
+        latest_planner_update_at = ""
+        for update in updates:
+            created_at = self._coerce_str(update.get("created_at", ""))
+            if created_at > latest_planner_update_at:
+                latest_planner_update_at = created_at
+
+        planner_watermark = ""
+        if self._state is not None:
+            planner_watermark = self._state.watermarks.planner_update_watermark
+
+        resolved_count = sum(count for action, count in action_counts.items() if action != "KEEP")
+        return ResumeProgressSummaryProjection(
+            planner_watermark=planner_watermark,
+            planner_updates_seen=len(updates),
+            planner_update_types=planner_update_types,
+            slice_ids=slice_ids,
+            slice_status_counts=slice_status_counts,
+            latest_planner_update_at=latest_planner_update_at,
+            reassess_action_counts=action_counts,
+            reassess_resolved_count=resolved_count,
+        )
+
+    def _project_reassess_planner_updates(
+        self,
+        updates: list[dict[str, Any]],
+    ) -> list[ReassessPlannerSignal]:
+        projected: list[ReassessPlannerSignal] = []
+        for update in updates:
+            event_kind = self._coerce_str(
+                update.get("event_kind", update.get("type", "unknown")),
+                "unknown",
+            ).lower()
+            event_ref = self._coerce_str(
+                update.get(
+                    "event_id",
+                    update.get(
+                        "trace_id",
+                        update.get("decision_id", update.get("constraint_id", "")),
+                    ),
+                ),
+            )
+            affected_canonical_keys = self._dedupe_ordered(
+                self._coerce_update_ids(update.get("affected_canonical_keys", []))
+                + self._coerce_update_ids(update.get("canonical_keys", []))
+                + self._coerce_update_ids(update.get("canonical_key", ""))
+            )
+            affected_constraint_ids = self._dedupe_ordered(
+                self._coerce_update_ids(update.get("affected_constraint_ids", []))
+                + self._coerce_update_ids(update.get("constraint_ids", []))
+                + self._coerce_update_ids(update.get("constraint_id", ""))
+            )
+            affected_decision_ids = self._dedupe_ordered(
+                self._coerce_update_ids(update.get("affected_decision_ids", []))
+                + self._coerce_update_ids(update.get("decision_ids", []))
+                + self._coerce_update_ids(update.get("decision_id", ""))
+            )
+            affected_question_ids = self._dedupe_ordered(
+                self._coerce_update_ids(update.get("affected_question_ids", []))
+                + self._coerce_update_ids(update.get("question_ids", []))
+                + self._coerce_update_ids(update.get("question_id", ""))
+            )
+            superseded_question_ids = self._dedupe_ordered(
+                self._coerce_update_ids(update.get("superseded_question_ids", []))
+                + self._coerce_update_ids(update.get("replaced_question_ids", []))
+                + self._coerce_update_ids(update.get("supersedes_question_id", ""))
+            )
+            superseded_canonical_keys = self._dedupe_ordered(
+                self._coerce_update_ids(update.get("superseded_canonical_keys", []))
+                + self._coerce_update_ids(update.get("obsolete_canonical_keys", []))
+            )
+
+            projected.append(
+                ReassessPlannerSignal(
+                    event_kind=event_kind,
+                    event_ref=event_ref,
+                    affected_canonical_keys=tuple(affected_canonical_keys),
+                    affected_constraint_ids=tuple(affected_constraint_ids),
+                    affected_decision_ids=tuple(affected_decision_ids),
+                    affected_question_ids=tuple(affected_question_ids),
+                    superseded_question_ids=tuple(superseded_question_ids),
+                    superseded_canonical_keys=tuple(superseded_canonical_keys),
+                )
+            )
+        return projected
+
+    def _project_reassess_question_key_map(
+        self,
+        question_key_map: dict[str, Any],
+    ) -> dict[str, ReassessQuestionKeySignal]:
+        projected: dict[str, ReassessQuestionKeySignal] = {}
+        for raw_canonical_key, raw_ref in question_key_map.items():
+            canonical_key = self._coerce_str(raw_canonical_key)
+            if not canonical_key:
+                continue
+
+            if isinstance(raw_ref, dict):
+                planner_constraint_ids = self._coerce_update_ids(
+                    raw_ref.get("planner_constraint_ids", []),
+                )
+                planner_decision_ids = self._coerce_update_ids(
+                    raw_ref.get("planner_decision_ids", []),
+                )
+            else:
+                planner_constraint_ids = self._coerce_update_ids(
+                    getattr(raw_ref, "planner_constraint_ids", []),
+                )
+                planner_decision_ids = self._coerce_update_ids(
+                    getattr(raw_ref, "planner_decision_ids", []),
+                )
+
+            projected[canonical_key] = ReassessQuestionKeySignal(
+                canonical_key=canonical_key,
+                resolved_constraint_ids=tuple(self._dedupe_ordered(planner_constraint_ids)),
+                related_decision_ids=tuple(self._dedupe_ordered(planner_decision_ids)),
+            )
+        return projected
+
+    def _planner_update_requires_review_decision(self, update: dict[str, Any]) -> bool:
+        review_flags = (
+            "review_decision",
+            "review_required",
+            "requires_review",
+            "needs_review",
+            "needs_human_review",
+            "human_authority_required",
+            "authority_bypassed",
+            "decision_without_authority",
+            "decision_requires_authority_review",
+        )
+        if any(self._coerce_bool(update.get(flag)) for flag in review_flags):
+            return True
+
+        authority_required = self._coerce_str(update.get("authority_required")).lower()
+        authority_payload = update.get("authority")
+        if not authority_required and isinstance(authority_payload, dict):
+            authority_required = self._coerce_str(
+                authority_payload.get("required", authority_payload.get("authority_required", "")),
+            ).lower()
+
+        event_kind = self._coerce_str(update.get("event_kind", update.get("type", ""))).lower()
+        has_decision_ids = bool(
+            self._coerce_update_ids(update.get("decision_ids", []))
+            or self._coerce_update_ids(update.get("decision_id", ""))
+        )
+        has_constraint_ids = bool(
+            self._coerce_update_ids(update.get("constraint_ids", []))
+            or self._coerce_update_ids(update.get("constraint_id", ""))
+        )
+
+        if authority_required in {"human_required", "user_required"} and (
+            has_decision_ids
+            or has_constraint_ids
+            or event_kind in {"decision_recorded", "constraint_saved"}
+        ):
+            return True
+
+        reason = self._coerce_str(update.get("reason")).lower()
+        is_decision_like = (
+            has_decision_ids
+            or has_constraint_ids
+            or event_kind
+            in {
+                "decision_recorded",
+                "constraint_saved",
+            }
+        )
+        return is_decision_like and any(
+            token in reason
+            for token in (
+                "without user authority",
+                "authority bypass",
+                "human authority required",
+                "manual review required",
+            )
+        )
+
+    def _enqueue_review_decision_question(self, update: dict[str, Any]) -> str | None:
+        if self._queue is None:
+            return None
+
+        decision_id = self._coerce_str(
+            update.get(
+                "decision_id",
+                self._coerce_str_list(update.get("decision_ids", []))[0]
+                if self._coerce_str_list(update.get("decision_ids", []))
+                else "",
+            ),
+        )
+        constraint_id = self._coerce_str(
+            update.get(
+                "constraint_id",
+                self._coerce_str_list(update.get("constraint_ids", []))[0]
+                if self._coerce_str_list(update.get("constraint_ids", []))
+                else "",
+            ),
+        )
+        event_ref = self._coerce_str(
+            update.get(
+                "event_id",
+                update.get("trace_id", decision_id or constraint_id),
+            ),
+        )
+        token = self._sanitize_event_token(event_ref or decision_id or constraint_id or "review")
+        canonical_key = f"intent.review_decision.{token}" if token else "intent.review_decision"
+
+        reason = self._coerce_str(
+            update.get("reason"),
+            "Planner advanced work without explicit user authority in auto mode.",
+        )
+        event_kind = self._coerce_str(
+            update.get("event_kind", update.get("type", "planner_update")),
+        )
+
+        question_id = f"q_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(UTC).isoformat()
+        item = QuestionItem(
+            question_id=question_id,
+            status="OPEN",
+            taxonomy_type="VALIDATION",
+            scope_kind="SYSTEM_WIDE",
+            canonical_key=canonical_key,
+            user_prompt=UserPrompt(
+                text="Review decision made in auto mode.",
+                scenario=(
+                    f"Event: {event_kind or 'planner_update'}\n"
+                    f"Decision ID: {decision_id or 'n/a'}\n"
+                    f"Constraint ID: {constraint_id or 'n/a'}\n"
+                    f"Reason: {reason}"
+                ),
+                why_it_matters="A decision was taken without direct user authority.",
+                answer_spec=AnswerSpec(
+                    kind="choice",
+                    choices=[
+                        {"id": "accept_auto", "label": "Accept auto decision"},
+                        {"id": "revise_decision", "label": "Revise the decision"},
+                        {"id": "manual_resolution", "label": "Require manual resolution"},
+                    ],
+                ),
+            ),
+            system_binding={
+                "review_decision": True,
+                "planner_event_id": event_ref,
+                "decision_id": decision_id,
+                "constraint_id": constraint_id,
+                "source_update": dict(update),
+            },
+            origins=[
+                QuestionOrigin(
+                    source_kind="PLANNER",
+                    trace_id=event_ref,
+                    created_at=now,
+                ),
+            ],
+            blockers=QuestionBlockers(severity="BLOCKING"),
+            quality_gate=QualityGateStatus(status="PASS", attempts=1, last_checked_at=now),
+            timestamps={"created_at": now, "updated_at": now},
+        )
+
+        existing = self._queue.dedup(item)
+        if existing is None:
+            self._queue.enqueue(item)
+            enqueued = item
+        else:
+            enqueued = existing
+            if enqueued.status != "OPEN":
+                enqueued.status = "OPEN"
+                enqueued.timestamps["updated_at"] = now
+
+        if self._event_log is not None:
+            self._event_log.append(
+                "question_enqueued",
+                {
+                    "question_id": enqueued.question_id,
+                    "canonical_key": enqueued.canonical_key,
+                    "reason": "review decision",
+                },
+            )
+        return enqueued.question_id
+
+    def _apply_auto_mode_planner_outcomes(
+        self,
+        updates: list[dict[str, Any]],
+        reassessment: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.is_auto_mode or self._queue is None:
+            return {
+                "auto_answered_question_ids": [],
+                "review_decision_question_ids": [],
+            }
+
+        actions = reassessment.get("actions", [])
+        auto_answered_ids: list[str] = []
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            if self._coerce_str(action.get("action")).upper() != "ANSWERED":
+                continue
+            question_id = self._coerce_str(action.get("question_id"))
+            if not question_id:
+                continue
+            item = self._queue.get_item(question_id)
+            if item is None or item.status != "ANSWERED":
+                continue
+            item.last_transition_reason = "auto resolution"
+            item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
+            action["reason"] = "auto resolution"
+            action["provenance"] = "auto resolution"
+            auto_answered_ids.append(question_id)
+
+        review_question_ids: list[str] = []
+        for update in updates:
+            if not self._planner_update_requires_review_decision(update):
+                continue
+            review_question_id = self._enqueue_review_decision_question(update)
+            if review_question_id:
+                review_question_ids.append(review_question_id)
+
+        return {
+            "auto_answered_question_ids": sorted(set(auto_answered_ids)),
+            "review_decision_question_ids": sorted(set(review_question_ids)),
+        }
+
+    def _next_up_preview(self, limit: int = 3) -> list[dict[str, Any]]:
+        if self._queue is None:
+            return []
+        open_items = self._queue.get_open_items()[: max(0, limit)]
+        return [
+            {
+                "question_id": item.question_id,
+                "canonical_key": item.canonical_key,
+                "severity": item.blockers.severity,
+            }
+            for item in open_items
+        ]
 
     # TODO [R2-1.4]: Implement resume() — deterministic resumption
     #   1. Load session_state.json
@@ -855,9 +1396,9 @@ class IntentAgentOrchestrator:
     #   5. Ingest new signals (classify, draft, quality gate, enqueue)
     #   6. Run reassessment against new planner updates
     #   7. Recompute queue ordering and staleness
-    #   8. Return next question to present
-    def resume(self) -> QuestionItem | None:
-        """Resume from persisted state and return next question."""
+    #   8. Return next action to present (question or batch)
+    def resume(self) -> dict[str, Any] | None:
+        """Resume from persisted state and return next action."""
         # 1. Init stores.
         self._signal_store = UserQuestionSignalStore(self._run_dir)
         self._planner_store = PlannerUpdateStore(self._run_dir)
@@ -886,20 +1427,31 @@ class IntentAgentOrchestrator:
             self.ingest_signal(signal)
 
         # 5. Read new planner updates and run reassessment.
-        self.handle_planner_updates()
+        reassessment = self.handle_planner_updates()
+        progress_summary = ResumeProgressSummaryProjection.from_dict(
+            reassessment.get("resume_progress_summary", {}),
+        )
 
         # 6. Recompute staleness so resumed flow is deterministic and
         #    does not present stale questions after planner/store drift.
         stale_ids = sorted(self._queue.mark_stale())
         if self._state is not None:
-            self._state.question_queue_state["stale_ids"] = stale_ids
+            self._state.question_queue_state.stale_ids = stale_ids
 
         # 7. Refresh derived queue metadata and skeleton readiness.
         self._refresh_question_queue_state()
         self._maybe_update_skeleton()
 
-        # 8. Return next question.
-        return self._queue.next_question() if self._queue else None
+        # Persist the resume checkpoint so replay starts from this watermark/state.
+        self.save_state()
+
+        # 8. Return next action via the same path as normal prompting flow.
+        action = self.next_action()
+        if action is None:
+            action = {"action": "wait"}
+        action["resume_progress"] = progress_summary.to_dict()
+        action["next_up"] = self._next_up_preview()
+        return action
 
     # TODO [R2-5.1/5.2]: Implement handle_user_message(text) — user input handler
     #   - Update problem frame via IntentFrameStrategy
@@ -995,12 +1547,13 @@ class IntentAgentOrchestrator:
         self._maybe_update_skeleton()
         self.save_state()
         if isinstance(vague_item, QuestionItem) and vague_item.status == "OPEN":
-            return {
+            action = {
                 "action": "ask",
                 "question": vague_item.to_dict(),
                 "question_id": vague_item.question_id,
                 "immediate_ask": True,
             }
+            return self._finalize_prompt_action(action)
         return None
 
     def _finalize_user_message(self) -> None:
@@ -1040,6 +1593,16 @@ class IntentAgentOrchestrator:
             self._ensure_initialized()
         assert self._state is not None
         assert self._queue is not None
+
+        if self._event_log is not None:
+            self._event_log.append(
+                "signal_received",
+                {
+                    "signal_id": signal.uq_id,
+                    "source_kind": signal.source.kind,
+                    "canonical_key_hint": signal.question.canonical_key_hint,
+                },
+            )
 
         question_text = signal.question.text
 
@@ -1729,9 +2292,11 @@ class IntentAgentOrchestrator:
         session_id: str,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         assert self._queue is not None
+        projected_updates = self._project_reassess_planner_updates(updates)
+        projected_question_key_map = self._project_reassess_question_key_map(question_key_map)
         reassessment = self._queue.reassess(
-            updates,
-            question_key_map,
+            projected_updates,
+            projected_question_key_map,
             run_id=run_id,
             session_id=session_id,
         )
@@ -1912,10 +2477,32 @@ class IntentAgentOrchestrator:
         watermark = self._state.watermarks.planner_update_watermark
         raw_updates = self._planner_store.read_since(watermark)
         if not raw_updates:
-            return self._empty_reassessment_result(run_id, session_id)
+            reassessment = self._empty_reassessment_result(run_id, session_id)
+            reassessment["resume_progress_summary"] = ResumeProgressSummaryProjection(
+                planner_watermark=watermark,
+            ).to_dict()
+            return reassessment
         new_updates = [dict(update) for update in raw_updates if isinstance(update, dict)]
         if not new_updates:
-            return self._empty_reassessment_result(run_id, session_id)
+            reassessment = self._empty_reassessment_result(run_id, session_id)
+            reassessment["resume_progress_summary"] = ResumeProgressSummaryProjection(
+                planner_watermark=watermark,
+            ).to_dict()
+            return reassessment
+
+        if self._event_log is not None:
+            for update in new_updates:
+                self._event_log.append(
+                    "planner_update_received",
+                    {
+                        "event_kind": self._coerce_str(
+                            update.get("event_kind", update.get("type", "unknown")),
+                            "unknown",
+                        ),
+                        "event_id": self._coerce_str(update.get("event_id")),
+                        "created_at": self._coerce_str(update.get("created_at")),
+                    },
+                )
 
         valid_actions = {
             "KEEP",
@@ -1946,6 +2533,18 @@ class IntentAgentOrchestrator:
         all_actions.extend(llm_actions)
 
         reassessment["actions"] = self._dedupe_reassess_actions(all_actions)
+        auto_outcomes = self._apply_auto_mode_planner_outcomes(new_updates, reassessment)
+        for question_id in auto_outcomes["review_decision_question_ids"]:
+            reassessment["actions"].append(
+                {
+                    "question_id": question_id,
+                    "action": "REVIEW_DECISION",
+                    "reason": "decision taken without user authority",
+                }
+            )
+        reassessment["actions"] = self._dedupe_reassess_actions(reassessment["actions"])
+        if auto_outcomes["review_decision_question_ids"]:
+            self._refresh_question_queue_state()
 
         # 4. Update planner watermark to the latest update's created_at.
         self._update_planner_watermark(new_updates)
@@ -1953,6 +2552,12 @@ class IntentAgentOrchestrator:
         reassessment["version"] = 1
         reassessment["run_id"] = run_id
         reassessment["session_id"] = session_id
+        resume_progress = self._build_resume_progress_summary(new_updates, reassessment)
+        resume_progress._passthrough_fields.update(auto_outcomes)
+        reassessment["resume_progress_summary"] = resume_progress.to_dict()
+        self._state.question_queue_state._passthrough_fields["resume_progress_summary"] = (
+            resume_progress.to_dict()
+        )
 
         self._persist_reassess_result(reassessment)
 
@@ -1991,7 +2596,7 @@ class IntentAgentOrchestrator:
                     "current_restatement": pf.current_restatement,
                     "goals": list(pf.goals),
                 }
-                queue_state = self._state.question_queue_state
+                queue_state = self._state.question_queue_state.to_dict()
                 if should_produce_skeleton(frame_dict, queue_state):
                     return {"action": "skeleton"}
             return {"action": "wait"}
@@ -2000,21 +2605,22 @@ class IntentAgentOrchestrator:
         # was INFO (or queue was empty), present the BLOCKING question immediately.
         blocking_items = [it for it in open_items if it.blockers.severity == "BLOCKING"]
         if blocking_items and self._state is not None:
-            last_presented_id = self._state.question_queue_state.get(
-                "last_presented_question_id", ""
-            )
+            queue_state = self._state.question_queue_state
+            last_presented_id = self._coerce_str(queue_state.last_presented_question_id)
             last_item = self._queue.get_item(last_presented_id) if last_presented_id else None
             last_was_info = last_item is None or last_item.blockers.severity == "INFO"
             if last_was_info:
                 # Preempt: present the highest-priority BLOCKING question
                 next_q = blocking_items[0]
-                self._state.question_queue_state["last_presented_question_id"] = next_q.question_id
-                return {
+                queue_state.last_presented_question_id = next_q.question_id
+                queue_state.active_batch_id = ""
+                action = {
                     "action": "ask",
                     "question": next_q.to_dict(),
                     "question_id": next_q.question_id,
                     "immediate_ask": True,
                 }
+                return self._finalize_prompt_action(action)
 
         # Get the next question (default priority ordering).
         batch = self._queue.next_batch(run_agent=self._run_agent)
@@ -2023,26 +2629,28 @@ class IntentAgentOrchestrator:
 
         if len(batch) > 1:
             if self._state is not None:
-                self._state.question_queue_state["last_presented_question_id"] = batch[
-                    0
-                ].question_id
-            return {
+                self._state.question_queue_state.last_presented_question_id = batch[0].question_id
+                self._state.question_queue_state.active_batch_id = batch[0].question_id
+            action = {
                 "action": "ask_batch",
                 "questions": [item.to_dict() for item in batch],
                 "question_ids": [item.question_id for item in batch],
             }
+            return self._finalize_prompt_action(action)
 
         next_q = batch[0]
 
         # Track last presented question in state.
         if self._state is not None:
-            self._state.question_queue_state["last_presented_question_id"] = next_q.question_id
+            self._state.question_queue_state.last_presented_question_id = next_q.question_id
+            self._state.question_queue_state.active_batch_id = ""
 
-        return {
+        action = {
             "action": "ask",
             "question": next_q.to_dict(),
             "question_id": next_q.question_id,
         }
+        return self._finalize_prompt_action(action)
 
     # TODO [R2-5.3]: Implement handle_vague_input(text) — vague input handler
     #   - If user input is vague, ask a single INTENT question that
@@ -2498,7 +3106,7 @@ class IntentAgentOrchestrator:
             "risk_flags": list(pf.risk_flags),
         }
         queue_state = self._state.question_queue_state
-        if not should_produce_skeleton(frame_dict, queue_state):
+        if not should_produce_skeleton(frame_dict, queue_state.to_dict()):
             return None
 
         # Gather open question IDs and constraint refs.
@@ -2588,9 +3196,9 @@ class IntentAgentOrchestrator:
         # 2. Sync queue state into session state before saving.
         if self._queue is not None and self._state is not None:
             state_ids = self._queue.state_ids()
-            self._state.question_queue_state["open_ids"] = state_ids.get("open_ids", [])
-            self._state.question_queue_state["closed_ids"] = state_ids.get("closed_ids", [])
-            self._state.question_queue_state["stale_ids"] = state_ids.get("stale_ids", [])
+            self._state.question_queue_state.open_ids = state_ids.get("open_ids", [])
+            self._state.question_queue_state.closed_ids = state_ids.get("closed_ids", [])
+            self._state.question_queue_state.stale_ids = state_ids.get("stale_ids", [])
 
         # 3. Save state.
         if self._state is not None:
