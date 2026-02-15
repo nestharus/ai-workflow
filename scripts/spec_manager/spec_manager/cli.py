@@ -747,7 +747,7 @@ def cmd_evidence_store_status(args: argparse.Namespace) -> int:
 
 
 def cmd_adjacency(args: argparse.Namespace) -> int:
-    """Run adjacency analysis on source and spec files."""
+    """Run adjacency analysis from declared relationship facts."""
     from spec_manager.analysis.adjacency.runner import (
         AdjacencyAnalysisConfig,
         run_adjacency_analysis,
@@ -756,15 +756,22 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
 
     source_dirs = [Path(d) for d in args.source_dir] if args.source_dir else []
     spec_dirs = [Path(d) for d in args.spec_dir] if args.spec_dir else []
+    relationship_fact_paths = (
+        [Path(p) for p in args.relationship_facts] if args.relationship_facts else []
+    )
+    if args.pin_registry:
+        relationship_fact_paths.extend(Path(p) for p in args.pin_registry)
 
-    if not source_dirs and not spec_dirs:
-        print("At least one --source-dir or --spec-dir is required.")
+    if not source_dirs and not spec_dirs and not relationship_fact_paths:
+        print(
+            "At least one --relationship-facts, --source-dir, or --spec-dir is required.",
+        )
         return 1
 
     config = AdjacencyAnalysisConfig(
         source_dirs=source_dirs,
         spec_dirs=spec_dirs,
-        include_cooccurrence=not args.no_cooccurrence,
+        relationship_fact_paths=relationship_fact_paths,
         output_format=args.format,
         output_path=Path(args.output) if args.output else None,
     )
@@ -774,8 +781,14 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
         print(f"  Source dirs: {', '.join(str(d) for d in source_dirs)}")
     if spec_dirs:
         print(f"  Spec dirs: {', '.join(str(d) for d in spec_dirs)}")
+    if relationship_fact_paths:
+        print(f"  Relationship facts: {', '.join(str(p) for p in relationship_fact_paths)}")
 
-    report = run_adjacency_analysis(config)
+    try:
+        report = run_adjacency_analysis(config)
+    except Exception as exc:
+        print(f"Adjacency analysis failed: {exc}")
+        return 1
 
     print("\nAdjacency Analysis Results:")
     print(f"  Total nodes: {report.total_nodes}")
@@ -1427,12 +1440,22 @@ def main() -> int:
     p_adjacency.add_argument(
         "--source-dir",
         action="append",
-        help="Python source directory to analyze (repeatable)",
+        help="Root directory used to discover relationship fact artifacts (repeatable)",
     )
     p_adjacency.add_argument(
         "--spec-dir",
         action="append",
-        help="Spec markdown directory to analyze (repeatable)",
+        help="Root directory used to discover relationship fact artifacts (repeatable)",
+    )
+    p_adjacency.add_argument(
+        "--relationship-facts",
+        action="append",
+        help="Path to RelationshipFacts JSON artifact (repeatable)",
+    )
+    p_adjacency.add_argument(
+        "--pin-registry",
+        action="append",
+        help="Path to pin_registry.json artifact (repeatable)",
     )
     p_adjacency.add_argument(
         "--format",
@@ -1445,11 +1468,6 @@ def main() -> int:
         help="Output file path",
     )
     p_adjacency.add_argument("--json", action="store_true", help="Print JSON to stdout")
-    p_adjacency.add_argument(
-        "--no-cooccurrence",
-        action="store_true",
-        help="Disable co-occurrence extraction",
-    )
 
     # scan-source (edit-in-place engine)
     p_scan_source = subparsers.add_parser(

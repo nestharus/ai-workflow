@@ -1,7 +1,8 @@
-"""Entity co-occurrence extractor from spec content.
+"""Co-occurrence verifier utilities for relationship-fact validation.
 
-Extracts adjacency signals from spec markdown -- algorithms and entities
-discussed in the same section form co-occurrence edges.
+This module performs heuristic markdown proximity analysis and should be used
+only as a verifier against declared LLM relationship facts, not as an edge
+source for primary graph construction.
 """
 
 from __future__ import annotations
@@ -27,11 +28,11 @@ class CoOccurrence:
     proximity: float  # 0.0-1.0, closer = higher (same paragraph > same section)
 
 
-def extract_cooccurrence_graph(
+def build_cooccurrence_verifier_graph(
     spec_paths: list[Path],
     window_mode: str = "section",
 ) -> AdjacencyGraph:
-    """Build co-occurrence graph from spec markdown files.
+    """Build a verifier-only co-occurrence graph from spec markdown files.
 
     Entities (algorithms, data structures, components) that appear in the
     same section/window form weighted edges.
@@ -60,9 +61,9 @@ def extract_cooccurrence_graph(
         source_file = str(path)
 
         if window_mode == "paragraph":
-            section_entities = _extract_entity_mentions_by_paragraph(content, source_file)
+            section_entities = _extract_entity_mentions_by_paragraph(content)
         else:
-            section_entities = _extract_entity_mentions(content, source_file)
+            section_entities = _extract_entity_mentions(content)
 
         cooccurrences = _build_cooccurrence_edges(section_entities, source_file)
         all_cooccurrences.extend(cooccurrences)
@@ -106,7 +107,6 @@ def extract_cooccurrence_graph(
 
 def _extract_entity_mentions(
     content: str,
-    source_file: str,
 ) -> dict[str, list[str]]:
     """Extract entity IDs mentioned in each section.
 
@@ -158,7 +158,6 @@ def _extract_entity_mentions(
 
 def _extract_entity_mentions_by_paragraph(
     content: str,
-    source_file: str,
 ) -> dict[str, list[str]]:
     """Extract entity IDs mentioned in each paragraph.
 

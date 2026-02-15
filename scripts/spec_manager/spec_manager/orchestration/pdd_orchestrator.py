@@ -690,9 +690,9 @@ class PddOrchestrator:
     def _run_cross_library(self) -> dict[str, Any]:
         """Phase 6: Adjacency graph and disconnected component detection.
 
-        Runs ``run_adjacency_analysis()`` against workspace source files
-        to build a unified adjacency graph (call, event, store,
-        cooccurrence) and detect disconnected components.
+        Runs ``run_adjacency_analysis()`` against workspace roots to discover
+        relationship-fact artifacts, then builds a unified relationship graph
+        (calls/events/stores) and detects disconnected components.
         """
         from spec_manager.analysis.adjacency.runner import (
             AdjacencyAnalysisConfig,
@@ -716,7 +716,7 @@ class PddOrchestrator:
     def _run_projection_sync(self) -> dict[str, Any]:
         """Phase 7: Lineage building, analysis generation, projection sync.
 
-        1. Loads projection edges from pin registry (scan fallback only).
+        1. Loads projection edges from pin registry.
         2. Builds ``LineageBuilder`` to trace atom→architecture projection.
         3. Runs ``generate_analysis_file()`` for the full analysis artifact.
         4. Runs ``ProjectionGenerator.generate_plan()`` for plan.md.
@@ -730,7 +730,6 @@ class PddOrchestrator:
             AtomDefinition,
             LineageBuilder,
             import_records_from_pin_registry,
-            scan_imports_from_directory,
         )
         from spec_manager.projection.lineage.persistence import save_lineage_table
         from spec_manager.schemas.derived_elements import DerivedElement
@@ -740,7 +739,7 @@ class PddOrchestrator:
         root = self.manager.structure.root
         outputs: dict[str, Any] = {}
 
-        # 1. Prefer registry-declared edges; fall back to scan-only discovery.
+        # 1. Consume registry-declared edges as the authoritative source.
         import_records = []
         registry_path = root / ".spec" / "pin_registry.json"
         if registry_path.exists():
@@ -757,7 +756,9 @@ class PddOrchestrator:
                 )
                 import_records = []
         if not import_records:
-            import_records = scan_imports_from_directory(root)
+            outputs["lineage_input_warning"] = (
+                "No pin-registry relationship edges found for lineage build."
+            )
         outputs["import_edges"] = len(import_records)
 
         # 2. Build atom definitions from branch manager for lineage tracking

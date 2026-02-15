@@ -6531,7 +6531,6 @@ class VerifyStep:
                 AtomDefinition,
                 LineageBuilder,
                 import_records_from_pin_registry,
-                scan_imports_from_directory,
             )
             from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
@@ -6551,8 +6550,7 @@ class VerifyStep:
                         exc_info=True,
                     )
             if not import_records:
-                record_source = "scan_fallback"
-                import_records = scan_imports_from_directory(verification_root)
+                record_source = "missing_registry_edges"
 
             atom_defs: list[AtomDefinition] = []
             branch_manager = ctx.branch_manager

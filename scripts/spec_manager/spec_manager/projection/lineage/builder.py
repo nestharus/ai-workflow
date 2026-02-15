@@ -86,16 +86,19 @@ class RawImportRecord:
 def scan_imports_from_directory(
     root_dir: Path,
     exclude_patterns: list[str] | None = None,
+    *,
+    verification_mode: bool = False,
 ) -> list[RawImportRecord]:
     """Scan all Python files in a directory for import statements.
 
     Primary path uses ``infer_code_signals(requested={"import_edges"})``.
-    Regex extraction remains only as a fallback migration path when no
-    inferred edge data is returned.
+    Regex extraction is disabled by default and only available when
+    ``verification_mode=True``.
 
     Args:
         root_dir: Root directory to scan.
         exclude_patterns: Glob patterns to exclude (e.g., ["__pycache__"]).
+        verification_mode: Enable regex fallback for verifier workflows only.
 
     Returns:
         List of RawImportRecord entries found across all files.
@@ -119,15 +122,20 @@ def scan_imports_from_directory(
                     break
             if skip:
                 continue
-        records.extend(_scan_file_imports(py_file))
+        records.extend(_scan_file_imports(py_file, allow_regex_fallback=verification_mode))
     return records
 
 
-def scan_imports_from_files(file_paths: list[Path]) -> list[RawImportRecord]:
+def scan_imports_from_files(
+    file_paths: list[Path],
+    *,
+    verification_mode: bool = False,
+) -> list[RawImportRecord]:
     """Scan specific files for import statements.
 
     Args:
         file_paths: List of source file paths to analyze.
+        verification_mode: Enable regex fallback for verifier workflows only.
 
     Returns:
         List of RawImportRecord entries found across all files.
@@ -137,14 +145,15 @@ def scan_imports_from_files(file_paths: list[Path]) -> list[RawImportRecord]:
     records: list[RawImportRecord] = []
     for file_path in file_paths:
         if is_source_file(file_path.suffix) and file_path.exists():
-            records.extend(_scan_file_imports(file_path))
+            records.extend(_scan_file_imports(file_path, allow_regex_fallback=verification_mode))
     return records
 
 
-def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
+def _scan_file_imports(file_path: Path, *, allow_regex_fallback: bool) -> list[RawImportRecord]:
     """Scan a single source file for import statements.
 
-    Uses inferred import-edge signals first, then regex fallback.
+    Uses inferred import-edge signals as the authoritative source.
+    Optional regex fallback is verifier-only and disabled by default.
 
     Args:
         file_path: Path to source file.
@@ -161,7 +170,10 @@ def _scan_file_imports(file_path: Path) -> list[RawImportRecord]:
     if inferred_records:
         return inferred_records
 
-    return _scan_file_imports_with_regex(file_path, source)
+    if allow_regex_fallback:
+        return _scan_file_imports_with_regex(file_path, source)
+
+    return []
 
 
 def _scan_file_imports_from_signals(file_path: Path, source: str) -> list[RawImportRecord]:

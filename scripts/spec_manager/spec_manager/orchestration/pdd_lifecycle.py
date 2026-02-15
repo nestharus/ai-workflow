@@ -1495,7 +1495,6 @@ class PddLifecycle:
             AtomDefinition,
             LineageBuilder,
             import_records_from_pin_registry,
-            scan_imports_from_directory,
         )
         from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
@@ -1520,8 +1519,6 @@ class PddLifecycle:
                         exc,
                         exc_info=True,
                     )
-            if not import_records:
-                import_records = scan_imports_from_directory(effective_root)
             atom_defs: list[AtomDefinition] = []
             branch_manager = getattr(self.manager, "branches", None)
             if branch_manager is not None:

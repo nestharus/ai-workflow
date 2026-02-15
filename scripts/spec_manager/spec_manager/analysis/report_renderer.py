@@ -22,9 +22,10 @@ def render_analysis_markdown(analysis: AnalysisFileSchema) -> str:
     ### atom_name (atom_file)
     **Forward Traces:**
     | Architectural Location | Projection Type | Confidence |
-    **Adjacency:**
-    - Co-occurrence: [atom_a, atom_b]
-    - Store-touch: [atom_c]
+    **Relationships:**
+    - Calls: [pin_a -> pin_b]
+    - Events: [pin_a -(evt)-> pin_b]
+    - Stores: [pin_a -(read)-> store_x]
     **Data Flow:**
     - Signals in: [param_a, param_b]
     - Signals out: [return_type]
@@ -123,24 +124,33 @@ def _render_atom_section(atom: AtomAnalysisEntry) -> list[str]:
         lines.append("No forward traces.")
     lines.append("")
 
-    # Adjacency
-    lines.append("**Adjacency:**")
+    # Relationship facts
+    lines.append("**Relationships:**")
     lines.append("")
-    if atom.adjacency:
-        co_occ = (
-            ", ".join(atom.adjacency.co_occurrence_edges)
-            if atom.adjacency.co_occurrence_edges
-            else "none"
-        )
-        store_t = (
-            ", ".join(atom.adjacency.store_touch_edges)
-            if atom.adjacency.store_touch_edges
-            else "none"
-        )
-        lines.append(f"- Co-occurrence: [{co_occ}]")
-        lines.append(f"- Store-touch: [{store_t}]")
+    if atom.relationship_facts:
+        call_entries = [
+            f"{fact.caller_pin} -> {fact.callee_pin}" for fact in atom.relationship_facts.calls
+        ]
+        event_entries = [
+            (
+                f"{fact.emitter_pin} -({fact.event_id})-> {fact.consumer_pin}"
+                if fact.consumer_pin
+                else f"{fact.emitter_pin} -({fact.event_id})-> ?"
+            )
+            for fact in atom.relationship_facts.events
+        ]
+        store_entries = [
+            f"{fact.pin} -({fact.access_type})-> {fact.store_id}"
+            for fact in atom.relationship_facts.stores
+        ]
+        calls = ", ".join(call_entries) if call_entries else "none"
+        events = ", ".join(event_entries) if event_entries else "none"
+        stores = ", ".join(store_entries) if store_entries else "none"
+        lines.append(f"- Calls: [{calls}]")
+        lines.append(f"- Events: [{events}]")
+        lines.append(f"- Stores: [{stores}]")
     else:
-        lines.append("- No adjacency data.")
+        lines.append("- No relationship facts.")
     lines.append("")
 
     # Data flow

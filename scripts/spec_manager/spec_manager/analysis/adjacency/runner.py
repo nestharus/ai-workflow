@@ -1,73 +1,128 @@
-"""Orchestrates the full adjacency detection pipeline.
-
-Collects source files and spec files, runs enabled extractors,
-builds the unified graph, detects disconnected components,
-and produces a report.
-"""
+"""Consumes relationship facts and runs adjacency graph analysis."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from spec_manager.schemas.lineage import (
+    CallRelationshipFact,
+    RelationshipFacts,
+    StoreRelationshipFact,
+)
+from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 from .detector import (
     AdjacencyReport,
     build_unified_graph,
     detect_disconnected_components,
 )
-from .graph import AdjacencyGraph, SignalType
+from .graph import SignalType
 
 
 @dataclass
 class AdjacencyAnalysisConfig:
-    """Configuration for adjacency analysis."""
+    """Configuration for adjacency analysis from relationship facts."""
 
-    source_dirs: list[Path]  # Python source directories to analyze
-    spec_dirs: list[Path]  # Spec markdown directories
-    include_cooccurrence: bool = True
+    source_dirs: list[Path] = field(default_factory=list)
+    spec_dirs: list[Path] = field(default_factory=list)
+    relationship_fact_paths: list[Path] = field(default_factory=list)
+    relationship_facts: RelationshipFacts | None = None
     weight_overrides: dict[str, float] | None = None
     output_format: str = "json"  # "json" or "markdown"
     output_path: Path | None = None
 
 
-def _collect_python_files(dirs: list[Path]) -> list[Path]:
-    """Collect all source files from the given directories."""
-    from spec_manager.core.language import is_source_file, source_rglob
+def _candidate_relationship_paths_from_root(root: Path) -> list[Path]:
+    """Return likely relationship-fact artifacts for one root path."""
+    if not root.exists():
+        return []
+    if root.is_file():
+        if root.name in {"relationship_facts.json", "pin_registry.json"}:
+            return [root]
+        return []
+    return [
+        candidate
+        for candidate in (
+            root / "relationship_facts.json",
+            root / ".spec" / "relationship_facts.json",
+            root / ".spec" / "pin_registry.json",
+        )
+        if candidate.exists() and candidate.is_file()
+    ]
 
-    files: list[Path] = []
-    for directory in dirs:
-        if not directory.exists():
+
+def _discover_relationship_fact_paths(config: AdjacencyAnalysisConfig) -> list[Path]:
+    """Discover relationship-fact sources declared by config roots."""
+    candidates: list[Path] = []
+    candidates.extend(config.relationship_fact_paths)
+    for root in [*config.source_dirs, *config.spec_dirs]:
+        candidates.extend(_candidate_relationship_paths_from_root(root))
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
             continue
-        if directory.is_file() and is_source_file(directory.suffix):
-            files.append(directory)
-        elif directory.is_dir():
-            files.extend(source_rglob(directory))
-    return files
+        seen.add(resolved)
+        deduped.append(resolved)
+    return deduped
 
 
-def _collect_spec_files(dirs: list[Path]) -> list[Path]:
-    """Collect all .md files from the given directories."""
-    files: list[Path] = []
-    for directory in dirs:
-        if not directory.exists():
-            continue
-        if directory.is_file() and directory.suffix == ".md":
-            files.append(directory)
-        elif directory.is_dir():
-            files.extend(sorted(directory.rglob("*.md")))
-    return files
+def _merge_relationship_facts(facts: list[RelationshipFacts]) -> RelationshipFacts:
+    """Merge many fact payloads into one additive relationship payload."""
+    merged = RelationshipFacts()
+    for item in facts:
+        merged.calls.extend(item.calls)
+        merged.events.extend(item.events)
+        merged.stores.extend(item.stores)
+    return merged
+
+
+def _facts_from_pin_registry(path: Path) -> RelationshipFacts:
+    """Project pin registry data into relationship facts."""
+    registry = PinFunctionRegistry.model_validate_json(path.read_text(encoding="utf-8"))
+    facts = RelationshipFacts()
+    for edge in registry.import_edges:
+        facts.calls.append(
+            CallRelationshipFact(
+                caller_pin=edge.arch_location,
+                callee_pin=edge.pin_func_id,
+                confidence=edge.confidence,
+                evidence_pin=edge.pin_func_id,
+            )
+        )
+    for pin in registry.pin_functions:
+        for store_id in pin.store_touches:
+            facts.stores.append(
+                StoreRelationshipFact(
+                    pin=pin.pin_func_id,
+                    store_id=store_id,
+                    access_type="read_write",
+                )
+            )
+    return facts
+
+
+def _load_relationship_facts(path: Path) -> RelationshipFacts:
+    """Load one relationship-fact artifact file."""
+    if path.name == "pin_registry.json":
+        return _facts_from_pin_registry(path)
+
+    content = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(content, dict) and isinstance(content.get("relationship_facts"), dict):
+        content = content["relationship_facts"]
+    return RelationshipFacts.model_validate(content)
+
+
+def _has_relationship_data(facts: RelationshipFacts) -> bool:
+    return bool(facts.calls or facts.events or facts.stores)
 
 
 def run_adjacency_analysis(config: AdjacencyAnalysisConfig) -> AdjacencyReport:
-    """Run the full adjacency detection pipeline.
-
-    1. Collect source files from source_dirs
-    2. Collect spec files from spec_dirs
-    3. Run enabled extractors
-    4. Build unified graph
-    5. Detect disconnected components
-    6. Produce report
+    """Run adjacency analysis using unified relationship facts as input.
 
     Args:
         config: Analysis configuration
@@ -75,19 +130,16 @@ def run_adjacency_analysis(config: AdjacencyAnalysisConfig) -> AdjacencyReport:
     Returns:
         AdjacencyReport with full analysis
     """
-    spec_files = _collect_spec_files(config.spec_dirs)
+    fact_sources = _discover_relationship_fact_paths(config)
+    loaded_facts = [_load_relationship_facts(path) for path in fact_sources]
+    if config.relationship_facts is not None:
+        loaded_facts.append(config.relationship_facts)
 
-    cooccurrence_graph: AdjacencyGraph | None = None
+    relationship_facts = (
+        _merge_relationship_facts(loaded_facts) if loaded_facts else RelationshipFacts()
+    )
 
-    partial_graphs: dict[str, AdjacencyGraph] = {}
-
-    if config.include_cooccurrence and spec_files:
-        from .extractors.cooccurrence import extract_cooccurrence_graph
-
-        cooccurrence_graph = extract_cooccurrence_graph(spec_files)
-        partial_graphs["cooccurrence"] = cooccurrence_graph
-
-    # Convert weight overrides from string keys to SignalType keys
+    # Convert weight overrides from string keys to SignalType multipliers.
     weight_overrides: dict[SignalType, float] | None = None
     if config.weight_overrides:
         weight_overrides = {}
@@ -96,14 +148,18 @@ def run_adjacency_analysis(config: AdjacencyAnalysisConfig) -> AdjacencyReport:
             if key in signal_type_map:
                 weight_overrides[signal_type_map[key]] = value
 
-    # Build unified graph
     unified = build_unified_graph(
-        cooccurrence_graph=cooccurrence_graph,
+        relationship_facts=relationship_facts,
         weight_overrides=weight_overrides,
     )
 
-    # Detect disconnected components
-    report = detect_disconnected_components(unified, partial_graphs=partial_graphs)
+    report = detect_disconnected_components(unified)
+    if not _has_relationship_data(relationship_facts):
+        report.disconnected_warnings.insert(
+            0,
+            "No RelationshipFacts were provided or discovered. "
+            "Adjacency graph is empty until LLM relationship output is supplied.",
+        )
 
     return report
 

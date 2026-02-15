@@ -29,18 +29,59 @@ class LineageEdge(BaseModel):
     evidence: str | None = None
 
 
-class AtomAdjacency(BaseModel):
-    """Adjacency edges for an algorithmic atom.
+class CallRelationshipFact(BaseModel):
+    """A call relationship declared by LLM relationship analysis.
 
     Attributes:
-        atom_id: The atom identifier
-        co_occurrence_edges: Atoms that co-occur in the same evidence window / section
-        store_touch_edges: Atoms that read/write the same stores
+        caller_pin: Source pin/function node initiating the call
+        callee_pin: Destination pin/function node receiving the call
+        confidence: Confidence score for the relationship
+        evidence_pin: Optional pin that anchors the evidence for this call
     """
 
-    atom_id: str
-    co_occurrence_edges: list[str] = Field(default_factory=list)
-    store_touch_edges: list[str] = Field(default_factory=list)
+    caller_pin: str
+    callee_pin: str
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    evidence_pin: str | None = None
+
+
+class EventRelationshipFact(BaseModel):
+    """An event flow relationship declared by LLM relationship analysis.
+
+    Attributes:
+        emitter_pin: Pin/function that emits the event
+        event_id: Stable event identifier
+        consumer_pin: Optional pin/function that consumes the event
+    """
+
+    emitter_pin: str
+    event_id: str
+    consumer_pin: str | None = None
+
+
+class StoreRelationshipFact(BaseModel):
+    """A store access relationship declared by LLM relationship analysis.
+
+    Attributes:
+        pin: Pin/function touching the store
+        store_id: Stable store identifier
+        access_type: Access mode for the store touch
+    """
+
+    pin: str
+    store_id: str
+    access_type: Literal["read", "write", "read_write"] = "read_write"
+
+
+class RelationshipFacts(BaseModel):
+    """Unified LLM relationship payload used for graph construction.
+
+    Replaces independent mechanical extractors with one authoritative schema.
+    """
+
+    calls: list[CallRelationshipFact] = Field(default_factory=list)
+    events: list[EventRelationshipFact] = Field(default_factory=list)
+    stores: list[StoreRelationshipFact] = Field(default_factory=list)
 
 
 class DataFlowSummary(BaseModel):
@@ -66,7 +107,7 @@ class AtomAnalysisEntry(BaseModel):
         atom_id: The atom identifier (function name or ATOM-* ID)
         atom_file: File where the atom is defined
         forward_traces: All architectural locations importing this atom
-        adjacency: Co-occurrence and store-touch edges
+        relationship_facts: Declared call/event/store relationships for this atom
         data_flow: Signals in/out/stores touched
         is_unimplemented: True if atom has no architectural imports
     """
@@ -74,7 +115,7 @@ class AtomAnalysisEntry(BaseModel):
     atom_id: str
     atom_file: str
     forward_traces: list[LineageEdge] = Field(default_factory=list)
-    adjacency: AtomAdjacency | None = None
+    relationship_facts: RelationshipFacts | None = None
     data_flow: DataFlowSummary | None = None
     is_unimplemented: bool = False
 

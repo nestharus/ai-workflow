@@ -1,9 +1,4 @@
-"""Graph union and disconnected component detection.
-
-Merges all four signal graphs (call, event, store touch, co-occurrence)
-and analyzes connectivity to classify components as truly isolated,
-potentially missed, or suspiciously isolated.
-"""
+"""Relationship-facts graph construction and disconnected component detection."""
 
 from __future__ import annotations
 
@@ -11,7 +6,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from .graph import AdjacencyGraph, EdgeSignal, SignalType
+from spec_manager.schemas.lineage import RelationshipFacts
+
+from .graph import AdjacencyGraph, EdgeSignal, NodeInfo, SignalType
 
 
 class IsolationClassification(Enum):
@@ -169,53 +166,65 @@ DEFAULT_SIGNAL_WEIGHTS: dict[SignalType, float] = {
 
 
 def build_unified_graph(
-    call_graph: AdjacencyGraph | None = None,
-    event_graph: AdjacencyGraph | None = None,
-    store_graph: AdjacencyGraph | None = None,
-    cooccurrence_graph: AdjacencyGraph | None = None,
+    relationship_facts: RelationshipFacts,
     weight_overrides: dict[SignalType, float] | None = None,
 ) -> AdjacencyGraph:
-    """Merge all signal graphs into a unified adjacency graph.
-
-    Applies weight scaling per signal type (overridable).
-    Overlapping edges between same node pairs have their signals combined.
+    """Build a unified graph directly from LLM relationship facts.
 
     Args:
-        call_graph: Call graph (SignalType.CALL edges)
-        event_graph: Event graph (SignalType.EVENT edges)
-        store_graph: Store touch graph (SignalType.STORE_TOUCH edges)
-        cooccurrence_graph: Co-occurrence graph (SignalType.CO_OCCURRENCE edges)
-        weight_overrides: Optional weight multipliers per signal type
+        relationship_facts: Unified calls/events/stores relationship payload
+        weight_overrides: Optional weight multipliers per signal type.
+            Overrides are multiplicative against DEFAULT_SIGNAL_WEIGHTS.
 
     Returns:
-        Unified AdjacencyGraph containing all signals
+        Unified AdjacencyGraph containing all declared signals
     """
     unified = AdjacencyGraph()
-    graphs = [
-        g for g in [call_graph, event_graph, store_graph, cooccurrence_graph] if g is not None
-    ]
+    weights = {
+        signal_type: base * (weight_overrides.get(signal_type, 1.0) if weight_overrides else 1.0)
+        for signal_type, base in DEFAULT_SIGNAL_WEIGHTS.items()
+    }
 
-    for graph in graphs:
-        unified = unified.union(graph)
+    for call in relationship_facts.calls:
+        unified.add_node(call.caller_pin, NodeInfo(node_id=call.caller_pin, node_type="pin"))
+        unified.add_node(call.callee_pin, NodeInfo(node_id=call.callee_pin, node_type="pin"))
+        signal = EdgeSignal(
+            signal_type=SignalType.CALL,
+            weight=weights[SignalType.CALL] * call.confidence,
+            details={"confidence": call.confidence, "evidence_pin": call.evidence_pin},
+        )
+        unified.add_edge(call.caller_pin, call.callee_pin, signal)
 
-    # Apply weight overrides if specified
-    if weight_overrides:
-        scaled = AdjacencyGraph()
-        for node_id in unified.nodes():
-            info = unified.node_info(node_id)
-            scaled.add_node(node_id, info)
+    for event in relationship_facts.events:
+        unified.add_node(event.emitter_pin, NodeInfo(node_id=event.emitter_pin, node_type="pin"))
+        unified.add_node(event.event_id, NodeInfo(node_id=event.event_id, node_type="event"))
+        emit_signal = EdgeSignal(
+            signal_type=SignalType.EVENT,
+            weight=weights[SignalType.EVENT],
+            details={"event_id": event.event_id, "role": "emit"},
+        )
+        unified.add_edge(event.emitter_pin, event.event_id, emit_signal)
+        if event.consumer_pin:
+            unified.add_node(
+                event.consumer_pin,
+                NodeInfo(node_id=event.consumer_pin, node_type="pin"),
+            )
+            consume_signal = EdgeSignal(
+                signal_type=SignalType.EVENT,
+                weight=weights[SignalType.EVENT],
+                details={"event_id": event.event_id, "role": "consume"},
+            )
+            unified.add_edge(event.event_id, event.consumer_pin, consume_signal)
 
-        for edge in unified.edges():
-            for signal in edge.signals:
-                multiplier = weight_overrides.get(signal.signal_type, 1.0)
-                scaled_signal = EdgeSignal(
-                    signal_type=signal.signal_type,
-                    weight=signal.weight * multiplier,
-                    details=signal.details,
-                )
-                scaled.add_edge(edge.source, edge.target, scaled_signal)
-
-        return scaled
+    for store in relationship_facts.stores:
+        unified.add_node(store.pin, NodeInfo(node_id=store.pin, node_type="pin"))
+        unified.add_node(store.store_id, NodeInfo(node_id=store.store_id, node_type="store"))
+        signal = EdgeSignal(
+            signal_type=SignalType.STORE_TOUCH,
+            weight=weights[SignalType.STORE_TOUCH],
+            details={"access_type": store.access_type, "store_id": store.store_id},
+        )
+        unified.add_edge(store.pin, store.store_id, signal)
 
     return unified
 
