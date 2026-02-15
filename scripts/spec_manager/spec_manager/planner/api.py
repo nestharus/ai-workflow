@@ -64,16 +64,16 @@ Capability = Literal[
 class PlanningContext:
     """Per-request context passed through all planner operations."""
 
-    run_id: str = ""
-    slice_id: str = ""
-    iteration: int = 0
+    run_id: str | None = None
+    slice_id: str | None = None
+    iteration: int | None = None
     layer: Layer = "any"
     mode: Literal["auto", "interactive"] = "auto"
     workspace_root: str = ""
-    slice_root: str = ""
-    bundle_ref: Any = None  # EvidenceBundle or lightweight view
-    signal_ref: Any = None  # InputSignal or Ambiguity
-    metadata: dict[str, Any] = field(default_factory=dict)
+    slice_root: str | None = None
+    bundle_ref: Any | None = None  # EvidenceBundle or lightweight view
+    signal_ref: Any | None = None  # InputSignal or Ambiguity
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
@@ -82,7 +82,7 @@ class PlanningRequest:
 
     capability: Capability
     context: PlanningContext
-    inputs: dict[str, Any] = field(default_factory=dict)
+    inputs: dict[str, Any]
     constraints_hint: dict[str, Any] | None = None
 
 
@@ -274,6 +274,13 @@ class GeneralPlanner:
         trace_id = _new_trace_id()
         layer = req.context.layer
         ctx = req.context
+        run_id = str(ctx.run_id or "").strip()
+        slice_id = str(ctx.slice_id or "").strip()
+        iteration_raw = ctx.iteration
+        try:
+            iteration = int(iteration_raw) if iteration_raw is not None else 0
+        except (TypeError, ValueError):
+            iteration = 0
         proposal_models = self._extract_proposal_models(req)
         requires_external_facts = self._requires_external_facts(req)
         high_risk = self._is_high_risk_request(req)
@@ -290,8 +297,8 @@ class GeneralPlanner:
         decision_key = compute_decision_key(
             layer=str(layer),
             capability=req.capability,
-            slice_id=ctx.slice_id,
-            iteration=ctx.iteration,
+            slice_id=slice_id,
+            iteration=iteration,
             inputs=req.inputs,
         )
         input_hash = compute_input_hash(req.capability, req.inputs)
@@ -307,12 +314,12 @@ class GeneralPlanner:
                 model_route=resolved_route.to_dict(),
             ),
             decision_key=decision_key,
-            run_id=ctx.run_id,
+            run_id=run_id,
             model_id=selected_model,
             planner_version=PLANNER_VERSION,
             layer=str(layer),
             capability=req.capability,
-            slice_id=ctx.slice_id,
+            slice_id=slice_id,
         )
         state_machine = self._load_state_machine(req)
         executed_actions: list[dict[str, Any]] = []
@@ -323,13 +330,13 @@ class GeneralPlanner:
             decision_key,
             req.capability,
             layer,
-            ctx.slice_id,
+            slice_id,
         )
 
         from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 
         context_token = ConstraintStoreAdapter.push_planner_update_context(
-            run_id=ctx.run_id,
+            run_id=run_id,
             layer=str(layer),
             capability=req.capability,
         )
@@ -1512,15 +1519,15 @@ class GeneralPlanner:
 
     def _should_run_integration_gate(self, req: PlanningRequest) -> bool:
         capability = str(req.capability).strip().upper()
-        if capability in {"INGEST_USER_ANSWER", "INTEGRATION_ANALYSIS", "GAP"}:
+        if capability == "INTEGRATION_ANALYSIS":
             return False
-        inputs = req.inputs if isinstance(req.inputs, dict) else {}
-        metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
-        if self._coerce_bool(inputs.get("skip_integration_gate")):
-            return False
-        if self._coerce_bool(metadata.get("skip_integration_gate")):
-            return False
-        return capability in {"PLAN", "UNDER_SPEC", "TRIAGE_SIGNAL", "RESOLVE_SIGNAL"}
+        return capability in {
+            "PLAN",
+            "UNDER_SPEC",
+            "TRIAGE_SIGNAL",
+            "RESOLVE_SIGNAL",
+            "GAP",
+        }
 
     def _should_run_critique_gate(
         self,
@@ -2694,60 +2701,80 @@ class GeneralPlanner:
     # Convenience adapters for existing call sites
     # ------------------------------------------------------------------
 
-    def resolve_signal(self, signal: Any, context: PlanningContext) -> Any:
-        """Resolve an ambiguity signal.
-
-        Returns the layer planner's response (typically a dict or None).
-        """
-        context.signal_ref = signal
+    def resolve_signal(self, signal: Any) -> dict[str, Any] | None:
+        """Resolve an ambiguity signal via the planner API wrapper."""
+        context = PlanningContext(
+            layer="any",
+            mode=self._mode if self._mode in {"auto", "interactive"} else "auto",
+            workspace_root=str(self._workspace_root),
+            signal_ref=signal,
+        )
         req = PlanningRequest(
             capability="RESOLVE_SIGNAL",
             context=context,
             inputs={"signal": signal},
         )
         result = self.plan(req)
-        return result.outputs.get("response")
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        response = outputs.get("response")
+        if response is None:
+            return None
+        if isinstance(response, dict):
+            return dict(response)
+        return {"text": str(response)}
 
     def plan_from_gaps(
         self,
         context: PlanningContext,
         gaps: list[dict[str, Any]],
-        *,
-        gap_analysis: dict[str, Any] | None = None,
-        prior_artifacts: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Generate a PLAN output payload from a gap list.
-
-        Returns the full planner outputs dict (intentions plus any
-        strategy-pipeline artifacts such as decision_requirements).
-        """
-        normalized_gap_analysis = dict(gap_analysis) if isinstance(gap_analysis, dict) else {}
-        normalized_prior_artifacts = (
-            dict(prior_artifacts) if isinstance(prior_artifacts, dict) else {}
-        )
+    ) -> list[dict[str, Any]]:
+        """Generate plan items from gaps through the planner lifecycle."""
         req = PlanningRequest(
             capability="PLAN",
             context=context,
-            inputs={
-                "gaps": gaps,
-                "gap_analysis": normalized_gap_analysis,
-                "prior_artifacts": normalized_prior_artifacts,
-            },
+            inputs={"gaps": gaps},
         )
         result = self.plan(req)
-        if not isinstance(result.outputs, dict):
-            return {}
-        return dict(result.outputs)
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        plan_items = outputs.get("plan_items", outputs.get("intentions", []))
+        if not isinstance(plan_items, list):
+            return []
+        return [item for item in plan_items if isinstance(item, dict)]
 
-    def resolve_under_spec(
-        self, context: PlanningContext, events: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    @staticmethod
+    def _extract_under_spec_events(context: PlanningContext) -> list[dict[str, Any]]:
+        metadata = context.metadata if isinstance(context.metadata, dict) else {}
+        events = metadata.get("under_spec_events", [])
+        if isinstance(events, list):
+            normalized = [row for row in events if isinstance(row, dict)]
+            if normalized:
+                return normalized
+
+        bundle = context.bundle_ref
+        if isinstance(bundle, dict):
+            impl = bundle.get("implementation")
+            if isinstance(impl, dict):
+                impl_events = impl.get("under_spec_events", [])
+                if isinstance(impl_events, list):
+                    return [row for row in impl_events if isinstance(row, dict)]
+            direct_events = bundle.get("under_spec_events", [])
+            if isinstance(direct_events, list):
+                return [row for row in direct_events if isinstance(row, dict)]
+
+        implementation = getattr(bundle, "implementation", None)
+        bundle_events = getattr(implementation, "under_spec_events", [])
+        if isinstance(bundle_events, list):
+            return [row for row in bundle_events if isinstance(row, dict)]
+        return []
+
+    def resolve_under_spec(self, context: PlanningContext) -> dict[str, Any]:
         """Resolve or block under-spec events.
 
         Returns an explicit contract with:
         ``blocked``, ``constraints``, ``questions``, ``resolved``,
         ``routing`` (work items), ``monitors``, and ``expansions``.
         """
+        events = self._extract_under_spec_events(context)
         req = PlanningRequest(
             capability="UNDER_SPEC",
             context=context,
@@ -3379,6 +3406,10 @@ class GeneralPlanner:
             inputs={"signal": signal},
         )
         return self.plan(req)
+
+
+# Public API alias defined by the planner contract.
+Planner = GeneralPlanner
 
 
 # ---------------------------------------------------------------------------

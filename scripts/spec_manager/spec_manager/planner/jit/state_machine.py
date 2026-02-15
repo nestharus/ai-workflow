@@ -10,6 +10,7 @@ class PlanPhase(Enum):
     INIT = "init"
     DISCOVER = "discover"
     INTEGRATION_ANALYSIS = "integration_analysis"
+    DECIDE = "decide"
     GAP_UNDERSTANDING = "gap_understanding"
     RESEARCH = "research"
     DESIGN = "design"

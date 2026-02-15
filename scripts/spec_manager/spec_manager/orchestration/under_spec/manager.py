@@ -355,12 +355,12 @@ class PlannerUnderSpecResolver:
             layer=ctx.layer,
             mode=ctx.mode,
             workspace_root=str(ctx.workspace_root),
-            metadata={"constraints_snapshot": list(ctx.constraints_snapshot)},
+            metadata={
+                "constraints_snapshot": list(ctx.constraints_snapshot),
+                "under_spec_events": [event.to_dict() for event in events],
+            },
         )
-        outputs = self._planner.resolve_under_spec(
-            planner_context,
-            [event.to_dict() for event in events],
-        )
+        outputs = self._planner.resolve_under_spec(planner_context)
         if not isinstance(outputs, dict):
             return DecisionOutcome(blocked=True)
 

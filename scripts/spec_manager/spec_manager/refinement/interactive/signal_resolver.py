@@ -95,11 +95,8 @@ class PlannerSignalResolver:
         )
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:
-        from spec_manager.planner.api import PlanningContext
-
         # Planner is the single decision authority for auto-mode signal handling.
-        ctx = PlanningContext(layer="any", mode="auto")
-        response = self._planner.resolve_signal(signal, ctx)
+        response = self._planner.resolve_signal(signal)
         if response is not None:
             return self._to_steering_response(signal, response, source="planner")
         return None

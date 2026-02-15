@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from spec_manager.planner.api import (
     GeneralPlanner,
+    Planner,
     PlanningContext,
     PlanningRequest,
     PlanningResult,
@@ -40,6 +41,7 @@ __all__ = [
     "L1Planner",
     "L2Planner",
     "L3Planner",
+    "Planner",
     "PlanningContext",
     "PlanningRequest",
     "PlanningResult",

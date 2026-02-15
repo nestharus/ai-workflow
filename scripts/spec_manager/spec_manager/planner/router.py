@@ -595,23 +595,33 @@ class CapabilityRouter:
         capability = str(getattr(req, "capability", "")).strip().upper()
 
         if capability == "RESOLVE_SIGNAL":
-            actions = [
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="resolve_signal",
-                    inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
-                )
-            ]
+            actions: list[NextAction] = []
             if requires_external_facts:
-                actions.insert(
-                    0,
+                actions.append(
                     NextAction(
                         action=ActionType.RUN_TOOL,
                         tool="web_research",
                         inputs={"phase": PlanPhase.RESEARCH.value},
                     ),
                 )
-            actions.append(NextAction(action=ActionType.COMPLETE))
+            actions.extend(
+                [
+                    NextAction(
+                        action=ActionType.CALL_AGENT,
+                        agent="resolve_signal",
+                        inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
+                    ),
+                    NextAction(
+                        action=ActionType.CALL_AGENT,
+                        agent="decide",
+                        inputs={"phase": PlanPhase.DECIDE.value},
+                    ),
+                    NextAction(
+                        action=ActionType.COMPLETE,
+                        inputs={"phase": PlanPhase.VALIDATE.value},
+                    ),
+                ]
+            )
             return actions
 
         if capability == "GAP":
@@ -626,7 +636,15 @@ class CapabilityRouter:
                     agent="gap_understanding",
                     inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
                 ),
-                NextAction(action=ActionType.COMPLETE),
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="decide",
+                    inputs={"phase": PlanPhase.DECIDE.value},
+                ),
+                NextAction(
+                    action=ActionType.COMPLETE,
+                    inputs={"phase": PlanPhase.VALIDATE.value},
+                ),
             ]
 
         if capability == "PLAN":
@@ -640,6 +658,11 @@ class CapabilityRouter:
                     action=ActionType.RUN_TOOL,
                     tool="extract_layer_skeleton",
                     inputs={"phase": PlanPhase.DISCOVER.value},
+                ),
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="decide",
+                    inputs={"phase": PlanPhase.DECIDE.value},
                 ),
                 NextAction(
                     action=ActionType.CALL_AGENT,
@@ -676,11 +699,19 @@ class CapabilityRouter:
             actions.extend(
                 [
                     NextAction(
+                        action=ActionType.CALL_AGENT,
+                        agent="decide",
+                        inputs={"phase": PlanPhase.DECIDE.value},
+                    ),
+                    NextAction(
                         action=ActionType.USER_INPUT,
                         prompt="Planner needs user input to resolve under-spec questions.",
-                        inputs={"phase": PlanPhase.RESEARCH.value},
+                        inputs={"phase": PlanPhase.VALIDATE.value},
                     ),
-                    NextAction(action=ActionType.COMPLETE),
+                    NextAction(
+                        action=ActionType.COMPLETE,
+                        inputs={"phase": PlanPhase.VALIDATE.value},
+                    ),
                 ]
             )
             return actions
@@ -697,7 +728,15 @@ class CapabilityRouter:
                     tool="integration_analyzer",
                     inputs={"phase": PlanPhase.INTEGRATION_ANALYSIS.value},
                 ),
-                NextAction(action=ActionType.COMPLETE),
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="decide",
+                    inputs={"phase": PlanPhase.DECIDE.value},
+                ),
+                NextAction(
+                    action=ActionType.COMPLETE,
+                    inputs={"phase": PlanPhase.VALIDATE.value},
+                ),
             ]
 
         if capability == "TRIAGE_SIGNAL":
@@ -713,7 +752,15 @@ class CapabilityRouter:
                         )
                     },
                 ),
-                NextAction(action=ActionType.COMPLETE),
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="decide",
+                    inputs={"phase": PlanPhase.DECIDE.value},
+                ),
+                NextAction(
+                    action=ActionType.COMPLETE,
+                    inputs={"phase": PlanPhase.VALIDATE.value},
+                ),
             ]
             return actions
 
@@ -860,6 +907,18 @@ class CapabilityRouter:
             )
             return
 
+        if agent_name == "decide":
+            output_payload = self._build_decision_payload(req=req, interim=interim)
+            interim["decision"] = output_payload
+            self._record_agent_invocation(
+                req=req,
+                agent_name=agent_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
+            return
+
         if agent_name == "build_plan":
             discovery = interim.get("discovery")
             if not isinstance(discovery, dict):
@@ -918,6 +977,69 @@ class CapabilityRouter:
             return
 
         raise ValueError(f"Unknown agent action: {agent_name}")
+
+    @staticmethod
+    def _build_decision_payload(*, req: Any, interim: dict[str, Any]) -> dict[str, Any]:
+        capability = str(getattr(req, "capability", "")).strip().upper()
+        decision: dict[str, Any] = {
+            "capability": capability,
+            "decision": "proceed",
+            "decision_text": f"{capability} advanced through DECIDE phase",
+        }
+
+        under_spec = interim.get("under_spec_result")
+        if isinstance(under_spec, dict):
+            blocked = bool(under_spec.get("blocked", False))
+            decision["decision"] = "block" if blocked else "proceed"
+            decision["blocked"] = blocked
+            questions = under_spec.get("questions", [])
+            decision["question_count"] = len(questions) if isinstance(questions, list) else 0
+            decision["decision_text"] = (
+                "UNDER_SPEC requires user authority"
+                if blocked
+                else "UNDER_SPEC resolved with available evidence"
+            )
+            return decision
+
+        triage = interim.get("triage_result")
+        if isinstance(triage, dict):
+            action = str(triage.get("action", "NOOP")).strip().upper() or "NOOP"
+            decision["action"] = action
+            decision["decision"] = (
+                "wait" if action not in {"NOOP", "WAKE_IMMEDIATELY"} else "proceed"
+            )
+            decision["decision_text"] = f"TRIAGE_SIGNAL classified action={action}"
+            return decision
+
+        plan = interim.get("plan")
+        if isinstance(plan, dict):
+            intentions = plan.get("intentions", [])
+            decision["intention_count"] = len(intentions) if isinstance(intentions, list) else 0
+            decision["decision_text"] = "PLAN selected design strategy from available constraints"
+            return decision
+
+        gap_outputs = interim.get("gap_outputs")
+        if isinstance(gap_outputs, dict):
+            prioritized = gap_outputs.get("prioritized_gaps", [])
+            decision["gap_count"] = len(prioritized) if isinstance(prioritized, list) else 0
+            decision["decision_text"] = "GAP selected prioritized backlog for downstream planning"
+            return decision
+
+        integration = interim.get("integration_analysis")
+        if isinstance(integration, dict):
+            risk = integration.get("risk_profile", {})
+            if isinstance(risk, dict):
+                decision["risk_level"] = str(risk.get("risk_level", "low")).strip()
+            decision["decision_text"] = (
+                "INTEGRATION_ANALYSIS computed risk profile and change impact"
+            )
+            return decision
+
+        resolved_signal = interim.get("resolve_signal_response")
+        if resolved_signal is not None:
+            decision["decision_text"] = "RESOLVE_SIGNAL generated steering response"
+
+        return decision
 
     @staticmethod
     def _context_metadata(req: Any) -> dict[str, Any]:

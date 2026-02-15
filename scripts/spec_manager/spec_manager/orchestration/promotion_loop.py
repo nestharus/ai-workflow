@@ -2717,7 +2717,7 @@ class PlanStep:
 
         Returns the full planner output payload with normalized intentions.
         """
-        from spec_manager.planner.api import PlanningContext
+        from spec_manager.planner.api import PlanningContext, PlanningRequest
 
         planning_ctx = PlanningContext(
             run_id=ctx.run_id,
@@ -2750,12 +2750,18 @@ class PlanStep:
             "under_spec_decisions": list(bundle.under_spec.decisions or []),
         }
 
-        plan_outputs = self._planner.plan_from_gaps(
-            planning_ctx,
-            bundle.gaps.open_gaps,
-            gap_analysis=gap_analysis,
-            prior_artifacts=prior_artifacts,
+        result = self._planner.plan(
+            PlanningRequest(
+                capability="PLAN",
+                context=planning_ctx,
+                inputs={
+                    "gaps": bundle.gaps.open_gaps,
+                    "gap_analysis": gap_analysis,
+                    "prior_artifacts": prior_artifacts,
+                },
+            )
         )
+        plan_outputs = result.outputs if hasattr(result, "outputs") else {}
         if not isinstance(plan_outputs, dict):
             return {"intentions": [], "plan_artifacts": {}}
 
