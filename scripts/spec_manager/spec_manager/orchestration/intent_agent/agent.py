@@ -535,6 +535,65 @@ class IntentAgentOrchestrator:
                 exc_info=True,
             )
 
+    def _emit_quality_gate_reformulation(
+        self,
+        *,
+        question_id: str,
+        canonical_key: str,
+        taxonomy_type: str,
+        question_text: str,
+        source: str,
+        reason: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Escalate an UNASKABLE quality-gate failure to Planner."""
+        if self._state is None:
+            return
+
+        question_type = normalize_user_facing_taxonomy(self._coerce_str(taxonomy_type, "SCOPE"))
+        payload: dict[str, Any] = {
+            "signal_type": "QUESTION_QUALITY_GATE_FAILED",
+            "source": "INTENT_AGENT",
+            "target": "PLANNER",
+            "run_id": self._state.run_id,
+            "session_id": self._state.session_id,
+            "created_at": datetime.now(UTC).isoformat(),
+            "question_id": self._coerce_str(question_id),
+            "canonical_key": self._normalize_canonical_key(
+                canonical_key,
+                taxonomy_type=question_type,
+                text=question_text,
+                scope_kind=classify_scope(question_text).value,
+            ),
+            "question_type": question_type,
+            "question_text": self._coerce_str(question_text),
+            "reason": self._coerce_str(reason, "quality gate failed"),
+            "details": {
+                "unaskable_source": self._coerce_str(source, "intent_agent"),
+                "failure_reason": self._coerce_str(reason, "quality gate failed"),
+                "escalation_path": "planner_reformulation",
+            },
+        }
+        if details:
+            payload["details"].update(details)
+
+        if self._on_planner_signal is None:
+            logger.debug(
+                "No planner signal callback configured; dropped quality failure signal "
+                "for question_id=%s",
+                question_id,
+            )
+            return
+
+        try:
+            self._on_planner_signal(payload)
+        except Exception:
+            logger.warning(
+                "on_planner_signal callback failed for quality failure signal (question_id=%s)",
+                question_id,
+                exc_info=True,
+            )
+
     def _coerce_str(self, value: Any, default: str = "") -> str:
         if not isinstance(value, str):
             return default
@@ -3249,11 +3308,25 @@ class IntentAgentOrchestrator:
                 item = existing
                 self._apply_quality_pass_to_item(item, used_candidate, records)
         else:
+            failure_reason = records[-1].reason if records else "quality gate failed"
+            failure_details = {
+                "text": text,
+                "attempts": len(records),
+            }
             self._mark_unaskable(
                 question_id,
                 source="vague_input",
-                reason=(records[-1].reason if records else "quality gate failed"),
-                details={"text": text},
+                reason=failure_reason,
+                details=failure_details,
+            )
+            self._emit_quality_gate_reformulation(
+                question_id=question_id,
+                canonical_key=canonical_key,
+                taxonomy_type=used_candidate_taxonomy,
+                question_text=used_candidate.text,
+                source="vague_input",
+                reason=failure_reason,
+                details=failure_details,
             )
 
         return item
@@ -3466,16 +3539,63 @@ class IntentAgentOrchestrator:
                     if replacement_item is not None:
                         return replacement_item
 
+            concept_terms = list(self._state.concept_map.user_introduced_terms)
+            final_candidate, records, passed = enforce_quality_gate(
+                QualityCheckCandidate(
+                    text=user_text,
+                    scenario=scenario_text,
+                    answer_spec_kind="choice",
+                    taxonomy_type=question_type,
+                ),
+                existing_item.question_id,
+                concept_map_user_terms=concept_terms,
+                validator=self._quality_validator,
+                repairer=self._question_repairer,
+                run_agent=self._run_agent,
+            )
+            self._log_quality_checks(records)
+
+            if not passed or final_candidate is None:
+                failure_reason = records[-1].reason if records else "quality gate failed"
+                failure_details = {
+                    "attempts": len(records),
+                    "redefinition_trigger": trigger_key,
+                }
+                existing_item.status = "UNASKABLE"
+                existing_item.quality_gate.status = "FAIL"
+                existing_item.quality_gate.attempts = len(records)
+                existing_item.quality_gate.last_quality_record_id = (
+                    records[-1].record_id if records else ""
+                )
+                existing_item.quality_gate.last_checked_at = datetime.now(UTC).isoformat()
+                existing_item.timestamps["updated_at"] = existing_item.quality_gate.last_checked_at
+                self._mark_unaskable(
+                    existing_item.question_id,
+                    source="redefinition",
+                    reason=failure_reason,
+                    details=failure_details,
+                )
+                self._emit_quality_gate_reformulation(
+                    question_id=existing_item.question_id,
+                    canonical_key=canonical_key,
+                    taxonomy_type=question_type,
+                    question_text=user_text,
+                    source="redefinition",
+                    reason=failure_reason,
+                    details=failure_details,
+                )
+                return existing_item
+
             if existing_item.status != "OPEN":
                 existing_item.status = "OPEN"
-            if existing_item.quality_gate.status != "PASS":
-                existing_item.quality_gate.status = "PASS"
-
             existing_item.taxonomy_type = question_type
             existing_item.scope_kind = scope_kind
             existing_item.canonical_key = canonical_key
-            existing_item.user_prompt.text = user_text
-            existing_item.user_prompt.scenario = scenario_text
+            existing_item.user_prompt.text = self._coerce_str(final_candidate.text, user_text)
+            existing_item.user_prompt.scenario = self._coerce_str(
+                final_candidate.scenario,
+                scenario_text,
+            )
             existing_item.user_prompt.why_it_matters = (
                 "This affects scope, tradeoffs, or project direction."
             )
@@ -3487,11 +3607,16 @@ class IntentAgentOrchestrator:
             existing_item.system_binding = self._normalize_question_binding(
                 existing_item.system_binding,
                 taxonomy_type=question_type,
-                text=user_text,
+                text=existing_item.user_prompt.text,
                 canonical_key=canonical_key,
             )
-
-            existing_item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
+            existing_item.quality_gate.status = "PASS"
+            existing_item.quality_gate.attempts = len(records)
+            existing_item.quality_gate.last_quality_record_id = (
+                records[-1].record_id if records else ""
+            )
+            existing_item.quality_gate.last_checked_at = datetime.now(UTC).isoformat()
+            existing_item.timestamps["updated_at"] = existing_item.quality_gate.last_checked_at
             existing_item.origins.append(
                 QuestionOrigin(
                     source_kind=source_text,
@@ -3501,6 +3626,89 @@ class IntentAgentOrchestrator:
             )
             return existing_item
 
+        concept_terms = list(self._state.concept_map.user_introduced_terms)
+        final_candidate, records, passed = enforce_quality_gate(
+            QualityCheckCandidate(
+                text=user_text,
+                scenario=scenario_text,
+                answer_spec_kind="choice",
+                taxonomy_type=question_type,
+            ),
+            question_id,
+            concept_map_user_terms=concept_terms,
+            validator=self._quality_validator,
+            repairer=self._question_repairer,
+            run_agent=self._run_agent,
+        )
+        self._log_quality_checks(records)
+
+        if not passed or final_candidate is None:
+            failed_candidate = final_candidate or QualityCheckCandidate(
+                text=user_text,
+                scenario=scenario_text,
+                answer_spec_kind="choice",
+                taxonomy_type=question_type,
+            )
+            item = QuestionItem(
+                question_id=question_id,
+                status="UNASKABLE",
+                taxonomy_type=question_type,
+                scope_kind=scope_kind,
+                canonical_key=canonical_key,
+                user_prompt=UserPrompt(
+                    text=self._coerce_str(failed_candidate.text, user_text),
+                    scenario=self._coerce_str(failed_candidate.scenario, scenario_text),
+                    why_it_matters="This affects scope, tradeoffs, or project direction.",
+                    answer_spec=AnswerSpec(
+                        kind="choice",
+                        choices=parsed_choices,
+                    ),
+                ),
+                system_binding=self._normalize_question_binding(
+                    {},
+                    taxonomy_type=question_type,
+                    text=self._coerce_str(failed_candidate.text, user_text),
+                    canonical_key=canonical_key,
+                ),
+                origins=[
+                    QuestionOrigin(
+                        source_kind=source_text,
+                        trace_id=source_trace,
+                        created_at=datetime.now(UTC).isoformat(),
+                    ),
+                ],
+                blockers=QuestionBlockers(
+                    severity="BLOCKING",
+                ),
+                quality_gate=QualityGateStatus(
+                    status="FAIL",
+                    attempts=len(records),
+                    last_quality_record_id=records[-1].record_id if records else "",
+                    last_checked_at=datetime.now(UTC).isoformat(),
+                ),
+            )
+            failure_reason = records[-1].reason if records else "quality gate failed"
+            failure_details = {
+                "attempts": len(records),
+                "redefinition_trigger": trigger_key,
+            }
+            self._mark_unaskable(
+                question_id,
+                source="redefinition",
+                reason=failure_reason,
+                details=failure_details,
+            )
+            self._emit_quality_gate_reformulation(
+                question_id=question_id,
+                canonical_key=canonical_key,
+                taxonomy_type=question_type,
+                question_text=item.user_prompt.text,
+                source="redefinition",
+                reason=failure_reason,
+                details=failure_details,
+            )
+            return item
+
         item = QuestionItem(
             question_id=question_id,
             status="OPEN",
@@ -3508,8 +3716,8 @@ class IntentAgentOrchestrator:
             scope_kind=scope_kind,
             canonical_key=canonical_key,
             user_prompt=UserPrompt(
-                text=user_text,
-                scenario=scenario_text,
+                text=self._coerce_str(final_candidate.text, user_text),
+                scenario=self._coerce_str(final_candidate.scenario, scenario_text),
                 why_it_matters="This affects scope, tradeoffs, or project direction.",
                 answer_spec=AnswerSpec(
                     kind="choice",
@@ -3519,7 +3727,7 @@ class IntentAgentOrchestrator:
             system_binding=self._normalize_question_binding(
                 {},
                 taxonomy_type=question_type,
-                text=user_text,
+                text=self._coerce_str(final_candidate.text, user_text),
                 canonical_key=canonical_key,
             ),
             origins=[
@@ -3534,7 +3742,8 @@ class IntentAgentOrchestrator:
             ),
             quality_gate=QualityGateStatus(
                 status="PASS",
-                attempts=1,
+                attempts=len(records),
+                last_quality_record_id=records[-1].record_id if records else "",
                 last_checked_at=datetime.now(UTC).isoformat(),
             ),
         )
@@ -3547,31 +3756,30 @@ class IntentAgentOrchestrator:
 
         if item.status != "OPEN":
             item.status = "OPEN"
-
-        # Quality gate (skip LLM unless repair is needed).
-        concept_terms = list(self._state.concept_map.user_introduced_terms)
-        final_candidate, records, passed = enforce_quality_gate(
-            QualityCheckCandidate(
-                text=item.user_prompt.text,
-                scenario=item.user_prompt.scenario,
-                answer_spec_kind="choice",
-                taxonomy_type=question_type,
-            ),
-            item.question_id,
-            concept_map_user_terms=concept_terms,
-            validator=self._quality_validator,
-            repairer=self._question_repairer,
-            run_agent=self._run_agent,
+        item.taxonomy_type = question_type
+        item.scope_kind = scope_kind
+        item.canonical_key = canonical_key
+        item.user_prompt.text = self._coerce_str(final_candidate.text, user_text)
+        item.user_prompt.scenario = self._coerce_str(final_candidate.scenario, scenario_text)
+        item.user_prompt.why_it_matters = "This affects scope, tradeoffs, or project direction."
+        item.user_prompt.answer_spec = AnswerSpec(
+            kind="choice",
+            choices=parsed_choices,
         )
-
-        if passed and final_candidate is not None:
-            item.user_prompt.text = final_candidate.text
-            item.user_prompt.scenario = final_candidate.scenario
-            item.quality_gate.status = "PASS"
-            item.quality_gate.attempts = len(records)
+        item.blockers.severity = "BLOCKING"
+        item.system_binding = self._normalize_question_binding(
+            item.system_binding,
+            taxonomy_type=question_type,
+            text=item.user_prompt.text,
+            canonical_key=canonical_key,
+        )
+        item.quality_gate.status = "PASS"
+        item.quality_gate.attempts = len(records)
+        item.quality_gate.last_quality_record_id = records[-1].record_id if records else ""
+        item.quality_gate.last_checked_at = datetime.now(UTC).isoformat()
 
         # Re-open if this was an older item that had already transitioned.
-        item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
+        item.timestamps["updated_at"] = item.quality_gate.last_checked_at
         return item
 
     # TODO [R2-6.1]: Implement produce_skeleton() — skeleton generation

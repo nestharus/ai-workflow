@@ -352,9 +352,7 @@ class QualityValidatorStrategy:
         else:
             checks.single_question = True
 
-        if candidate.answer_spec_kind in _VALID_ANSWER_SPEC_KINDS:
-            checks.bounded_answerability = True
-        else:
+        if candidate.answer_spec_kind not in _VALID_ANSWER_SPEC_KINDS:
             deterministic_failures.append(
                 f"Invalid answer_spec_kind '{candidate.answer_spec_kind}'.",
             )
@@ -444,22 +442,18 @@ class QualityValidatorStrategy:
 
         parsed_checks = QualityChecks(
             domain_language_only=bool(parsed.get("domain_language_only", False)),
-            bounded_answerability=checks.bounded_answerability,
+            bounded_answerability=bool(parsed.get("bounded_answerability", False)),
             specific_behavior=bool(parsed.get("specific_behavior", False)),
             scenario_grounded=checks.scenario_grounded
             and bool(parsed.get("scenario_grounded", False)),
             single_question=checks.single_question and bool(parsed.get("single_question", False)),
         )
-        checks.domain_language_only = parsed_checks.domain_language_only
-        checks.specific_behavior = parsed_checks.specific_behavior
-        checks.scenario_grounded = parsed_checks.scenario_grounded
-        checks.single_question = parsed_checks.single_question
         reason = str(parsed.get("reason", ""))
-        result = "PASS" if checks.all_pass else "FAIL"
+        result = "PASS" if parsed_checks.all_pass else "FAIL"
 
         return QualityCheckRecord(
             candidate=candidate,
-            checks=checks,
+            checks=parsed_checks,
             result=result,
             reason=reason,
         )
