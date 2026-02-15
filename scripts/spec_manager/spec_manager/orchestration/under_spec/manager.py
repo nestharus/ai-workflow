@@ -166,11 +166,16 @@ class UnderSpecManager:
         planner: Any = None,
         run_id: str = "",
     ) -> None:
+        if not isinstance(run_id, str):
+            raise TypeError("UnderSpecManager run_id must be a string")
+        normalized_run_id = run_id.strip()
+        if not normalized_run_id:
+            raise ValueError("UnderSpecManager requires a non-empty run_id")
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
         self._planner = planner
-        self._run_id = run_id
+        self._run_id = normalized_run_id
         self._last_constraint_request_path = ""
 
     def resolve(

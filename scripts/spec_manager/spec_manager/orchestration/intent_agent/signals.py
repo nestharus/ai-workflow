@@ -33,8 +33,21 @@ VALID_SOURCE_KINDS = frozenset(
         "UNDER_SPEC",
         "PROMOTION_LOOP",
         "PDD_LIFECYCLE",
-        "INTENT_AGENT",
         "SLICE_AGENT",
+    }
+)
+VALID_TAXONOMY_HINTS = frozenset(
+    {
+        "INTENT",
+        "CONSTRAINT",
+        "TRADEOFF",
+        "SCOPE",
+        "VALIDATION",
+        "ARCHITECTURE",
+        "IMPLEMENTATION",
+        "DESIGN_PATTERN",
+        "OPTIMIZATION",
+        "UNKNOWN",
     }
 )
 
@@ -46,11 +59,37 @@ def _validate_source_kind(
     source_payload: dict[str, Any],
 ) -> None:
     """Enforce authoritative source-kind values with traceable error context."""
-    if source_kind and source_kind not in VALID_SOURCE_KINDS:
+    if not isinstance(source_kind, str) or not source_kind.strip():
+        raise ValueError(
+            "Signal record missing required field: source.kind; "
+            f"uq_id={uq_id!r}; source={source_payload!r}"
+        )
+    normalized = source_kind.strip()
+    if normalized not in VALID_SOURCE_KINDS:
         raise ValueError(
             "Signal has invalid source.kind: "
-            f"{source_kind!r}; uq_id={uq_id!r}; source={source_payload!r}; "
+            f"{normalized!r}; uq_id={uq_id!r}; source={source_payload!r}; "
             f"expected one of {sorted(VALID_SOURCE_KINDS)}"
+        )
+
+
+def _validate_taxonomy_hint(
+    taxonomy_hint: str,
+    *,
+    uq_id: str,
+    question_payload: dict[str, Any],
+) -> None:
+    if not isinstance(taxonomy_hint, str):
+        raise TypeError(
+            "Signal record has invalid question.taxonomy_hint; "
+            f"uq_id={uq_id!r}; question={question_payload!r}"
+        )
+    normalized = taxonomy_hint.strip()
+    if normalized not in VALID_TAXONOMY_HINTS:
+        raise ValueError(
+            "Signal has invalid question.taxonomy_hint: "
+            f"{normalized!r}; uq_id={uq_id!r}; question={question_payload!r}; "
+            f"expected one of {sorted(VALID_TAXONOMY_HINTS)}"
         )
 
 
@@ -58,9 +97,7 @@ def _validate_source_kind(
 class SignalSource:
     """Source of a UserQuestionSignal."""
 
-    kind: str = (
-        ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | INTENT_AGENT | SLICE_AGENT
-    )
+    kind: str = ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | SLICE_AGENT
     trace_id: str = ""
     slice_id: str = ""
     layer: str = ""
@@ -131,10 +168,22 @@ class UserQuestionSignal:
     payload: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.uq_version, int) or self.uq_version < 1:
+            raise ValueError(
+                "Signal record has invalid uq_version; expected integer >= 1, "
+                f"received {self.uq_version!r}"
+            )
         if not self.uq_id:
             self.uq_id = f"uq_{uuid.uuid4().hex[:12]}"
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
+        if not isinstance(self.run_id, str) or not self.run_id.strip():
+            raise ValueError("Signal record missing required field: run_id")
+        self.run_id = self.run_id.strip()
+        if not isinstance(self.created_at, str) or not self.created_at.strip():
+            raise ValueError("Signal record missing required field: created_at")
+        self.source.kind = self.source.kind.strip()
+        self.question.taxonomy_hint = self.question.taxonomy_hint.strip()
         _validate_source_kind(
             self.source.kind,
             uq_id=self.uq_id,
@@ -144,6 +193,16 @@ class UserQuestionSignal:
                 "slice_id": self.source.slice_id,
                 "layer": self.source.layer,
                 "signal_id": self.source.signal_id,
+            },
+        )
+        _validate_taxonomy_hint(
+            self.question.taxonomy_hint,
+            uq_id=self.uq_id,
+            question_payload={
+                "text": self.question.text,
+                "taxonomy_hint": self.question.taxonomy_hint,
+                "canonical_key_hint": self.question.canonical_key_hint,
+                "answer_spec_hint": self.question.answer_spec_hint,
             },
         )
 
@@ -211,28 +270,24 @@ class UserQuestionSignal:
             uq_id=uq_id,
             source_payload=src,
         )
-        if "trace_id" not in src:
-            raise TypeError("Signal record missing required field: source.trace_id")
-        if not isinstance(src["trace_id"], str):
+        trace_id = src.get("trace_id", "")
+        if not isinstance(trace_id, str):
             raise TypeError("Signal record has invalid source.trace_id")
-        if "slice_id" not in src:
-            raise TypeError("Signal record missing required field: source.slice_id")
-        if not isinstance(src["slice_id"], str):
+        slice_id = src.get("slice_id", "")
+        if not isinstance(slice_id, str):
             raise TypeError("Signal record has invalid source.slice_id")
-        if "layer" not in src:
-            raise TypeError("Signal record missing required field: source.layer")
-        if not isinstance(src["layer"], str):
+        layer = src.get("layer", "")
+        if not isinstance(layer, str):
             raise TypeError("Signal record has invalid source.layer")
-        if "signal_id" not in src:
-            raise TypeError("Signal record missing required field: source.signal_id")
-        if not isinstance(src["signal_id"], str):
+        signal_id = src.get("signal_id", "")
+        if not isinstance(signal_id, str):
             raise TypeError("Signal record has invalid source.signal_id")
         source = SignalSource(
             kind=source_kind,
-            trace_id=src["trace_id"],
-            slice_id=src["slice_id"],
-            layer=src["layer"],
-            signal_id=src["signal_id"],
+            trace_id=trace_id,
+            slice_id=slice_id,
+            layer=layer,
+            signal_id=signal_id,
         )
 
         q = d.get("question")
@@ -241,23 +296,24 @@ class UserQuestionSignal:
         question_text = q.get("text")
         if not isinstance(question_text, str) or not question_text.strip():
             raise TypeError("Signal record missing required field: question.text")
-        if "taxonomy_hint" not in q:
-            raise TypeError("Signal record missing required field: question.taxonomy_hint")
-        if not isinstance(q["taxonomy_hint"], str):
+        taxonomy_hint = q.get("taxonomy_hint", "UNKNOWN")
+        if not isinstance(taxonomy_hint, str):
             raise TypeError("Signal record has invalid question.taxonomy_hint")
-        if "canonical_key_hint" not in q:
-            raise TypeError("Signal record missing required field: question.canonical_key_hint")
-        if not isinstance(q["canonical_key_hint"], str):
+        _validate_taxonomy_hint(
+            taxonomy_hint,
+            uq_id=uq_id,
+            question_payload=q,
+        )
+        canonical_key_hint = q.get("canonical_key_hint", "")
+        if not isinstance(canonical_key_hint, str):
             raise TypeError("Signal record has invalid question.canonical_key_hint")
-        if "answer_spec_hint" not in q:
-            raise TypeError("Signal record missing required field: question.answer_spec_hint")
-        answer_spec_hint = q["answer_spec_hint"]
+        answer_spec_hint = q.get("answer_spec_hint", {})
         if not isinstance(answer_spec_hint, dict):
             raise TypeError("Signal record has invalid question.answer_spec_hint")
         question = SignalQuestion(
             text=question_text,
-            taxonomy_hint=q["taxonomy_hint"],
-            canonical_key_hint=q["canonical_key_hint"],
+            taxonomy_hint=taxonomy_hint,
+            canonical_key_hint=canonical_key_hint,
             answer_spec_hint=answer_spec_hint,
         )
 
@@ -287,9 +343,7 @@ class UserQuestionSignal:
             blocked_slices=blocked_slices,
         )
 
-        if "spec_refs" not in ctx:
-            raise TypeError("Signal record missing required field: context.spec_refs")
-        raw_spec_refs = ctx["spec_refs"]
+        raw_spec_refs = ctx.get("spec_refs", [])
         if not isinstance(raw_spec_refs, list):
             raise TypeError("Signal record has invalid context.spec_refs")
         spec_refs: list[SpecRefItem] = []
@@ -317,9 +371,7 @@ class UserQuestionSignal:
                 )
             )
 
-        if "code_refs" not in ctx:
-            raise TypeError("Signal record missing required field: context.code_refs")
-        raw_code_refs = ctx["code_refs"]
+        raw_code_refs = ctx.get("code_refs", [])
         if not isinstance(raw_code_refs, list):
             raise TypeError("Signal record has invalid context.code_refs")
         code_refs: list[CodeRefItem] = []
@@ -352,29 +404,28 @@ class UserQuestionSignal:
             spec_refs=spec_refs,
             code_refs=code_refs,
         )
-        uq_version = d.get("uq_version", 1)
-        if not isinstance(uq_version, int):
+        uq_version = d.get("uq_version")
+        if not isinstance(uq_version, int) or uq_version < 1:
             raise TypeError("Signal record has invalid uq_version")
-        run_id = d.get("run_id", "")
-        if not isinstance(run_id, str):
-            raise TypeError("Signal record has invalid run_id")
-        created_at = d.get("created_at", "")
-        if not isinstance(created_at, str):
-            raise TypeError("Signal record has invalid created_at")
+        run_id = d.get("run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise TypeError("Signal record missing required field: run_id")
+        created_at = d.get("created_at")
+        if not isinstance(created_at, str) or not created_at.strip():
+            raise TypeError("Signal record missing required field: created_at")
         payload = d.get("payload", {})
         if not isinstance(payload, dict):
             raise TypeError("Signal record has invalid payload")
-
-        sig = cls.__new__(cls)
-        sig.uq_version = uq_version
-        sig.uq_id = uq_id
-        sig.run_id = run_id
-        sig.created_at = created_at
-        sig.source = source
-        sig.question = question
-        sig.context = context
-        sig.payload = payload
-        return sig
+        return cls(
+            uq_version=uq_version,
+            uq_id=uq_id,
+            run_id=run_id.strip(),
+            created_at=created_at,
+            source=source,
+            question=question,
+            context=context,
+            payload=payload,
+        )
 
 
 @dataclass

@@ -427,7 +427,99 @@ class Planner:
         )
 
     @staticmethod
-    def _derive_review_requirement(outputs: dict[str, Any]) -> tuple[bool, str]:
+    def _extract_review_questions(outputs: dict[str, Any]) -> list[dict[str, Any]]:
+        review_questions: list[dict[str, Any]] = []
+
+        decision_requirements = outputs.get("decision_requirements")
+        if isinstance(decision_requirements, list):
+            for requirement in decision_requirements:
+                if not isinstance(requirement, dict):
+                    continue
+                requirement_authority = (
+                    str(requirement.get("authority_required", "")).strip().lower()
+                )
+                if requirement_authority not in {"human_required", "user_required"}:
+                    continue
+                question_text = (
+                    str(
+                        requirement.get("question")
+                        or requirement.get("user_question")
+                        or requirement.get("question_text")
+                        or "",
+                    ).strip()
+                    or "Planner requires user authority for a decision."
+                )
+                reason = (
+                    str(requirement.get("reason", "")).strip()
+                    or f"authority_required={requirement_authority}"
+                )
+                payload: dict[str, Any] = {}
+                requirement_ids = Planner._coerce_id_list(
+                    requirement.get("decision_requirement_id")
+                )
+                requirement_ids.extend(
+                    Planner._coerce_id_list(requirement.get("decision_requirement_ids"))
+                )
+                requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_id")))
+                requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_ids")))
+                requirement_ids = Planner._dedupe_preserve(requirement_ids)
+                if requirement_ids:
+                    payload["decision_requirement_ids"] = requirement_ids
+                requirement_decision_ids = Planner._coerce_id_list(requirement.get("decision_id"))
+                requirement_decision_ids.extend(
+                    Planner._coerce_id_list(requirement.get("decision_ids"))
+                )
+                requirement_decision_ids = Planner._dedupe_preserve(requirement_decision_ids)
+                if requirement_decision_ids:
+                    payload["decision_ids"] = requirement_decision_ids
+                requirement_canonical_keys = Planner._coerce_id_list(
+                    requirement.get("canonical_key")
+                )
+                requirement_canonical_keys.extend(
+                    Planner._coerce_id_list(requirement.get("canonical_keys"))
+                )
+                requirement_canonical_keys = Planner._dedupe_preserve(requirement_canonical_keys)
+                if requirement_canonical_keys:
+                    payload["canonical_keys"] = requirement_canonical_keys
+                review_questions.append(
+                    {
+                        "question_text": question_text,
+                        "reason": reason,
+                        "payload": payload,
+                    }
+                )
+
+        under_spec_events = outputs.get("under_spec_events")
+        if isinstance(under_spec_events, list):
+            for event in under_spec_events:
+                if not isinstance(event, dict):
+                    continue
+                event_type = str(event.get("type", "")).strip().lower()
+                event_authority = str(event.get("authority_required", "")).strip().lower()
+                if event_type not in {
+                    "authority_required",
+                    "decision_required",
+                } and event_authority not in {
+                    "human_required",
+                    "user_required",
+                }:
+                    continue
+                question_text = str(event.get("question", "")).strip()
+                if not question_text:
+                    question_text = "Planner requires user authority for an under-spec decision."
+                reason = str(event.get("reason", "")).strip() or "human authority required"
+                payload: dict[str, Any] = {}
+                under_spec_event_id = str(event.get("event_id", "")).strip()
+                if under_spec_event_id:
+                    payload["under_spec_event_id"] = under_spec_event_id
+                review_questions.append(
+                    {
+                        "question_text": question_text,
+                        "reason": reason,
+                        "payload": payload,
+                    }
+                )
+
         explicit_flags = (
             "review_required",
             "requires_review",
@@ -435,9 +527,6 @@ class Planner:
             "needs_human_review",
             "human_authority_required",
         )
-        if any(Planner._coerce_bool(outputs.get(flag)) for flag in explicit_flags):
-            return True, "planner flagged review_required"
-
         authority_required = str(outputs.get("authority_required", "")).strip().lower()
         authority_payload = outputs.get("authority")
         if not authority_required and isinstance(authority_payload, dict):
@@ -450,54 +539,38 @@ class Planner:
                 .strip()
                 .lower()
             )
-        if authority_required in {"human_required", "user_required"}:
-            return True, f"authority_required={authority_required}"
+        if review_questions:
+            return review_questions
 
-        under_spec_events = outputs.get("under_spec_events")
-        if isinstance(under_spec_events, list):
-            for event in under_spec_events:
-                if not isinstance(event, dict):
-                    continue
-                event_type = str(event.get("type", "")).strip().lower()
-                event_authority = str(event.get("authority_required", "")).strip().lower()
-                if event_type in {"authority_required", "decision_required"} or event_authority in {
-                    "human_required",
-                    "user_required",
-                }:
-                    reason = str(event.get("reason", "")).strip() or "human authority required"
-                    return True, reason
+        review_required = any(Planner._coerce_bool(outputs.get(flag)) for flag in explicit_flags)
+        if not review_required and authority_required in {"human_required", "user_required"}:
+            review_required = True
+        if not review_required:
+            return []
 
-        decision_requirements = outputs.get("decision_requirements")
-        if isinstance(decision_requirements, list):
-            for requirement in decision_requirements:
-                if not isinstance(requirement, dict):
-                    continue
-                requirement_authority = (
-                    str(requirement.get("authority_required", "")).strip().lower()
-                )
-                if requirement_authority in {"human_required", "user_required"}:
-                    reason = (
-                        str(requirement.get("reason", "")).strip() or "human authority required"
-                    )
-                    return True, reason
-
-        return False, ""
-
-    @staticmethod
-    def _extract_review_question_text(outputs: dict[str, Any], fallback: str) -> str:
+        question_text = ""
         for key in ("review_question_text", "user_question", "question"):
-            text = str(outputs.get(key, "")).strip()
-            if text:
-                return text
-        under_spec_events = outputs.get("under_spec_events")
-        if isinstance(under_spec_events, list):
-            for event in under_spec_events:
-                if not isinstance(event, dict):
-                    continue
-                text = str(event.get("question", "")).strip()
-                if text:
-                    return text
-        return fallback
+            candidate = str(outputs.get(key, "")).strip()
+            if candidate:
+                question_text = candidate
+                break
+        if not question_text:
+            question_text = "Planner reached a decision that requires user authority review."
+
+        reason = str(outputs.get("review_reason", "")).strip()
+        if not reason:
+            if authority_required in {"human_required", "user_required"}:
+                reason = f"authority_required={authority_required}"
+            else:
+                reason = "planner flagged review_required"
+
+        return [
+            {
+                "question_text": question_text,
+                "reason": reason,
+                "payload": {},
+            }
+        ]
 
     @staticmethod
     def _build_review_signal_payload(
@@ -510,12 +583,27 @@ class Planner:
         canonical_keys: list[str],
         decision_ids: list[str],
         constraint_ids: list[str],
+        signal_sequence: int,
         question_text: str,
         reason: str,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        signal_id = trace_id or f"planner-review-{uuid.uuid4().hex[:12]}"
+        if trace_id:
+            signal_id = f"{trace_id}:review:{signal_sequence}"
+        else:
+            signal_id = f"planner-review-{uuid.uuid4().hex[:12]}"
         token = re.sub(r"[^a-zA-Z0-9._-]+", "_", decision_key or signal_id).strip("._-")
         canonical_key_hint = f"planner.review.{token}" if token else "planner.review"
+        payload = {
+            "event_kind": "decision_review_required",
+            "reason": reason,
+            "decision_key": decision_key,
+            "decision_ids": list(decision_ids),
+            "constraint_ids": list(constraint_ids),
+            "canonical_keys": list(canonical_keys),
+        }
+        if extra_payload:
+            payload.update(extra_payload)
         return {
             "uq_version": 1,
             "uq_id": f"uq_{uuid.uuid4().hex[:12]}",
@@ -533,7 +621,7 @@ class Planner:
                 "taxonomy_hint": "VALIDATION",
                 "canonical_key_hint": canonical_key_hint,
                 "answer_spec_hint": {
-                    "kind": "choice",
+                    "preferred_kind": "choice",
                     "choices": [
                         {"id": "accept_auto", "label": "Accept planner decision"},
                         {"id": "revise_decision", "label": "Revise decision with planner"},
@@ -549,14 +637,7 @@ class Planner:
                 "spec_refs": [],
                 "code_refs": [],
             },
-            "payload": {
-                "event_kind": "decision_review_required",
-                "reason": reason,
-                "decision_key": decision_key,
-                "decision_ids": list(decision_ids),
-                "constraint_ids": list(constraint_ids),
-                "canonical_keys": list(canonical_keys),
-            },
+            "payload": payload,
         }
 
     def _emit_decision_recorded_event(
@@ -575,13 +656,15 @@ class Planner:
         decision_ids, constraint_ids, canonical_keys = self._extract_update_identifiers(
             safe_outputs
         )
-        review_required, review_reason = self._derive_review_requirement(safe_outputs)
+        review_questions = self._extract_review_questions(safe_outputs)
+        review_required = bool(review_questions)
+        review_reason = review_questions[0]["reason"] if review_questions else ""
 
         decision = getattr(trace, "decision", None)
         decision_text = ""
         if decision is not None:
             decision_text = str(getattr(decision, "decision_text", "") or "")
-        event: dict[str, Any] = {
+        base_event: dict[str, Any] = {
             "event_kind": "decision_recorded",
             "event_id": str(getattr(trace, "trace_id", "") or ""),
             "trace_id": str(getattr(trace, "trace_id", "") or ""),
@@ -599,31 +682,48 @@ class Planner:
             "review_required": review_required,
             "review_reason": review_reason,
         }
-        if review_required:
-            default_question = "Planner reached a decision that requires user authority review."
-            question_text = self._extract_review_question_text(
-                safe_outputs, fallback=default_question
-            )
-            event["user_question_signal"] = self._build_review_signal_payload(
-                run_id=context.run_id,
-                trace_id=event["trace_id"],
-                slice_id=context.slice_id,
-                layer=event["layer"],
-                decision_key=decision_key,
-                canonical_keys=canonical_keys,
-                decision_ids=decision_ids,
-                constraint_ids=constraint_ids,
-                question_text=question_text,
-                reason=review_reason or "human authority required",
-            )
-        try:
-            self._on_decision_recorded(event)
-        except Exception:
-            logger.warning(
-                "on_decision_recorded callback failed for trace=%s",
-                event["trace_id"],
-                exc_info=True,
-            )
+        events_to_emit: list[dict[str, Any]] = []
+        if review_questions:
+            for sequence, review_question in enumerate(review_questions, start=1):
+                event = dict(base_event)
+                event["event_id"] = (
+                    f"{base_event['event_id']}:{sequence}"
+                    if base_event["event_id"]
+                    else f"planner-review-event-{uuid.uuid4().hex[:12]}"
+                )
+                event["created_at"] = datetime.now(UTC).isoformat()
+                event["review_reason"] = str(review_question["reason"]).strip()
+                event["user_question_signal"] = self._build_review_signal_payload(
+                    run_id=context.run_id,
+                    trace_id=event["trace_id"],
+                    slice_id=context.slice_id,
+                    layer=event["layer"],
+                    decision_key=decision_key,
+                    canonical_keys=canonical_keys,
+                    decision_ids=decision_ids,
+                    constraint_ids=constraint_ids,
+                    signal_sequence=sequence,
+                    question_text=str(review_question["question_text"]).strip(),
+                    reason=str(review_question["reason"]).strip() or "human authority required",
+                    extra_payload=(
+                        review_question["payload"]
+                        if isinstance(review_question.get("payload"), dict)
+                        else {}
+                    ),
+                )
+                events_to_emit.append(event)
+        else:
+            events_to_emit.append(base_event)
+
+        for event in events_to_emit:
+            try:
+                self._on_decision_recorded(event)
+            except Exception:
+                logger.warning(
+                    "on_decision_recorded callback failed for trace=%s",
+                    event["trace_id"],
+                    exc_info=True,
+                )
 
     def _persist_trace(self, trace: Any) -> None:
         """Persist trace artifacts; failure is a hard planner error."""
