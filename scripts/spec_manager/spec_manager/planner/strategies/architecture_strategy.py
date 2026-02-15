@@ -154,7 +154,8 @@ class ArchitecturePlannerStrategy:
                         if fact.constraint_id in existing_constraint_ids:
                             continue
                         session.new_constraints.append(fact)
-                        auth_constraints.append(fact)
+                        if fact.authority_required == "planner_ok":
+                            auth_constraints.append(fact)
                         existing_constraint_ids.add(fact.constraint_id)
 
             if outcome.under_spec_events:
@@ -435,11 +436,13 @@ class ArchitecturePlannerStrategy:
         question = f"Architecture decision constraint {constraint_id}"
         answer = ""
         resolved_dimension = dimension
+        resolved_authority = "planner_ok" if dimension == "software" else "human_required"
 
         if isinstance(payload, dict):
             text_question = str(payload.get("question", "")).strip()
             text_answer = str(payload.get("answer", payload.get("value", ""))).strip()
             payload_dimension = str(payload.get("dimension", "")).strip().lower()
+            payload_authority_required = str(payload.get("authority_required", "")).strip().lower()
             if text_question:
                 question = text_question
             answer = text_answer or json.dumps(payload, sort_keys=True)
@@ -452,6 +455,10 @@ class ArchitecturePlannerStrategy:
                 "operational",
             }:
                 resolved_dimension = payload_dimension
+            if payload_authority_required in {"planner_ok", "human_required"}:
+                resolved_authority = payload_authority_required
+            elif resolved_dimension != "software":
+                resolved_authority = "human_required"
         elif isinstance(payload, str):
             answer = payload.strip()
         elif payload is not None:
@@ -468,7 +475,7 @@ class ArchitecturePlannerStrategy:
             confidence=1.0,
             validated=True,
             dimension=resolved_dimension,  # type: ignore[arg-type]
-            authority_required="planner_ok",
+            authority_required=resolved_authority,  # type: ignore[arg-type]
             decision_type="architecture_decision",
             scope=scope or "system",
             applies_to_layers=["L2"],

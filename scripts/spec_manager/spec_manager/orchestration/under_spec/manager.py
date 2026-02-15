@@ -202,8 +202,14 @@ class UnderSpecManager:
 
         # Phase 1: Check existing constraints
         covered, uncovered = self._store.find_covering(slice_id, events)
+        refinement_candidates = self._build_refinement_candidates(
+            slice_id=slice_id,
+            covered_events=covered,
+        )
+        resolution_targets = uncovered + refinement_candidates
+        uncovered_event_ids = {event.event_id for event in uncovered if event.event_id}
 
-        if not uncovered:
+        if not resolution_targets:
             logger.info(
                 "All %d under-spec events covered by existing constraints",
                 len(covered),
@@ -211,24 +217,25 @@ class UnderSpecManager:
             return UnderSpecOutcome(resolved=covered)
 
         logger.info(
-            "%d covered, %d uncovered under-spec events for slice '%s'",
+            "%d covered, %d uncovered, %d refinable under-spec events for slice '%s'",
             len(covered),
             len(uncovered),
+            len(refinement_candidates),
             slice_id,
         )
 
-        # Phase 2: Attempt resolution of uncovered events
+        # Phase 2: Attempt resolution for uncovered events and eligible refinements.
         self._interactive_questions_emitted = False
 
         if self._mode == "interactive":
             constraints, blocked = self._resolve_interactive(
                 slice_id,
-                uncovered,
+                resolution_targets,
                 layer=layer,
             )
             resolution = _ResolutionPayload(constraints=constraints, blocked=blocked)
         else:
-            resolution = self._resolve_auto(slice_id, uncovered, layer=layer)
+            resolution = self._resolve_auto(slice_id, resolution_targets, layer=layer)
             if resolution.needs_interactive_review:
                 logger.info(
                     "Escalating %d under-spec expansion candidate(s) to interactive "
@@ -244,7 +251,11 @@ class UnderSpecManager:
                 resolution.blocked.extend(escalated_blocked)
 
         new_constraints = resolution.constraints
-        still_blocked = resolution.blocked
+        still_blocked = [
+            event
+            for event in resolution.blocked
+            if event.event_id and event.event_id in uncovered_event_ids
+        ]
         routed_work_items = resolution.routing
         routed_monitors = resolution.monitors
         expansions = resolution.expansions
@@ -261,16 +272,18 @@ class UnderSpecManager:
                     c.constraint_id,
                 )
                 # Find the event it was supposed to resolve
-                matching = [e for e in uncovered if e.event_id == c.constraint_id]
+                resolved_event_id = self._constraint_event_id(c)
+                if resolved_event_id not in uncovered_event_ids:
+                    continue
+                matching = [e for e in uncovered if e.event_id == resolved_event_id]
                 still_blocked.extend(matching)
 
-        constraint_file_path = self._persist_constraints_via_planner(
+        constraint_file_path, persisted_constraint_ids = self._persist_constraints_via_planner(
             slice_id=slice_id,
             layer=layer,
             constraints=validated,
         )
-        persisted_ids = {c.constraint_id for c in validated} if constraint_file_path else set()
-        if validated and not persisted_ids:
+        if validated and not persisted_constraint_ids:
             logger.warning(
                 "Planner persistence unavailable for %d under-spec constraints (slice=%s); "
                 "keeping events in blocked state",
@@ -280,12 +293,35 @@ class UnderSpecManager:
             still_blocked.extend(
                 event
                 for event in uncovered
-                if event.event_id in {c.constraint_id for c in validated}
+                if event.event_id
+                in {
+                    self._constraint_event_id(c)
+                    for c in validated
+                    if self._constraint_event_id(c) in uncovered_event_ids
+                }
             )
             validated = []
+            persisted_constraint_ids = set()
+
+        persisted_event_ids = {
+            self._constraint_event_id(constraint)
+            for constraint in validated
+            if constraint.constraint_id in persisted_constraint_ids
+            and self._constraint_event_id(constraint)
+        }
+        missing_uncovered_event_ids = {
+            self._constraint_event_id(constraint)
+            for constraint in validated
+            if constraint.constraint_id not in persisted_constraint_ids
+            and self._constraint_event_id(constraint) in uncovered_event_ids
+        }
+        if missing_uncovered_event_ids:
+            still_blocked.extend(
+                event for event in uncovered if event.event_id in missing_uncovered_event_ids
+            )
 
         still_blocked = self._dedupe_events(still_blocked)
-        newly_resolved = [e for e in uncovered if e.event_id in persisted_ids]
+        newly_resolved = [e for e in uncovered if e.event_id in persisted_event_ids]
         decisions = self._build_decisions(validated)
         decisions.extend(self._build_expansion_decisions(expansions))
 
@@ -510,11 +546,17 @@ class UnderSpecManager:
                 confidence = 0.7
                 trace: list[str] = []
                 authority_required = "planner_ok"
+                constraint_id = ""
+                question = ""
+                status = "ACTIVE"
+                supersedes: list[str] = []
 
                 if isinstance(value, str):
                     answer = value.strip()
                 elif isinstance(value, dict):
                     answer = str(value.get("answer", "")).strip()
+                    question = str(value.get("question", "")).strip()
+                    constraint_id = str(value.get("constraint_id", "")).strip()
                     raw_confidence = value.get("confidence")
                     if isinstance(raw_confidence, (int, float)):
                         confidence = float(raw_confidence)
@@ -524,10 +566,23 @@ class UnderSpecManager:
                     authority_required = str(value.get("authority_required", "planner_ok")).strip()
                     if not authority_required:
                         authority_required = "planner_ok"
+                    status = str(value.get("status", "ACTIVE")).strip().upper() or "ACTIVE"
+                    if status not in {"ACTIVE", "SUPERSEDED"}:
+                        status = "ACTIVE"
+                    supersedes_raw = value.get("supersedes", [])
+                    if isinstance(supersedes_raw, list):
+                        supersedes = [
+                            str(item).strip() for item in supersedes_raw if str(item).strip()
+                        ]
+                    elif isinstance(supersedes_raw, str):
+                        supersedes = [supersedes_raw.strip()] if supersedes_raw.strip() else []
 
                 if answer:
                     matching = [e for e in events if e.event_id == key or e.question == key]
                     for event in matching:
+                        resolved_event_id = event.event_id
+                        effective_constraint_id = constraint_id or resolved_event_id
+                        question_text = question or event.question
                         gate_reason = ""
                         if authority_required != "planner_ok":
                             gate_reason = "human_authority_required"
@@ -562,16 +617,20 @@ class UnderSpecManager:
                             )
                         if isinstance(value, dict):
                             event_trace.append("resolution_kind=decision_constraint")
+                        if resolved_event_id:
+                            event_trace.append(f"resolves_event_id={resolved_event_id}")
                         event_trace.append("auto_resolve_gate=passed")
                         constraints.append(
                             Constraint(
-                                constraint_id=event.event_id,
-                                question=event.question,
+                                constraint_id=effective_constraint_id,
+                                question=question_text,
                                 answer=answer,
                                 source="planner",
                                 confidence=confidence,
                                 validated=False,
                                 authority_required=authority_required,
+                                status=status,
+                                supersedes=supersedes,
                                 trace=event_trace,
                             )
                         )
@@ -718,32 +777,20 @@ class UnderSpecManager:
                 response = coordinator.research(ambiguity, self._workspace)
 
                 if response.response_text.strip():
-                    constraints.append(
-                        Constraint(
-                            constraint_id=event.event_id,
-                            question=event.question,
-                            answer=response.response_text,
-                            source="research_coordinator",
-                            confidence=0.7,
-                            validated=False,
-                            trace=[
-                                token
-                                for token in [
-                                    "under_spec_resolution_mode=legacy_coordinator_fallback",
-                                    f"slice_id={slice_id}",
-                                    f"signal_id={event.event_id}",
-                                    (
-                                        f"spec_ref={event.source_file}:{event.source_line or 1}"
-                                        if event.source_file
-                                        else ""
-                                    ),
-                                ]
-                                if token
-                            ],
-                        )
-                    )
+                    blocked_event = UnderSpecEvent.from_dict(event.to_dict())
+                    gate_ctx = dict(blocked_event.context or {})
+                    gate_ctx["auto_resolve_gate"] = {
+                        "decision": "blocked",
+                        "reason": "legacy_fallback_requires_human_authority",
+                        "authority_required": "human_required",
+                        "confidence": 0.7,
+                    }
+                    gate_ctx["legacy_fallback_suggestion"] = response.response_text.strip()
+                    blocked_event.context = gate_ctx
+                    blocked.append(blocked_event)
                     logger.info(
-                        "Under-spec fallback resolved event=%s for slice=%s via legacy coordinator",
+                        "Under-spec fallback suggested an answer for event=%s slice=%s; "
+                        "routing as human-required",
                         event.event_id,
                         slice_id,
                     )
@@ -1132,11 +1179,11 @@ class UnderSpecManager:
         slice_id: str,
         layer: str,
         constraints: list[Constraint],
-    ) -> str:
+    ) -> tuple[str, set[str]]:
         if not constraints:
-            return ""
+            return "", set()
         if self._planner is None or not hasattr(self._planner, "persist_under_spec_constraints"):
-            return ""
+            return "", set()
         try:
             result = self._planner.persist_under_spec_constraints(
                 run_id=self._run_id,
@@ -1151,10 +1198,61 @@ class UnderSpecManager:
                 layer,
                 exc_info=True,
             )
-            return ""
+            return "", set()
         if not isinstance(result, dict):
-            return ""
-        return str(result.get("constraints_path", "")).strip()
+            return "", set()
+        persisted_constraint_ids_raw = result.get("constraint_ids", [])
+        persisted_constraint_ids = (
+            {str(item).strip() for item in persisted_constraint_ids_raw if str(item).strip()}
+            if isinstance(persisted_constraint_ids_raw, list)
+            else set()
+        )
+        return str(result.get("constraints_path", "")).strip(), persisted_constraint_ids
+
+    @staticmethod
+    def _constraint_event_id(constraint: Constraint) -> str:
+        for token in constraint.trace:
+            token_text = str(token).strip()
+            if token_text.startswith("resolves_event_id="):
+                return token_text.split("=", 1)[1].strip()
+        return str(constraint.constraint_id).strip()
+
+    def _build_refinement_candidates(
+        self,
+        *,
+        slice_id: str,
+        covered_events: list[UnderSpecEvent],
+    ) -> list[UnderSpecEvent]:
+        if self._mode != "auto" or self._planner is None:
+            return []
+        if not covered_events:
+            return []
+
+        constraints = self._store.load(slice_id)
+        active_constraints = {
+            constraint.constraint_id: constraint
+            for constraint in constraints
+            if str(constraint.constraint_id).strip()
+            and str(constraint.status).strip().upper() == "ACTIVE"
+        }
+
+        refinement_candidates: list[UnderSpecEvent] = []
+        for event in covered_events:
+            active = active_constraints.get(event.event_id)
+            if active is None:
+                continue
+            refined_event = UnderSpecEvent.from_dict(event.to_dict())
+            ctx = dict(refined_event.context or {})
+            ctx["refinement_candidate"] = {
+                "existing_constraint_id": active.constraint_id,
+                "existing_question": active.question,
+                "existing_answer": active.answer,
+                "existing_trace": list(active.trace),
+                "existing_supersedes": list(active.supersedes),
+            }
+            refined_event.context = ctx
+            refinement_candidates.append(refined_event)
+        return refinement_candidates
 
     @staticmethod
     def _extract_options(context: dict[str, Any]) -> list[str]:

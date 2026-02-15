@@ -1488,6 +1488,28 @@ class Planner:
         target_slice = str(slice_id or "__system__").strip() or "__system__"
         layer_token = str(layer or "any").strip().lower()
         run_token = str(run_id or "").strip()
+        authoritative_facts = self._constraints_adapter.load_merged(target_slice)
+
+        existing_active_by_canonical: dict[str, list[ConstraintFact]] = {}
+        existing_active_by_question: dict[str, list[ConstraintFact]] = {}
+        for existing_fact in authoritative_facts:
+            if str(getattr(existing_fact, "status", "ACTIVE")).strip().upper() != "ACTIVE":
+                continue
+            existing_canonical_key = self._extract_trace_tag(
+                getattr(existing_fact, "trace", []), "canonical_key"
+            )
+            existing_canonical_norm = self._normalize_for_compare(existing_canonical_key)
+            if existing_canonical_norm:
+                existing_active_by_canonical.setdefault(existing_canonical_norm, []).append(
+                    existing_fact
+                )
+            existing_question_norm = self._normalize_for_compare(
+                getattr(existing_fact, "question", "")
+            )
+            if existing_question_norm:
+                existing_active_by_question.setdefault(existing_question_norm, []).append(
+                    existing_fact
+                )
 
         for row in constraints:
             if not isinstance(row, dict):
@@ -1503,10 +1525,36 @@ class Planner:
             if not canonical_key:
                 canonical_key = f"underspec.{constraint_id}"
                 trace.append(f"canonical_key={canonical_key}")
+            canonical_key_norm = self._normalize_for_compare(canonical_key)
+            question_norm = self._normalize_for_compare(question)
             confidence = self._clamp_confidence(row.get("confidence", 0.7))
             authority_required = str(row.get("authority_required", "planner_ok")).strip()
             if authority_required != "planner_ok":
                 continue
+            status = str(row.get("status", "ACTIVE")).strip().upper() or "ACTIVE"
+            if status not in {"ACTIVE", "SUPERSEDED"}:
+                status = "ACTIVE"
+            raw_supersedes = row.get("supersedes", [])
+            if isinstance(raw_supersedes, list):
+                supersedes = [str(item).strip() for item in raw_supersedes if str(item).strip()]
+            elif isinstance(raw_supersedes, str):
+                supersedes = [raw_supersedes.strip()] if raw_supersedes.strip() else []
+            else:
+                supersedes = []
+
+            if not supersedes:
+                prior_facts: list[ConstraintFact] = []
+                if canonical_key_norm:
+                    prior_facts = list(existing_active_by_canonical.get(canonical_key_norm, []))
+                if not prior_facts and question_norm:
+                    prior_facts = list(existing_active_by_question.get(question_norm, []))
+                supersedes = [
+                    str(existing.constraint_id).strip()
+                    for existing in prior_facts
+                    if str(existing.constraint_id).strip()
+                    and str(existing.constraint_id).strip() != constraint_id
+                ]
+            supersedes = self._dedupe_preserve(supersedes)
 
             source = self._coerce_under_spec_constraint_source(row.get("source", "research"))
             fact = ConstraintFact(
@@ -1519,7 +1567,8 @@ class Planner:
                 dimension="software",
                 authority_required="planner_ok",
                 scope=str(row.get("scope", "intra:LIB") or "intra:LIB"),
-                status="ACTIVE",
+                status=status,
+                supersedes=supersedes,
                 trace=[
                     *trace,
                     "ingest_capability=UNDER_SPEC",

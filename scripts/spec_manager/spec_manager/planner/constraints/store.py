@@ -125,30 +125,56 @@ class ConstraintsStore:
         """Load constraints from both ``__system__`` and *slice_id*, merged.
 
         System-level constraints are loaded first, then slice-specific
-        constraints are appended (duplicates by constraint_id are skipped).
+        constraints override by ``constraint_id``. For duplicate IDs within a
+        source, the latest record wins.
         """
         system = self.load("__system__")
         if slice_id == "__system__":
-            return system
+            return self._collapse_latest(system)
         specific = self.load(slice_id)
-        seen_ids = {c.constraint_id for c in system}
-        merged = list(system)
-        for c in specific:
-            if c.constraint_id not in seen_ids:
-                merged.append(c)
-                seen_ids.add(c.constraint_id)
+
+        merged_by_id = self._latest_by_id(self._collapse_latest(system))
+        for constraint_id, constraint in self._latest_by_id(
+            self._collapse_latest(specific)
+        ).items():
+            merged_by_id[constraint_id] = constraint
+
+        merged = list(merged_by_id.values())
+        merged.extend(self._constraints_without_id(system))
+        merged.extend(self._constraints_without_id(specific))
         return merged
 
     def save(self, slice_id: str, constraints: list[Constraint]) -> Path:
-        """Save constraints for a slice (merges with existing)."""
-        existing = self.load(slice_id)
-        existing_ids = {c.constraint_id for c in existing}
+        """Save constraints for a slice (append-only, supersession-aware)."""
+        merged = list(self.load(slice_id))
+        latest_index_by_id = {
+            c.constraint_id: idx for idx, c in enumerate(merged) if str(c.constraint_id).strip()
+        }
 
-        merged = list(existing)
-        for c in constraints:
-            if c.constraint_id not in existing_ids:
-                merged.append(c)
-                existing_ids.add(c.constraint_id)
+        for incoming in constraints:
+            for superseded_id in (str(item).strip() for item in incoming.supersedes):
+                if not superseded_id:
+                    continue
+                latest_index = latest_index_by_id.get(superseded_id)
+                if latest_index is None:
+                    continue
+                prior = merged[latest_index]
+                if prior.status == "SUPERSEDED":
+                    continue
+                prior.status = "SUPERSEDED"
+                superseded_by = str(incoming.constraint_id).strip()
+                if superseded_by:
+                    marker = f"superseded_by={superseded_by}"
+                    if marker not in prior.trace:
+                        prior.trace.append(marker)
+
+            if self._contains_constraint(merged, incoming):
+                continue
+
+            merged.append(incoming)
+            incoming_id = str(incoming.constraint_id).strip()
+            if incoming_id:
+                latest_index_by_id[incoming_id] = len(merged) - 1
 
         self._root.mkdir(parents=True, exist_ok=True)
         path = self._root / f"{slice_id}.yaml"
@@ -166,8 +192,12 @@ class ConstraintsStore:
         Returns:
             (covered, uncovered) --- events with matching constraints vs not.
         """
-        constraints = self.load(slice_id)
-        constraint_ids = {c.constraint_id for c in constraints}
+        constraints = self._collapse_latest(self.load(slice_id))
+        constraint_ids = {
+            c.constraint_id
+            for c in constraints
+            if str(c.constraint_id).strip() and str(c.status).strip().upper() == "ACTIVE"
+        }
 
         covered = []
         uncovered = []
@@ -178,3 +208,30 @@ class ConstraintsStore:
                 uncovered.append(event)
 
         return covered, uncovered
+
+    @staticmethod
+    def _contains_constraint(existing: list[Constraint], candidate: Constraint) -> bool:
+        payload = candidate.to_dict()
+        return any(current.to_dict() == payload for current in existing)
+
+    @classmethod
+    def _collapse_latest(cls, constraints: list[Constraint]) -> list[Constraint]:
+        """Collapse duplicate constraint IDs so the latest record per ID wins."""
+        by_id = cls._latest_by_id(constraints)
+        collapsed = list(by_id.values())
+        collapsed.extend(cls._constraints_without_id(constraints))
+        return collapsed
+
+    @staticmethod
+    def _latest_by_id(constraints: list[Constraint]) -> dict[str, Constraint]:
+        by_id: dict[str, Constraint] = {}
+        for constraint in constraints:
+            constraint_id = str(constraint.constraint_id).strip()
+            if not constraint_id:
+                continue
+            by_id[constraint_id] = constraint
+        return by_id
+
+    @staticmethod
+    def _constraints_without_id(constraints: list[Constraint]) -> list[Constraint]:
+        return [c for c in constraints if not str(c.constraint_id).strip()]
