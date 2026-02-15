@@ -50,6 +50,11 @@ def _infer_source_layer(
     return "L1"
 
 
+def _gate_source_for_layer(layer: str) -> str:
+    normalized = _normalize_layer(layer) or "L1"
+    return "ALGORITHMIC_GATE" if normalized == "L1" else "ARCH_GATE"
+
+
 @dataclass
 class RoutingBatch:
     """Result of routing a batch of failures."""
@@ -96,7 +101,7 @@ class DemotionRouter:
         )
         ticket = DemotionTicket(
             run_id=self._run_id,
-            source=ctx.source or "GATE_FAILURE",
+            source=ctx.source or "ALGORITHMIC_GATE",
             category=ctx.category or "",
             gate=ctx.gate,
             target_layer=routing.target_layer,
@@ -152,7 +157,7 @@ class DemotionRouter:
             ctx = DemotionContext(
                 active_layer=self._active_layer,
                 source_layer=source_layer,
-                source="GATE_FAILURE",
+                source=_gate_source_for_layer(source_layer),
                 gate=gate_id,
                 failing_files=list(failing_files),
                 failing_pins=list(failing_pins),

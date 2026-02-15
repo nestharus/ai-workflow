@@ -308,6 +308,7 @@ class DemotionsRef:
     emitted: list[str] = field(default_factory=list)
     applied: list[str] = field(default_factory=list)
     pending: list[str] = field(default_factory=list)
+    records: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------

@@ -45,6 +45,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import tempfile
 from collections import defaultdict
@@ -58,6 +59,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
 
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
+from spec_manager.orchestration.downward_flow.engine import DownwardFlowEngine, FailureEvidence
 from spec_manager.orchestration.evidence import EvidenceBundle
 from spec_manager.orchestration.models import Layer
 
@@ -188,6 +190,13 @@ def _hash_bytes(content: bytes) -> str:
 def _hash_text(content: str) -> str:
     """Return stable SHA256 hex digest for text."""
     return _hash_bytes(content.encode("utf-8"))
+
+
+def _gate_source_for_layer(layer: str) -> Literal["ALGORITHMIC_GATE", "ARCH_GATE"]:
+    normalized = str(layer).strip().upper()
+    if normalized == "L1":
+        return "ALGORITHMIC_GATE"
+    return "ARCH_GATE"
 
 
 def _safe_rel(path: Path, root: Path) -> str:
@@ -3499,12 +3508,14 @@ class ImplementStep:
                     DemotionTicket(
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
-                        source="IMPLEMENT",
+                        source="ALGORITHMIC_GATE" if target == "L1" else "ARCH_GATE",
                         origin_layer="L3",
+                        hop_trace=["L3", target],
                         target_layer=target,
                         severity=severity,
                         diagnosis=reason,
                         failing_files=[file_path] if file_path else [],
+                        symbol_span_anchors=[{"file": file_path}] if file_path else [],
                     )
                 )
 
@@ -4694,10 +4705,11 @@ class PromoteStep:
             ticket = DemotionTicket(
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
-                source="GATE_FAILURE",
+                source=_gate_source_for_layer(current_layer),
                 category="governance",
                 gate="DIRTY_TO_CLEAN_GOVERNANCE",
                 origin_layer=current_layer,
+                hop_trace=[current_layer, current_layer],
                 target_layer=current_layer,
                 severity="BLOCKER",
                 diagnosis="; ".join(governance_failures[:5]),
@@ -5547,8 +5559,10 @@ class PromoteStep:
                     DemotionTicket(
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
-                        source="GATE_FAILURE",
+                        source="ALGORITHMIC_GATE",
                         gate="EVIDENCE_INTEGRITY",
+                        origin_layer="L1",
+                        hop_trace=["L1", "L1"],
                         target_layer="L1",
                         severity="BLOCKER",
                         diagnosis="; ".join(failures),
@@ -5663,6 +5677,46 @@ class PromoteStep:
             return StepResult(status="OK")
 
         current_layer = self._current_layer_literal(ctx.layer)
+        gap_records = [gap for gap in bundle.gaps.open_gaps if isinstance(gap, dict)]
+        failing_files = sorted(
+            {
+                str(gap.get("file") or (gap.get("location") or {}).get("file") or "").strip()
+                for gap in gap_records
+            }
+            - {""}
+        )
+        failing_pins = sorted({str(gap.get("pin_id") or "").strip() for gap in gap_records} - {""})
+        failing_atoms = sorted(
+            {str(gap.get("atom_id") or "").strip() for gap in gap_records} - {""}
+        )
+        symbol_span_anchors = []
+        for gap in gap_records:
+            file_path = str(
+                gap.get("file") or (gap.get("location") or {}).get("file") or ""
+            ).strip()
+            if not file_path:
+                continue
+            span = gap.get("span") if isinstance(gap.get("span"), dict) else {}
+            symbol_span_anchors.append(
+                {
+                    "file": file_path,
+                    "symbol": str(
+                        gap.get("anchor") or gap.get("pin_id") or gap.get("atom_id") or ""
+                    ).strip()
+                    or None,
+                    "start_line": span.get("start_line"),
+                    "end_line": span.get("end_line"),
+                }
+            )
+        evidence_refs = [ref for ref in (bundle.gates.path, bundle.gaps.path) if str(ref).strip()]
+        component_id = next(
+            (
+                str(gap.get("component_id")).strip()
+                for gap in gap_records
+                if str(gap.get("component_id") or "").strip()
+            ),
+            None,
+        )
         behavior_change_failures = [
             gate for gate in failed_gates if gate.get("required_change_type") == "behavior_change"
         ]
@@ -5675,13 +5729,20 @@ class PromoteStep:
             DemotionTicket(
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
-                source="GATE_FAILURE",
+                source="ARCH_GATE",
                 category="logic",
                 gate=str(gate.get("gate_id", "")),
                 origin_layer=current_layer,
+                hop_trace=[current_layer, "L1"],
                 target_layer="L1",
                 severity="BLOCKER",
                 diagnosis=str(gate.get("summary", "L2 behavior-change gate failed")),
+                failing_files=failing_files,
+                failing_pins=failing_pins,
+                failing_atoms=failing_atoms,
+                component_id=component_id,
+                symbol_span_anchors=symbol_span_anchors,
+                evidence_refs=evidence_refs,
             )
             for gate in behavior_change_failures
         ]
@@ -5690,13 +5751,20 @@ class PromoteStep:
                 DemotionTicket(
                     run_id=ctx.run_id,
                     slice_id=ctx.slice_id,
-                    source="GATE_FAILURE",
+                    source="ARCH_GATE",
                     category="governance",
                     gate=str(gate.get("gate_id", "")),
                     origin_layer=current_layer,
+                    hop_trace=[current_layer, current_layer],
                     target_layer=current_layer,
                     severity="BLOCKER",
                     diagnosis=str(gate.get("summary", "L2 governance gate failed")),
+                    failing_files=failing_files,
+                    failing_pins=failing_pins,
+                    failing_atoms=failing_atoms,
+                    component_id=component_id,
+                    symbol_span_anchors=symbol_span_anchors,
+                    evidence_refs=evidence_refs,
                 )
             )
 
@@ -5805,12 +5873,23 @@ class PromoteStep:
                             slice_id=ctx.slice_id,
                             source="REVIEW",
                             origin_layer="L3",
+                            hop_trace=["L3", "L1"],
                             target_layer="L1",
                             severity=str(finding.get("severity", "MAJOR")).upper(),
                             diagnosis=str(
                                 finding.get("description", "Quality finding requires logic change")
                             ),
                             failing_files=[finding["file"]] if finding.get("file") else [],
+                            symbol_span_anchors=(
+                                [
+                                    {
+                                        "file": finding.get("file", ""),
+                                        **(finding.get("span", {}) or {}),
+                                    }
+                                ]
+                                if finding.get("file")
+                                else []
+                            ),
                         )
                     )
                 elif category == "architecture":
@@ -5820,6 +5899,7 @@ class PromoteStep:
                             slice_id=ctx.slice_id,
                             source="REVIEW",
                             origin_layer="L3",
+                            hop_trace=["L3", "L2"],
                             target_layer="L2",
                             severity=str(finding.get("severity", "MAJOR")).upper(),
                             diagnosis=str(
@@ -5828,6 +5908,16 @@ class PromoteStep:
                                 )
                             ),
                             failing_files=[finding["file"]] if finding.get("file") else [],
+                            symbol_span_anchors=(
+                                [
+                                    {
+                                        "file": finding.get("file", ""),
+                                        **(finding.get("span", {}) or {}),
+                                    }
+                                ]
+                                if finding.get("file")
+                                else []
+                            ),
                         )
                     )
             for finding in actionable_diff:
@@ -5840,8 +5930,9 @@ class PromoteStep:
                     DemotionTicket(
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
-                        source="DIFF_IMPACT",
+                        source="REVIEW",
                         origin_layer="L3",
+                        hop_trace=["L3", target],
                         target_layer=target,
                         severity=severity,
                         diagnosis=str(
@@ -5851,6 +5942,11 @@ class PromoteStep:
                             )
                         ),
                         failing_files=[finding["file"]] if finding.get("file") else [],
+                        symbol_span_anchors=(
+                            [{"file": finding.get("file", ""), **(finding.get("span", {}) or {})}]
+                            if finding.get("file")
+                            else []
+                        ),
                     )
                 )
 
@@ -5923,12 +6019,22 @@ class PromoteStep:
                     DemotionTicket(
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
-                        source="GATE_FAILURE",
+                        source=(
+                            "ALGORITHMIC_GATE"
+                            if gate["required_change_type"] == "behavior_change"
+                            else (
+                                "ARCH_GATE"
+                                if gate["required_change_type"] == "wiring_only"
+                                else "REVIEW"
+                            )
+                        ),
                         origin_layer="L3",
+                        hop_trace=["L3", target],
                         target_layer=target,
                         gate=gate["gate_id"],
                         severity="BLOCKER" if target in {"L1", "L3"} else "MAJOR",
                         diagnosis=gate["summary"],
+                        evidence_refs=[ref for ref in (bundle.gates.path, bundle.gaps.path) if ref],
                     )
                 )
             return StepResult(
@@ -5949,9 +6055,199 @@ class IntegrateStep:
     """
 
     name = "INTEGRATE"
+    _FAILURE_FILE_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.[A-Za-z0-9_]+)(?::(\d+))?")
 
     def __init__(self, *, investigator_budget: int = 2) -> None:
         self._investigator_budget = investigator_budget
+
+    @staticmethod
+    def _extract_failure_files(
+        *,
+        refs: list[str],
+        summary: str,
+        changed_files: list[str],
+    ) -> list[str]:
+        """Extract likely failing files from failure refs/summary with changed-file fallback."""
+        candidates: list[str] = []
+        haystacks = [*refs, summary]
+        for text in haystacks:
+            for match in IntegrateStep._FAILURE_FILE_RE.findall(str(text)):
+                path = str(match[0]).strip().replace("\\", "/").lstrip("./")
+                if path:
+                    candidates.append(path)
+        if not candidates:
+            candidates.extend(str(path).strip() for path in changed_files if str(path).strip())
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for path in candidates:
+            if path not in seen:
+                seen.add(path)
+                deduped.append(path)
+        return deduped[:25]
+
+    @staticmethod
+    def _build_pin_registry_adapter(slice_root: Path) -> Any | None:
+        """Build a lightweight adapter for DownwardFlowEngine pin/atom queries."""
+        registry_path = slice_root / ".spec" / "pin_registry.json"
+        payload = _read_json_file(registry_path)
+        if not isinstance(payload, dict):
+            return None
+        pin_functions = [
+            item for item in payload.get("pin_functions", []) if isinstance(item, dict)
+        ]
+        import_edges = [item for item in payload.get("import_edges", []) if isinstance(item, dict)]
+        if not pin_functions and not import_edges:
+            return None
+
+        by_pin: dict[str, dict[str, Any]] = {
+            str(item.get("pin_func_id", "")).strip(): item
+            for item in pin_functions
+            if str(item.get("pin_func_id", "")).strip()
+        }
+        by_file: dict[str, list[str]] = defaultdict(list)
+        for edge in import_edges:
+            pin_id = str(edge.get("pin_func_id", "")).strip()
+            file_path = str(edge.get("arch_file_path", "")).strip().replace("\\", "/")
+            if not pin_id or not file_path:
+                continue
+            by_file[file_path].append(pin_id)
+
+        class _TraceAdapter:
+            def query_pin_functions_for_file(self, file_path: str) -> list[Any]:
+                normalized = str(file_path).strip().replace("\\", "/")
+                matches: list[str] = []
+                for edge_file, pins in by_file.items():
+                    if (
+                        normalized == edge_file
+                        or normalized.endswith(edge_file)
+                        or edge_file.endswith(normalized)
+                    ):
+                        matches.extend(pins)
+                return [SimpleNamespace(pin_id=pin_id) for pin_id in dict.fromkeys(matches)]
+
+            def query_importers(self, pin_id: str) -> list[Any]:
+                pin = by_pin.get(str(pin_id).strip(), {})
+                atoms = [
+                    str(atom_id).strip()
+                    for atom_id in (pin.get("evidence_atom_ids") or [])
+                    if str(atom_id).strip()
+                ]
+                return [
+                    SimpleNamespace(pin_id=f"PIN-ATOM-{atom_id}")
+                    for atom_id in dict.fromkeys(atoms)
+                ]
+
+        return _TraceAdapter()
+
+    @staticmethod
+    def _anchors_from_refs(*, failing_files: list[str], refs: list[str]) -> list[dict[str, Any]]:
+        anchors: list[dict[str, Any]] = []
+        for file_path in failing_files:
+            anchors.append({"file": file_path})
+        for ref in refs:
+            for path, line in IntegrateStep._FAILURE_FILE_RE.findall(str(ref)):
+                cleaned = str(path).strip().replace("\\", "/").lstrip("./")
+                if not cleaned:
+                    continue
+                anchor: dict[str, Any] = {"file": cleaned}
+                if line:
+                    try:
+                        line_num = int(line)
+                        if line_num > 0:
+                            anchor["start_line"] = line_num
+                            anchor["end_line"] = line_num
+                    except ValueError:
+                        pass
+                anchors.append(anchor)
+        unique: list[dict[str, Any]] = []
+        seen = set()
+        for anchor in anchors:
+            key = (
+                str(anchor.get("file", "")).strip(),
+                int(anchor.get("start_line") or 0),
+                int(anchor.get("end_line") or 0),
+            )
+            if not key[0] or key in seen:
+                continue
+            seen.add(key)
+            unique.append(anchor)
+        return unique[:40]
+
+    def _build_test_failure_tickets(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        refs: list[str],
+        summary: str,
+        evidence_refs: list[str],
+    ) -> list[DemotionTicket]:
+        """Create traced TEST_FAILURE demotion tickets using DownwardFlowEngine."""
+        active_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
+        changed_files = [
+            str(path) for path in (bundle.diff.changed_files or []) if str(path).strip()
+        ]
+        failing_files = self._extract_failure_files(
+            refs=refs, summary=summary, changed_files=changed_files
+        )
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else Path(".")
+        trace_adapter = (
+            self._build_pin_registry_adapter(slice_root) if slice_root.exists() else None
+        )
+        engine = DownwardFlowEngine(
+            run_id=ctx.run_id,
+            active_layer=active_layer,
+            pin_registry=trace_adapter,
+        )
+        batch = engine.trace_and_route(
+            FailureEvidence(
+                source="TEST_FAILURE",
+                failing_files=failing_files,
+                evidence_paths=evidence_refs,
+                stack_trace=summary,
+            )
+        )
+
+        tickets = list(batch.tickets)
+        if not tickets:
+            tickets = [
+                DemotionTicket(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    source="TEST_FAILURE",
+                    origin_layer=active_layer,
+                    hop_trace=[active_layer, "L1"],
+                    target_layer="L1",
+                    severity="BLOCKER",
+                    diagnosis=summary or "Integration test/merge failure",
+                    failing_files=failing_files,
+                    evidence_refs=evidence_refs,
+                )
+            ]
+
+        anchors = self._anchors_from_refs(failing_files=failing_files, refs=refs)
+        for ticket in tickets:
+            ticket.slice_id = ctx.slice_id
+            ticket.source = "TEST_FAILURE"
+            ticket.origin_layer = active_layer
+            if not ticket.hop_trace:
+                ticket.hop_trace = [active_layer, ticket.target_layer]
+            ticket.severity = "BLOCKER"
+            if summary and summary not in ticket.diagnosis:
+                ticket.diagnosis = f"{ticket.diagnosis}; {summary}".strip("; ")
+            ticket.evidence_refs = list(dict.fromkeys([*ticket.evidence_refs, *evidence_refs]))
+            ticket.failing_atoms = [
+                str(atom).removeprefix("PIN-ATOM-")
+                for atom in ticket.failing_atoms
+                if str(atom).strip()
+            ]
+            if failing_files and not ticket.failing_files:
+                ticket.failing_files = list(failing_files)
+            if anchors:
+                ticket.symbol_span_anchors = anchors
+            if ticket.failing_files and not ticket.component_id:
+                ticket.component_id = ticket.failing_files[0].split("/")[0]
+        return tickets
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Merge grandchild → dirty with single rebase retry for merge conflicts."""
@@ -6145,24 +6441,27 @@ class IntegrateStep:
                 "merge_error": str(merge_result.error or ""),
                 "merge_attempts": merge_attempts,
             }
-            ticket_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
-            ticket = DemotionTicket(
-                run_id=ctx.run_id,
-                slice_id=ctx.slice_id,
-                source="TEST_FAILURE",
-                origin_layer=ticket_layer,
-                target_layer=ticket_layer,
-                severity="BLOCKER",
-                diagnosis=(
-                    "Merge conflict after rebase retry: "
-                    f"{merge_result.error or 'unknown merge error'}"
-                ),
-                evidence_refs=[],
-                investigator_report_ref="",
+            summary = (
+                f"Merge conflict after rebase retry: {merge_result.error or 'unknown merge error'}"
+            )
+            refs = [
+                summary,
+                *[
+                    str(item.get("error", "")).strip()
+                    for item in merge_attempts
+                    if str(item.get("error", "")).strip()
+                ],
+            ]
+            tickets = self._build_test_failure_tickets(
+                ctx=ctx,
+                bundle=bundle,
+                refs=refs,
+                summary=summary,
+                evidence_refs=["integration.report.json"],
             )
             record_artifacts(
                 merge=merge_result,
-                emitted=[ticket],
+                emitted=tickets,
                 error=merge_result.error,
                 merge_attempts=merge_attempts,
                 failure_evidence=failure_evidence,
@@ -6170,7 +6469,7 @@ class IntegrateStep:
             )
             return StepResult(
                 status="RETRY",
-                emitted_tickets=[ticket],
+                emitted_tickets=tickets,
                 error=merge_result.error,
             )
 
@@ -6246,21 +6545,17 @@ class IntegrateStep:
                 if isinstance(retry_receipt_holder.get("receipt"), dict):
                     ci_tick_receipt = cast("dict[str, Any]", retry_receipt_holder["receipt"])
             else:
-                ticket_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
                 diagnosis = summary or ci_tick_error or "CI tick failed after integrate"
-                ticket = DemotionTicket(
-                    run_id=ctx.run_id,
-                    slice_id=ctx.slice_id,
-                    source="TEST_FAILURE",
-                    origin_layer=ticket_layer,
-                    target_layer=ticket_layer,
-                    severity="BLOCKER",
-                    diagnosis=diagnosis,
+                tickets = self._build_test_failure_tickets(
+                    ctx=ctx,
+                    bundle=bundle,
+                    refs=refs,
+                    summary=diagnosis,
                     evidence_refs=list(investigator_report_refs),
-                    investigator_report_ref=investigator_report_refs[-1]
-                    if investigator_report_refs
-                    else "",
                 )
+                if investigator_report_refs:
+                    for ticket in tickets:
+                        ticket.investigator_report_ref = investigator_report_refs[-1]
                 merge_attempts.append(
                     {
                         "attempt": len(merge_attempts) + 1,
@@ -6272,7 +6567,7 @@ class IntegrateStep:
                 )
                 record_artifacts(
                     merge=merge_result,
-                    emitted=[ticket],
+                    emitted=tickets,
                     error=diagnosis,
                     merge_attempts=merge_attempts,
                     ci_tick_triggered=ci_tick_triggered,
@@ -6283,7 +6578,7 @@ class IntegrateStep:
                 )
                 return StepResult(
                     status="RETRY",
-                    emitted_tickets=[ticket],
+                    emitted_tickets=tickets,
                     error=diagnosis,
                 )
 
@@ -6399,13 +6694,25 @@ class VerifyStep:
             return DemotionTicket(
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
-                source="VERIFY",
+                source="LINEAGE",
                 category=cat,
                 origin_layer=ctx.layer.upper(),
+                hop_trace=[ctx.layer.upper(), target],
                 target_layer=target,
                 severity=sev if sev in ("BLOCKER", "MAJOR", "MINOR") else "MINOR",
                 diagnosis=f.get("evidence", "")[:500] or f.get("dimension", "Verification finding"),
                 failing_files=failing_files,
+                symbol_span_anchors=[
+                    {
+                        "file": loc.get("file", ""),
+                        "symbol": loc.get("symbol"),
+                        "start_line": loc.get("start_line"),
+                        "end_line": loc.get("end_line"),
+                    }
+                ]
+                if loc.get("file")
+                else [],
+                evidence_refs=[bundle.verification.path] if bundle.verification.path else [],
             )
 
         def run_agent_json(agent_name: str, prompt: str) -> dict[str, Any]:
@@ -6474,12 +6781,28 @@ class VerifyStep:
 
         if oversight_status == "FAIL":
             tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
+            governance_question = (
+                "VERIFY governance failed; pipeline requires explicit remediation."
+            )
+            bundle.implementation.under_spec_events = [
+                *[
+                    e
+                    for e in (bundle.implementation.under_spec_events or [])
+                    if isinstance(e, dict)
+                ],
+                {
+                    "kind": "GOVERNANCE_BLOCK",
+                    "question": governance_question,
+                    "context": "verify.notes.json",
+                    "source": "VERIFY",
+                },
+            ]
             notes["findings"] = findings
             notes_path = iteration_dir / "verify.notes.json"
             notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
             bundle.verification.path = notes_path.name
             return StepResult(
-                status="RETRY",
+                status="BLOCKED",
                 emitted_tickets=tickets,
                 notes_path=str(notes_path),
                 error="VERIFY: governance FAIL",
@@ -7650,6 +7973,7 @@ class PromotionLoop:
             or bundle.demotions.emitted
             or bundle.demotions.applied
             or bundle.demotions.pending
+            or bundle.demotions.records
         ):
             bundle.demotions.path = _write_iteration_json(
                 bundle,
@@ -7659,6 +7983,7 @@ class PromotionLoop:
                     "emitted": bundle.demotions.emitted,
                     "applied": bundle.demotions.applied,
                     "pending": bundle.demotions.pending,
+                    "records": bundle.demotions.records,
                 },
             )
 
@@ -7894,12 +8219,24 @@ class PromotionLoop:
                     # Apply demotion tickets + track retries per unique failure pattern
                     seen_keys: set[tuple[str, str]] = set()
                     for ticket in result.emitted_tickets:
-                        apply_result = self._dm.apply(ticket, Path(ctx.slice_root))
+                        apply_result = self._dm.apply(
+                            ticket,
+                            Path(ctx.slice_root) if ctx.slice_root else Path("."),
+                            gap_queue=self._gap_queue,
+                            branch_manager=ctx.branch_manager,
+                        )
                         bundle.demotions.emitted.append(ticket.ticket_id)
                         if apply_result.get("applied", False):
                             bundle.demotions.applied.append(ticket.ticket_id)
                         else:
                             bundle.demotions.pending.append(ticket.ticket_id)
+                        bundle.demotions.records.append(
+                            {
+                                "ticket": ticket.to_dict(),
+                                "apply_result": apply_result,
+                                "evidence_refs": list(ticket.evidence_refs),
+                            }
+                        )
                         files_key = (
                             ",".join(sorted(ticket.failing_files)) if ticket.failing_files else ""
                         )
@@ -7929,6 +8266,33 @@ class PromotionLoop:
                                 demotion_tickets=all_tickets,
                                 error=f"Per-ticket retry budget exceeded for gate={tracker_key[1]}",
                             )
+
+                    # Ticket questions without available constraints force BLOCKED.
+                    unresolved_ticket_questions = [
+                        str(question).strip()
+                        for ticket in result.emitted_tickets
+                        for question in (ticket.questions or [])
+                        if str(question).strip()
+                    ]
+                    if unresolved_ticket_questions and not (bundle.facts.constraints_refs or []):
+                        existing_events = [
+                            event
+                            for event in (bundle.implementation.under_spec_events or [])
+                            if isinstance(event, dict)
+                        ]
+                        for question in unresolved_ticket_questions:
+                            existing_events.append(
+                                {
+                                    "kind": "DEMOTION_UNDER_SPEC",
+                                    "question": question,
+                                    "context": "demotions.json",
+                                    "source": "DEMOTION_TICKET",
+                                }
+                            )
+                        bundle.implementation.under_spec_events = existing_events
+                        result.status = "BLOCKED"
+                        if not result.error:
+                            result.error = "Demotion ticket raised unresolved under-spec questions"
 
                 self._record_provenance(bundle, step.name, result, ctx)
                 self._refresh_facts(bundle)
@@ -7972,6 +8336,12 @@ class PromotionLoop:
                     for event in bundle.implementation.under_spec_events:
                         if q := event.get("question"):
                             questions.append(q)
+                    for ticket in all_tickets:
+                        for q in ticket.questions or []:
+                            cleaned = str(q).strip()
+                            if cleaned:
+                                questions.append(cleaned)
+                    questions = list(dict.fromkeys(questions))
                     return SliceResult(
                         slice_id=ctx.slice_id,
                         status="BLOCKED",

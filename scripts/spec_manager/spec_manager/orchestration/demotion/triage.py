@@ -22,7 +22,7 @@ class DemotionContext:
 
     active_layer: Layer = "L1"
     source_layer: Layer = "L1"
-    source: str = ""  # TEST_FAILURE, REVIEW, ARCH_GATE, ALGORITHMIC_GATE, VERIFY, etc.
+    source: str = ""  # TEST_FAILURE, REVIEW, ARCH_GATE, ALGORITHMIC_GATE, LINEAGE
     gate: str | None = None
     category: str = ""  # style | maintainability | architecture | logic | drift | governance
     dimension: str = ""  # ARCH_BOUNDARY | PIN_COVERAGE | CLARITY | CORRECTNESS | DRIFT | GOVERNANCE
@@ -125,11 +125,9 @@ _L3_GATES = {
 _SOURCE_ROUTING: dict[str, Layer | None] = {
     "ALGORITHMIC_GATE": "L1",
     "ARCH_GATE": "L2",
-    "TEST_FAILURE": None,
+    "TEST_FAILURE": "L1",
     "LINEAGE": "L2",
     "REVIEW": "L3",
-    "GATE_FAILURE": None,
-    "VERIFY": None,
 }
 
 _ARCH_TO_L1_TAGS = {"INLINE_LOGIC_AT_ARCH"}
@@ -306,14 +304,17 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 confidence=0.75,
             )
         if ctx.source == "TEST_FAILURE":
-            return DemotionRouting(
-                target_layer=active_layer,
-                action="fix_in_layer",
-                reason=(
-                    "Source 'TEST_FAILURE' defaults to current layer; "
-                    "demote lower only when stronger diagnosis signals exist"
+            return _constrain_to_active(
+                DemotionRouting(
+                    target_layer="L1",
+                    action="demote",
+                    reason=(
+                        "Source 'TEST_FAILURE' is symptom-level evidence and defaults to "
+                        "demotion for downward trace"
+                    ),
+                    confidence=0.7,
                 ),
-                confidence=0.7,
+                active_layer,
             )
         target = _SOURCE_ROUTING.get(ctx.source)
         if target is None and ctx.source in _SOURCE_ROUTING:
@@ -354,7 +355,7 @@ def triage_finding(finding_dict: dict, active_layer: Layer, source_layer: Layer)
         DemotionContext(
             active_layer=active_layer,
             source_layer=source_layer,
-            source="VERIFY",
+            source="LINEAGE",
             category=finding_dict.get("category", ""),
             dimension=finding_dict.get("dimension", ""),
             tags=list(finding_dict.get("tags", []) or []),

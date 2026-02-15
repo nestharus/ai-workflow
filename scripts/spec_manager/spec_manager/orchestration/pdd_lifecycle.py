@@ -1231,7 +1231,7 @@ class PddLifecycle:
             tickets.append(
                 DemotionTicket(
                     run_id=self.manager.run_id,
-                    source="GATE_FAILURE",
+                    source="ALGORITHMIC_GATE" if target_layer == "L1" else "ARCH_GATE",
                     gate=f"QA::{phase_name}",
                     target_layer=target_layer,
                     origin_layer="L3",
@@ -2836,7 +2836,7 @@ class PddLifecycle:
             ticket = DemotionTicket(
                 run_id=self.manager.run_id,
                 slice_id=slice_id,
-                source="GATE_FAILURE",
+                source="ALGORITHMIC_GATE" if target_layer == "L1" else "ARCH_GATE",
                 gate=gate_name,
                 target_layer=target_layer,
                 origin_layer=origin_layer,
@@ -4291,7 +4291,7 @@ class PddLifecycle:
         ticket = DemotionTicket(
             run_id=self.manager.run_id,
             slice_id="__pipeline__",
-            source="GATE_FAILURE",
+            source="ALGORITHMIC_GATE" if normalized_layer == "L1" else "ARCH_GATE",
             category="governance",
             gate=gate,
             origin_layer=normalized_layer,
