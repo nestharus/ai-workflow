@@ -283,6 +283,42 @@ def _read_json_file(path: Path) -> dict[str, Any] | list[Any] | None:
     return None
 
 
+def _normalize_focus_targets(raw: Any) -> dict[str, list[str]]:
+    """Normalize focus targets payload to canonical string-list fields."""
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: dict[str, list[str]] = {}
+    for key in ("failing_files", "failing_pins", "failing_atoms", "location_symbols"):
+        values = raw.get(key, [])
+        if not isinstance(values, list):
+            continue
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for value in values:
+            text = str(value).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text)
+        if cleaned:
+            normalized[key] = cleaned
+    return normalized
+
+
+def _path_matches_focus(path: str, focus_files: set[str]) -> bool:
+    """Return True when *path* matches one of the focused file hints."""
+    normalized = str(path).strip().replace("\\", "/")
+    if not normalized:
+        return False
+    return any(
+        normalized == focused
+        or normalized.endswith(f"/{focused}")
+        or focused.endswith(f"/{normalized}")
+        for focused in focus_files
+    )
+
+
 def _run_git_in_worktree(
     worktree: Path,
     args: list[str],
@@ -2181,6 +2217,56 @@ class PlanStep:
     def __init__(self, planner: Any = None) -> None:
         self._planner = planner
 
+    @staticmethod
+    def _focus_targets(ctx: SliceContext) -> dict[str, list[str]]:
+        """Return normalized focus targets for the active slice."""
+        if not isinstance(ctx.config, dict):
+            return {}
+        return _normalize_focus_targets(ctx.config.get("focus_targets", {}))
+
+    @staticmethod
+    def _focus_score(intention: dict[str, Any], focus_targets: dict[str, list[str]]) -> int:
+        """Score an intention by how directly it targets focused failures."""
+        if not focus_targets:
+            return 0
+        score = 0
+        focus_files = {path.replace("\\", "/") for path in focus_targets.get("failing_files", [])}
+        focus_symbols = {
+            symbol.lower().strip() for symbol in focus_targets.get("location_symbols", []) if symbol
+        }
+
+        target_file = str(intention.get("target_file", "")).strip()
+        if target_file and _path_matches_focus(target_file, focus_files):
+            score += 2
+
+        target_files = intention.get("target_files", [])
+        if isinstance(target_files, list) and any(
+            _path_matches_focus(str(path), focus_files) for path in target_files
+        ):
+            score += 2
+
+        target_function = str(intention.get("target_function", "")).strip().lower()
+        if target_function and target_function in focus_symbols:
+            score += 1
+        return score
+
+    @classmethod
+    def _apply_focus_targets(
+        cls,
+        intentions: list[dict[str, Any]],
+        focus_targets: dict[str, list[str]],
+    ) -> list[dict[str, Any]]:
+        """Annotate/reorder intentions using transition focus targets."""
+        if not intentions or not focus_targets:
+            return intentions
+        scored: list[tuple[int, int, dict[str, Any]]] = []
+        for idx, intention in enumerate(intentions):
+            enriched = dict(intention)
+            enriched["focus_targets"] = focus_targets
+            scored.append((cls._focus_score(enriched, focus_targets), idx, enriched))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [row for _, _, row in scored]
+
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Generate layer-appropriate implementation plan from gaps."""
         from spec_manager.orchestration.evidence import PlanRef
@@ -2202,6 +2288,8 @@ class PlanStep:
         else:
             intentions = []
 
+        focus_targets = self._focus_targets(ctx)
+        intentions = self._apply_focus_targets(intentions, focus_targets)
         bundle.plan = PlanRef(path="plan.json", intentions=intentions)
 
         # Run planning gate: check decision requirements against constraints
@@ -2285,6 +2373,7 @@ class PlanStep:
             workspace_root=ctx.workspace_root,
             slice_root=ctx.slice_root,
             bundle_ref=bundle,
+            metadata={"focus_targets": self._focus_targets(ctx)},
         )
         return self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
 
@@ -2434,6 +2523,56 @@ class ImplementStep:
     """
 
     name = "IMPLEMENT"
+
+    @staticmethod
+    def _focus_targets(ctx: SliceContext) -> dict[str, list[str]]:
+        """Return normalized focus targets for implementation hints."""
+        if not isinstance(ctx.config, dict):
+            return {}
+        return _normalize_focus_targets(ctx.config.get("focus_targets", {}))
+
+    @staticmethod
+    def _focus_targets_prompt_section(focus_targets: dict[str, list[str]]) -> str:
+        """Render focus targets as a compact prompt section."""
+        if not focus_targets:
+            return ""
+        return json.dumps(focus_targets, indent=2)
+
+    @staticmethod
+    def _gap_focus_score(gap: dict[str, Any], focus_targets: dict[str, list[str]]) -> int:
+        """Score a gap by overlap with focused failing files/symbols."""
+        if not focus_targets:
+            return 0
+        focus_files = {path.replace("\\", "/") for path in focus_targets.get("failing_files", [])}
+        focus_symbols = {
+            symbol.lower().strip() for symbol in focus_targets.get("location_symbols", []) if symbol
+        }
+        file_path = str(gap.get("file", "")).strip()
+        location = gap.get("location", {}) if isinstance(gap.get("location"), dict) else {}
+        symbol = str(gap.get("function") or location.get("symbol") or "").strip().lower()
+        score = 0
+        if file_path and _path_matches_focus(file_path, focus_files):
+            score += 2
+        if symbol and symbol in focus_symbols:
+            score += 1
+        return score
+
+    @classmethod
+    def _prioritize_gap_report(
+        cls,
+        gaps: list[dict[str, Any]],
+        focus_targets: dict[str, list[str]],
+    ) -> list[dict[str, Any]]:
+        """Prioritize focused failures first while preserving all gap records."""
+        if not gaps or not focus_targets:
+            return gaps
+        scored: list[tuple[int, int, dict[str, Any]]] = []
+        for idx, gap in enumerate(gaps):
+            if not isinstance(gap, dict):
+                continue
+            scored.append((cls._gap_focus_score(gap, focus_targets), idx, gap))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [row for _, _, row in scored]
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Dispatch to layer-specific implementation and emit evidence atomically."""
@@ -2822,11 +2961,12 @@ class ImplementStep:
                 workspace_root=ctx.workspace_root,
             )
             iteration_dir = bundle.iter_dir(evidence_root)
+            focus_targets = self._focus_targets(ctx)
             run_result = runner.run_for_slice(
                 slice_root=slice_root,
                 iteration_dir=iteration_dir,
                 plan_intentions=bundle.plan.intentions,
-                gap_report=bundle.gaps.open_gaps,
+                gap_report=self._prioritize_gap_report(bundle.gaps.open_gaps, focus_targets),
             )
 
             gap_inventory = self._gaps_from_under_spec_events(run_result.under_spec_events)
@@ -2905,6 +3045,9 @@ class ImplementStep:
                     continue
 
         intentions_text = json.dumps(bundle.plan.intentions, indent=2)
+        focus_targets = self._focus_targets(ctx)
+        focus_section = self._focus_targets_prompt_section(focus_targets)
+        focus_prompt = f"## FOCUS TARGETS\n{focus_section}\n\n" if focus_section else ""
 
         prompt = (
             "## TASK\n"
@@ -2924,6 +3067,7 @@ class ImplementStep:
             '"description": ..., "span": {"start_line": N, "end_line": N}}]\n'
             '- "under_spec_events": [{"question": ..., "context": ...}]\n\n'
             f"## PLAN\n{intentions_text}\n\n"
+            f"{focus_prompt}"
             "## CURRENT CODE\n\n" + "\n\n".join(code_summaries[:10])
         )
 
@@ -2989,6 +3133,9 @@ class ImplementStep:
 
         intentions_text = json.dumps(bundle.plan.intentions, indent=2)
         gaps_text = json.dumps(bundle.gaps.open_gaps[:20], indent=2)
+        focus_targets = self._focus_targets(ctx)
+        focus_section = self._focus_targets_prompt_section(focus_targets)
+        focus_prompt = f"## FOCUS TARGETS\n{focus_section}\n\n" if focus_section else ""
 
         # Gather code for the files being refactored — scope to slice file for L3
         code_summaries: list[str] = []
@@ -3027,6 +3174,7 @@ class ImplementStep:
             '- "demotion_needed": [{"file": ..., "reason": ..., "target_layer": "L1"|"L2"}]\n\n'
             f"## REFACTOR PLAN\n{intentions_text}\n\n"
             f"## FINDINGS TO ADDRESS\n{gaps_text}\n\n"
+            f"{focus_prompt}"
             "## CURRENT CODE\n\n" + "\n\n".join(code_summaries[:10])
         )
 
@@ -7060,6 +7208,17 @@ class PromotionLoop:
         Returns:
             SliceResult with final status.
         """
+        slice_config = dict(run_context.config) if isinstance(run_context.config, dict) else {}
+        raw_focus_targets = {}
+        slice_focus_targets = slice_config.pop("slice_focus_targets", None)
+        if isinstance(slice_focus_targets, dict):
+            raw_focus_targets = slice_focus_targets.get(slice_ref.slice_id, {})
+        elif isinstance(slice_config.get("focus_targets"), dict):
+            raw_focus_targets = slice_config.get("focus_targets", {})
+        focus_targets = _normalize_focus_targets(raw_focus_targets)
+        if focus_targets:
+            slice_config["focus_targets"] = focus_targets
+
         ctx = SliceContext(
             slice_id=slice_ref.slice_id,
             slice_root=slice_ref.worktree_path,
@@ -7068,7 +7227,7 @@ class PromotionLoop:
             mode=run_context.mode,
             lifecycle_mode=self._normalize_lifecycle_mode(run_context.lifecycle_mode),
             workspace_root=run_context.workspace_root,
-            config=run_context.config,
+            config=slice_config,
             ci_tick_callback=run_context.ci_tick_callback,
             ci_periodic_tick_callback=run_context.ci_periodic_tick_callback,
             ci_periodic_tick_interval_sec=run_context.ci_periodic_tick_interval_sec,

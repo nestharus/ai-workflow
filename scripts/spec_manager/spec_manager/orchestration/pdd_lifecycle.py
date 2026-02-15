@@ -1571,13 +1571,25 @@ class PddLifecycle:
         transition_stuck = False
 
         for round_num in range(1, max_rounds + 1):
+            known_ticket_paths = self._snapshot_demotion_ticket_paths()
             refinement_result = refinement_method()
-            demotions = refinement_result.get("demotion_tickets", 0)
+            raw_demotions = refinement_result.get("demotion_tickets", 0)
+            try:
+                demotions = int(raw_demotions)
+            except (TypeError, ValueError):
+                demotions = 0
+            round_tickets = self._load_new_demotion_tickets(known_ticket_paths)
+            focus_targets = self._collect_transition_rework_focus_targets(
+                from_layer,
+                round_tickets,
+            )
 
             round_result: dict[str, Any] = {
                 "round": round_num,
                 "refinement": refinement_result,
                 "demotions": demotions,
+                "rework_ticket_count": len(round_tickets),
+                "focus_targets": focus_targets,
             }
 
             if demotions <= 0:
@@ -1594,9 +1606,34 @@ class PddLifecycle:
                 from_layer,
             )
             rework_mode = _LAYER_LIFECYCLE_MODE.get(from_layer, "build")
+            target_slice_ids = sorted(focus_targets)
+            if not target_slice_ids:
+                transition_stuck = True
+                round_result["rework"] = {
+                    "layer": from_layer,
+                    "lifecycle_mode": rework_mode,
+                    "slices": [],
+                    "all_complete": False,
+                    "note": "Demotions emitted without owning-slice targets for focused rework",
+                }
+                round_result["error"] = (
+                    "Transition demotions could not be mapped to owning slices for focused rework"
+                )
+                rework_rounds.append(round_result)
+                logger.warning(
+                    "Transition %s→%s round %d/%d: demotions emitted but no owning "
+                    "slice targets were identified",
+                    from_layer,
+                    to_layer,
+                    round_num,
+                    max_rounds,
+                )
+                break
             round_result["rework"] = self._run_slices_at_layer(
                 from_layer,
                 lifecycle_mode=rework_mode,
+                target_slice_ids=target_slice_ids,
+                slice_focus_targets=focus_targets,
             )
             rework_rounds.append(round_result)
 
@@ -1908,6 +1945,179 @@ class PddLifecycle:
 
         return results
 
+    def _demotion_tickets_dir(self) -> Path:
+        """Return run-scoped demotion ticket artifact directory."""
+        return (
+            self.manager.workspace_path
+            / ".pdd_runs"
+            / self.manager.run_id
+            / "demotions"
+            / "tickets"
+        )
+
+    def _snapshot_demotion_ticket_paths(self) -> set[str]:
+        """Capture current demotion ticket artifact paths."""
+        tickets_dir = self._demotion_tickets_dir()
+        if not tickets_dir.exists():
+            return set()
+        return {str(path) for path in tickets_dir.glob("*.json")}
+
+    def _load_new_demotion_tickets(self, known_ticket_paths: set[str]) -> list[dict[str, Any]]:
+        """Load demotion tickets written since *known_ticket_paths* snapshot."""
+        tickets_dir = self._demotion_tickets_dir()
+        if not tickets_dir.exists():
+            return []
+
+        tickets: list[dict[str, Any]] = []
+        for ticket_path in sorted(tickets_dir.glob("*.json")):
+            if str(ticket_path) in known_ticket_paths:
+                continue
+            try:
+                payload = json.loads(ticket_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            ticket = payload.get("ticket", payload) if isinstance(payload, dict) else None
+            if isinstance(ticket, dict):
+                tickets.append(ticket)
+        return tickets
+
+    @staticmethod
+    def _ticket_string_list(value: Any) -> list[str]:
+        """Normalize arbitrary payloads into a list of non-empty strings."""
+        if not isinstance(value, list):
+            return []
+        seen: set[str] = set()
+        items: list[str] = []
+        for raw in value:
+            text = str(raw).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            items.append(text)
+        return items
+
+    def _ticket_focus_targets(self, ticket: dict[str, Any]) -> dict[str, list[str]]:
+        """Extract focus target hints from a demotion ticket payload."""
+        location_symbols: list[str] = []
+        location = ticket.get("location")
+        if isinstance(location, dict):
+            symbol = str(location.get("symbol", "")).strip()
+            if symbol:
+                location_symbols.append(symbol)
+
+        return {
+            "failing_files": self._ticket_string_list(ticket.get("failing_files", [])),
+            "failing_pins": self._ticket_string_list(ticket.get("failing_pins", [])),
+            "failing_atoms": self._ticket_string_list(ticket.get("failing_atoms", [])),
+            "location_symbols": location_symbols,
+        }
+
+    def _resolve_ticket_slice_ids(
+        self,
+        *,
+        layer: Layer,
+        ticket: dict[str, Any],
+        available_slice_ids: set[str],
+    ) -> list[str]:
+        """Resolve owning slice IDs for a transition demotion ticket."""
+        resolved: set[str] = set()
+        raw_slice_id = str(ticket.get("slice_id", "")).strip()
+
+        if raw_slice_id:
+            if raw_slice_id in available_slice_ids:
+                resolved.add(raw_slice_id)
+            if layer == "l2" and not raw_slice_id.startswith("arch-"):
+                arch_slice_id = f"arch-{raw_slice_id}"
+                if arch_slice_id in available_slice_ids:
+                    resolved.add(arch_slice_id)
+            if layer == "l3":
+                cq_slice_id = (
+                    raw_slice_id
+                    if raw_slice_id.startswith("cq-")
+                    else f"cq-{Path(raw_slice_id).stem}"
+                )
+                if cq_slice_id in available_slice_ids:
+                    resolved.add(cq_slice_id)
+
+        failing_files = self._ticket_string_list(ticket.get("failing_files", []))
+        for slice_id in self._infer_conflict_slice_ids(layer, failing_files):
+            if slice_id in available_slice_ids:
+                resolved.add(slice_id)
+
+        # L3 slices are file-stem keyed; infer directly from failing files when needed.
+        if layer == "l3":
+            for failing_file in failing_files:
+                stem_slice_id = f"cq-{Path(failing_file).stem}"
+                if stem_slice_id in available_slice_ids:
+                    resolved.add(stem_slice_id)
+
+        component_id = str(ticket.get("component_id", "")).strip()
+        if layer == "l2" and component_id:
+            arch_slice_id = f"arch-{component_id}"
+            if arch_slice_id in available_slice_ids:
+                resolved.add(arch_slice_id)
+
+        if layer == "l1" and raw_slice_id:
+            lowered = raw_slice_id.lower()
+            for slice_id in available_slice_ids:
+                if slice_id.lower() in lowered or lowered in slice_id.lower():
+                    resolved.add(slice_id)
+
+        return sorted(resolved)
+
+    def _collect_transition_rework_focus_targets(
+        self,
+        layer: Layer,
+        round_tickets: list[dict[str, Any]],
+    ) -> dict[str, dict[str, list[str]]]:
+        """Build owning-slice focus targets from transition demotion tickets."""
+        available_slice_ids = {
+            str(getattr(ref, "slice_id", "")).strip()
+            for ref in self._discover_slices(layer)
+            if str(getattr(ref, "slice_id", "")).strip()
+        }
+        if not available_slice_ids:
+            return {}
+
+        target_layer = layer.upper()
+        focused: dict[str, dict[str, set[str]]] = {}
+        for ticket in round_tickets:
+            ticket_target = str(ticket.get("target_layer", "")).strip().upper()
+            if ticket_target and ticket_target != target_layer:
+                continue
+
+            owner_slice_ids = self._resolve_ticket_slice_ids(
+                layer=layer,
+                ticket=ticket,
+                available_slice_ids=available_slice_ids,
+            )
+            if not owner_slice_ids:
+                continue
+
+            focus_targets = self._ticket_focus_targets(ticket)
+            for slice_id in owner_slice_ids:
+                bucket = focused.setdefault(
+                    slice_id,
+                    {
+                        "failing_files": set(),
+                        "failing_pins": set(),
+                        "failing_atoms": set(),
+                        "location_symbols": set(),
+                    },
+                )
+                for key in ("failing_files", "failing_pins", "failing_atoms", "location_symbols"):
+                    bucket[key].update(focus_targets.get(key, []))
+
+        normalized: dict[str, dict[str, list[str]]] = {}
+        for slice_id, targets in focused.items():
+            normalized[slice_id] = {
+                "failing_files": sorted(targets["failing_files"]),
+                "failing_pins": sorted(targets["failing_pins"]),
+                "failing_atoms": sorted(targets["failing_atoms"]),
+                "location_symbols": sorted(targets["location_symbols"]),
+            }
+        return normalized
+
     @staticmethod
     def _normalize_conflict_path(path: str) -> str:
         """Normalize conflict paths for stable matching."""
@@ -1967,6 +2177,7 @@ class PddLifecycle:
 
             worktree_path = self._normalize_conflict_path(str(getattr(ref, "worktree_path", "")))
             library_id = str(getattr(ref, "library_id", "")).strip()
+            l3_slice_stem = slice_id.removeprefix("cq-") if slice_id.startswith("cq-") else ""
 
             for conflict_path in normalized_conflicts:
                 if any(
@@ -1978,6 +2189,9 @@ class PddLifecycle:
                     matched.add(slice_id)
                     break
                 if library_id and f"/{library_id}/" in f"/{conflict_path}/":
+                    matched.add(slice_id)
+                    break
+                if l3_slice_stem and Path(conflict_path).stem == l3_slice_stem:
                     matched.add(slice_id)
                     break
                 if worktree_path and (
@@ -2084,6 +2298,8 @@ class PddLifecycle:
         layer: Layer,
         *,
         lifecycle_mode: LifecycleRunMode = "build",
+        target_slice_ids: list[str] | None = None,
+        slice_focus_targets: dict[str, dict[str, list[str]]] | None = None,
     ) -> dict[str, Any]:
         """Discover slices and run PromotionLoop at a given layer.
 
@@ -2094,6 +2310,9 @@ class PddLifecycle:
         Args:
             layer: Which layer to run slices at.
             lifecycle_mode: PromotionLoop lifecycle mode for this layer pass.
+            target_slice_ids: Optional focused slice IDs to run.
+            slice_focus_targets: Optional per-slice focus targets derived
+                from demotion tickets.
 
         Returns:
             Dict with per-slice results.
@@ -2109,9 +2328,24 @@ class PddLifecycle:
 
         # Discover slices for this layer
         slice_refs = self._discover_slices(layer)
+        requested_slice_ids = {
+            str(slice_id).strip() for slice_id in (target_slice_ids or []) if str(slice_id).strip()
+        }
+        if requested_slice_ids:
+            slice_refs = [ref for ref in slice_refs if ref.slice_id in requested_slice_ids]
 
         if not slice_refs:
-            return {"layer": layer, "note": f"No slices found at {layer}"}
+            note = f"No slices found at {layer}"
+            if requested_slice_ids:
+                note = f"No matching slices found at {layer} for focused rework targets"
+            return {
+                "layer": layer,
+                "lifecycle_mode": lifecycle_mode,
+                "requested_slice_ids": sorted(requested_slice_ids),
+                "note": note,
+                "slices": [],
+                "all_complete": True,
+            }
 
         # Create slice worktrees if managed
         if self.worktree_manager:
@@ -2126,12 +2360,28 @@ class PddLifecycle:
                         ref.worktree_path = str(existing)
 
         # Run PromotionLoop via scheduler
+        run_context_config = self._build_run_context_config()
+        if slice_focus_targets:
+            run_context_config = {
+                **run_context_config,
+                "slice_focus_targets": {
+                    str(slice_id): {
+                        "failing_files": list(targets.get("failing_files", [])),
+                        "failing_pins": list(targets.get("failing_pins", [])),
+                        "failing_atoms": list(targets.get("failing_atoms", [])),
+                        "location_symbols": list(targets.get("location_symbols", [])),
+                    }
+                    for slice_id, targets in slice_focus_targets.items()
+                    if str(slice_id).strip()
+                },
+            }
+
         run_context = RunContext(
             run_id=self.manager.run_id,
             mode="auto" if self.mode != "interactive" else "interactive",
             lifecycle_mode=lifecycle_mode,
             workspace_root=str(self.manager.workspace_path),
-            config=self._build_run_context_config(),
+            config=run_context_config,
         )
 
         planner = self._build_planner()
