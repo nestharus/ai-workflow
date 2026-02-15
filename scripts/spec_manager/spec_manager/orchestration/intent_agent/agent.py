@@ -4126,17 +4126,33 @@ class IntentAgentOrchestrator:
             },
             "success_metrics": list(pf.success_metrics),
             "risk_flags": list(pf.risk_flags),
+            "frame_assumptions": [
+                {
+                    "text": item.text,
+                    "status": item.status,
+                    "source": item.source,
+                }
+                for item in pf.frame_assumptions
+            ],
         }
         queue_state = self._state.question_queue_state
+        raw_tradeoff_positions = queue_state._passthrough_fields.get("tradeoff_positions", [])
+        frame_dict["tradeoff_positions"] = (
+            list(raw_tradeoff_positions) if isinstance(raw_tradeoff_positions, list) else []
+        )
         if not should_produce_skeleton(frame_dict, queue_state.to_dict()):
             return None
 
-        # Gather open question IDs and constraint refs.
+        # Gather open question IDs and planner refs.
         open_items = self._queue.get_open_items()
         open_question_ids = [it.question_id for it in open_items]
         constraint_refs: list[str] = []
+        decision_refs: list[str] = []
         for ref in self._state.question_key_map.values():
             constraint_refs.extend(ref.planner_constraint_ids)
+            decision_refs.extend(ref.planner_decision_ids)
+        constraint_refs = self._dedupe_ordered(constraint_refs)
+        decision_refs = self._dedupe_ordered(decision_refs)
 
         # Concept map dict.
         cm = self._state.concept_map
@@ -4157,12 +4173,14 @@ class IntentAgentOrchestrator:
             open_questions=[
                 {
                     "question_id": it.question_id,
+                    "question_text": it.user_prompt.text,
                     "canonical_key": it.canonical_key,
                     "scenario": it.user_prompt.scenario,
                 }
                 for it in open_items
             ],
             constraint_refs=constraint_refs,
+            decision_refs=decision_refs,
             run_agent=self._run_agent,
         )
 
@@ -4174,6 +4192,7 @@ class IntentAgentOrchestrator:
         open_q_dicts = [
             {
                 "question_id": it.question_id,
+                "question_text": it.user_prompt.text,
                 "canonical_key": it.canonical_key,
                 "scenario": it.user_prompt.scenario,
             }
@@ -4185,6 +4204,8 @@ class IntentAgentOrchestrator:
             open_q_dicts,
             constraint_refs,
             output_dir,
+            decision_refs=decision_refs,
+            tradeoff_positions=frame_dict.get("tradeoff_positions", []),
         )
         created_paths.append(snapshot_path)
 
