@@ -78,11 +78,11 @@ def _build_intent_agent(workspace: Path, run_id: str) -> Any:
     run_dir = workspace / ".pdd_runs" / run_id
     planner_cell: dict[str, Planner] = {}
 
-    def _on_translation_saved(translation: Any) -> None:
+    def _on_translation_saved(translation: Any) -> Any:
         if "planner" not in planner_cell:
             planner_cell["planner"] = Planner(workspace_root=workspace)
         planner = planner_cell["planner"]
-        planner.ingest_user_answer(translation.save(run_dir))
+        return planner.ingest_user_answer(translation)
 
     return IntentAgentOrchestrator(
         run_dir=run_dir,

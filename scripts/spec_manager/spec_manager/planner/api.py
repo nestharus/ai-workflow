@@ -24,6 +24,7 @@ from spec_manager.planner.router import CapabilityRouter, LayerRouter
 
 logger = logging.getLogger(__name__)
 PLANNER_VERSION = "1"
+_VALID_INGEST_TAXONOMY = frozenset({"INTENT", "CONSTRAINT", "TRADEOFF", "SCOPE", "VALIDATION"})
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -37,6 +38,7 @@ Capability = Literal[
     "UNDER_SPEC",  # resolve or block; produce constraints + routing + monitors
     "INTEGRATION_ANALYSIS",
     "TRIAGE_SIGNAL",  # reactive triage of coordination signals
+    "INGEST_USER_ANSWER",  # planner-mediated answer ingestion
 ]
 
 
@@ -253,41 +255,49 @@ class Planner:
             ctx.slice_id,
         )
 
-        # Override hook (for counterfactual testing / ground truth injection)
-        if self._override_provider is not None:
-            override_result = self._override_provider(req)
-            if override_result is not None:
-                override_result.trace_id = trace_id
-                trace.status = override_result.status
-                trace.overridden = True
-                trace.set_decision(
-                    DecisionRecord(
-                        decision_text=f"OVERRIDDEN: {override_result.status}",
-                    )
-                )
-                trace.add_artifact("override_outputs", override_result.outputs)
-                self._persist_trace(trace)
-                self._emit_decision_recorded_event(
-                    trace=trace,
-                    context=ctx,
-                    capability=req.capability,
-                    decision_key=decision_key,
-                    outputs=override_result.outputs,
-                )
-                return override_result
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 
+        context_token = ConstraintStoreAdapter.push_planner_update_context(
+            run_id=ctx.run_id,
+            layer=str(layer),
+            capability=req.capability,
+        )
         try:
-            planner = self._layer_router.select(layer)
+            # Override hook (for counterfactual testing / ground truth injection)
+            if self._override_provider is not None:
+                override_result = self._override_provider(req)
+                if override_result is not None:
+                    override_result.trace_id = trace_id
+                    trace.status = override_result.status
+                    trace.overridden = True
+                    trace.set_decision(
+                        DecisionRecord(
+                            decision_text=f"OVERRIDDEN: {override_result.status}",
+                        )
+                    )
+                    trace.add_artifact("override_outputs", override_result.outputs)
+                    self._persist_trace(trace)
+                    self._emit_decision_recorded_event(
+                        trace=trace,
+                        context=ctx,
+                        capability=req.capability,
+                        decision_key=decision_key,
+                        outputs=override_result.outputs,
+                    )
+                    return override_result
+
             route_start = time.perf_counter()
-            result = self._capability_router.route(planner, req)
+            if req.capability == "INGEST_USER_ANSWER":
+                result = self._handle_ingest_user_answer(req)
+            else:
+                planner = self._layer_router.select(layer)
+                result = self._capability_router.route(planner, req)
             duration_ms = (time.perf_counter() - route_start) * 1000.0
             result.trace_id = trace_id
             trace.status = result.status
-            trace.set_decision(
-                DecisionRecord(
-                    decision_text=result.status,
-                )
-            )
+            outputs_payload = result.outputs if isinstance(result.outputs, dict) else {}
+            decision_text = str(outputs_payload.get("decision_text", "")).strip() or result.status
+            trace.set_decision(DecisionRecord(decision_text=decision_text))
             trace.add_artifact("outputs", result.outputs)
             usage_tokens = _extract_tokens(result.outputs)
             trace.record_model_call(
@@ -349,6 +359,8 @@ class Planner:
                 outputs={},
             )
             return result
+        finally:
+            ConstraintStoreAdapter.pop_planner_update_context(context_token)
 
     @staticmethod
     def _coerce_bool(value: Any) -> bool:
@@ -649,9 +661,6 @@ class Planner:
         decision_key: str,
         outputs: dict[str, Any],
     ) -> None:
-        if self._on_decision_recorded is None:
-            return
-
         safe_outputs = outputs if isinstance(outputs, dict) else {}
         decision_ids, constraint_ids, canonical_keys = self._extract_update_identifiers(
             safe_outputs
@@ -659,6 +668,9 @@ class Planner:
         review_questions = self._extract_review_questions(safe_outputs)
         review_required = bool(review_questions)
         review_reason = review_questions[0]["reason"] if review_questions else ""
+        decision_record_tags = self._dedupe_preserve(
+            self._coerce_id_list(safe_outputs.get("decision_record_tags", []))
+        )
 
         decision = getattr(trace, "decision", None)
         decision_text = ""
@@ -682,6 +694,8 @@ class Planner:
             "review_required": review_required,
             "review_reason": review_reason,
         }
+        if decision_record_tags:
+            base_event["decision_record_tags"] = decision_record_tags
         events_to_emit: list[dict[str, Any]] = []
         if review_questions:
             for sequence, review_question in enumerate(review_questions, start=1):
@@ -716,14 +730,16 @@ class Planner:
             events_to_emit.append(base_event)
 
         for event in events_to_emit:
-            try:
-                self._on_decision_recorded(event)
-            except Exception:
-                logger.warning(
-                    "on_decision_recorded callback failed for trace=%s",
-                    event["trace_id"],
-                    exc_info=True,
-                )
+            self._append_planner_update(context.run_id, event)
+            if self._on_decision_recorded is not None:
+                try:
+                    self._on_decision_recorded(event)
+                except Exception:
+                    logger.warning(
+                        "on_decision_recorded callback failed for trace=%s",
+                        event["trace_id"],
+                        exc_info=True,
+                    )
 
     def _persist_trace(self, trace: Any) -> None:
         """Persist trace artifacts; failure is a hard planner error."""
@@ -780,6 +796,620 @@ class Planner:
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+
+    def _append_planner_update(self, run_id: str, event: dict[str, Any]) -> None:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            logger.debug(
+                "Planner update not written because run_id is missing (event_kind=%s)",
+                event.get("event_kind", ""),
+            )
+            return
+        updates_path = (
+            self._workspace_root
+            / ".pdd_runs"
+            / normalized_run_id
+            / "coordination"
+            / "planner_updates.jsonl"
+        )
+        try:
+            updates_path.parent.mkdir(parents=True, exist_ok=True)
+            with updates_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+        except OSError:
+            logger.warning(
+                "Failed to append planner update event_kind=%s run_id=%s",
+                event.get("event_kind", ""),
+                normalized_run_id,
+                exc_info=True,
+            )
+
+    def ingest_user_answer(
+        self,
+        translation: Any,
+        *,
+        context: PlanningContext | None = None,
+        slice_id: str = "",
+    ) -> PlanningResult:
+        """Ingest an Intent-Agent answer translation through Planner.plan()."""
+        inputs: dict[str, Any] = {}
+        run_id_hint = ""
+        if isinstance(translation, Path):
+            inputs["translation_path"] = str(translation)
+            run_id_hint = self._infer_run_id_from_translation_path(translation)
+        elif isinstance(translation, str):
+            inputs["translation_path"] = translation
+            run_id_hint = self._infer_run_id_from_translation_path(Path(translation))
+        elif isinstance(translation, dict):
+            inputs["translation"] = translation
+            run_id_hint = str(translation.get("run_id", "")).strip()
+        elif hasattr(translation, "to_dict") and callable(translation.to_dict):
+            payload = translation.to_dict()
+            inputs["translation"] = payload
+            run_id_hint = str(payload.get("run_id", "")).strip()
+        else:
+            inputs["translation"] = translation
+
+        if slice_id:
+            inputs["slice_id"] = slice_id
+
+        if context is None:
+            context = PlanningContext(
+                run_id=run_id_hint,
+                slice_id=slice_id,
+                layer="any",
+                mode=self._mode if self._mode in {"auto", "interactive"} else "auto",
+                workspace_root=str(self._workspace_root),
+            )
+
+        req = PlanningRequest(
+            capability="INGEST_USER_ANSWER",
+            context=context,
+            inputs=inputs,
+        )
+        return self.plan(req)
+
+    def _handle_ingest_user_answer(self, req: PlanningRequest) -> PlanningResult:
+        from spec_manager.orchestration.intent_agent.answer_translation import AnswerTranslation
+        from spec_manager.planner.constraints.types import ConstraintFact
+
+        payload, source_ref, payload_errors = self._resolve_ingest_translation_payload(req.inputs)
+        if payload is None:
+            return PlanningResult(
+                status="ERROR",
+                outputs={
+                    "validation_errors": payload_errors,
+                    "decision_record_tags": ["answer_ingestion"],
+                    "decision_text": "INGEST_USER_ANSWER rejected invalid payload",
+                },
+                error="invalid answer translation payload",
+            )
+
+        validation_errors = self._validate_ingest_translation_payload(payload)
+        if validation_errors:
+            return PlanningResult(
+                status="ERROR",
+                outputs={
+                    "validation_errors": validation_errors,
+                    "translation_id": str(payload.get("translation_id", "")).strip(),
+                    "decision_record_tags": ["answer_ingestion"],
+                    "decision_text": "INGEST_USER_ANSWER rejected invalid schema",
+                },
+                error="invalid answer translation schema",
+            )
+
+        try:
+            translation = AnswerTranslation.from_dict(payload)
+        except Exception as exc:
+            return PlanningResult(
+                status="ERROR",
+                outputs={
+                    "translation_id": str(payload.get("translation_id", "")).strip(),
+                    "validation_errors": [f"translation deserialization failed: {exc}"],
+                    "decision_record_tags": ["answer_ingestion"],
+                    "decision_text": "INGEST_USER_ANSWER failed to deserialize translation",
+                },
+                error=f"translation deserialization failed: {exc}",
+            )
+
+        if translation.translation_status != "succeeded":
+            return PlanningResult(
+                status="NOOP",
+                outputs={
+                    "translation_id": translation.translation_id,
+                    "question_id": translation.question_id,
+                    "answer_id": translation.answer_id,
+                    "source_ref": source_ref,
+                    "translation_status": translation.translation_status,
+                    "translation_failures": list(translation.extracted.translation_failures),
+                    "decision_record_tags": ["answer_ingestion"],
+                    "decision_text": "INGEST_USER_ANSWER skipped failed translation",
+                },
+            )
+
+        target_slice_id = (
+            str(req.inputs.get("slice_id") or req.context.slice_id or "__system__").strip()
+            or "__system__"
+        )
+
+        authoritative_facts = self._constraints_adapter.load_merged(target_slice_id)
+        existing_by_canonical: dict[str, list[Any]] = {}
+        existing_by_question: dict[str, list[Any]] = {}
+        for fact in authoritative_facts:
+            canonical_key = self._extract_trace_tag(getattr(fact, "trace", []), "canonical_key")
+            canonical_norm = self._normalize_for_compare(canonical_key)
+            if canonical_norm:
+                existing_by_canonical.setdefault(canonical_norm, []).append(fact)
+            question_norm = self._normalize_for_compare(getattr(fact, "question", ""))
+            if question_norm:
+                existing_by_question.setdefault(question_norm, []).append(fact)
+
+        proposals: list[dict[str, Any]] = []
+        candidate_validation_errors: list[str] = []
+        fallback_key = str(
+            translation.canonical_key_hint or translation.question_id or "answer"
+        ).strip()
+
+        for idx, candidate in enumerate(translation.extracted.constraint_candidates):
+            question = str(candidate.question).strip()
+            answer = str(candidate.answer).strip() or str(translation.user_answer.raw_text).strip()
+            canonical_key = str(candidate.canonical_key_hint).strip() or fallback_key
+            if not question:
+                question = f"Constraint answer for {canonical_key or translation.question_id}"
+            if not answer:
+                candidate_validation_errors.append(
+                    f"constraint_candidates[{idx}] missing answer text",
+                )
+                continue
+            scope_kind = str(candidate.scope_kind).strip().upper()
+            scope = "system" if scope_kind == "SYSTEM_WIDE" else "intra:LIB"
+            proposals.append(
+                {
+                    "taxonomy": "CONSTRAINT",
+                    "canonical_key": canonical_key,
+                    "question": question,
+                    "answer": answer,
+                    "confidence": self._clamp_confidence(candidate.confidence),
+                    "scope": scope,
+                }
+            )
+
+        for idx, candidate in enumerate(translation.extracted.tradeoff_candidates):
+            axis = str(candidate.axis).strip()
+            preference = str(candidate.preference).strip()
+            if not (axis and preference):
+                candidate_validation_errors.append(
+                    f"tradeoff_candidates[{idx}] requires axis and preference",
+                )
+                continue
+            canonical_suffix = re.sub(r"[^a-z0-9]+", "_", axis.lower()).strip("_") or f"axis_{idx}"
+            proposals.append(
+                {
+                    "taxonomy": "TRADEOFF",
+                    "canonical_key": f"{fallback_key}.tradeoff.{canonical_suffix}",
+                    "question": f"Tradeoff preference for {axis}",
+                    "answer": preference,
+                    "confidence": self._clamp_confidence(candidate.confidence),
+                    "scope": "intra:LIB",
+                }
+            )
+
+        for idx, candidate in enumerate(translation.extracted.scope_candidates):
+            scope_in = [str(item).strip() for item in candidate.scope_in if str(item).strip()]
+            scope_out = [str(item).strip() for item in candidate.scope_out if str(item).strip()]
+            if not scope_in and not scope_out:
+                candidate_validation_errors.append(
+                    f"scope_candidates[{idx}] empty scope_in and scope_out",
+                )
+                continue
+            if scope_in:
+                proposals.append(
+                    {
+                        "taxonomy": "SCOPE",
+                        "canonical_key": f"{fallback_key}.scope.in",
+                        "question": "In-scope items from user answer",
+                        "answer": ", ".join(scope_in),
+                        "confidence": 1.0,
+                        "scope": "intra:LIB",
+                    }
+                )
+            if scope_out:
+                proposals.append(
+                    {
+                        "taxonomy": "SCOPE",
+                        "canonical_key": f"{fallback_key}.scope.out",
+                        "question": "Out-of-scope items from user answer",
+                        "answer": ", ".join(scope_out),
+                        "confidence": 1.0,
+                        "scope": "intra:LIB",
+                    }
+                )
+
+        for idx, candidate in enumerate(translation.extracted.validation_candidates):
+            acceptance_statement = str(candidate.acceptance_statement).strip()
+            if not acceptance_statement:
+                candidate_validation_errors.append(
+                    f"validation_candidates[{idx}] missing acceptance_statement",
+                )
+                continue
+            proposals.append(
+                {
+                    "taxonomy": "VALIDATION",
+                    "canonical_key": f"{fallback_key}.validation.{idx + 1}",
+                    "question": "Validation criterion from user answer",
+                    "answer": acceptance_statement,
+                    "confidence": 1.0,
+                    "scope": "intra:LIB",
+                }
+            )
+
+        accepted_facts: list[ConstraintFact] = []
+        accepted_constraint_ids: list[str] = []
+        accepted_canonical_keys: list[str] = []
+        decision_requirements: list[dict[str, Any]] = []
+        under_spec_events: list[dict[str, Any]] = []
+        conflicts: list[dict[str, Any]] = []
+        seen_candidates: set[tuple[str, str, str]] = set()
+        seen_canonical_answers: dict[str, str] = {}
+
+        for proposal in proposals:
+            taxonomy = str(proposal.get("taxonomy", "")).strip().upper()
+            if taxonomy not in _VALID_INGEST_TAXONOMY:
+                candidate_validation_errors.append(
+                    f"invalid taxonomy {taxonomy!r}; expected one of "
+                    f"{sorted(_VALID_INGEST_TAXONOMY)}",
+                )
+                continue
+
+            canonical_key = str(proposal.get("canonical_key", "")).strip()
+            canonical_norm = self._normalize_for_compare(canonical_key)
+            question = str(proposal.get("question", "")).strip()
+            question_norm = self._normalize_for_compare(question)
+            answer = str(proposal.get("answer", "")).strip()
+            answer_norm = self._normalize_for_compare(answer)
+            if not question_norm or not answer_norm:
+                candidate_validation_errors.append(
+                    f"{taxonomy} candidate requires non-empty question and answer",
+                )
+                continue
+
+            dedupe_key = (canonical_norm, question_norm, answer_norm)
+            if dedupe_key in seen_candidates:
+                continue
+            seen_candidates.add(dedupe_key)
+
+            if canonical_norm:
+                existing_candidate_answer = seen_canonical_answers.get(canonical_norm, "")
+                if existing_candidate_answer and existing_candidate_answer != answer_norm:
+                    decision_id = self._build_ingest_decision_id(
+                        canonical_key,
+                        question,
+                        answer,
+                        existing_candidate_answer,
+                    )
+                    conflict_question = (
+                        f"User answer provided conflicting values for {canonical_key}. "
+                        "Which value should be authoritative?"
+                    )
+                    decision_requirements.append(
+                        {
+                            "decision_id": decision_id,
+                            "question": conflict_question,
+                            "kind": "answer_conflict",
+                            "dimension": "software",
+                            "scope": "intra:LIB",
+                            "impact": "MEDIUM",
+                            "options": ["first_value", "latest_value", "manual_resolution"],
+                            "needed_for": [target_slice_id],
+                            "authority_required": "human_required",
+                            "reason": "conflicting answers in same ingestion batch",
+                            "canonical_key": canonical_key,
+                        }
+                    )
+                    under_spec_events.append(
+                        {
+                            "type": "decision_required",
+                            "event_id": decision_id,
+                            "decision_id": decision_id,
+                            "question": conflict_question,
+                            "reason": "conflicting answers in same ingestion batch",
+                            "canonical_key": canonical_key,
+                            "authority_required": "human_required",
+                        }
+                    )
+                    conflicts.append(
+                        {
+                            "canonical_key": canonical_key,
+                            "reason": "batch_conflict",
+                        }
+                    )
+                    continue
+                seen_canonical_answers[canonical_norm] = answer_norm
+
+            existing_matches: list[Any] = []
+            if canonical_norm:
+                existing_matches.extend(existing_by_canonical.get(canonical_norm, []))
+            if not existing_matches and question_norm:
+                existing_matches.extend(existing_by_question.get(question_norm, []))
+
+            if existing_matches:
+                same_answer = any(
+                    self._normalize_for_compare(getattr(existing, "answer", "")) == answer_norm
+                    for existing in existing_matches
+                )
+                if same_answer:
+                    continue
+
+                existing = existing_matches[0]
+                existing_constraint_id = str(getattr(existing, "constraint_id", "")).strip()
+                decision_id = self._build_ingest_decision_id(
+                    canonical_key,
+                    question,
+                    answer,
+                    existing_constraint_id,
+                )
+                conflict_question = (
+                    f"User answer conflicts with existing authoritative constraint "
+                    f"{existing_constraint_id} for '{question}'. Which should apply?"
+                )
+                decision_requirements.append(
+                    {
+                        "decision_id": decision_id,
+                        "question": conflict_question,
+                        "kind": "answer_conflict",
+                        "dimension": "software",
+                        "scope": "intra:LIB",
+                        "impact": "MEDIUM",
+                        "options": ["keep_existing", "accept_user_answer", "manual_resolution"],
+                        "needed_for": [target_slice_id],
+                        "authority_required": "human_required",
+                        "reason": "proposed answer conflicts with authoritative constraint",
+                        "canonical_key": canonical_key,
+                        "existing_constraint_id": existing_constraint_id,
+                    }
+                )
+                under_spec_events.append(
+                    {
+                        "type": "decision_required",
+                        "event_id": decision_id,
+                        "decision_id": decision_id,
+                        "question": conflict_question,
+                        "reason": "proposed answer conflicts with authoritative constraint",
+                        "canonical_key": canonical_key,
+                        "constraint_id": existing_constraint_id,
+                        "authority_required": "human_required",
+                    }
+                )
+                conflicts.append(
+                    {
+                        "canonical_key": canonical_key,
+                        "existing_constraint_id": existing_constraint_id,
+                        "reason": "authoritative_conflict",
+                    }
+                )
+                continue
+
+            constraint_id = self._build_ingest_constraint_id(canonical_key, question, answer)
+            fact = ConstraintFact(
+                constraint_id=constraint_id,
+                question=question,
+                answer=answer,
+                source="user",
+                confidence=self._clamp_confidence(proposal.get("confidence", 1.0)),
+                validated=True,
+                dimension="software",
+                authority_required="planner_ok",
+                scope=str(proposal.get("scope", "intra:LIB")),
+                status="ACTIVE",
+                trace=[
+                    "ingest_capability=INGEST_USER_ANSWER",
+                    f"translation_id={translation.translation_id}",
+                    f"answer_id={translation.answer_id}",
+                    f"question_id={translation.question_id}",
+                    f"taxonomy={taxonomy.lower()}",
+                    f"canonical_key={canonical_key}",
+                    "authority_input=user_answer",
+                    "authority_policy=planner_validated",
+                ],
+            )
+            accepted_facts.append(fact)
+            accepted_constraint_ids.append(constraint_id)
+            if canonical_key:
+                accepted_canonical_keys.append(canonical_key)
+
+        persisted_path = ""
+        if accepted_facts:
+            persisted_path = str(
+                self._constraints_adapter.save_facts(target_slice_id, accepted_facts)
+            )
+
+        decision_ids = self._dedupe_preserve(
+            [
+                str(item.get("decision_id", "")).strip()
+                for item in decision_requirements
+                if str(item.get("decision_id", "")).strip()
+            ]
+        )
+
+        outputs: dict[str, Any] = {
+            "translation_id": translation.translation_id,
+            "question_id": translation.question_id,
+            "answer_id": translation.answer_id,
+            "source_ref": source_ref,
+            "ingest_slice_id": target_slice_id,
+            "constraint_ids": self._dedupe_preserve(accepted_constraint_ids),
+            "canonical_keys": self._dedupe_preserve(accepted_canonical_keys),
+            "decision_ids": decision_ids,
+            "decision_requirements": decision_requirements,
+            "under_spec_events": under_spec_events,
+            "accepted_constraints": [fact.to_dict() for fact in accepted_facts],
+            "conflicts": conflicts,
+            "validation_errors": candidate_validation_errors,
+            "persisted_constraints_path": persisted_path,
+            "decision_record_tags": ["answer_ingestion"],
+            "decision_text": (
+                "INGEST_USER_ANSWER "
+                f"accepted={len(accepted_facts)} "
+                f"conflicts={len(conflicts)} "
+                f"validation_errors={len(candidate_validation_errors)}"
+            ),
+        }
+        if not accepted_facts and not decision_requirements:
+            return PlanningResult(status="NOOP", outputs=outputs)
+        return PlanningResult(status="OK", outputs=outputs)
+
+    def _resolve_ingest_translation_payload(
+        self,
+        inputs: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, str, list[str]]:
+        payload_errors: list[str] = []
+        source_ref = ""
+        raw_translation = inputs.get("translation")
+        raw_translation_path = inputs.get("translation_path")
+
+        if raw_translation_path:
+            path = Path(str(raw_translation_path))
+            source_ref = str(path)
+            if not path.exists():
+                return None, source_ref, [f"translation_path does not exist: {path}"]
+            try:
+                raw_payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                return None, source_ref, [f"failed to read translation_path: {exc}"]
+            if not isinstance(raw_payload, dict):
+                return None, source_ref, ["translation_path JSON payload must be an object"]
+            return raw_payload, source_ref, payload_errors
+
+        if isinstance(raw_translation, dict):
+            source_ref = f"translation:{raw_translation.get('translation_id', '')}"
+            return raw_translation, source_ref, payload_errors
+
+        if hasattr(raw_translation, "to_dict") and callable(raw_translation.to_dict):
+            payload = raw_translation.to_dict()
+            if not isinstance(payload, dict):
+                return None, source_ref, ["translation.to_dict() must return an object"]
+            source_ref = f"translation:{payload.get('translation_id', '')}"
+            return payload, source_ref, payload_errors
+
+        if isinstance(raw_translation, (str, Path)):
+            path = Path(str(raw_translation))
+            source_ref = str(path)
+            if not path.exists():
+                return None, source_ref, [f"translation path does not exist: {path}"]
+            try:
+                raw_payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                return None, source_ref, [f"failed to read translation path: {exc}"]
+            if not isinstance(raw_payload, dict):
+                return None, source_ref, ["translation path JSON payload must be an object"]
+            return raw_payload, source_ref, payload_errors
+
+        payload_errors.append(
+            "INGEST_USER_ANSWER requires translation payload or translation_path input",
+        )
+        return None, source_ref, payload_errors
+
+    @staticmethod
+    def _validate_ingest_translation_payload(payload: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        required_fields = ("translation_id", "question_id", "created_at", "extracted")
+        for field_name in required_fields:
+            if field_name not in payload:
+                errors.append(f"missing required field: {field_name}")
+
+        translation_id = payload.get("translation_id")
+        if not isinstance(translation_id, str) or not translation_id.strip():
+            errors.append("translation_id must be a non-empty string")
+
+        question_id = payload.get("question_id")
+        if not isinstance(question_id, str) or not question_id.strip():
+            errors.append("question_id must be a non-empty string")
+
+        extracted = payload.get("extracted")
+        if not isinstance(extracted, dict):
+            errors.append("extracted must be an object")
+            return errors
+
+        extracted_list_fields = (
+            "constraint_candidates",
+            "scope_candidates",
+            "tradeoff_candidates",
+            "validation_candidates",
+            "followup_question_drafts",
+            "followup_omissions",
+            "translation_failures",
+        )
+        for field_name in extracted_list_fields:
+            value = extracted.get(field_name, [])
+            if not isinstance(value, list):
+                errors.append(f"extracted.{field_name} must be a list")
+
+        for idx, followup in enumerate(extracted.get("followup_question_drafts", [])):
+            if not isinstance(followup, dict):
+                errors.append(f"extracted.followup_question_drafts[{idx}] must be an object")
+                continue
+            taxonomy_type = str(followup.get("taxonomy_type", "")).strip().upper()
+            if taxonomy_type and taxonomy_type not in _VALID_INGEST_TAXONOMY:
+                errors.append(
+                    "extracted.followup_question_drafts"
+                    f"[{idx}].taxonomy_type {taxonomy_type!r} is invalid",
+                )
+
+        return errors
+
+    @staticmethod
+    def _extract_trace_tag(trace_entries: Any, key: str) -> str:
+        key_prefix = f"{key}="
+        if not isinstance(trace_entries, list):
+            return ""
+        for entry in trace_entries:
+            entry_text = str(entry)
+            if entry_text.startswith(key_prefix):
+                return entry_text.split("=", 1)[1].strip()
+        return ""
+
+    @staticmethod
+    def _normalize_for_compare(value: Any) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    @staticmethod
+    def _clamp_confidence(value: Any) -> float:
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return max(0.0, min(1.0, confidence))
+
+    @staticmethod
+    def _build_ingest_constraint_id(canonical_key: str, question: str, answer: str) -> str:
+        seed = f"{canonical_key}|{question}|{answer}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+        token = re.sub(r"[^a-zA-Z0-9]+", "-", canonical_key).strip("-").upper()[:24]
+        if token:
+            return f"ANS-{token}-{digest[:6]}"
+        return f"ANS-{digest}"
+
+    @staticmethod
+    def _build_ingest_decision_id(
+        canonical_key: str,
+        question: str,
+        proposed_answer: str,
+        conflict_ref: str,
+    ) -> str:
+        seed = f"{canonical_key}|{question}|{proposed_answer}|{conflict_ref}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+        return f"DEC-{digest}"
+
+    @staticmethod
+    def _infer_run_id_from_translation_path(path: Path) -> str:
+        parts = list(path.parts)
+        for idx, part in enumerate(parts):
+            if part != ".pdd_runs":
+                continue
+            run_idx = idx + 1
+            if run_idx < len(parts):
+                return str(parts[run_idx]).strip()
+        return ""
 
     # ------------------------------------------------------------------
     # Convenience adapters for existing call sites

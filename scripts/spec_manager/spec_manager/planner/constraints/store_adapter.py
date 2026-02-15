@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from contextvars import ContextVar, Token
+from datetime import UTC, datetime
 from pathlib import Path
 
 from spec_manager.planner.constraints.store import (
@@ -35,8 +37,8 @@ class ConstraintStoreAdapter:
         workspace_root: Path to the workspace directory.
         on_constraint_saved: Optional callback
             ``(slice_id, constraint_id, canonical_key) -> None``
-            invoked for each constraint persisted via :meth:`save_facts`.
-            Used to emit wake events when constraints arrive.
+            invoked for each constraint persisted via :meth:`save_facts`
+            after the structural planner update event is written.
     """
 
     def __init__(
@@ -47,6 +49,32 @@ class ConstraintStoreAdapter:
         self._workspace = workspace_root
         self._store = ConstraintsStore(workspace_root)
         self._on_constraint_saved = on_constraint_saved
+
+    # Planner update context shared across adapter instances created during a
+    # single planner.plan() call (including strategy-owned adapters).
+    _planner_update_context: ContextVar[dict[str, str]] = ContextVar(
+        "constraint_store_adapter_planner_update_context",
+    )
+
+    @classmethod
+    def push_planner_update_context(
+        cls,
+        *,
+        run_id: str,
+        layer: str = "",
+        capability: str = "",
+    ) -> Token[dict[str, str]]:
+        return cls._planner_update_context.set(
+            {
+                "run_id": str(run_id or "").strip(),
+                "layer": str(layer or "").strip(),
+                "capability": str(capability or "").strip(),
+            }
+        )
+
+    @classmethod
+    def pop_planner_update_context(cls, token: Token[dict[str, str]]) -> None:
+        cls._planner_update_context.reset(token)
 
     # ------------------------------------------------------------------
     # Facts
@@ -76,8 +104,10 @@ class ConstraintStoreAdapter:
         """Persist :class:`ConstraintFact` objects via the underlying store.
 
         Converts each fact to a :class:`Constraint` before saving.
-        Invokes the ``on_constraint_saved`` callback for each fact so that
-        coordination infrastructure (e.g. WakeQueue) can react.
+        Always emits ``constraint_saved`` planner update events to
+        ``.pdd_runs/<run_id>/coordination/planner_updates.jsonl`` when
+        planner context is available, then invokes ``on_constraint_saved``
+        callbacks as an additional in-process hook.
 
         Returns:
             Path to the saved constraints file.
@@ -85,37 +115,76 @@ class ConstraintStoreAdapter:
         constraints = [self._fact_to_constraint(f) for f in facts]
         path = self._store.save(slice_id, constraints)
 
-        if self._on_constraint_saved is not None:
-            for f in facts:
-                if f.constraint_id:
-                    # Extract canonical_key from trace entries like "canonical_key=..."
-                    canonical_key = ""
-                    for t in f.trace:
-                        if t.startswith("canonical_key="):
-                            canonical_key = t.split("=", 1)[1]
-                            break
-                    try:
-                        self._on_constraint_saved(slice_id, f.constraint_id, canonical_key)
-                    except Exception:
-                        logger.warning(
-                            "on_constraint_saved callback failed for %s/%s",
-                            slice_id,
-                            f.constraint_id,
-                            exc_info=True,
-                        )
-
-        # Planner update signals (constraint_saved) are emitted via the
-        # on_constraint_saved callback above.  The Planner wires this callback
-        # to write to .pdd_runs/<run_id>/coordination/planner_updates.jsonl
-        # when constructed with the appropriate run context.
-        logger.debug(
-            "save_facts: %d facts persisted for slice %s; "
-            "planner update signals delegated to on_constraint_saved callback",
-            len(facts),
-            slice_id,
-        )
+        self._emit_constraint_saved_events(slice_id, facts)
 
         return path
+
+    def _emit_constraint_saved_events(self, slice_id: str, facts: list[ConstraintFact]) -> None:
+        context = self._planner_update_context.get({})
+        run_id = str(context.get("run_id", "")).strip()
+        layer = str(context.get("layer", "")).strip()
+        capability = str(context.get("capability", "")).strip()
+
+        if not run_id:
+            logger.debug(
+                "save_facts persisted %d facts for slice %s but planner update context "
+                "has no run_id; skipping planner_updates.jsonl emission",
+                len(facts),
+                slice_id,
+            )
+
+        for fact in facts:
+            if not fact.constraint_id:
+                continue
+            canonical_key = self._extract_canonical_key(fact)
+            event = {
+                "event_kind": "constraint_saved",
+                "event_id": fact.constraint_id,
+                "created_at": datetime.now(UTC).isoformat(),
+                "run_id": run_id,
+                "slice_id": slice_id,
+                "layer": layer,
+                "capability": capability,
+                "constraint_id": fact.constraint_id,
+                "constraint_ids": [fact.constraint_id],
+                "canonical_key": canonical_key,
+                "canonical_keys": [canonical_key] if canonical_key else [],
+            }
+            if run_id:
+                self._append_planner_update_event(run_id, event)
+
+            if self._on_constraint_saved is not None:
+                try:
+                    self._on_constraint_saved(slice_id, fact.constraint_id, canonical_key)
+                except Exception:
+                    logger.warning(
+                        "on_constraint_saved callback failed for %s/%s",
+                        slice_id,
+                        fact.constraint_id,
+                        exc_info=True,
+                    )
+
+    def _append_planner_update_event(self, run_id: str, event: dict[str, object]) -> None:
+        updates_path = (
+            self._workspace / ".pdd_runs" / run_id / "coordination" / "planner_updates.jsonl"
+        )
+        try:
+            updates_path.parent.mkdir(parents=True, exist_ok=True)
+            with updates_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+        except OSError:
+            logger.warning(
+                "Failed to append constraint_saved planner update for event_id=%s",
+                event.get("event_id", ""),
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _extract_canonical_key(fact: ConstraintFact) -> str:
+        for trace_entry in fact.trace:
+            if trace_entry.startswith("canonical_key="):
+                return trace_entry.split("=", 1)[1]
+        return ""
 
     # ------------------------------------------------------------------
     # Hypotheses
