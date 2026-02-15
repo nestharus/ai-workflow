@@ -4043,6 +4043,166 @@ class PromoteStep:
         return result
 
     @staticmethod
+    def _current_layer_literal(layer: str) -> Literal["L1", "L2", "L3"]:
+        normalized = str(layer).strip().upper()
+        if normalized == "L2":
+            return "L2"
+        if normalized == "L3":
+            return "L3"
+        return "L1"
+
+    @staticmethod
+    def _bundle_required_evidence_refs(bundle: EvidenceBundle) -> list[tuple[str, str]]:
+        refs: list[tuple[str, str]] = [
+            ("manifest.path", str(bundle.manifest.path or "").strip()),
+            ("diff.path", str(bundle.diff.path or "").strip()),
+            ("implementation.result_path", str(bundle.implementation.result_path or "").strip()),
+            ("pins_snapshot.path", str(bundle.pins_snapshot.path or "").strip()),
+            ("graph_snapshot.path", str(bundle.graph_snapshot.path or "").strip()),
+        ]
+        refs.extend(
+            (
+                f"manifest.generated_files[{idx}]",
+                str(rel_path).strip(),
+            )
+            for idx, rel_path in enumerate(bundle.manifest.generated_files or [])
+            if str(rel_path).strip()
+        )
+        return refs
+
+    def _prior_iteration_bundle(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        evidence_root: Path,
+    ) -> tuple[dict[str, Any], Path | None]:
+        """Load the latest completed bundle from a prior iteration for this slice."""
+        slices_root = (
+            evidence_root / ".pdd_runs" / ctx.run_id / "slices" / ctx.slice_id
+            if ctx.run_id and ctx.slice_id
+            else None
+        )
+        if slices_root is None or not slices_root.exists():
+            return {}, None
+
+        candidates: list[Path] = []
+        for candidate in slices_root.glob("iter_*/bundle.json"):
+            try:
+                iter_num = int(candidate.parent.name.split("_")[-1])
+            except (TypeError, ValueError):
+                continue
+            if iter_num >= bundle.iteration:
+                continue
+            candidates.append(candidate)
+
+        if not candidates:
+            return {}, None
+
+        latest = sorted(candidates)[-1]
+        payload = _read_json_file(latest)
+        return (payload if isinstance(payload, dict) else {}), latest.parent
+
+    def _collect_dirty_clean_governance_findings(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        iteration_dir: Path,
+        evidence_root: Path,
+    ) -> tuple[list[str], list[str]]:
+        """Return FAIL/WARN findings for dirty→clean promotion governance."""
+        failures: list[str] = []
+        warnings: list[str] = []
+
+        for label, rel_path in self._bundle_required_evidence_refs(bundle):
+            if not rel_path:
+                failures.append(f"{label} missing")
+                continue
+            artifact_path = iteration_dir / rel_path
+            if not artifact_path.exists():
+                failures.append(f"{label} missing artifact file: {rel_path}")
+
+        prior_bundle, prior_iter_dir = self._prior_iteration_bundle(
+            ctx=ctx,
+            bundle=bundle,
+            evidence_root=evidence_root,
+        )
+        if not prior_bundle:
+            warnings.append("No prior iteration bundle available for CI receipt continuity check")
+        else:
+            integration_ref = str((prior_bundle.get("integration") or {}).get("path", "")).strip()
+            if not integration_ref or prior_iter_dir is None:
+                failures.append("Prior iteration missing integration report reference")
+            else:
+                integration_payload = _read_json_file(prior_iter_dir / integration_ref)
+                if not isinstance(integration_payload, dict):
+                    failures.append("Prior iteration integration report unreadable")
+                else:
+                    ci_tick = integration_payload.get("ci_tick")
+                    if not isinstance(ci_tick, dict):
+                        failures.append(
+                            "Prior iteration integration report missing ci_tick payload"
+                        )
+                    else:
+                        if not bool(ci_tick.get("triggered", False)):
+                            failures.append("Prior iteration CI tick was not triggered")
+                        ci_error = str(ci_tick.get("error", "")).strip()
+                        if ci_error:
+                            failures.append(f"Prior iteration CI tick error: {ci_error}")
+                        ci_receipt = ci_tick.get("receipt")
+                        if not isinstance(ci_receipt, dict) or not ci_receipt:
+                            failures.append("Prior iteration CI tick receipt missing")
+                        elif bool(ci_receipt.get("failed", False)):
+                            failures.append("Prior iteration CI tick receipt recorded failed=true")
+
+            tests_ref = (prior_bundle.get("tests") or {}).get("slice_path", "")
+            tests_path = str(tests_ref).strip()
+            if not tests_path or prior_iter_dir is None:
+                failures.append("Prior iteration missing slice test receipt reference")
+            else:
+                tests_payload = _read_json_file(prior_iter_dir / tests_path)
+                if not isinstance(tests_payload, dict):
+                    failures.append("Prior iteration slice test receipt unreadable")
+                else:
+                    result_payload = tests_payload.get("result")
+                    if not isinstance(result_payload, dict):
+                        failures.append("Prior iteration slice test receipt missing result payload")
+
+        under_spec_events = list(bundle.implementation.under_spec_events or [])
+        has_decision_activity = bool(under_spec_events or bundle.under_spec.decisions)
+        if has_decision_activity:
+            decision_ref = str(bundle.under_spec.path or "").strip()
+            if not decision_ref:
+                failures.append(
+                    "Decision activity detected but under_spec.path decision log is missing"
+                )
+            else:
+                decision_path = iteration_dir / decision_ref
+                if not decision_path.exists():
+                    failures.append(f"Decision log artifact missing: {decision_ref}")
+                else:
+                    decision_payload = _read_json_file(decision_path)
+                    if not isinstance(decision_payload, dict):
+                        failures.append(f"Decision log artifact unreadable: {decision_ref}")
+                    elif "decisions" not in decision_payload and "blockers" not in decision_payload:
+                        failures.append(
+                            f"Decision log artifact missing decisions/blockers: {decision_ref}"
+                        )
+                    impl_ref = str(bundle.implementation.result_path or "").strip()
+                    impl_path = iteration_dir / impl_ref if impl_ref else None
+                    if (
+                        impl_path
+                        and impl_path.exists()
+                        and (decision_path.stat().st_mtime < impl_path.stat().st_mtime)
+                    ):
+                        failures.append(
+                            "Decision log is stale relative to current implementation artifact"
+                        )
+
+        return failures, warnings
+
+    @staticmethod
     def _canonical_edge_signal(signal_type: Any) -> str:
         """Map edge/projection labels to canonical graph signal types."""
         if not isinstance(signal_type, str):
@@ -4215,6 +4375,8 @@ class PromoteStep:
         collapse_payload: dict[str, Any] = {"executed": False}
         promote_payload: dict[str, Any] = {"executed": False}
         warnings: list[str] = []
+        governance_failures: list[str] = []
+        governance_warnings: list[str] = []
 
         branch_manager = ctx.branch_manager
         if branch_manager is not None:
@@ -4233,21 +4395,39 @@ class PromoteStep:
             else:
                 warnings.append("collapse_codebase unavailable on branch_manager")
 
+            governance_failures, governance_warnings = (
+                self._collect_dirty_clean_governance_findings(
+                    ctx=ctx,
+                    bundle=bundle,
+                    iteration_dir=iteration_dir,
+                    evidence_root=evidence_root,
+                )
+            )
+            for warning in governance_warnings:
+                warnings.append(f"dirty-clean governance WARN: {warning}")
+
             promote_fn = getattr(branch_manager, "promote", None)
             if callable(promote_fn):
-                try:
-                    promote_result = promote_fn(skip_compliance=True)
+                if governance_failures:
                     promote_payload = {
-                        "executed": True,
-                        "result": promote_result.to_dict()
-                        if hasattr(promote_result, "to_dict")
-                        else {},
-                        "success": bool(getattr(promote_result, "success", True)),
+                        "executed": False,
+                        "success": False,
+                        "error": "dirty-clean governance gate failed",
                     }
-                    if not promote_payload["success"]:
-                        warnings.append("branch promotion reported unsuccessful result")
-                except Exception as exc:
-                    warnings.append(f"branch promote failed: {exc}")
+                else:
+                    try:
+                        promote_result = promote_fn(skip_compliance=True)
+                        promote_payload = {
+                            "executed": True,
+                            "result": promote_result.to_dict()
+                            if hasattr(promote_result, "to_dict")
+                            else {},
+                            "success": bool(getattr(promote_result, "success", True)),
+                        }
+                        if not promote_payload["success"]:
+                            warnings.append("branch promotion reported unsuccessful result")
+                    except Exception as exc:
+                        warnings.append(f"branch promote failed: {exc}")
             else:
                 warnings.append("promote unavailable on branch_manager")
         else:
@@ -4265,9 +4445,35 @@ class PromoteStep:
                 "pin_registry_path": str(registry_path),
                 "collapse": collapse_payload,
                 "promotion": promote_payload,
+                "dirty_clean_governance": {
+                    "passed": not governance_failures,
+                    "failures": governance_failures,
+                    "warnings": governance_warnings,
+                },
                 "warnings": warnings,
             },
         )
+
+        if governance_failures:
+            current_layer = self._current_layer_literal(ctx.layer)
+            ticket = DemotionTicket(
+                run_id=ctx.run_id,
+                slice_id=ctx.slice_id,
+                source="GATE_FAILURE",
+                category="governance",
+                gate="DIRTY_TO_CLEAN_GOVERNANCE",
+                origin_layer=current_layer,
+                target_layer=current_layer,
+                severity="BLOCKER",
+                diagnosis="; ".join(governance_failures[:5]),
+                evidence_refs=[bundle.promotion.path] if bundle.promotion.path else [],
+            )
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=[ticket],
+                error="Dirty→clean governance gate failed",
+            )
+
         return StepResult(status="OK")
 
     def _materialize_snapshots(
@@ -5243,22 +5449,43 @@ class PromoteStep:
         if not failed_gates:
             return StepResult(status="OK")
 
+        current_layer = self._current_layer_literal(ctx.layer)
         behavior_change_failures = [
             gate for gate in failed_gates if gate.get("required_change_type") == "behavior_change"
+        ]
+        governance_failures = [
+            gate
+            for gate in failed_gates
+            if "governance" in str(gate.get("gate_id", "")).strip().lower()
         ]
         tickets = [
             DemotionTicket(
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
                 source="GATE_FAILURE",
+                category="logic",
                 gate=str(gate.get("gate_id", "")),
-                origin_layer="L2",
+                origin_layer=current_layer,
                 target_layer="L1",
                 severity="BLOCKER",
                 diagnosis=str(gate.get("summary", "L2 behavior-change gate failed")),
             )
             for gate in behavior_change_failures
         ]
+        for gate in governance_failures:
+            tickets.append(
+                DemotionTicket(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    source="GATE_FAILURE",
+                    category="governance",
+                    gate=str(gate.get("gate_id", "")),
+                    origin_layer=current_layer,
+                    target_layer=current_layer,
+                    severity="BLOCKER",
+                    diagnosis=str(gate.get("summary", "L2 governance gate failed")),
+                )
+            )
 
         wiring_failures = len(failed_gates) - len(behavior_change_failures)
         error_parts = []
@@ -5267,6 +5494,10 @@ class PromoteStep:
         if behavior_change_failures:
             error_parts.append(
                 f"{len(behavior_change_failures)} gate(s) require L1 behavior-change demotion"
+            )
+        if governance_failures:
+            error_parts.append(
+                f"{len(governance_failures)} governance gate(s) require governance remediation"
             )
 
         return StepResult(
@@ -5897,7 +6128,7 @@ class VerifyStep:
 
         def triage_to_ticket(f: dict[str, Any]) -> DemotionTicket | None:
             required = f.get("required_change_type", "refactor_only")
-            cat = f.get("category", "style")
+            cat = str(f.get("category", "style")).strip().lower() or "style"
             sev = f.get("severity", "MINOR")
 
             if cat == "governance":
@@ -5916,6 +6147,7 @@ class VerifyStep:
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
                 source="VERIFY",
+                category=cat,
                 origin_layer=ctx.layer.upper(),
                 target_layer=target,
                 severity=sev if sev in ("BLOCKER", "MAJOR", "MINOR") else "MINOR",

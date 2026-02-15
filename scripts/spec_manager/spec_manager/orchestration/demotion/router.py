@@ -64,6 +64,7 @@ class DemotionRouter:
         ticket = DemotionTicket(
             run_id=self._run_id,
             source=ctx.source or "GATE_FAILURE",
+            category=ctx.category or "",
             gate=ctx.gate,
             target_layer=routing.target_layer,
             severity=ticket_severity,

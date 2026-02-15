@@ -46,6 +46,7 @@ class DemotionTicket:
         "GATE_FAILURE",
         "VERIFY",
     ] = "ALGORITHMIC_GATE"
+    category: str = ""  # style | maintainability | architecture | logic | drift | governance
     gate: str | None = None
 
     target_layer: Literal["L1", "L2", "L3"] = "L1"
@@ -325,6 +326,7 @@ class DemotionManager:
             "slice_id": ticket.slice_id,
             "created_at": ticket.created_at,
             "source": ticket.source,
+            "category": ticket.category,
             "gate": ticket.gate,
             "origin_layer": ticket.origin_layer,
             "target_layer": ticket.target_layer,

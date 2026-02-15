@@ -127,6 +127,8 @@ class PddLifecycle:
             ``"soft"`` records failures but continues).
         qa_min_pass_rate: Minimum QA pass rate required when
             ``qa_enforcement="hard"``.
+        governance_strict_mode: Whether WARN-level governance findings should
+            also block transitions and release.
         model_profile: Optional model profile used for role-based model routing.
         planner_override_provider: Optional planner provider override for tests/evals.
     """
@@ -149,6 +151,7 @@ class PddLifecycle:
         refinement_max_issues: int = 0,
         qa_enforcement: Literal["hard", "soft"] = "hard",
         qa_min_pass_rate: float = 1.0,
+        governance_strict_mode: bool = False,
         model_profile: Any = None,
         planner_override_provider: Any = None,
     ) -> None:
@@ -170,6 +173,7 @@ class PddLifecycle:
             "hard" if qa_enforcement == "hard" else "soft"
         )
         self.qa_min_pass_rate = min(max(float(qa_min_pass_rate), 0.0), 1.0)
+        self.governance_strict_mode = bool(governance_strict_mode)
         self._model_profile = model_profile
         self._planner_override_provider = planner_override_provider
         self._compute_quality = False
@@ -890,6 +894,17 @@ class PddLifecycle:
                 "Final governance gate failed: %s",
                 final_governance.get("error", ""),
             )
+            final_ticket = self._emit_governance_failure_ticket(
+                gate="FINAL_GOVERNANCE",
+                layer="L3",
+                diagnosis=str(final_governance.get("error") or "Final governance gate failed"),
+                evidence_refs=[
+                    self._run_report_relpath("final_report.md"),
+                    self._run_report_relpath("scorecard.json"),
+                    self._run_report_relpath("run_summary.json"),
+                ],
+            )
+            results["final_governance_ticket"] = final_ticket
             results["release_blocked"] = True
             results["release_blocked_reason"] = "Final governance gate failed"
             state_mgr.update_state(phase="blocked_final_governance")
@@ -1708,6 +1723,17 @@ class PddLifecycle:
                 to_layer,
                 governance.get("error", ""),
             )
+            transition_gate = f"TRANSITION::{from_layer.upper()}->{to_layer.upper()}::GOVERNANCE"
+            transition_ticket = self._emit_governance_failure_ticket(
+                gate=transition_gate,
+                layer=str(from_layer).upper(),
+                diagnosis=str(
+                    governance.get("error")
+                    or f"Transition {from_layer}→{to_layer} blocked by governance gate"
+                ),
+                evidence_refs=[],
+            )
+            results["governance_ticket"] = transition_ticket
             results["governance_blocked"] = True
             results["error"] = (
                 f"Transition {from_layer}→{to_layer} blocked by governance gate: "
@@ -3882,6 +3908,262 @@ class PddLifecycle:
     # Governance helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _layer_literal(value: str) -> Literal["L1", "L2", "L3"]:
+        normalized = str(value).strip().upper()
+        if normalized == "L2":
+            return "L2"
+        if normalized == "L3":
+            return "L3"
+        return "L1"
+
+    def _governance_strict_mode_enabled(self) -> bool:
+        return bool(self.governance_strict_mode)
+
+    @staticmethod
+    def _governance_finding(
+        message: str,
+        *,
+        level: Literal["FAIL", "WARN"],
+        checkpoint: str,
+    ) -> dict[str, Any]:
+        return {
+            "level": level,
+            "checkpoint": checkpoint,
+            "message": message,
+        }
+
+    def _emit_governance_failure_ticket(
+        self,
+        *,
+        gate: str,
+        layer: str,
+        diagnosis: str,
+        evidence_refs: list[str],
+    ) -> dict[str, Any]:
+        """Persist a governance failure ticket for run-level hard stops."""
+        from spec_manager.orchestration.demotion import DemotionTicket
+
+        normalized_layer = self._layer_literal(layer)
+        ticket = DemotionTicket(
+            run_id=self.manager.run_id,
+            slice_id="__pipeline__",
+            source="GATE_FAILURE",
+            category="governance",
+            gate=gate,
+            origin_layer=normalized_layer,
+            target_layer=normalized_layer,
+            severity="BLOCKER",
+            diagnosis=diagnosis[:500],
+            evidence_refs=[str(ref).strip() for ref in evidence_refs if str(ref).strip()],
+        )
+        # Run-level governance failures are not applied to a single slice patch path.
+        ticket.apply_status = "APPLIED"
+
+        tickets_dir = self._demotion_tickets_dir()
+        tickets_dir.mkdir(parents=True, exist_ok=True)
+        ticket_path = tickets_dir / f"{ticket.ticket_id}.json"
+        ticket_path.write_text(
+            json.dumps(
+                {
+                    "ticket": ticket.to_dict(),
+                    "result": {
+                        "applied": False,
+                        "patches": [],
+                        "gap_evidence_added": 0,
+                        "note": "governance hard-stop ticket (run-level)",
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return {"ticket": ticket.to_dict(), "ticket_path": str(ticket_path)}
+
+    def _latest_bundle_paths_by_slice(self, bundle_paths: list[Path]) -> list[Path]:
+        latest: dict[str, tuple[int, Path]] = {}
+        for bundle_path in bundle_paths:
+            slice_id = bundle_path.parent.parent.name
+            try:
+                iteration = int(bundle_path.parent.name.split("_")[-1])
+            except (TypeError, ValueError):
+                iteration = -1
+            prev = latest.get(slice_id)
+            if prev is None or iteration > prev[0]:
+                latest[slice_id] = (iteration, bundle_path)
+        return [payload[1] for _, payload in sorted(latest.items())]
+
+    def _open_governance_fail_findings(self, *, bundle_paths: list[Path]) -> list[str]:
+        """Scan latest per-slice evidence for unresolved governance FAIL findings."""
+        findings: set[str] = set()
+        for bundle_path in self._latest_bundle_paths_by_slice(bundle_paths):
+            bundle_data = self._read_json_dict(bundle_path)
+            if not bundle_data:
+                continue
+            slice_id = str(bundle_data.get("slice_id") or bundle_path.parent.parent.name).strip()
+            iteration_dir = bundle_path.parent
+
+            verification_ref = str((bundle_data.get("verification") or {}).get("path", "")).strip()
+            if verification_ref:
+                verification_payload = self._read_json_payload(iteration_dir / verification_ref)
+                rows = (
+                    verification_payload.get("findings", [])
+                    if isinstance(verification_payload, dict)
+                    else []
+                )
+                for row in rows if isinstance(rows, list) else []:
+                    if not isinstance(row, dict):
+                        continue
+                    category = str(row.get("category", "")).strip().lower()
+                    dimension = str(row.get("dimension", "")).strip().upper()
+                    if category != "governance" and dimension != "GOVERNANCE":
+                        continue
+                    severity = str(row.get("severity", "MINOR")).strip().upper()
+                    if severity not in {"BLOCKER", "MAJOR"}:
+                        continue
+                    evidence = str(
+                        row.get("evidence") or row.get("description") or "governance finding"
+                    )
+                    findings.add(f"{slice_id}: open governance FAIL ({severity}) - {evidence}")
+
+            quality_receipts = self._read_json_payload(iteration_dir / "quality.receipts.json")
+            receipt_rows = (
+                quality_receipts.get("receipts", []) if isinstance(quality_receipts, dict) else []
+            )
+            for receipt in receipt_rows if isinstance(receipt_rows, list) else []:
+                if not isinstance(receipt, dict):
+                    continue
+                dimension = str(receipt.get("dimension", "")).strip().upper()
+                status = str(receipt.get("status", "")).strip().upper()
+                if dimension == "GOVERNANCE" and status == "FAIL":
+                    reviewer_id = str(receipt.get("reviewer_id", "governance-reviewer")).strip()
+                    findings.add(
+                        f"{slice_id}: open governance FAIL from quality receipt {reviewer_id}"
+                    )
+
+        return sorted(findings)
+
+    def _alignment_artifact_findings(self, *, checkpoint: str, reports_dir: Path) -> list[str]:
+        findings: list[str] = []
+        checkpoint_key = checkpoint.lower().strip()
+        requires_alignment = checkpoint_key in {"transition_l1_l2", "transition_l2_l3", "final"}
+        if not requires_alignment:
+            return findings
+
+        component_manifest = reports_dir / "component_manifest.json"
+        if not component_manifest.exists():
+            findings.append("Component manifest artifact missing")
+        else:
+            manifest_payload = self._read_json_payload(component_manifest)
+            components = (
+                manifest_payload.get("components", []) if isinstance(manifest_payload, dict) else []
+            )
+            if not isinstance(components, list):
+                findings.append("Component manifest payload is invalid")
+            elif not components:
+                findings.append("Component manifest has no components")
+
+        alignment_report = reports_dir / "alignment_report.json"
+        if not alignment_report.exists():
+            findings.append("POWER alignment artifact missing")
+        else:
+            alignment_payload = self._read_json_payload(alignment_report)
+            if not isinstance(alignment_payload, dict):
+                findings.append("POWER alignment artifact unreadable")
+
+        return findings
+
+    def _final_receipt_completeness_findings(self, *, bundle_paths: list[Path]) -> list[str]:
+        findings: list[str] = []
+        latest_paths = self._latest_bundle_paths_by_slice(bundle_paths)
+        if not latest_paths:
+            return ["Final governance receipt completeness: no slice bundles found"]
+
+        for bundle_path in latest_paths:
+            bundle_data = self._read_json_dict(bundle_path)
+            if not bundle_data:
+                findings.append(f"{bundle_path.parent.parent.name}: bundle unreadable")
+                continue
+            slice_id = str(bundle_data.get("slice_id") or bundle_path.parent.parent.name).strip()
+            iteration_dir = bundle_path.parent
+
+            integration_ref = str((bundle_data.get("integration") or {}).get("path", "")).strip()
+            if not integration_ref:
+                findings.append(f"{slice_id}: integration receipt missing")
+            else:
+                integration_payload = self._read_json_payload(iteration_dir / integration_ref)
+                ci_tick = (
+                    integration_payload.get("ci_tick")
+                    if isinstance(integration_payload, dict)
+                    else None
+                )
+                if not isinstance(ci_tick, dict):
+                    findings.append(f"{slice_id}: integration receipt missing ci_tick details")
+                else:
+                    if not bool(ci_tick.get("triggered", False)):
+                        findings.append(f"{slice_id}: CI tick not triggered")
+                    ci_error = str(ci_tick.get("error", "")).strip()
+                    if ci_error:
+                        findings.append(f"{slice_id}: CI tick error present ({ci_error})")
+                    ci_receipt = ci_tick.get("receipt")
+                    if not isinstance(ci_receipt, dict) or not ci_receipt:
+                        findings.append(f"{slice_id}: CI tick receipt missing")
+                    elif bool(ci_receipt.get("failed", False)):
+                        findings.append(f"{slice_id}: CI tick receipt failed=true")
+
+            tests_ref = str((bundle_data.get("tests") or {}).get("slice_path", "")).strip()
+            if not tests_ref:
+                findings.append(f"{slice_id}: slice test receipt missing")
+            else:
+                test_payload = self._read_json_payload(iteration_dir / tests_ref)
+                result_payload = (
+                    test_payload.get("result") if isinstance(test_payload, dict) else None
+                )
+                if not isinstance(result_payload, dict):
+                    findings.append(f"{slice_id}: slice test receipt missing result payload")
+
+            verification_ref = str((bundle_data.get("verification") or {}).get("path", "")).strip()
+            if not verification_ref:
+                findings.append(f"{slice_id}: verification receipt missing")
+            elif not (iteration_dir / verification_ref).exists():
+                findings.append(
+                    f"{slice_id}: verification receipt path missing ({verification_ref})"
+                )
+
+        return findings
+
+    def _decision_injection_findings(self, *, run_dir: Path) -> list[str]:
+        findings: list[str] = []
+        approvals_dir = run_dir / "approvals"
+        if not approvals_dir.exists():
+            return ["Approvals directory missing"]
+
+        for decision_path in approvals_dir.rglob("*.json"):
+            rel = str(decision_path.relative_to(approvals_dir)).replace("\\", "/")
+            is_allowed = (
+                (rel.startswith("l1/iteration_") and rel.endswith("/decision.json"))
+                or rel == "l2/decision.json"
+                or rel == "l3/decision.json"
+            )
+            if not is_allowed:
+                findings.append(
+                    f"Decision-injection pattern detected: unauthorized decision file {rel}"
+                )
+                continue
+            payload = self._read_json_dict(decision_path)
+            if not payload:
+                findings.append(f"Decision artifact unreadable: {rel}")
+                continue
+            expected_layer = rel.split("/", 1)[0]
+            recorded_layer = str(payload.get("layer", "")).strip().lower()
+            if recorded_layer and recorded_layer != expected_layer:
+                findings.append(
+                    f"Decision artifact layer mismatch for {rel}: "
+                    f"expected {expected_layer}, got {recorded_layer}"
+                )
+
+        return findings
+
     def _run_governance_check(
         self,
         checkpoint: str,
@@ -3889,85 +4171,118 @@ class PddLifecycle:
         check_artifacts: bool = False,
         check_report: bool = False,
     ) -> dict[str, Any]:
-        """Run governance validation at a pipeline checkpoint.
-
-        Checks:
-        - No open governance FAIL findings
-        - Required artifacts present (if check_artifacts)
-        - Report completeness (if check_report)
-
-        Args:
-            checkpoint: Name of the checkpoint (e.g., "transition_l1_l2", "final").
-            check_artifacts: Whether to verify artifact presence.
-            check_report: Whether to verify final report.
-
-        Returns:
-            Dict with ``passed`` bool and findings.
-        """
+        """Run governance validation at a pipeline checkpoint."""
         run_id = self.manager.run_id
         workspace = self.manager.workspace_path
         run_dir = workspace / ".pdd_runs" / run_id
         reports_dir = workspace / "reports" / "pdd" / run_id
-        findings: list[str] = []
+        findings: list[dict[str, Any]] = []
+        checkpoint_key = checkpoint.lower().strip()
+        strict_mode = self._governance_strict_mode_enabled()
 
+        def add_findings(messages: list[str], *, level: Literal["FAIL", "WARN"]) -> None:
+            for message in messages:
+                findings.append(
+                    self._governance_finding(message, level=level, checkpoint=checkpoint)
+                )
+
+        bundle_paths = self._iter_bundle_paths()
         if check_artifacts:
-            bundle_paths = self._iter_bundle_paths()
             if not bundle_paths:
-                findings.append("No evidence bundles found in slices directory")
+                add_findings(["No evidence bundles found in slices directory"], level="FAIL")
             else:
                 integrity_errors = 0
                 for bundle_path in bundle_paths:
                     try:
                         bundle_data = json.loads(bundle_path.read_text(encoding="utf-8"))
                     except Exception as exc:
-                        findings.append(f"Unreadable evidence bundle: {bundle_path.name} ({exc})")
+                        add_findings(
+                            [f"Unreadable evidence bundle: {bundle_path.name} ({exc})"],
+                            level="FAIL",
+                        )
                         integrity_errors += 1
                         continue
-                    issues = self._bundle_integrity_issues(bundle_data)
+                    issues = self._bundle_integrity_issues(bundle_data, bundle_path=bundle_path)
                     if issues:
                         integrity_errors += 1
                         parent_name = bundle_path.parent.name
                         grandparent_name = bundle_path.parent.parent.name
-                        findings.append(f"{grandparent_name}/{parent_name}: {issues[0]}")
+                        scoped_issues = [
+                            f"{grandparent_name}/{parent_name}: {issue}" for issue in issues
+                        ]
+                        add_findings(scoped_issues, level="FAIL")
                 if integrity_errors > 0:
-                    findings.append(f"{integrity_errors} bundle(s) failed integrity checks")
+                    add_findings(
+                        [f"{integrity_errors} bundle(s) failed integrity checks"], level="FAIL"
+                    )
 
-            # Verify demotion ledger exists (it's OK if empty)
             demotions_dir = run_dir / "demotions"
             if not demotions_dir.exists():
-                findings.append("Demotions directory missing")
-            findings.extend(
-                self._approval_artifact_findings(checkpoint=checkpoint, run_dir=run_dir)
+                add_findings(["Demotions directory missing"], level="WARN")
+
+            add_findings(
+                self._approval_artifact_findings(checkpoint=checkpoint, run_dir=run_dir),
+                level="FAIL",
             )
-            if checkpoint.lower().strip() == "final":
+            add_findings(
+                self._alignment_artifact_findings(checkpoint=checkpoint, reports_dir=reports_dir),
+                level="FAIL",
+            )
+            add_findings(
+                self._open_governance_fail_findings(bundle_paths=bundle_paths),
+                level="FAIL",
+            )
+
+            if checkpoint_key == "final":
                 run_summary_path = reports_dir / "run_summary.json"
-                findings.extend(
+                add_findings(
                     self._run_summary_artifact_findings(
                         run_summary_path=run_summary_path,
                         workspace=workspace,
-                    )
+                    ),
+                    level="FAIL",
+                )
+                add_findings(
+                    self._final_receipt_completeness_findings(bundle_paths=bundle_paths),
+                    level="FAIL",
+                )
+                add_findings(
+                    self._decision_injection_findings(run_dir=run_dir),
+                    level="FAIL",
                 )
 
         if check_report:
             report_path = reports_dir / "final_report.md"
             if not report_path.exists():
-                findings.append("Final report missing")
+                add_findings(["Final report missing"], level="FAIL")
             scorecard_path = reports_dir / "scorecard.json"
             if not scorecard_path.exists():
-                findings.append("Scorecard JSON missing")
-            if checkpoint.lower().strip() == "final":
+                add_findings(["Scorecard JSON missing"], level="FAIL")
+            if checkpoint_key == "final":
                 run_summary_path = reports_dir / "run_summary.json"
                 if not run_summary_path.exists():
-                    findings.append("Run summary JSON missing")
+                    add_findings(["Run summary JSON missing"], level="FAIL")
             if report_path.exists():
-                findings.extend(self._report_content_findings(report_path))
+                add_findings(self._report_content_findings(report_path), level="FAIL")
 
-        passed = len(findings) == 0
+        fail_count = sum(1 for finding in findings if finding.get("level") == "FAIL")
+        warn_count = sum(1 for finding in findings if finding.get("level") == "WARN")
+        passed = fail_count == 0 and (warn_count == 0 or not strict_mode)
+
+        blocking_findings = [
+            finding
+            for finding in findings
+            if finding.get("level") == "FAIL" or (strict_mode and finding.get("level") == "WARN")
+        ]
+        error = "; ".join(str(finding.get("message", "")).strip() for finding in blocking_findings)
         return {
             "checkpoint": checkpoint,
             "passed": passed,
+            "strict_mode": strict_mode,
+            "fail_count": fail_count,
+            "warn_count": warn_count,
             "findings": findings,
-            "error": "; ".join(findings) if findings else "",
+            "error": error,
         }
 
     def _approval_artifact_findings(self, *, checkpoint: str, run_dir: Path) -> list[str]:
@@ -4114,13 +4429,20 @@ class PddLifecycle:
         return findings
 
     @staticmethod
-    def _read_json_dict(path: Path) -> dict[str, Any]:
+    def _read_json_payload(path: Path) -> dict[str, Any] | list[Any]:
         if not path.exists():
             return {}
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
+        if isinstance(payload, (dict, list)):
+            return payload
+        return {}
+
+    @staticmethod
+    def _read_json_dict(path: Path) -> dict[str, Any]:
+        payload = PddLifecycle._read_json_payload(path)
         return payload if isinstance(payload, dict) else {}
 
     def _latest_l1_approval(self, approvals_dir: Path) -> tuple[dict[str, Any], Path]:
@@ -4397,7 +4719,12 @@ class PddLifecycle:
             return []
         return sorted(run_slices_dir.glob("*/iter_*/bundle.json"))
 
-    def _bundle_integrity_issues(self, bundle_data: dict[str, Any]) -> list[str]:
+    def _bundle_integrity_issues(
+        self,
+        bundle_data: dict[str, Any],
+        *,
+        bundle_path: Path | None = None,
+    ) -> list[str]:
         """Return evidence integrity failures for one bundle payload."""
         issues: list[str] = []
         manifest_files = (bundle_data.get("manifest") or {}).get("files") or []
@@ -4430,6 +4757,111 @@ class PddLifecycle:
             issues.append("graph_snapshot.path missing")
         if not graph_snapshot.get("snapshot_hash"):
             issues.append("graph_snapshot.snapshot_hash missing")
+
+        if bundle_path is not None:
+            iteration_dir = bundle_path.parent
+            required_refs = (
+                ("manifest.path", str((bundle_data.get("manifest") or {}).get("path", "")).strip()),
+                ("diff.path", str((bundle_data.get("diff") or {}).get("path", "")).strip()),
+                (
+                    "implementation.result_path",
+                    str((bundle_data.get("implementation") or {}).get("result_path", "")).strip(),
+                ),
+                (
+                    "promotion.path",
+                    str((bundle_data.get("promotion") or {}).get("path", "")).strip(),
+                ),
+                ("gates.path", str((bundle_data.get("gates") or {}).get("path", "")).strip()),
+                (
+                    "integration.path",
+                    str((bundle_data.get("integration") or {}).get("path", "")).strip(),
+                ),
+                (
+                    "tests.slice_path",
+                    str((bundle_data.get("tests") or {}).get("slice_path", "")).strip(),
+                ),
+                (
+                    "verification.path",
+                    str((bundle_data.get("verification") or {}).get("path", "")).strip(),
+                ),
+                (
+                    "pins_snapshot.path",
+                    str((bundle_data.get("pins_snapshot") or {}).get("path", "")).strip(),
+                ),
+                (
+                    "graph_snapshot.path",
+                    str((bundle_data.get("graph_snapshot") or {}).get("path", "")).strip(),
+                ),
+            )
+            for label, rel_path in required_refs:
+                if not rel_path:
+                    issues.append(f"{label} missing")
+                    continue
+                artifact_path = iteration_dir / rel_path
+                if not artifact_path.exists():
+                    issues.append(f"{label} artifact missing: {rel_path}")
+
+            for rel_path in (bundle_data.get("manifest") or {}).get("generated_files", []) or []:
+                rel_value = str(rel_path).strip()
+                if not rel_value:
+                    continue
+                if not (iteration_dir / rel_value).exists():
+                    issues.append(f"manifest.generated_files artifact missing: {rel_value}")
+
+            integration_ref = str((bundle_data.get("integration") or {}).get("path", "")).strip()
+            if integration_ref:
+                integration_payload = self._read_json_payload(iteration_dir / integration_ref)
+                if isinstance(integration_payload, dict):
+                    ci_tick = integration_payload.get("ci_tick")
+                    if not isinstance(ci_tick, dict):
+                        issues.append("integration report missing ci_tick payload")
+                    else:
+                        if not bool(ci_tick.get("triggered", False)):
+                            issues.append("integration ci_tick.triggered is false")
+                        ci_error = str(ci_tick.get("error", "")).strip()
+                        if ci_error:
+                            issues.append(f"integration ci_tick error present: {ci_error}")
+                        ci_receipt = ci_tick.get("receipt")
+                        if not isinstance(ci_receipt, dict) or not ci_receipt:
+                            issues.append("integration ci_tick receipt missing")
+                        elif bool(ci_receipt.get("failed", False)):
+                            issues.append("integration ci_tick receipt failed=true")
+                else:
+                    issues.append("integration report unreadable")
+
+            under_spec_events = (bundle_data.get("implementation") or {}).get(
+                "under_spec_events"
+            ) or []
+            under_spec = bundle_data.get("under_spec") or {}
+            decision_activity = bool(under_spec_events or under_spec.get("decisions"))
+            decision_ref = str(under_spec.get("path", "")).strip()
+            if decision_activity and not decision_ref:
+                issues.append("under_spec decision activity present but under_spec.path missing")
+            if decision_ref:
+                decision_path = iteration_dir / decision_ref
+                if not decision_path.exists():
+                    issues.append(f"under_spec decision log artifact missing: {decision_ref}")
+                else:
+                    decision_payload = self._read_json_payload(decision_path)
+                    if not isinstance(decision_payload, dict):
+                        issues.append(f"under_spec decision log unreadable: {decision_ref}")
+                    elif "decisions" not in decision_payload and "blockers" not in decision_payload:
+                        issues.append(
+                            f"under_spec decision log missing decisions/blockers sections: "
+                            f"{decision_ref}"
+                        )
+                    impl_ref = str(
+                        (bundle_data.get("implementation") or {}).get("result_path", "")
+                    ).strip()
+                    impl_path = iteration_dir / impl_ref if impl_ref else None
+                    if (
+                        impl_path is not None
+                        and impl_path.exists()
+                        and decision_path.stat().st_mtime < impl_path.stat().st_mtime
+                    ):
+                        issues.append(
+                            "under_spec decision log stale relative to implementation result"
+                        )
 
         return issues
 
