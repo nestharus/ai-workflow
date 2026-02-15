@@ -55,7 +55,7 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from spec_manager.orchestration.models import Layer
 from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from spec_manager.vcs.worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
+LifecycleRunMode = Literal["build", "qa", "architecture", "code_quality"]
 
 
 def _hash_text(content: str) -> str:
@@ -77,6 +78,11 @@ _LAYER_REFINEMENT: dict[Layer, str] = {
     "l1": "_library_refinement",
     "l2": "_architectural_refinement",
     "l3": "_code_quality_refinement",
+}
+_LAYER_LIFECYCLE_MODE: dict[Layer, LifecycleRunMode] = {
+    "l1": "build",
+    "l2": "architecture",
+    "l3": "code_quality",
 }
 
 _TERMINAL_SLICE_STATUSES = {"COMPLETE", "PROMOTED", "SKIPPED"}
@@ -568,9 +574,10 @@ class PddLifecycle:
                     return results
                 continue
 
-            # Final QA eval
-            pass_outcome["qa"] = self.qa()
-            pass_outcome["qa_gate"] = self._evaluate_qa_gate(pass_outcome["qa"])
+            # Final QA mode: evals/tests -> demotions -> slice rework rounds.
+            pass_outcome["qa_mode"] = self._run_qa_mode()
+            pass_outcome["qa"] = pass_outcome["qa_mode"].get("qa", {})
+            pass_outcome["qa_gate"] = pass_outcome["qa_mode"].get("qa_gate", {})
             pass_outcome["global_termination"] = self._evaluate_global_termination(pass_outcome)
 
             results.update(pass_outcome)
@@ -811,6 +818,175 @@ class PddLifecycle:
         except Exception as exc:
             logger.warning("QA eval failed: %s", exc)
             return {"error": str(exc)}
+
+    @staticmethod
+    def _qa_phase_target_layer(phase_name: str) -> str:
+        """Route QA failures to the most likely owning layer."""
+        lowered = phase_name.lower()
+        if any(token in lowered for token in ("arch", "topology", "wiring", "component")):
+            return "L2"
+        if any(token in lowered for token in ("style", "maintainability", "readability")):
+            return "L3"
+        return "L1"
+
+    def _qa_failures_to_tickets(
+        self,
+        qa_result: dict[str, Any],
+        *,
+        evidence_ref: str,
+    ) -> list[Any]:
+        """Convert QA gate failures into DemotionTickets."""
+        from spec_manager.orchestration.demotion import DemotionTicket
+
+        failures: list[dict[str, Any]] = []
+        qa_rows = qa_result.get("results", [])
+        if isinstance(qa_rows, list):
+            for row in qa_rows:
+                if not isinstance(row, dict):
+                    continue
+                if bool(row.get("passed", False)):
+                    continue
+                failures.append(row)
+
+        if not failures:
+            qa_error = str(qa_result.get("error", "")).strip()
+            if qa_error:
+                failures.append({"phase": "qa-eval", "error": qa_error, "passed": False})
+
+        tickets: list[DemotionTicket] = []
+        for failure in failures:
+            phase_name = str(failure.get("phase", "qa-gate")).strip() or "qa-gate"
+            recall = failure.get("recall")
+            precision = failure.get("precision")
+            target_layer = self._qa_phase_target_layer(phase_name)
+            details: list[str] = [f"QA phase '{phase_name}' failed"]
+            if recall is not None:
+                details.append(f"recall={recall}")
+            if precision is not None:
+                details.append(f"precision={precision}")
+            if failure.get("error"):
+                details.append(f"error={failure['error']}")
+            tickets.append(
+                DemotionTicket(
+                    run_id=self.manager.run_id,
+                    source="GATE_FAILURE",
+                    gate=f"QA::{phase_name}",
+                    target_layer=target_layer,
+                    origin_layer="L3",
+                    hop_trace=["L3", target_layer],
+                    severity="BLOCKER",
+                    diagnosis=", ".join(details),
+                    failing_files=[f"qa/{phase_name}.txt"],
+                    evidence_refs=[evidence_ref],
+                )
+            )
+        return tickets
+
+    def _run_qa_mode(self, *, max_rounds: int = 3) -> dict[str, Any]:
+        """Run QA as demotion-driven rounds with PromotionLoop rework."""
+        from spec_manager.orchestration.demotion import DemotionManager
+
+        rounds: list[dict[str, Any]] = []
+        final_qa: dict[str, Any] = {}
+        final_gate: dict[str, Any] = {
+            "passed": False,
+            "enforcement": self.qa_enforcement,
+            "error": "QA mode did not run",
+            "pass_rate": 0.0,
+        }
+        total_tickets = 0
+        total_applied = 0
+        stuck = False
+
+        demotion_manager = DemotionManager(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
+
+        for round_num in range(1, max_rounds + 1):
+            qa_result = self.qa()
+            qa_gate = self._evaluate_qa_gate(qa_result)
+            qa_report_name = f"qa_round_{round_num}.json"
+            self._write_run_report(qa_report_name, qa_result)
+            qa_report_ref = self._run_report_relpath(qa_report_name)
+
+            round_payload: dict[str, Any] = {
+                "round": round_num,
+                "qa": qa_result,
+                "qa_gate": qa_gate,
+                "qa_report_path": qa_report_ref,
+                "demotion_tickets": 0,
+                "demotion_tickets_applied": 0,
+                "rework": {},
+            }
+
+            final_qa = qa_result
+            final_gate = qa_gate
+
+            if qa_gate.get("passed", False):
+                rounds.append(round_payload)
+                break
+
+            tickets = self._qa_failures_to_tickets(qa_result, evidence_ref=qa_report_ref)
+            if not tickets:
+                round_payload["error"] = "QA failed but no demotion tickets were generated"
+                rounds.append(round_payload)
+                stuck = True
+                break
+
+            ticket_rows: list[dict[str, Any]] = []
+            affected_layers: set[Layer] = set()
+            for ticket in tickets:
+                file_hint = ticket.failing_files[0] if ticket.failing_files else ""
+                apply_result = demotion_manager.apply(
+                    ticket,
+                    slice_root=self._resolve_demotion_slice_root(file_hint),
+                )
+                ticket_rows.append({"ticket": ticket.to_dict(), "apply_result": apply_result})
+                target_layer = str(ticket.target_layer).strip().lower()
+                if target_layer in {"l1", "l2", "l3"}:
+                    affected_layers.add(cast("Layer", target_layer))
+
+            total_tickets += len(ticket_rows)
+            total_applied += sum(
+                1
+                for row in ticket_rows
+                if bool((row.get("apply_result") or {}).get("applied", False))
+            )
+            round_payload["demotion_tickets"] = len(ticket_rows)
+            round_payload["demotion_tickets_applied"] = sum(
+                1
+                for row in ticket_rows
+                if bool((row.get("apply_result") or {}).get("applied", False))
+            )
+
+            tickets_report_name = f"qa_demotion_tickets_round_{round_num}.json"
+            self._write_run_report(tickets_report_name, ticket_rows)
+            round_payload["qa_demotion_tickets_path"] = self._run_report_relpath(
+                tickets_report_name
+            )
+
+            for layer in sorted(affected_layers):
+                run_mode = _LAYER_LIFECYCLE_MODE.get(layer, "build")
+                round_payload["rework"][layer] = self._run_slices_at_layer(
+                    layer,
+                    lifecycle_mode=run_mode,
+                )
+
+            rounds.append(round_payload)
+            if round_num == max_rounds:
+                stuck = True
+
+        self._write_run_report("qa_mode_rounds.json", rounds)
+        return {
+            "qa": final_qa,
+            "qa_gate": final_gate,
+            "rework_rounds": rounds,
+            "demotion_tickets": total_tickets,
+            "demotion_tickets_applied": total_applied,
+            "stuck": stuck,
+            "rounds_path": self._run_report_relpath("qa_mode_rounds.json"),
+        }
 
     def _evaluate_qa_gate(self, qa_result: dict[str, Any]) -> dict[str, Any]:
         """Evaluate QA result using configured hard/soft policy."""
@@ -1234,6 +1410,8 @@ class PddLifecycle:
         """
         logger.info("=== Layer %s: START ===", layer.upper())
         results: dict[str, Any] = {"layer": layer}
+        lifecycle_mode = _LAYER_LIFECYCLE_MODE.get(layer, "build")
+        results["lifecycle_mode"] = lifecycle_mode
 
         refinement_method = getattr(self, _LAYER_REFINEMENT[layer])
 
@@ -1241,7 +1419,7 @@ class PddLifecycle:
         results["entry_refinement"] = refinement_method()
 
         # Per-slice work via PromotionLoop
-        results["slices"] = self._run_slices_at_layer(layer)
+        results["slices"] = self._run_slices_at_layer(layer, lifecycle_mode=lifecycle_mode)
 
         # Exit refinement (typed per layer)
         results["exit_refinement"] = refinement_method()
@@ -1305,7 +1483,11 @@ class PddLifecycle:
                 demotions,
                 from_layer,
             )
-            round_result["rework"] = self._run_slices_at_layer(from_layer)
+            rework_mode = _LAYER_LIFECYCLE_MODE.get(from_layer, "build")
+            round_result["rework"] = self._run_slices_at_layer(
+                from_layer,
+                lifecycle_mode=rework_mode,
+            )
             rework_rounds.append(round_result)
 
             if round_num == max_rounds and demotions > 0:
@@ -1371,7 +1553,12 @@ class PddLifecycle:
 
         return results
 
-    def _run_slices_at_layer(self, layer: Layer) -> dict[str, Any]:
+    def _run_slices_at_layer(
+        self,
+        layer: Layer,
+        *,
+        lifecycle_mode: LifecycleRunMode = "build",
+    ) -> dict[str, Any]:
         """Discover slices and run PromotionLoop at a given layer.
 
         Creates coordination infrastructure (WorkItemStore, WakeQueue,
@@ -1380,6 +1567,7 @@ class PddLifecycle:
 
         Args:
             layer: Which layer to run slices at.
+            lifecycle_mode: PromotionLoop lifecycle mode for this layer pass.
 
         Returns:
             Dict with per-slice results.
@@ -1415,6 +1603,7 @@ class PddLifecycle:
         run_context = RunContext(
             run_id=self.manager.run_id,
             mode="auto" if self.mode != "interactive" else "interactive",
+            lifecycle_mode=lifecycle_mode,
             workspace_root=str(self.manager.workspace_path),
             config=self._build_run_context_config(),
         )
@@ -1492,6 +1681,7 @@ class PddLifecycle:
 
         return {
             "layer": layer,
+            "lifecycle_mode": lifecycle_mode,
             "slices": [
                 {
                     "slice_id": r.slice_id,

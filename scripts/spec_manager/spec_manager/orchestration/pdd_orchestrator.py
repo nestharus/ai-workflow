@@ -53,6 +53,48 @@ PDD_PHASE_ORDER: list[Phase] = [
 ]
 
 
+class PromotionLoopRunner:
+    """Compatibility wrapper for running slice batches via PromotionLoop."""
+
+    def __init__(
+        self,
+        manager: WorkspaceManager,
+        *,
+        max_parallel: int = 4,
+    ) -> None:
+        self._manager = manager
+        self._max_parallel = max_parallel
+
+    def run_slices(
+        self,
+        *,
+        slice_refs: list[Any],
+        run_context: Any,
+    ) -> dict[str, Any]:
+        """Run discovered slices through PromotionLoop and return scheduler output."""
+        from spec_manager.orchestration.promotion_loop import PromotionLoop
+        from spec_manager.orchestration.promotion_scheduler import (
+            PromotionScheduler,
+            SchedulerConfig,
+        )
+
+        loop = PromotionLoop(
+            workspace_manager=self._manager,
+            branch_manager=self._manager.branches,
+            workspace_root=self._manager.workspace_path,
+        )
+        scheduler = PromotionScheduler(
+            loop=loop,
+            config=SchedulerConfig(max_parallel=self._max_parallel),
+        )
+        sched_result = scheduler.run(slice_refs, run_context)
+        return {
+            "slice_results": sched_result.slice_results,
+            "waiting_slices": sched_result.waiting_slices,
+            "all_complete": sched_result.all_complete,
+        }
+
+
 class PddOrchestrator:
     """Sequences PDD modules through design phases 0-10.
 
@@ -225,7 +267,6 @@ class PddOrchestrator:
         """
         from spec_manager.orchestration.intake_queue import IntakeQueue
         from spec_manager.orchestration.promotion_loop import (
-            PromotionLoop,
             RunContext,
             SliceRef,
         )
@@ -278,27 +319,13 @@ class PddOrchestrator:
         run_context = RunContext(
             run_id=self.manager.run_id,
             mode="auto",
+            lifecycle_mode="build",
             workspace_root=str(self.manager.workspace_path),
             max_iterations=max_iterations,
         )
-
-        loop = PromotionLoop(
-            workspace_manager=self.manager,
-            branch_manager=self.manager.branches,
-            workspace_root=self.manager.workspace_path,
-        )
-
-        from spec_manager.orchestration.promotion_scheduler import (
-            PromotionScheduler,
-            SchedulerConfig,
-        )
-
-        scheduler = PromotionScheduler(
-            loop=loop,
-            config=SchedulerConfig(max_parallel=4),
-        )
-        sched_result = scheduler.run(slice_refs, run_context)
-        slice_results = sched_result.slice_results
+        runner = PromotionLoopRunner(self.manager, max_parallel=4)
+        runner_result = runner.run_slices(slice_refs=slice_refs, run_context=run_context)
+        slice_results = runner_result["slice_results"]
 
         results["slices"] = [
             {
@@ -310,6 +337,7 @@ class PddOrchestrator:
             }
             for r in slice_results
         ]
+        results["waiting_slices"] = runner_result["waiting_slices"]
 
         # 4. Global verification (P6 + P7)
         all_complete = all(r.status in {"COMPLETE", "SKIPPED"} for r in slice_results)

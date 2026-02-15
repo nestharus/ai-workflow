@@ -47,7 +47,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
 from spec_manager.orchestration.evidence import EvidenceBundle
@@ -57,6 +57,8 @@ logger = logging.getLogger(__name__)
 
 
 _DISABLE_L1_GAP_SCAN_KEY = "disable_l1_gap_scan"
+InteractionMode = Literal["interactive", "auto"]
+LifecycleRunMode = Literal["build", "qa", "architecture", "code_quality"]
 
 
 @dataclass(frozen=True)
@@ -298,7 +300,8 @@ class RunContext:
     """Run-scoped context shared across all slices."""
 
     run_id: str = ""
-    mode: Literal["interactive", "auto"] = "auto"
+    mode: InteractionMode = "auto"
+    lifecycle_mode: LifecycleRunMode = "build"
     workspace_root: str = ""
     max_iterations: int = 20
     max_iterations_by_layer: dict[str, int] = field(
@@ -326,7 +329,8 @@ class SliceContext:
     clean_sibling_root: str = ""
     layer: Layer = "l1"
     run_id: str = ""
-    mode: Literal["interactive", "auto"] = "auto"
+    mode: InteractionMode = "auto"
+    lifecycle_mode: LifecycleRunMode = "build"
     workspace_root: str = ""
     config: dict[str, Any] = field(default_factory=dict)
     worktree_manager: Any | None = None
@@ -4189,7 +4193,7 @@ class AlignStep:
 # Default step sequence
 # ------------------------------------------------------------------
 
-DEFAULT_STEPS: list[type] = [
+DEFAULT_BUILD_STEPS: tuple[type, ...] = (
     CollectBaselineStep,
     GapExplorationStep,
     PlanStep,
@@ -4200,7 +4204,42 @@ DEFAULT_STEPS: list[type] = [
     IntegrateStep,
     VerifyStep,
     AlignStep,
-]
+)
+ARCHITECTURE_MODE_STEPS: tuple[type, ...] = (
+    CollectBaselineStep,
+    GapExplorationStep,
+    PlanStep,
+    ImplementStep,
+    CoordinateStep,
+    AnalyzeStep,
+    PromoteStep,
+    IntegrateStep,
+    VerifyStep,
+)
+CODE_QUALITY_MODE_STEPS: tuple[type, ...] = DEFAULT_BUILD_STEPS
+
+RUN_MODE_STEP_DISPATCH: dict[LifecycleRunMode, dict[Layer, tuple[type, ...]]] = {
+    "build": {
+        "l1": DEFAULT_BUILD_STEPS,
+        "l2": DEFAULT_BUILD_STEPS,
+        "l3": DEFAULT_BUILD_STEPS,
+    },
+    "qa": {
+        "l1": (CollectBaselineStep, IntegrateStep, VerifyStep),
+        "l2": (CollectBaselineStep, IntegrateStep, VerifyStep),
+        "l3": (CollectBaselineStep, IntegrateStep, VerifyStep),
+    },
+    "architecture": {
+        "l1": ARCHITECTURE_MODE_STEPS,
+        "l2": ARCHITECTURE_MODE_STEPS,
+        "l3": ARCHITECTURE_MODE_STEPS,
+    },
+    "code_quality": {
+        "l1": CODE_QUALITY_MODE_STEPS,
+        "l2": CODE_QUALITY_MODE_STEPS,
+        "l3": CODE_QUALITY_MODE_STEPS,
+    },
+}
 
 
 # ------------------------------------------------------------------
@@ -4242,21 +4281,43 @@ class PromotionLoop:
         from spec_manager.core.gap_queue import GapQueue
 
         self._gap_queue = GapQueue()
+        self._steps_override = steps
+        self._step_cache: dict[tuple[LifecycleRunMode, Layer], list[Any]] = {}
 
-        # Build step instances
-        if steps is not None:
-            self._steps = steps
-        else:
-            self._steps = []
-            for step_cls in DEFAULT_STEPS:
-                if step_cls is IntegrateStep:
-                    self._steps.append(step_cls())
-                elif step_cls is GapExplorationStep:
-                    self._steps.append(step_cls(planner=self._planner, gap_queue=self._gap_queue))
-                elif step_cls in (PlanStep, CoordinateStep):
-                    self._steps.append(step_cls(planner=self._planner))
-                else:
-                    self._steps.append(step_cls())
+    @staticmethod
+    def _normalize_lifecycle_mode(value: str) -> LifecycleRunMode:
+        normalized = str(value).strip().lower()
+        if normalized in {"build", "qa", "architecture", "code_quality"}:
+            return cast("LifecycleRunMode", normalized)
+        return "build"
+
+    def _instantiate_steps(self, step_types: tuple[type, ...]) -> list[Any]:
+        instances: list[Any] = []
+        for step_cls in step_types:
+            if step_cls is IntegrateStep:
+                instances.append(step_cls())
+            elif step_cls is GapExplorationStep:
+                instances.append(step_cls(planner=self._planner, gap_queue=self._gap_queue))
+            elif step_cls in (PlanStep, CoordinateStep):
+                instances.append(step_cls(planner=self._planner))
+            else:
+                instances.append(step_cls())
+        return instances
+
+    def _steps_for_run(self, *, lifecycle_mode: LifecycleRunMode, layer: Layer) -> list[Any]:
+        if self._steps_override is not None:
+            return self._steps_override
+
+        key = (lifecycle_mode, layer)
+        cached = self._step_cache.get(key)
+        if cached is not None:
+            return cached
+
+        mode_dispatch = RUN_MODE_STEP_DISPATCH.get(lifecycle_mode, RUN_MODE_STEP_DISPATCH["build"])
+        step_types = mode_dispatch.get(layer, mode_dispatch["l1"])
+        instances = self._instantiate_steps(step_types)
+        self._step_cache[key] = instances
+        return instances
 
     def _record_provenance(
         self,
@@ -4273,6 +4334,7 @@ class PromotionLoop:
             "layer": ctx.layer,
             "slice_id": ctx.slice_id,
             "mode": ctx.mode,
+            "lifecycle_mode": ctx.lifecycle_mode,
         }
         if result.error:
             entry["error"] = result.error[:500]
@@ -4666,6 +4728,7 @@ class PromotionLoop:
             layer=slice_ref.layer,
             run_id=run_context.run_id,
             mode=run_context.mode,
+            lifecycle_mode=self._normalize_lifecycle_mode(run_context.lifecycle_mode),
             workspace_root=run_context.workspace_root,
             config=run_context.config,
             worktree_manager=self._wm,
@@ -4690,6 +4753,10 @@ class PromotionLoop:
         # Layer-specific iteration limit
         max_iters = run_context.max_iterations_by_layer.get(
             slice_ref.layer, run_context.max_iterations
+        )
+        active_steps = self._steps_for_run(
+            lifecycle_mode=ctx.lifecycle_mode,
+            layer=ctx.layer,
         )
 
         all_tickets: list[DemotionTicket] = []
@@ -4727,7 +4794,7 @@ class PromotionLoop:
             waiting = False
             step_statuses: dict[str, str] = {}
 
-            for step in self._steps:
+            for step in active_steps:
                 logger.debug("Running step: %s", step.name)
                 result = step.run(ctx, bundle)
                 if step.name == "GAP_EXPLORATION" and result.status == "OK":
@@ -4886,7 +4953,7 @@ class PromotionLoop:
             unresolved_slice_demotions = len(bundle.demotions.pending)
             refinement_issue_count = self._refinement_issue_count(ctx, bundle)
             refinement_issue_threshold = self._refinement_issue_threshold(ctx)
-            configured_steps = {step.name for step in self._steps}
+            configured_steps = {step.name for step in active_steps}
             required_steps = tuple(
                 step_name
                 for step_name in ("PROMOTE", "INTEGRATE", "VERIFY", "ALIGN")
