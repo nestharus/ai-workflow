@@ -93,11 +93,9 @@ logger = logging.getLogger(__name__)
 
 _VALID_REDEFINITION_QUESTION_TYPES = frozenset({"VALIDATION", "SCOPE", "TRADEOFF"})
 _REDEFINITION_UPDATE_SOURCES = frozenset({"PLANNER"})
-_CANONICAL_ORIGIN_KINDS = frozenset({"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP"})
-_ORIGIN_KIND_ALIASES = {
-    "PDD_LIFECYCLE": "PROMOTION_LOOP",
-    "SLICE_AGENT": "UNDER_SPEC",
-}
+_CANONICAL_ORIGIN_KINDS = frozenset(
+    {"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP", "PDD_LIFECYCLE", "SLICE_AGENT"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -470,13 +468,12 @@ class IntentAgentOrchestrator:
         normalized = self._coerce_str(source_kind).upper()
         if not normalized:
             raise ValueError(f"{field_name} must be a non-empty source kind")
-        canonical = _ORIGIN_KIND_ALIASES.get(normalized, normalized)
-        if canonical not in _CANONICAL_ORIGIN_KINDS:
+        if normalized not in _CANONICAL_ORIGIN_KINDS:
             raise ValueError(
                 f"{field_name} source kind {source_kind!r} is invalid; "
                 f"expected one of {sorted(_CANONICAL_ORIGIN_KINDS)}"
             )
-        return canonical
+        return normalized
 
     def _coerce_str_list(self, value: Any) -> list[str]:
         if value is None:
@@ -683,13 +680,11 @@ class IntentAgentOrchestrator:
             question_id = f"q_{uuid.uuid4().hex[:12]}"
 
         now = datetime.now(UTC).isoformat()
-        system_binding = dict(source_item.system_binding or {})
-        system_binding.update(
-            {
-                "superseded_by": source_item.question_id,
-                "replaced_by": question_id,
-                "replacement_reason": reason,
-            }
+        system_binding = self._normalize_question_binding(
+            source_item.system_binding,
+            taxonomy_type=source_item.taxonomy_type,
+            text=new_text,
+            canonical_key=canonical_key,
         )
         new_origins = list(source_item.origins)
         replacement_item = QuestionItem(
@@ -801,7 +796,7 @@ class IntentAgentOrchestrator:
             return []
 
         persisted_dims = normalize_constraint_dimensions(
-            item.system_binding.get("constraint_dimensions", []),
+            item.system_binding.get("constraint_key_hints", []),
         )
         if persisted_dims:
             return persisted_dims
@@ -813,6 +808,29 @@ class IntentAgentOrchestrator:
             )
         )
 
+    def _normalize_binding_str_list(
+        self,
+        base_binding: dict[str, Any],
+        field_name: str,
+    ) -> list[str]:
+        raw = base_binding.get(field_name)
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            raise TypeError(f"system_binding.{field_name} must be a list of strings")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for idx, value in enumerate(raw):
+            if not isinstance(value, str):
+                raise TypeError(f"system_binding.{field_name}[{idx}] must be a string")
+            text = value.strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
     def _normalize_question_binding(
         self,
         base_binding: dict[str, Any] | None,
@@ -822,19 +840,23 @@ class IntentAgentOrchestrator:
         canonical_key: str,
     ) -> dict[str, Any]:
         binding = dict(base_binding or {})
+        normalized_binding: dict[str, Any] = {}
+        for field_name in ("constraint_key_hints", "decision_requirement_ids", "work_items"):
+            values = self._normalize_binding_str_list(binding, field_name)
+            if values:
+                normalized_binding[field_name] = values
+
         normalized_taxonomy = normalize_user_facing_taxonomy(taxonomy_type)
         if normalized_taxonomy == QuestionTaxonomy.CONSTRAINT.value:
             inferred = infer_constraint_dimensions_with_key(
                 text,
                 canonical_key=canonical_key,
             )
-            binding["constraint_dimensions"] = normalize_constraint_dimensions(
-                normalize_constraint_dimensions(binding.get("constraint_dimensions", []))
+            normalized_binding["constraint_key_hints"] = normalize_constraint_dimensions(
+                normalize_constraint_dimensions(normalized_binding.get("constraint_key_hints", []))
                 + inferred,
             )
-        else:
-            binding["constraint_dimensions"] = []
-        return binding
+        return normalized_binding
 
     def _coerce_answer_spec_kind(self, answer_spec_kind: Any) -> str:
         normalized = self._coerce_str(answer_spec_kind, "choice").replace("-", "_").lower()
@@ -2833,35 +2855,6 @@ class IntentAgentOrchestrator:
             if existing_item.quality_gate.status != "PASS":
                 existing_item.quality_gate.status = "PASS"
 
-            if not isinstance(existing_item.system_binding, dict):
-                existing_item.system_binding = {}
-            redefinition_history = existing_item.system_binding.get("redefinition_history")
-            if not isinstance(redefinition_history, list):
-                redefinition_history = []
-                existing_item.system_binding["redefinition_history"] = redefinition_history
-            redefinition_history.append(
-                {
-                    "recorded_at": datetime.now(UTC).isoformat(),
-                    "trigger": trigger_key,
-                    "source": source_text.lower(),
-                    "taxonomy_type": existing_item.taxonomy_type,
-                    "scope_kind": existing_item.scope_kind,
-                    "canonical_key": existing_item.canonical_key,
-                    "user_prompt_text": existing_item.user_prompt.text,
-                    "user_prompt_scenario": existing_item.user_prompt.scenario,
-                    "user_prompt_why_it_matters": existing_item.user_prompt.why_it_matters,
-                    "answer_spec_kind": existing_item.user_prompt.answer_spec.kind,
-                    "answer_spec_choices": [
-                        dict(choice) for choice in existing_item.user_prompt.answer_spec.choices
-                    ],
-                    "answer_spec_value_type": existing_item.user_prompt.answer_spec.value_type,
-                    "answer_spec_units_hint": existing_item.user_prompt.answer_spec.units_hint,
-                    "answer_spec_text_bounds": dict(
-                        existing_item.user_prompt.answer_spec.text_bounds
-                    ),
-                }
-            )
-
             existing_item.taxonomy_type = question_type
             existing_item.scope_kind = scope_kind
             existing_item.canonical_key = canonical_key
@@ -2875,14 +2868,11 @@ class IntentAgentOrchestrator:
                 choices=parsed_choices,
             )
             existing_item.blockers.severity = "BLOCKING"
-            existing_item.system_binding.update(
-                {
-                    "redefinition_trigger": trigger_key,
-                    "redefinition_type": trigger_type,
-                    "redefinition_stage": stage_text,
-                    "redefinition_source": source_text.lower(),
-                    "redefinition_canonical_key": canonical_key,
-                }
+            existing_item.system_binding = self._normalize_question_binding(
+                existing_item.system_binding,
+                taxonomy_type=question_type,
+                text=user_text,
+                canonical_key=canonical_key,
             )
 
             existing_item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
@@ -2910,13 +2900,12 @@ class IntentAgentOrchestrator:
                     choices=parsed_choices,
                 ),
             ),
-            system_binding={
-                "redefinition_trigger": trigger_key,
-                "redefinition_type": trigger_type,
-                "redefinition_stage": stage_text,
-                "redefinition_source": source_text.lower(),
-                "redefinition_canonical_key": canonical_key,
-            },
+            system_binding=self._normalize_question_binding(
+                {},
+                taxonomy_type=question_type,
+                text=user_text,
+                canonical_key=canonical_key,
+            ),
             origins=[
                 QuestionOrigin(
                     source_kind=source_text,

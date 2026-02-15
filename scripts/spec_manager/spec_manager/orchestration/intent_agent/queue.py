@@ -49,8 +49,9 @@ _VALID_TAXONOMY_TYPES = frozenset(
     {"INTENT", "CONSTRAINT", "TRADEOFF", "SCOPE", "VALIDATION"},
 )
 _VALID_SCOPE_KINDS = frozenset({"SYSTEM_WIDE", "FEATURE_SPECIFIC"})
-_VALID_SOURCE_KINDS = frozenset({"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP"})
-_SOURCE_KIND_ALIASES = {"PDD_LIFECYCLE": "PROMOTION_LOOP", "SLICE_AGENT": "UNDER_SPEC"}
+_VALID_SOURCE_KINDS = frozenset(
+    {"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP", "PDD_LIFECYCLE", "SLICE_AGENT"}
+)
 _VALID_SEVERITY = frozenset({"BLOCKING", "HIGH_RISK", "MEDIUM_RISK", "INFO"})
 _VALID_QG_STATUSES = frozenset({"PASS", "FAIL", "PENDING"})
 _VALID_ANSWER_KINDS = frozenset({"choice", "yes_no", "value", "bounded_text"})
@@ -169,30 +170,28 @@ def _coerce_system_binding(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise QueueValidationError("system_binding must be a dict")
 
-    system_binding = dict(value)
-    normalized_array_fields = (
+    allowed_fields = {
         "constraint_key_hints",
         "decision_requirement_ids",
         "work_items",
-    )
-    for field in normalized_array_fields:
-        if field in system_binding:
-            system_binding[field] = _coerce_id_list(
-                system_binding[field],
-                f"system_binding.{field}",
-                allow_scalar=True,
-            )
+    }
+    _ensure_no_extra_keys(value, allowed_fields, "system_binding")
+
+    system_binding: dict[str, Any] = {}
+    for field in sorted(allowed_fields):
+        if field not in value:
+            continue
+        system_binding[field] = list(_ensure_list_of_str(value[field], f"system_binding.{field}"))
     return system_binding
 
 
 def _canonical_source_kind(value: Any, field_name: str) -> str:
     raw = _ensure_str(value, field_name).strip().upper()
-    canonical = _SOURCE_KIND_ALIASES.get(raw, raw)
-    if canonical not in _VALID_SOURCE_KINDS:
+    if raw not in _VALID_SOURCE_KINDS:
         raise QueueValidationError(
             f"{field_name} {value!r} is invalid; expected one of {sorted(_VALID_SOURCE_KINDS)}"
         )
-    return canonical
+    return raw
 
 
 def _is_truthy(value: Any) -> bool:
@@ -264,7 +263,9 @@ class UserPrompt:
 class QuestionOrigin:
     """Provenance for where a question came from."""
 
-    source_kind: str = ""  # INTENT_AGENT | PLANNER | UNDER_SPEC | PROMOTION_LOOP
+    source_kind: str = (
+        ""  # INTENT_AGENT | PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | SLICE_AGENT
+    )
     trace_id: str = ""
     signal_id: str = ""
     slice_id: str = ""
@@ -291,7 +292,10 @@ class QualityGateStatus:
     status: str = "PENDING"  # PASS | FAIL | PENDING
     attempts: int = 0
     last_quality_record_id: str = ""
-    last_checked_at: str = ""
+    last_checked_at: str = dataclass_field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+    def __post_init__(self) -> None:
+        _ensure_iso_datetime(self.last_checked_at, "quality_gate.last_checked_at")
 
 
 @dataclass
@@ -340,7 +344,10 @@ class QuestionItem:
             raise QueueValidationError(f"scope_kind {self.scope_kind!r} is not valid")
 
         if not isinstance(self.canonical_key, str):
-            raise QueueValidationError("canonical_key must be a string")
+            raise QueueValidationError("canonical_key must be a non-empty string")
+        self.canonical_key = self.canonical_key.strip()
+        if not self.canonical_key:
+            raise QueueValidationError("canonical_key must be a non-empty string")
 
         if not isinstance(self.user_prompt, UserPrompt):
             raise QueueValidationError("user_prompt must be a UserPrompt")
@@ -478,9 +485,7 @@ class QuestionItem:
         if attempts < 0:
             raise QueueValidationError("quality_gate.attempts must be >= 0")
         _ensure_str(self.quality_gate.last_quality_record_id, "quality_gate.last_quality_record_id")
-        _ensure_str(self.quality_gate.last_checked_at, "quality_gate.last_checked_at")
-        if self.quality_gate.last_checked_at:
-            _ensure_iso_datetime(self.quality_gate.last_checked_at, "quality_gate.last_checked_at")
+        _ensure_iso_datetime(self.quality_gate.last_checked_at, "quality_gate.last_checked_at")
 
         if not isinstance(self.timestamps, dict):
             raise QueueValidationError("timestamps must be a dict")
@@ -1728,6 +1733,11 @@ class QuestionQueue:
         for item_payload in ordered:
             item = QuestionItem.from_dict(item_payload)
             item.validate()
+            if item.quality_gate.status != "PASS":
+                raise QueueValidationError(
+                    f"question_queue.json contains non-PASS item {item.question_id!r}; "
+                    "only PASS quality gate items may enter the active queue"
+                )
             if item.question_id in queue._items:
                 raise QueueValidationError(
                     f"question_queue.json contains duplicate question_id {item.question_id!r}"
