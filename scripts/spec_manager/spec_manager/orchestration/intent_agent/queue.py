@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
+from spec_manager.core.json_extraction import _extract_json_payload
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,9 +62,19 @@ _VALID_TRIGGER_KINDS = frozenset(
         "PLANNER_CONSTRAINT_SAVED",
         "PLANNER_DECISION_RECORDED",
         "USER_ANSWER_INGESTED",
-        "PLANNER_EVENT_UNRECOGNIZED",
     },
 )
+_VALID_REASSESS_ACTIONS = frozenset(
+    {
+        "KEEP",
+        "ANSWERED",
+        "STALE",
+        "SUPERSEDED",
+        "REWORD",
+        "DISMISSED",
+    }
+)
+_VALID_LLM_REASSESS_ACTIONS = frozenset({"KEEP", "STALE", "SUPERSEDED", "REWORD", "DISMISSED"})
 _VALID_ANSWER_VALUE_TYPES = frozenset(
     {"integer", "number", "currency", "duration", "date", "string"},
 )
@@ -896,7 +908,6 @@ class QuestionQueue:
 
     def __init__(self) -> None:
         self._items: dict[str, QuestionItem] = {}
-        self._reassess_drop_actions: list[dict[str, Any]] = []
 
     def _touch(self, item: QuestionItem, reason: str = "") -> None:
         if reason:
@@ -1169,16 +1180,32 @@ class QuestionQueue:
     def _build_trigger(self, planner_updates: list[ReassessPlannerSignal]) -> dict[str, str]:
         if not planner_updates:
             return {"kind": "USER_ANSWER_INGESTED", "ref": ""}
+        fallback_ref = ""
         for update in planner_updates:
+            if update.event_ref and not fallback_ref:
+                fallback_ref = update.event_ref
             trigger_kind = _TRIGGER_BY_EVENT.get(update.event_kind)
             if trigger_kind:
                 return {"kind": trigger_kind, "ref": update.event_ref}
-        ref = ""
-        for update in planner_updates:
-            ref = update.event_ref
-            if ref:
-                break
-        return {"kind": "PLANNER_EVENT_UNRECOGNIZED", "ref": ref}
+
+            inferred_event = update.event_kind.lower()
+            if "decision" in inferred_event:
+                return {"kind": "PLANNER_DECISION_RECORDED", "ref": update.event_ref}
+            if "constraint" in inferred_event:
+                return {"kind": "PLANNER_CONSTRAINT_SAVED", "ref": update.event_ref}
+
+            has_decision_ids = bool(update.affected_decision_ids)
+            has_constraint_ids = bool(update.affected_constraint_ids)
+            if has_decision_ids and not has_constraint_ids:
+                return {"kind": "PLANNER_DECISION_RECORDED", "ref": update.event_ref}
+            if has_constraint_ids and not has_decision_ids:
+                return {"kind": "PLANNER_CONSTRAINT_SAVED", "ref": update.event_ref}
+            if has_decision_ids:
+                return {"kind": "PLANNER_DECISION_RECORDED", "ref": update.event_ref}
+            if has_constraint_ids:
+                return {"kind": "PLANNER_CONSTRAINT_SAVED", "ref": update.event_ref}
+
+        return {"kind": "PLANNER_CONSTRAINT_SAVED", "ref": fallback_ref}
 
     def _collect_redundant_keys(
         self,
@@ -1201,17 +1228,14 @@ class QuestionQueue:
             field_name: str,
             raw_id: str,
         ) -> None:
-            self._record_reassess_drop_action(
-                source="planner_updates",
-                identifier=f"entry[{update_index}].{field_name}",
-                reason=(
-                    f"planner id {raw_id!r} from {field_name} does not map to any canonical_key"
-                ),
-                metadata={
-                    "value": raw_id,
-                    "event_kind": update.event_kind,
-                    "event_ref": update.event_ref,
-                },
+            logger.warning(
+                "reassess dropped unmapped planner reference entry[%s].%s=%r "
+                "(event_kind=%s event_ref=%s)",
+                update_index,
+                field_name,
+                raw_id,
+                update.event_kind,
+                update.event_ref,
             )
 
         for canonical_key, ref in question_key_map.items():
@@ -1288,29 +1312,229 @@ class QuestionQueue:
         }
         return canonical_reasons, question_reasons
 
-    def _record_reassess_drop_action(
+    def _run_llm_reassess_pass(
         self,
+        open_items: list[QuestionItem],
+        planner_updates: list[ReassessPlannerSignal],
+        question_key_map: dict[str, ReassessQuestionKeySignal],
         *,
-        source: str,
-        identifier: str,
-        reason: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        action: dict[str, Any] = {
-            "question_id": "",
-            "action": "INVALID_INPUT",
-            "source": source,
-            "identifier": identifier,
-            "reason": reason,
-        }
-        if metadata:
-            action["metadata"] = metadata
-        self._reassess_drop_actions.append(action)
+        run_agent: Any = None,
+    ) -> list[dict[str, Any]]:
+        if not open_items:
+            return []
+        if run_agent is None:
+            return [
+                {
+                    "question_id": item.question_id,
+                    "action": "KEEP",
+                    "reason": "no LLM reassess agent",
+                }
+                for item in open_items
+            ]
 
-    def _drain_reassess_drop_actions(self) -> list[dict[str, Any]]:
-        actions = list(self._reassess_drop_actions)
-        self._reassess_drop_actions.clear()
-        return actions
+        open_questions = [
+            {
+                "question_id": item.question_id,
+                "canonical_key": item.canonical_key,
+                "text": item.user_prompt.text,
+                "taxonomy_type": item.taxonomy_type,
+                "scope_kind": item.scope_kind,
+                "severity": item.blockers.severity,
+                "blocked_slices": list(item.blockers.blocked_slices),
+                "blocked_layers": list(item.blockers.blocked_layers),
+                "blocked_steps": list(item.blockers.blocked_steps),
+            }
+            for item in open_items
+        ]
+        planner_context = [
+            {
+                "event_kind": update.event_kind,
+                "event_ref": update.event_ref,
+                "affected_canonical_keys": list(update.affected_canonical_keys),
+                "affected_constraint_ids": list(update.affected_constraint_ids),
+                "affected_decision_ids": list(update.affected_decision_ids),
+                "affected_question_ids": list(update.affected_question_ids),
+                "superseded_question_ids": list(update.superseded_question_ids),
+                "superseded_canonical_keys": list(update.superseded_canonical_keys),
+            }
+            for update in planner_updates
+        ]
+        key_context = {
+            canonical_key: {
+                "resolved_constraint_ids": list(ref.resolved_constraint_ids),
+                "related_decision_ids": list(ref.related_decision_ids),
+            }
+            for canonical_key, ref in question_key_map.items()
+        }
+        prompt = (
+            "Reassess unresolved OPEN questions after planner updates.\n"
+            "For each question, choose exactly one action: "
+            "KEEP, STALE, SUPERSEDED, REWORD, DISMISSED.\n"
+            "Return only a JSON array where each entry is:\n"
+            '{"question_id":"...", "action":"KEEP|STALE|SUPERSEDED|REWORD|DISMISSED", '
+            '"reason":"...", "replacement":{"new_question_id":"...", '
+            '"new_canonical_key":"...", "new_user_prompt_text":"..."}}\n'
+            "Only include replacement when action is REWORD.\n\n"
+            f"OPEN_QUESTIONS={json.dumps(open_questions)}\n"
+            f"PLANNER_UPDATES={json.dumps(planner_context)}\n"
+            f"QUESTION_KEY_MAP={json.dumps(key_context)}"
+        )
+
+        item_by_id = {item.question_id: item for item in open_items}
+        normalized_by_question_id: dict[str, dict[str, Any]] = {}
+
+        try:
+            raw = run_agent(prompt)
+            payload = _extract_json_payload(raw)
+            parsed = json.loads(payload)
+            if not isinstance(parsed, list):
+                raise QueueValidationError("LLM reassess response must be a JSON array")
+
+            for idx, entry in enumerate(parsed):
+                if not isinstance(entry, dict):
+                    logger.debug(
+                        "Skipping LLM reassess entry[%s]: expected object, got %s",
+                        idx,
+                        type(entry).__name__,
+                    )
+                    continue
+                question_id = str(entry.get("question_id", "")).strip()
+                if question_id not in item_by_id:
+                    continue
+
+                action = str(entry.get("action", "KEEP")).strip().upper()
+                if action not in _VALID_LLM_REASSESS_ACTIONS:
+                    action = "KEEP"
+
+                reason = str(entry.get("reason", "")).strip()
+                if not reason:
+                    reason = "llm reassess decision"
+
+                normalized: dict[str, Any] = {
+                    "question_id": question_id,
+                    "action": action,
+                    "reason": reason,
+                }
+
+                replacement_raw = entry.get("replacement")
+                if action == "REWORD" and isinstance(replacement_raw, dict):
+                    replacement: dict[str, str] = {}
+                    new_question_id = str(replacement_raw.get("new_question_id", "")).strip()
+                    new_canonical_key = str(replacement_raw.get("new_canonical_key", "")).strip()
+                    new_user_prompt_text = str(
+                        replacement_raw.get("new_user_prompt_text", "")
+                    ).strip()
+                    if new_question_id:
+                        replacement["new_question_id"] = new_question_id
+                    if new_canonical_key:
+                        replacement["new_canonical_key"] = new_canonical_key
+                    if new_user_prompt_text:
+                        replacement["new_user_prompt_text"] = new_user_prompt_text
+                    if replacement:
+                        normalized["replacement"] = replacement
+
+                normalized_by_question_id[question_id] = normalized
+        except Exception:
+            logger.warning(
+                "LLM reassess pass failed; falling back to KEEP for unresolved questions",
+                exc_info=True,
+            )
+            return [
+                {
+                    "question_id": item.question_id,
+                    "action": "KEEP",
+                    "reason": "llm reassess parse failure",
+                }
+                for item in open_items
+            ]
+
+        llm_actions: list[dict[str, Any]] = []
+        for item in open_items:
+            decision = normalized_by_question_id.get(
+                item.question_id,
+                {
+                    "question_id": item.question_id,
+                    "action": "KEEP",
+                    "reason": "no llm decision",
+                },
+            )
+            action = decision["action"]
+            reason = decision["reason"]
+
+            if action == "KEEP":
+                llm_actions.append(
+                    {
+                        "question_id": item.question_id,
+                        "action": "KEEP",
+                        "reason": reason,
+                    }
+                )
+                continue
+
+            if action == "STALE":
+                if self.set_status(item.question_id, "STALE", reason):
+                    llm_actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "STALE",
+                            "reason": reason,
+                        }
+                    )
+                continue
+
+            if action == "SUPERSEDED":
+                if self.set_status(item.question_id, "SUPERSEDED", reason):
+                    llm_actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "SUPERSEDED",
+                            "reason": reason,
+                        }
+                    )
+                continue
+
+            if action == "DISMISSED":
+                if self.set_status(item.question_id, "DISMISSED", reason):
+                    llm_actions.append(
+                        {
+                            "question_id": item.question_id,
+                            "action": "DISMISSED",
+                            "reason": reason,
+                        }
+                    )
+                continue
+
+            if action == "REWORD":
+                replacement = decision.get("replacement")
+                action_record: dict[str, Any] = {
+                    "question_id": item.question_id,
+                    "action": "REWORD",
+                    "reason": reason,
+                }
+                if isinstance(replacement, dict):
+                    new_prompt = str(replacement.get("new_user_prompt_text", "")).strip()
+                    if new_prompt:
+                        item.user_prompt.text = new_prompt
+                    new_canonical_key = str(replacement.get("new_canonical_key", "")).strip()
+                    if new_canonical_key:
+                        old_canonical_key = item.canonical_key
+                        item.canonical_key = new_canonical_key
+                        if old_canonical_key != new_canonical_key:
+                            old_ref = question_key_map.pop(old_canonical_key, None)
+                            if old_ref is not None:
+                                question_key_map[new_canonical_key] = ReassessQuestionKeySignal(
+                                    canonical_key=new_canonical_key,
+                                    resolved_constraint_ids=old_ref.resolved_constraint_ids,
+                                    related_decision_ids=old_ref.related_decision_ids,
+                                )
+                    if new_prompt or new_canonical_key:
+                        self._touch(item, reason)
+                    if replacement:
+                        action_record["replacement"] = replacement
+                llm_actions.append(action_record)
+                continue
+
+        return llm_actions
 
     # TODO [R2-2.1]: Implement enqueue(item) — add item after quality gate pass
     def enqueue(self, item: QuestionItem) -> None:
@@ -1391,7 +1615,6 @@ class QuestionQueue:
     ) -> dict[str, Any]:
         """Reassess all OPEN questions using explicit planner/key projection contracts."""
         created_at = datetime.now(UTC).isoformat()
-        self._reassess_drop_actions.clear()
         projected_updates = self._project_planner_updates(planner_updates)
         projected_question_key_map = self._project_question_key_map(question_key_map)
         stale_canonical_keys, stale_question_reasons = self._collect_redundant_keys(
@@ -1419,7 +1642,8 @@ class QuestionQueue:
             stale_question_ids.update(update.affected_question_ids)
             stale_question_ids.update(update.superseded_question_ids)
         trigger = self._build_trigger(projected_updates)
-        actions: list[dict[str, Any]] = self._drain_reassess_drop_actions()
+        actions: list[dict[str, Any]] = []
+        llm_candidates: list[QuestionItem] = []
 
         for item in sorted(self._items.values(), key=lambda item: item.question_id):
             if item.status != "OPEN":
@@ -1512,13 +1736,29 @@ class QuestionQueue:
                     )
                 continue
 
-            actions.append(
-                {
-                    "question_id": item.question_id,
-                    "action": "KEEP",
-                    "reason": "no mechanical match",
-                }
-            )
+            llm_candidates.append(item)
+
+        llm_actions = self._run_llm_reassess_pass(
+            llm_candidates,
+            projected_updates,
+            projected_question_key_map,
+            run_agent=run_agent,
+        )
+        actions.extend(llm_actions)
+
+        normalized_actions: list[dict[str, Any]] = []
+        for action in actions:
+            action_name = str(action.get("action", "")).strip().upper()
+            if action_name not in _VALID_REASSESS_ACTIONS:
+                logger.warning(
+                    "Dropping unsupported reassess action %r for question_id=%r",
+                    action_name,
+                    action.get("question_id"),
+                )
+                continue
+            normalized_action = dict(action)
+            normalized_action["action"] = action_name
+            normalized_actions.append(normalized_action)
 
         return {
             "version": 1,
@@ -1526,7 +1766,7 @@ class QuestionQueue:
             "session_id": session_id,
             "trigger": trigger,
             "created_at": created_at,
-            "actions": actions,
+            "actions": normalized_actions,
         }
 
     def _set_status(self, item: QuestionItem, new_status: str, reason: str = "") -> bool:
