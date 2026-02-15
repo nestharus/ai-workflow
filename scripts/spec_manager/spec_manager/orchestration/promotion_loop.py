@@ -1424,13 +1424,19 @@ class GapExplorationStep:
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Dispatch to layer-specific gap exploration."""
+        result: StepResult
         if ctx.layer == "l1":
-            return self._explore_l1(ctx, bundle)
-        if ctx.layer == "l2":
-            return self._explore_l2(ctx, bundle)
-        if ctx.layer == "l3":
-            return self._explore_l3(ctx, bundle)
-        return StepResult(status="OK")
+            result = self._explore_l1(ctx, bundle)
+        elif ctx.layer == "l2":
+            result = self._explore_l2(ctx, bundle)
+        elif ctx.layer == "l3":
+            result = self._explore_l3(ctx, bundle)
+        else:
+            result = StepResult(status="OK")
+
+        if result.status == "OK":
+            self._run_gap_planner_pass(ctx, bundle)
+        return result
 
     @staticmethod
     def _reuse_previous_gaps_if_fresh(
@@ -1523,6 +1529,76 @@ class GapExplorationStep:
             "open_gaps": metrics.get("open_gaps", 0),
             "total_gaps": metrics.get("total_gaps", 0),
         }
+
+    def _run_gap_planner_pass(self, ctx: SliceContext, bundle: EvidenceBundle) -> None:
+        """Run planner GAP post-processing over collected raw gaps."""
+        if self._planner is None:
+            return
+
+        raw_gaps = [dict(gap) for gap in (bundle.gaps.open_gaps or []) if isinstance(gap, dict)]
+        bundle.gaps.open_gaps = raw_gaps
+        bundle.gaps.analysis = dict(bundle.gaps.analysis or {})
+
+        try:
+            from spec_manager.planner.api import PlanningContext, PlanningRequest
+
+            planning_ctx = PlanningContext(
+                run_id=ctx.run_id,
+                slice_id=ctx.slice_id,
+                iteration=bundle.iteration,
+                layer=ctx.layer,
+                mode=ctx.mode,
+                workspace_root=ctx.workspace_root,
+                slice_root=ctx.slice_root,
+                bundle_ref=bundle,
+                metadata={
+                    "changed_files": list(bundle.diff.changed_files or []),
+                },
+            )
+            result = self._planner.plan(
+                PlanningRequest(
+                    capability="GAP",
+                    context=planning_ctx,
+                    inputs={"raw_gaps": raw_gaps},
+                )
+            )
+            outputs = getattr(result, "outputs", {})
+            safe_outputs = outputs if isinstance(outputs, dict) else {}
+            bundle.gaps.planner_outputs = safe_outputs
+
+            curated_raw = (
+                safe_outputs.get("gaps")
+                or safe_outputs.get("prioritized_gaps")
+                or safe_outputs.get("clustered_gaps")
+                or []
+            )
+            if isinstance(curated_raw, list):
+                curated = [self._normalize_gap(gap) for gap in curated_raw if isinstance(gap, dict)]
+                if curated:
+                    bundle.gaps.open_gaps = curated
+
+            decision_requirements_raw = safe_outputs.get("decision_requirements", [])
+            decision_requirements = (
+                [item for item in decision_requirements_raw if isinstance(item, dict)]
+                if isinstance(decision_requirements_raw, list)
+                else []
+            )
+            integration_notes = safe_outputs.get("integration_notes", [])
+            if not isinstance(integration_notes, list):
+                integration_notes = []
+
+            bundle.gaps.analysis.update(
+                {
+                    "planner_status": str(getattr(result, "status", "OK")),
+                    "planner_trace_id": str(getattr(result, "trace_id", "")),
+                    "raw_gap_count": len(raw_gaps),
+                    "curated_gap_count": len(bundle.gaps.open_gaps or []),
+                    "decision_requirements": decision_requirements,
+                    "integration_notes": integration_notes,
+                }
+            )
+        except Exception as exc:
+            logger.debug("Planner GAP post-processing failed: %s", exc, exc_info=True)
 
     @staticmethod
     def _pattern_library_path(workspace: Path) -> Path:
@@ -2506,16 +2582,15 @@ class PlanStep:
     the constraints store.  Uncovered decisions become under-spec events
     that block the slice before implementation begins.
 
-    When a *planner* is provided, routes plan generation through the
-    planner module instead of the static _plan_l2/_plan_l3
-    methods.  The planner provides richer context-aware planning
-    including integration analysis and constraint checking.
+    PLAN is planner-authoritative for L2/L3. Legacy static planning
+    fallbacks are intentionally removed.
     """
 
     name = "PLAN"
 
-    def __init__(self, planner: Any = None) -> None:
+    def __init__(self, planner: Any = None, resolver: Any = None) -> None:
         self._planner = planner
+        self._resolver = resolver
 
     @staticmethod
     def _focus_targets(ctx: SliceContext) -> dict[str, list[str]]:
@@ -2574,33 +2649,34 @@ class PlanStep:
         # SEC-067 invariant: L1 PLAN is a no-op; implementation works directly from
         # gap/spec-comment authority without intermediate planning intentions.
         if ctx.layer == "l1":
-            bundle.plan = PlanRef(path="plan.json", intentions=[])
+            bundle.plan = PlanRef(path="plan.json", intentions=[], plan_artifacts={})
             return StepResult(status="OK")
 
         if not bundle.gaps.open_gaps:
-            bundle.plan = PlanRef(path="plan.json", intentions=[])
+            bundle.plan = PlanRef(path="plan.json", intentions=[], plan_artifacts={})
             return StepResult(status="OK")
 
-        # Route through planner if available (L2/L3 only)
-        if self._planner is not None:
-            plan_outputs = self._plan_via_planner(ctx, bundle)
-            intentions = plan_outputs.get("intentions", [])
-            if not isinstance(intentions, list):
-                intentions = []
-        elif ctx.layer == "l2":
-            intentions = self._plan_l2(bundle.gaps.open_gaps)
-            plan_outputs = {"intentions": intentions}
-        elif ctx.layer == "l3":
-            intentions = self._plan_l3(bundle.gaps.open_gaps)
-            plan_outputs = {"intentions": intentions}
-        else:
+        if self._planner is None:
+            return StepResult(
+                status="FAIL",
+                error="Planner is required for PLAN step in L2/L3.",
+            )
+
+        plan_outputs = self._plan_via_planner(ctx, bundle)
+        intentions = plan_outputs.get("intentions", [])
+        if not isinstance(intentions, list):
             intentions = []
-            plan_outputs = {"intentions": intentions}
 
         focus_targets = self._focus_targets(ctx)
         intentions = self._apply_focus_targets(intentions, focus_targets)
         plan_outputs["intentions"] = intentions
-        bundle.plan = PlanRef(path="plan.json", intentions=intentions)
+        plan_artifacts_raw = plan_outputs.get("plan_artifacts", {})
+        plan_artifacts = plan_artifacts_raw if isinstance(plan_artifacts_raw, dict) else {}
+        bundle.plan = PlanRef(
+            path="plan.json",
+            intentions=intentions,
+            plan_artifacts=plan_artifacts,
+        )
 
         # Run planning gate: check decision requirements against constraints
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
@@ -2626,7 +2702,11 @@ class PlanStep:
                     bundle.implementation.under_spec_events = (
                         existing + gate_result.under_spec_events
                     )
-                    return StepResult(status="BLOCKED")
+                    coordinate_step = CoordinateStep(
+                        planner=self._planner,
+                        resolver=self._resolver,
+                    )
+                    return coordinate_step._resolve_under_spec(ctx, bundle)
             except Exception as exc:
                 logger.debug("Planning gate skipped: %s", exc)
 
@@ -2642,6 +2722,7 @@ class PlanStep:
         planning_ctx = PlanningContext(
             run_id=ctx.run_id,
             slice_id=ctx.slice_id,
+            iteration=bundle.iteration,
             layer=ctx.layer,
             mode=ctx.mode,
             workspace_root=ctx.workspace_root,
@@ -2649,149 +2730,48 @@ class PlanStep:
             bundle_ref=bundle,
             metadata={"focus_targets": self._focus_targets(ctx)},
         )
-        plan_outputs = self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
+        gap_analysis: dict[str, Any] = {}
+        if isinstance(bundle.gaps.analysis, dict):
+            gap_analysis.update(bundle.gaps.analysis)
+        if isinstance(bundle.gaps.planner_outputs, dict) and bundle.gaps.planner_outputs:
+            gap_analysis["gap_planner_outputs"] = dict(bundle.gaps.planner_outputs)
+        if isinstance(bundle.gaps.stagnation, dict) and bundle.gaps.stagnation:
+            gap_analysis["gap_queue_stagnation"] = dict(bundle.gaps.stagnation)
+
+        prior_artifacts: dict[str, Any] = {
+            "source_index_entries": list(bundle.source_index.entries or []),
+            "facts": {
+                "functions": dict(bundle.facts.functions or {}),
+                "stores": dict(bundle.facts.stores or {}),
+                "atoms": dict(bundle.facts.atoms or {}),
+                "remaining_gap_pins": list(bundle.facts.remaining_gap_pins or []),
+            },
+            "previous_plan_artifacts": dict(bundle.plan.plan_artifacts or {}),
+            "under_spec_decisions": list(bundle.under_spec.decisions or []),
+        }
+
+        plan_outputs = self._planner.plan_from_gaps(
+            planning_ctx,
+            bundle.gaps.open_gaps,
+            gap_analysis=gap_analysis,
+            prior_artifacts=prior_artifacts,
+        )
         if not isinstance(plan_outputs, dict):
-            return {"intentions": []}
+            return {"intentions": [], "plan_artifacts": {}}
 
         intentions_raw = plan_outputs.get("intentions", [])
         if not isinstance(intentions_raw, list):
             intentions_raw = []
         normalized_outputs = dict(plan_outputs)
         normalized_outputs["intentions"] = [row for row in intentions_raw if isinstance(row, dict)]
+        artifacts_raw = normalized_outputs.get("plan_artifacts")
+        if isinstance(artifacts_raw, dict):
+            normalized_outputs["plan_artifacts"] = dict(artifacts_raw)
+        else:
+            normalized_outputs["plan_artifacts"] = {
+                key: value for key, value in normalized_outputs.items() if key != "intentions"
+            }
         return normalized_outputs
-
-    @staticmethod
-    def _plan_l2(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """L2: each gap becomes a wiring/assembly intention."""
-        intentions = []
-        for gap in gaps:
-            component_id = gap.get("component_id", "")
-            target_files = gap.get("target_files", [])
-            if not isinstance(target_files, list):
-                target_files = []
-            if not target_files and gap.get("file"):
-                target_files = [str(gap.get("file", ""))]
-            intentions.append(
-                {
-                    "gap_id": gap.get("file", component_id or "unknown"),
-                    "component_id": component_id,
-                    "target_files": [str(path) for path in target_files if str(path).strip()],
-                    "approach": f"Wire: {gap.get('description', '')}",
-                    "acceptance_criteria": "Component assembled, pins connected, no inlined logic",
-                    "layer_constraint": "wiring_only",
-                }
-            )
-        return intentions
-
-    @staticmethod
-    def _plan_l3(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """L3: group findings by function/span and sequence smallest safe refactors first."""
-        severity_order = {"MINOR": 0, "MAJOR": 1, "BLOCKER": 2}
-        grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-
-        for raw_gap in gaps:
-            if not isinstance(raw_gap, dict):
-                continue
-            gap = _normalize_gap_record(raw_gap)
-            file_path = str(gap.get("file", "")).strip() or "unknown"
-            location = gap.get("location", {}) or {}
-            span = gap.get("span", {}) or {}
-            symbol = str(gap.get("function") or location.get("symbol") or "").strip()
-            start_line = span.get("start_line") if isinstance(span.get("start_line"), int) else 0
-            end_line = span.get("end_line") if isinstance(span.get("end_line"), int) else start_line
-
-            if symbol:
-                scope_key = f"function:{symbol}"
-            elif start_line > 0:
-                scope_key = f"span:{start_line}-{end_line or start_line}"
-            else:
-                scope_key = "file_scope"
-
-            grouped[(file_path, scope_key)].append(gap)
-
-        ordered_groups = sorted(
-            grouped.items(),
-            key=lambda item: (
-                min(
-                    severity_order.get(str(g.get("severity", "MINOR")).upper(), 1) for g in item[1]
-                ),
-                min(
-                    (
-                        (
-                            int((g.get("span", {}) or {}).get("end_line", 0))
-                            - int((g.get("span", {}) or {}).get("start_line", 0))
-                            + 1
-                        )
-                        for g in item[1]
-                        if isinstance((g.get("span", {}) or {}).get("start_line"), int)
-                    ),
-                    default=10_000,
-                ),
-                item[0][0],
-                item[0][1],
-            ),
-        )
-
-        intentions: list[dict[str, Any]] = []
-        for idx, ((file_path, scope_key), scope_gaps) in enumerate(ordered_groups, start=1):
-            ordered_scope_gaps = sorted(
-                scope_gaps,
-                key=lambda g: severity_order.get(str(g.get("severity", "MINOR")).upper(), 1),
-            )
-            first = ordered_scope_gaps[0]
-            span = first.get("span", {}) or {}
-            target_span = (
-                {
-                    "start_line": span.get("start_line"),
-                    "end_line": span.get("end_line"),
-                    "start_col": span.get("start_col"),
-                    "end_col": span.get("end_col"),
-                }
-                if span
-                else {}
-            )
-            target_function = ""
-            if scope_key.startswith("function:"):
-                target_function = scope_key.split(":", 1)[1]
-
-            descriptions = [
-                str(g.get("description") or "").strip()
-                for g in ordered_scope_gaps
-                if str(g.get("description") or "").strip()
-            ]
-            summary = "; ".join(descriptions[:4]) or "targeted clean-code refactor"
-            scope_label = target_function or scope_key.replace(":", " ")
-            acceptance_scope = f"{file_path} ({scope_label})"
-            intentions.append(
-                {
-                    "intention_id": f"l3-intention-{idx}",
-                    "gap_id": f"{file_path}:{scope_key}",
-                    "target_file": file_path,
-                    "target_function": target_function,
-                    "target_span": target_span,
-                    "approach": (
-                        f"Apply smallest-safe refactors for {len(scope_gaps)} finding(s): {summary}"
-                    ),
-                    "acceptance_criteria": (
-                        f"No behavior change within {acceptance_scope}; "
-                        "fresh quality reviewers report no findings for this scope; "
-                        "diff-impact classifier reports no logic/boundary impact."
-                    ),
-                    "layer_constraint": "refactor_only",
-                    "required_change_type": "refactor_only",
-                    "finding_count": len(scope_gaps),
-                    "source_gaps": [
-                        {
-                            "kind": g.get("kind", ""),
-                            "severity": g.get("severity", "MINOR"),
-                            "description": g.get("description", ""),
-                            "span": g.get("span", {}),
-                        }
-                        for g in ordered_scope_gaps[:20]
-                    ],
-                }
-            )
-        return intentions
 
 
 class ImplementStep:
@@ -3538,8 +3518,9 @@ class CoordinateStep:
 
     name = "COORDINATE"
 
-    def __init__(self, planner: Any = None) -> None:
+    def __init__(self, planner: Any = None, resolver: Any = None) -> None:
         self._planner = planner
+        self._resolver = resolver
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Resolve under-spec events for the active layer."""
@@ -3876,7 +3857,8 @@ class CoordinateStep:
             if not work_item.owner_slice_id:
                 work_item.owner_slice_id = ctx.slice_id
             if not work_item.status:
-                work_item.status = "NEW"
+                work_item_kind = str(work_item.kind).strip().upper()
+                work_item.status = "OPEN" if work_item_kind == "ARCH_DECISION" else "NEW"
             if store.get(work_item.work_item_id) is not None:
                 continue
             store.add(work_item)
@@ -3904,8 +3886,11 @@ class CoordinateStep:
             work_item_id = str(condition.get("work_item_id", "")).strip()
             if not work_item_id:
                 return {}
+            condition_kind = str(condition.get("kind", "")).strip().lower()
+            default_status = "DECIDED" if condition_kind == "arch_decision" else "MERGED"
             required_status = (
-                str(condition.get("required_status", "MERGED")).strip().upper() or "MERGED"
+                str(condition.get("required_status", default_status)).strip().upper()
+                or default_status
             )
             return {
                 "type": "work_item_done",
@@ -4070,6 +4055,7 @@ class CoordinateStep:
             workspace_root=workspace,
             mode=ctx.mode,
             planner=self._planner,
+            resolver=self._resolver,
             run_id=ctx.run_id,
         )
         outcome = manager.resolve(slice_id=ctx.slice_id, events=events, layer=ctx.layer)
@@ -8076,6 +8062,7 @@ class PromotionLoop:
         demotion_manager: DemotionManager | None = None,
         steps: list[Any] | None = None,
         planner: Any = None,
+        under_spec_resolver: Any = None,
     ) -> None:
         self._wm = worktree_manager
         self._workspace_manager = workspace_manager
@@ -8083,6 +8070,7 @@ class PromotionLoop:
         self._workspace_root = workspace_root
         self._dm = demotion_manager or DemotionManager(workspace_root)
         self._planner = planner
+        self._under_spec_resolver = under_spec_resolver
         from spec_manager.core.gap_queue import GapQueue
 
         self._gap_queue = GapQueue()
@@ -8104,7 +8092,12 @@ class PromotionLoop:
             elif step_cls is GapExplorationStep:
                 instances.append(step_cls(planner=self._planner, gap_queue=self._gap_queue))
             elif step_cls in (PlanStep, CoordinateStep):
-                instances.append(step_cls(planner=self._planner))
+                instances.append(
+                    step_cls(
+                        planner=self._planner,
+                        resolver=self._under_spec_resolver,
+                    )
+                )
             else:
                 instances.append(step_cls())
         return instances
@@ -8413,7 +8406,13 @@ class PromotionLoop:
                 },
             )
 
-        if bundle.gaps.path or bundle.gaps.open_gaps or bundle.gaps.stagnation:
+        if (
+            bundle.gaps.path
+            or bundle.gaps.open_gaps
+            or bundle.gaps.stagnation
+            or bundle.gaps.analysis
+            or bundle.gaps.planner_outputs
+        ):
             bundle.gaps.path = _write_iteration_json(
                 bundle,
                 evidence_root,
@@ -8421,12 +8420,15 @@ class PromotionLoop:
                 {
                     "open_gaps": bundle.gaps.open_gaps,
                     "stagnation": bundle.gaps.stagnation,
+                    "analysis": bundle.gaps.analysis,
+                    "planner_outputs": bundle.gaps.planner_outputs,
                 },
             )
 
         if (
             bundle.plan.path
             or bundle.plan.intentions
+            or bundle.plan.plan_artifacts
             or bundle.plan.edit_targets
             or bundle.plan.test_plan
             or bundle.plan.risks
@@ -8437,6 +8439,7 @@ class PromotionLoop:
                 "plan.json",
                 {
                     "intentions": bundle.plan.intentions,
+                    "plan_artifacts": bundle.plan.plan_artifacts,
                     "edit_targets": bundle.plan.edit_targets,
                     "test_plan": bundle.plan.test_plan,
                     "risks": bundle.plan.risks,

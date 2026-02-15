@@ -7,6 +7,7 @@ planner by capability and resolves an orthogonal model route by work type.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -282,23 +283,116 @@ class CapabilityRouter:
 
         if capability == "GAP":
             discovery = planner.discover(ctx)
-            return PlanningResult(status="OK", outputs={"discovery": discovery})
+            raw_gaps = inputs.get("raw_gaps", [])
+            normalized_raw_gaps = (
+                [dict(gap) for gap in raw_gaps if isinstance(gap, dict)]
+                if isinstance(raw_gaps, list)
+                else []
+            )
+
+            deduped_gaps: list[dict[str, Any]] = []
+            seen_fingerprints: set[str] = set()
+            for gap in normalized_raw_gaps:
+                fingerprint = json.dumps(
+                    {
+                        "kind": str(gap.get("kind", "")).strip(),
+                        "file": str(gap.get("file", "")).strip(),
+                        "component_id": str(gap.get("component_id", "")).strip(),
+                        "anchor": str(gap.get("anchor", "")).strip(),
+                        "description": str(gap.get("description", "")).strip(),
+                    },
+                    sort_keys=True,
+                )
+                if fingerprint in seen_fingerprints:
+                    continue
+                seen_fingerprints.add(fingerprint)
+                deduped_gaps.append(gap)
+
+            severity_order = {"BLOCKER": 0, "MAJOR": 1, "MINOR": 2}
+            prioritized_gaps = sorted(
+                deduped_gaps,
+                key=lambda gap: (
+                    severity_order.get(str(gap.get("severity", "MAJOR")).strip().upper(), 1),
+                    str(gap.get("file", "")).strip(),
+                    str(gap.get("description", "")).strip(),
+                ),
+            )
+
+            integration_notes: list[dict[str, Any]] = []
+            decision_requirements: list[dict[str, Any]] = []
+            for index, gap in enumerate(prioritized_gaps, start=1):
+                component_id = str(gap.get("component_id", "")).strip()
+                file_path = str(gap.get("file", "")).strip()
+                anchor = str(gap.get("anchor", "")).strip()
+                integration_notes.append(
+                    {
+                        "gap_id": str(gap.get("gap_id", "")) or f"gap_{index}",
+                        "implicated_components": [component_id] if component_id else [],
+                        "implicated_files": [file_path] if file_path else [],
+                        "anchor": anchor,
+                    }
+                )
+
+                embedded_requirements = gap.get("decision_requirements", [])
+                if isinstance(embedded_requirements, list):
+                    for requirement in embedded_requirements:
+                        if isinstance(requirement, dict):
+                            decision_requirements.append(requirement)
+
+                question = str(gap.get("question", "")).strip()
+                options_raw = gap.get("options", [])
+                options = (
+                    [str(item).strip() for item in options_raw if str(item).strip()]
+                    if isinstance(options_raw, list)
+                    else []
+                )
+                if question and options:
+                    decision_requirements.append(
+                        {
+                            "decision_id": str(gap.get("decision_id", "")).strip()
+                            or f"GAP-{index}",
+                            "question": question,
+                            "options": options,
+                            "needed_for": str(gap.get("file", "")).strip(),
+                            "reason": "gap_requires_architecture_decision",
+                        }
+                    )
+
+            return PlanningResult(
+                status="OK",
+                outputs={
+                    "discovery": discovery,
+                    "gaps": prioritized_gaps,
+                    "clustered_gaps": deduped_gaps,
+                    "prioritized_gaps": prioritized_gaps,
+                    "integration_notes": integration_notes,
+                    "decision_requirements": decision_requirements,
+                },
+            )
 
         if capability == "PLAN":
             gaps = inputs.get("gaps", [])
+            gap_analysis = inputs.get("gap_analysis", {})
+            prior_artifacts = inputs.get("prior_artifacts", {})
+            metadata = getattr(ctx, "metadata", {}) if hasattr(ctx, "metadata") else {}
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            if isinstance(gap_analysis, dict) and gap_analysis:
+                metadata["gap_analysis"] = dict(gap_analysis)
+            if isinstance(prior_artifacts, dict) and prior_artifacts:
+                metadata["prior_artifacts"] = dict(prior_artifacts)
+            if hasattr(ctx, "metadata"):
+                ctx.metadata = metadata
             discovery = planner.discover(ctx)
             plan = planner.build_plan(ctx, gaps, discovery)
             outputs: dict[str, Any] = {"intentions": plan.get("intentions", [])}
-            # Forward strategy pipeline outputs when present
-            for key in (
-                "decision_requirements",
-                "new_constraints",
-                "new_constraints_to_write",
-                "under_spec_events",
-                "decision_outcomes",
-            ):
-                if key in plan:
-                    outputs[key] = plan[key]
+            for key, value in plan.items():
+                if key == "intentions":
+                    continue
+                outputs[key] = value
+            if "plan_artifacts" not in outputs:
+                outputs["plan_artifacts"] = {
+                    key: value for key, value in outputs.items() if key != "intentions"
+                }
             return PlanningResult(status="OK", outputs=outputs)
 
         if capability == "UNDER_SPEC":

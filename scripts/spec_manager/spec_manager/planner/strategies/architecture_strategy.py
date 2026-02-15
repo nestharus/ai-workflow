@@ -746,12 +746,15 @@ class ArchitecturePlannerStrategy:
                 work_item_id=dp.decision_id,
                 spec_text=dp.description,
                 owner_slice_id=dp.owner_slice_id or slice_id,
-                status="NEW",
+                status="OPEN",
                 kind="ARCH_DECISION",
+                scope=dp.scope,
+                trigger_refs=list(dp.trigger_evidence),
+                required_constraints=list(dp.required_constraints),
+                candidate_refs=[],
+                selected_candidate_ref="",
                 metadata={
-                    "scope": dp.scope,
-                    "trigger_refs": dp.trigger_evidence,
-                    "required_constraints": dp.required_constraints,
+                    "decision_type": getattr(dp, "decision_type", ""),
                 },
             )
             try:
@@ -774,11 +777,11 @@ class ArchitecturePlannerStrategy:
         if self._work_item_store is not None:
             try:
                 if outcome.committed:
-                    self._work_item_store.update_status(dp.decision_id, "DONE")
+                    self._work_item_store.update_status(dp.decision_id, "DECIDED")
                 elif outcome.under_spec_events or outcome.decision_requirements:
                     self._work_item_store.update_status(dp.decision_id, "BLOCKED")
                 else:
-                    self._work_item_store.update_status(dp.decision_id, "IN_PROGRESS")
+                    self._work_item_store.update_status(dp.decision_id, "EXPLORING")
             except (KeyError, ValueError):
                 logger.debug(
                     "Could not update work item status for %s",

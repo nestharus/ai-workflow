@@ -8,7 +8,7 @@ Resolves under-spec events by either:
 
 Modes:
   * **interactive** — emits :class:`UserQuestionSignal` events only.
-  * **auto** — delegates to Planner (preferred) or legacy coordinator;
+  * **auto** — delegates to an injected resolver (planner-backed by default);
     low-confidence / contradictory expansions are escalated to interactive
     signal emission.
 """
@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
 from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
@@ -293,6 +293,147 @@ class _ResolutionPayload:
     needs_interactive_review: list[UnderSpecEvent] = field(default_factory=list)
 
 
+@dataclass
+class ResolverContext:
+    """Context passed into an injected under-spec resolver."""
+
+    run_id: str
+    slice_id: str
+    layer: str
+    mode: Literal["interactive", "auto"]
+    workspace_root: Path
+    constraints_snapshot: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class DecisionOutcome:
+    """Normalized resolver output for under-spec decisions."""
+
+    blocked: bool = False
+    constraints: dict[str, Any] = field(default_factory=dict)
+    questions: list[dict[str, Any]] = field(default_factory=list)
+    resolved: list[dict[str, Any]] = field(default_factory=list)
+    routing: list[dict[str, Any]] = field(default_factory=list)
+    monitors: list[dict[str, Any]] = field(default_factory=list)
+    expansions: list[dict[str, Any]] = field(default_factory=list)
+    contradictions: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "blocked": self.blocked,
+            "constraints": self.constraints,
+            "questions": self.questions,
+            "resolved": self.resolved,
+            "routing": self.routing,
+            "monitors": self.monitors,
+            "expansions": self.expansions,
+            "contradictions": self.contradictions,
+            "confidence": self.confidence,
+        }
+
+
+class UnderSpecResolver(Protocol):
+    """Resolver contract injected into UnderSpecManager."""
+
+    def resolve(self, events: list[UnderSpecEvent], ctx: ResolverContext) -> DecisionOutcome:
+        """Resolve or block the provided under-spec events."""
+
+
+class PlannerUnderSpecResolver:
+    """Planner-backed resolver implementation for under-spec decisions."""
+
+    def __init__(self, planner: Any) -> None:
+        self._planner = planner
+
+    def resolve(self, events: list[UnderSpecEvent], ctx: ResolverContext) -> DecisionOutcome:
+        from spec_manager.planner.api import PlanningContext
+
+        planner_context = PlanningContext(
+            run_id=ctx.run_id,
+            slice_id=ctx.slice_id,
+            layer=ctx.layer,
+            mode=ctx.mode,
+            workspace_root=str(ctx.workspace_root),
+            metadata={"constraints_snapshot": list(ctx.constraints_snapshot)},
+        )
+        outputs = self._planner.resolve_under_spec(
+            planner_context,
+            [event.to_dict() for event in events],
+        )
+        if not isinstance(outputs, dict):
+            return DecisionOutcome(blocked=True)
+
+        constraints_raw = outputs.get("constraints", {})
+        constraints = constraints_raw if isinstance(constraints_raw, dict) else {}
+
+        questions: list[dict[str, Any]] = []
+        questions_raw = outputs.get("questions", [])
+        if isinstance(questions_raw, list):
+            for row in questions_raw:
+                if isinstance(row, dict):
+                    text = str(
+                        row.get("question") or row.get("text") or row.get("prompt") or ""
+                    ).strip()
+                    if not text:
+                        continue
+                    question_payload = dict(row)
+                    question_payload["question"] = text
+                    questions.append(question_payload)
+                    continue
+                text = str(row).strip()
+                if text:
+                    questions.append({"question": text, "options": [], "evidence_needed": []})
+
+        resolved_raw = outputs.get("resolved", [])
+        resolved = (
+            [row for row in resolved_raw if isinstance(row, dict)]
+            if isinstance(resolved_raw, list)
+            else []
+        )
+        routing_raw = outputs.get("routing", [])
+        routing = (
+            [row for row in routing_raw if isinstance(row, dict)]
+            if isinstance(routing_raw, list)
+            else []
+        )
+        monitors_raw = outputs.get("monitors", [])
+        monitors = (
+            [row for row in monitors_raw if isinstance(row, dict)]
+            if isinstance(monitors_raw, list)
+            else []
+        )
+        expansions_raw = outputs.get("expansions", [])
+        expansions = (
+            [row for row in expansions_raw if isinstance(row, dict)]
+            if isinstance(expansions_raw, list)
+            else []
+        )
+        contradictions_raw = outputs.get("contradictions", [])
+        contradictions = (
+            [str(item).strip() for item in contradictions_raw if str(item).strip()]
+            if isinstance(contradictions_raw, list)
+            else []
+        )
+        confidence_raw = outputs.get("confidence", outputs.get("score", 0.0))
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        return DecisionOutcome(
+            blocked=bool(outputs.get("blocked", False)),
+            constraints=constraints,
+            questions=questions,
+            resolved=resolved,
+            routing=routing,
+            monitors=monitors,
+            expansions=expansions,
+            contradictions=contradictions,
+            confidence=max(0.0, min(1.0, confidence)),
+        )
+
+
 # ------------------------------------------------------------------
 # UnderSpecManager
 # ------------------------------------------------------------------
@@ -309,6 +450,7 @@ class UnderSpecManager:
         workspace_root: Repository root path.
         mode: Resolution mode (interactive or auto).
         planner: Optional planner instance for resolution.
+        resolver: Optional injected resolver implementation.
         run_id: PDD run identifier (used for signal store path).
     """
 
@@ -320,6 +462,7 @@ class UnderSpecManager:
         workspace_root: Path,
         mode: Literal["interactive", "auto"] = "auto",
         planner: Any = None,
+        resolver: UnderSpecResolver | None = None,
         run_id: str = "",
     ) -> None:
         if not isinstance(run_id, str):
@@ -332,6 +475,9 @@ class UnderSpecManager:
         self._store = ConstraintsStore(workspace_root)
         self._constraints_adapter = ConstraintStoreAdapter(workspace_root)
         self._planner = planner
+        self._resolver: UnderSpecResolver | None = resolver
+        if self._resolver is None and planner is not None:
+            self._resolver = PlannerUnderSpecResolver(planner)
         self._run_id = normalized_run_id
         self._interactive_questions_emitted = False
 
@@ -673,12 +819,10 @@ class UnderSpecManager:
         layer: str,
     ) -> dict[str, str]:
         """Optionally refine interactive under-spec questions through planner strategy."""
-        if self._planner is None or not events:
+        if self._resolver is None or not events:
             return {}
 
         try:
-            from spec_manager.planner.api import PlanningContext
-
             constraints_snapshot = [
                 {
                     "constraint_id": constraint.constraint_id,
@@ -700,23 +844,18 @@ class UnderSpecManager:
                 }
                 for event in events
             ]
-            context = PlanningContext(
+            context = ResolverContext(
                 run_id=self._run_id,
                 slice_id=slice_id,
                 layer=layer,
                 mode="interactive",
-                workspace_root=str(self._workspace),
-                metadata={
-                    "under_spec_question_refinement": {
-                        "constraints_snapshot": constraints_snapshot,
-                        "local_context": local_context,
-                    }
-                },
+                workspace_root=self._workspace,
+                constraints_snapshot=[
+                    *constraints_snapshot,
+                    {"local_context": local_context},
+                ],
             )
-            outputs = self._planner.resolve_under_spec(
-                context,
-                [event.to_dict() for event in events],
-            )
+            outputs = self._resolver.resolve(events, context).to_dict()
         except Exception:
             logger.debug(
                 "Interactive question refinement failed for slice '%s'",
@@ -733,7 +872,15 @@ class UnderSpecManager:
         for index, raw_question in enumerate(questions):
             if index >= len(events):
                 break
-            question_text = str(raw_question).strip()
+            if isinstance(raw_question, dict):
+                question_text = str(
+                    raw_question.get("question")
+                    or raw_question.get("text")
+                    or raw_question.get("prompt")
+                    or ""
+                ).strip()
+            else:
+                question_text = str(raw_question).strip()
             if not question_text:
                 continue
             refined[self._interactive_event_key(events[index])] = question_text
@@ -746,32 +893,25 @@ class UnderSpecManager:
         *,
         layer: str = "any",
     ) -> _ResolutionPayload:
-        """Resolve via planner (preferred) or ResearchCoordinator (fallback).
+        """Resolve under-spec via injected resolver."""
+        if self._resolver is None:
+            logger.warning(
+                "Under-spec resolver unavailable (slice=%s, layer=%s); events remain blocked",
+                slice_id,
+                layer,
+            )
+            return _ResolutionPayload(blocked=list(events))
 
-        The planner routes to layer-specific resolution and research tools.
-        Constraints must pass validation before the slice unblocks.
-        """
-        # Try planner-based resolution first
-        if self._planner is not None:
-            return self._resolve_via_planner(slice_id, events, layer=layer)
+        return self._resolve_via_resolver(slice_id, events, layer=layer)
 
-        logger.warning(
-            "Planner unavailable for under-spec resolution (slice=%s, layer=%s); "
-            "using legacy ResearchCoordinator fallback",
-            slice_id,
-            layer,
-        )
-        constraints, blocked = self._resolve_via_coordinator(slice_id, events)
-        return _ResolutionPayload(constraints=constraints, blocked=blocked)
-
-    def _resolve_via_planner(
+    def _resolve_via_resolver(
         self,
         slice_id: str,
         events: list[UnderSpecEvent],
         *,
         layer: str = "any",
     ) -> _ResolutionPayload:
-        """Resolve under-spec events via the planner module."""
+        """Resolve under-spec events via injected resolver contract."""
         constraints: list[Constraint] = []
         blocked: list[UnderSpecEvent] = []
         routing: list[dict[str, Any]] = []
@@ -780,23 +920,45 @@ class UnderSpecManager:
         needs_interactive_review: list[UnderSpecEvent] = []
 
         try:
-            from spec_manager.planner.api import PlanningContext
-
-            event_dicts = [e.to_dict() for e in events]
-            ctx = PlanningContext(
+            resolver = self._resolver
+            if resolver is None:
+                return _ResolutionPayload(blocked=list(events))
+            constraints_snapshot = [
+                {
+                    "constraint_id": constraint.constraint_id,
+                    "question": constraint.question,
+                    "answer": constraint.answer,
+                    "dimension": constraint.dimension,
+                    "authority_required": constraint.authority_required,
+                    "scope": constraint.scope,
+                }
+                for constraint in self._load_merged_constraints(slice_id)
+            ]
+            resolver_context = ResolverContext(
                 run_id=self._run_id,
                 slice_id=slice_id,
                 layer=layer,
                 mode="auto",
-                workspace_root=str(self._workspace),
+                workspace_root=self._workspace,
+                constraints_snapshot=constraints_snapshot,
             )
-            result = self._planner.resolve_under_spec(ctx, event_dicts)
+            decision_outcome = resolver.resolve(events, resolver_context)
+            result = decision_outcome.to_dict()
+            questions_raw = result.get("questions", [])
+            questions = (
+                [row for row in questions_raw if isinstance(row, dict)]
+                if isinstance(questions_raw, list)
+                else []
+            )
+            constraints_payload = result.get("constraints", {})
+            if not isinstance(constraints_payload, dict):
+                constraints_payload = {}
 
             resolved_ids: set[str] = set()
             policy_dimensions = self._policy_dimensions_for_slice(slice_id)
 
-            # Extract constraints from planner result
-            for key, value in result.get("constraints", {}).items():
+            # Extract constraints from resolver result
+            for key, value in constraints_payload.items():
                 answer = ""
                 confidence = 0.7
                 trace: list[str] = []
@@ -1051,10 +1213,25 @@ class UnderSpecManager:
             # Remaining events are blocked
             for event in events:
                 if event.event_id not in resolved_ids:
-                    blocked.append(event)
+                    blocked_event = UnderSpecEvent.from_dict(event.to_dict())
+                    question_payload = self._question_payload_for_event(
+                        event=blocked_event,
+                        questions=questions,
+                    )
+                    if question_payload:
+                        question_text = str(question_payload.get("question", "")).strip()
+                        if question_text:
+                            blocked_event.question = question_text
+                        blocked_event.context = {
+                            **dict(blocked_event.context or {}),
+                            "options": question_payload.get("options", []),
+                            "evidence_needed": question_payload.get("evidence_needed", []),
+                            "question_payload": question_payload,
+                        }
+                    blocked.append(blocked_event)
 
         except Exception as exc:
-            logger.warning("Planner resolution failed: %s", exc)
+            logger.warning("Resolver resolution failed: %s", exc)
             blocked = list(events)
 
         return _ResolutionPayload(
@@ -1065,73 +1242,6 @@ class UnderSpecManager:
             expansions=expansions,
             needs_interactive_review=self._dedupe_events(needs_interactive_review),
         )
-
-    def _resolve_via_coordinator(
-        self,
-        slice_id: str,
-        events: list[UnderSpecEvent],
-    ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
-        """Resolve via ResearchCoordinator (legacy fallback)."""
-        constraints: list[Constraint] = []
-        blocked: list[UnderSpecEvent] = []
-
-        try:
-            from spec_manager.refinement.interactive.ambiguity_detector import (
-                Ambiguity,
-            )
-            from spec_manager.refinement.interactive.research.coordinator import (
-                ResearchCoordinator,
-            )
-
-            coordinator = ResearchCoordinator()
-
-            for event in events:
-                ambiguity = Ambiguity(
-                    ambiguity_id=event.event_id or f"underspec_{id(event)}",
-                    source_text=event.question,
-                    source_location=f"{event.source_file}:{event.source_line}",
-                    ambiguity_type="missing_condition",
-                    confidence=1.0,
-                    suggested_question=event.question,
-                )
-
-                response = coordinator.research(ambiguity, self._workspace)
-
-                if response.response_text.strip():
-                    blocked_event = UnderSpecEvent.from_dict(event.to_dict())
-                    gate_ctx = dict(blocked_event.context or {})
-                    gate_ctx["auto_resolve_gate"] = {
-                        "decision": "blocked",
-                        "reason": "legacy_fallback_requires_human_authority",
-                        "authority_required": "human_required",
-                        "confidence": 0.7,
-                    }
-                    gate_ctx["legacy_fallback_suggestion"] = response.response_text.strip()
-                    blocked_event.context = gate_ctx
-                    blocked.append(blocked_event)
-                    logger.info(
-                        "Under-spec fallback suggested an answer for event=%s slice=%s; "
-                        "routing as human-required",
-                        event.event_id,
-                        slice_id,
-                    )
-                else:
-                    logger.debug(
-                        "Under-spec fallback did not resolve event=%s for slice=%s",
-                        event.event_id,
-                        slice_id,
-                    )
-                    blocked.append(event)
-
-        except Exception as exc:
-            logger.warning(
-                "Auto resolution failed for legacy coordinator fallback (slice=%s): %s",
-                slice_id,
-                exc,
-            )
-            blocked = list(events)
-
-        return constraints, blocked
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1292,6 +1402,32 @@ class UnderSpecManager:
             seen_ids.add(key)
             deduped.append(event)
         return deduped
+
+    @staticmethod
+    def _question_payload_for_event(
+        *,
+        event: UnderSpecEvent,
+        questions: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        event_id = str(event.event_id).strip()
+        event_question = str(event.question).strip()
+
+        for question in questions:
+            candidate_event_id = str(
+                question.get("event_id", question.get("decision_id", ""))
+            ).strip()
+            if event_id and candidate_event_id and candidate_event_id == event_id:
+                return question
+
+        if event_question:
+            for question in questions:
+                text = str(
+                    question.get("question") or question.get("text") or question.get("prompt") or ""
+                ).strip()
+                if text and text == event_question:
+                    return question
+
+        return questions[0] if questions else None
 
     def _write_constraint_request(self, slice_id: str, events: list[UnderSpecEvent]) -> Path:
         lines: list[str] = [

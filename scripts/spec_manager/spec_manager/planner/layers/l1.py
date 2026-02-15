@@ -536,7 +536,7 @@ class L1Planner:
         missing_detail = str(search_outcome.get("missing_detail", "")).strip()
 
         if coverage == "FULL_COVERAGE" and primary_match is not None:
-            if primary_match.status in ("MERGED", "DONE"):
+            if primary_match.status in ("MERGED", "DONE", "DECIDED"):
                 return {
                     "action": "WAKE_IMMEDIATELY",
                     "monitors": [],
@@ -578,7 +578,9 @@ class L1Planner:
 
         if coverage == "PARTIAL_COVERAGE":
             candidate_matches = [m for m in [primary_match, *secondary_matches] if m is not None]
-            active_matches = [m for m in candidate_matches if m.status not in ("MERGED", "DONE")]
+            active_matches = [
+                m for m in candidate_matches if m.status not in ("MERGED", "DONE", "DECIDED")
+            ]
             if active_matches:
                 monitors = _build_partial_match_monitors(
                     signal=signal, matches=active_matches, ctx=ctx
@@ -978,8 +980,13 @@ def _build_work_item_monitor(
     if isinstance(target_statuses, list) and target_statuses:
         required_status = str(target_statuses[0])
     else:
-        required_status = "MERGED"
-        target_statuses = ["MERGED", "DONE"]
+        kind = str(work_item_dict.get("kind", "")).strip().upper()
+        if kind == "ARCH_DECISION":
+            required_status = "DECIDED"
+            target_statuses = ["DECIDED"]
+        else:
+            required_status = "MERGED"
+            target_statuses = ["MERGED", "DONE"]
     return {
         "type": "work_item_done",
         "work_item_id": work_item_dict.get("work_item_id", ""),
@@ -1000,28 +1007,20 @@ def _build_partial_match_monitors(
     """Build whitelisted work-item monitors for partial coverage matches."""
     monitors: list[dict[str, Any]] = []
     for m in matches:
-        monitors.append(
-            {
-                "type": "work_item_done",
-                "work_item_id": m.work_item_id,
-                "required_status": "MERGED",
-                "kind": "work_item_status",
-                "signal_id": signal.get("signal_id", ""),
-                "run_id": getattr(ctx, "run_id", ""),
-                "timeout_seconds": 3600,
-            }
-        )
-        monitors.append(
-            {
-                "type": "work_item_done",
-                "work_item_id": m.work_item_id,
-                "required_status": "DONE",
-                "kind": "work_item_status",
-                "signal_id": signal.get("signal_id", ""),
-                "run_id": getattr(ctx, "run_id", ""),
-                "timeout_seconds": 3600,
-            }
-        )
+        kind = str(getattr(m, "kind", "")).strip().upper()
+        statuses = ["DECIDED"] if kind == "ARCH_DECISION" else ["MERGED", "DONE"]
+        for required_status in statuses:
+            monitors.append(
+                {
+                    "type": "work_item_done",
+                    "work_item_id": m.work_item_id,
+                    "required_status": required_status,
+                    "kind": "work_item_status",
+                    "signal_id": signal.get("signal_id", ""),
+                    "run_id": getattr(ctx, "run_id", ""),
+                    "timeout_seconds": 3600,
+                }
+            )
     return monitors
 
 

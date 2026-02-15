@@ -1853,17 +1853,30 @@ class GeneralPlanner:
         return result.outputs.get("response")
 
     def plan_from_gaps(
-        self, context: PlanningContext, gaps: list[dict[str, Any]]
+        self,
+        context: PlanningContext,
+        gaps: list[dict[str, Any]],
+        *,
+        gap_analysis: dict[str, Any] | None = None,
+        prior_artifacts: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate a PLAN output payload from a gap list.
 
         Returns the full planner outputs dict (intentions plus any
         strategy-pipeline artifacts such as decision_requirements).
         """
+        normalized_gap_analysis = dict(gap_analysis) if isinstance(gap_analysis, dict) else {}
+        normalized_prior_artifacts = (
+            dict(prior_artifacts) if isinstance(prior_artifacts, dict) else {}
+        )
         req = PlanningRequest(
             capability="PLAN",
             context=context,
-            inputs={"gaps": gaps},
+            inputs={
+                "gaps": gaps,
+                "gap_analysis": normalized_gap_analysis,
+                "prior_artifacts": normalized_prior_artifacts,
+            },
         )
         result = self.plan(req)
         if not isinstance(result.outputs, dict):
@@ -2051,11 +2064,7 @@ class GeneralPlanner:
         constraints_raw = outputs.get("constraints", {})
         constraints = constraints_raw if isinstance(constraints_raw, dict) else {}
         questions_raw = outputs.get("questions", [])
-        questions = (
-            [str(q).strip() for q in questions_raw if str(q).strip()]
-            if isinstance(questions_raw, list)
-            else []
-        )
+        questions = self._normalize_under_spec_questions(questions_raw)
         resolved_raw = outputs.get("resolved", [])
         resolved = (
             [row for row in resolved_raw if isinstance(row, dict)]
@@ -2116,6 +2125,77 @@ class GeneralPlanner:
             "confidence": max(0.0, min(1.0, confidence)),
             "contradictions": contradictions,
         }
+
+    @staticmethod
+    def _normalize_under_spec_questions(raw_questions: Any) -> list[dict[str, Any]]:
+        """Normalize blocked-question payloads without flattening away decision structure."""
+        if not isinstance(raw_questions, list):
+            return []
+
+        questions: list[dict[str, Any]] = []
+        for raw_question in raw_questions:
+            if isinstance(raw_question, str):
+                text = raw_question.strip()
+                if not text:
+                    continue
+                questions.append(
+                    {
+                        "question": text,
+                        "options": [],
+                        "evidence_needed": [],
+                    }
+                )
+                continue
+
+            if not isinstance(raw_question, dict):
+                continue
+
+            text = str(
+                raw_question.get("question")
+                or raw_question.get("text")
+                or raw_question.get("prompt")
+                or ""
+            ).strip()
+            if not text:
+                continue
+
+            options_raw = raw_question.get("options", raw_question.get("choices", []))
+            options = (
+                [str(option).strip() for option in options_raw if str(option).strip()]
+                if isinstance(options_raw, list)
+                else []
+            )
+
+            evidence_raw = raw_question.get(
+                "evidence_needed",
+                raw_question.get("evidence_refs", raw_question.get("evidence", [])),
+            )
+            evidence_needed = (
+                [str(ref).strip() for ref in evidence_raw if str(ref).strip()]
+                if isinstance(evidence_raw, list)
+                else []
+            )
+
+            normalized: dict[str, Any] = {
+                "question": text,
+                "options": options,
+                "evidence_needed": evidence_needed,
+            }
+            for key in (
+                "event_id",
+                "decision_id",
+                "reason",
+                "authority_required",
+                "dimension",
+                "decision_type",
+                "needed_for",
+            ):
+                if key in raw_question:
+                    normalized[key] = raw_question[key]
+
+            questions.append(normalized)
+
+        return questions
 
     @staticmethod
     def _coerce_under_spec_constraint_source(

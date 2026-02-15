@@ -24,9 +24,41 @@ logger = logging.getLogger(__name__)
 # Types
 # ---------------------------------------------------------------------------
 
-STATUS = Literal["NEW", "ASSIGNED", "IN_PROGRESS", "MERGED", "DONE", "BLOCKED"]
+STATUS = Literal[
+    "NEW",
+    "ASSIGNED",
+    "IN_PROGRESS",
+    "MERGED",
+    "DONE",
+    "BLOCKED",
+    "OPEN",
+    "EXPLORING",
+    "DECIDED",
+]
 
-_VALID_STATUSES = {"NEW", "ASSIGNED", "IN_PROGRESS", "MERGED", "DONE", "BLOCKED"}
+_SPEC_WORK_STATUSES = {"NEW", "ASSIGNED", "IN_PROGRESS", "MERGED", "DONE", "BLOCKED"}
+_ARCH_DECISION_STATUSES = {"OPEN", "EXPLORING", "BLOCKED", "DECIDED"}
+_KIND_STATUS_MAP: dict[str, set[str]] = {
+    "SPEC_WORK": _SPEC_WORK_STATUSES,
+    "ARCH_DECISION": _ARCH_DECISION_STATUSES,
+}
+
+
+def _normalize_kind(kind: str) -> str:
+    normalized = str(kind).strip().upper()
+    return normalized if normalized else "SPEC_WORK"
+
+
+def _valid_statuses_for_kind(kind: str) -> set[str]:
+    normalized_kind = _normalize_kind(kind)
+    return _KIND_STATUS_MAP.get(normalized_kind, _SPEC_WORK_STATUSES)
+
+
+def _default_status_for_kind(kind: str) -> str:
+    normalized_kind = _normalize_kind(kind)
+    if normalized_kind == "ARCH_DECISION":
+        return "OPEN"
+    return "NEW"
 
 
 def _normalize(text: str) -> str:
@@ -110,6 +142,11 @@ class WorkItem:
     created_at: str = ""
     updated_at: str = ""
     kind: str = "SPEC_WORK"
+    scope: str = ""
+    trigger_refs: list[str] = field(default_factory=list)
+    required_constraints: list[str] = field(default_factory=list)
+    candidate_refs: list[str] = field(default_factory=list)
+    selected_candidate_ref: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -123,16 +160,37 @@ class WorkItem:
             loc = WorkItemLocation.from_dict(loc_data)
         else:
             loc = WorkItemLocation()
+        kind = _normalize_kind(d.get("kind", "SPEC_WORK"))
+        raw_status = str(d.get("status", "")).strip().upper()
+        status = raw_status or _default_status_for_kind(kind)
+        if status not in _valid_statuses_for_kind(kind):
+            status = _default_status_for_kind(kind)
+        trigger_refs = d.get("trigger_refs", [])
+        required_constraints = d.get("required_constraints", [])
+        candidate_refs = d.get("candidate_refs", [])
         return cls(
             work_item_id=d.get("work_item_id", ""),
             spec_text=d.get("spec_text", ""),
             owner_slice_id=d.get("owner_slice_id", ""),
-            status=d.get("status", "NEW"),
+            status=status,
             location=loc,
             tags=d.get("tags", []),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
-            kind=d.get("kind", "SPEC_WORK"),
+            kind=kind,
+            scope=str(d.get("scope", "")).strip(),
+            trigger_refs=[str(item).strip() for item in trigger_refs if str(item).strip()]
+            if isinstance(trigger_refs, list)
+            else [],
+            required_constraints=[
+                str(item).strip() for item in required_constraints if str(item).strip()
+            ]
+            if isinstance(required_constraints, list)
+            else [],
+            candidate_refs=[str(item).strip() for item in candidate_refs if str(item).strip()]
+            if isinstance(candidate_refs, list)
+            else [],
+            selected_candidate_ref=str(d.get("selected_candidate_ref", "")).strip(),
             metadata=d.get("metadata", {}),
         )
 
@@ -202,6 +260,14 @@ class WorkItemStore:
 
     def add(self, item: WorkItem) -> None:
         """Append a work item to JSONL and rebuild index."""
+        item.kind = _normalize_kind(item.kind)
+        normalized_status = str(item.status).strip().upper()
+        item.status = normalized_status or _default_status_for_kind(item.kind)
+        if item.status not in _valid_statuses_for_kind(item.kind):
+            raise ValueError(
+                f"Invalid status '{item.status}' for kind '{item.kind}'. "
+                f"Expected one of {sorted(_valid_statuses_for_kind(item.kind))}."
+            )
         if not item.created_at:
             item.created_at = datetime.now(UTC).isoformat()
         item.updated_at = item.created_at
@@ -214,12 +280,17 @@ class WorkItemStore:
 
     def update_status(self, work_item_id: str, status: str) -> None:
         """Update the status of an existing work item."""
-        if status not in _VALID_STATUSES:
-            raise ValueError(f"Invalid status: {status}")
+        normalized_status = str(status).strip().upper()
         item = self._items.get(work_item_id)
         if item is None:
             raise KeyError(f"Work item not found: {work_item_id}")
-        item.status = status
+        valid_statuses = _valid_statuses_for_kind(item.kind)
+        if normalized_status not in valid_statuses:
+            raise ValueError(
+                f"Invalid status '{normalized_status}' for kind '{item.kind}'. "
+                f"Expected one of {sorted(valid_statuses)}."
+            )
+        item.status = normalized_status
         item.updated_at = datetime.now(UTC).isoformat()
         item.metadata = dict(item.metadata or {})
         item.metadata["spec_fingerprint"] = _fingerprint(item.spec_text)

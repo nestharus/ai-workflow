@@ -1711,16 +1711,19 @@ class L2Planner:
                             work_item_id=work_item_id,
                             spec_text=summary,
                             owner_slice_id=target_slice,
-                            status="NEW",
+                            status="OPEN",
                             kind="ARCH_DECISION",
+                            scope=inter_scope,
+                            trigger_refs=trigger_refs,
+                            required_constraints=[],
+                            candidate_refs=[],
+                            selected_candidate_ref="",
                             location=WorkItemLocation(
                                 file=location["file"],
                                 symbol=location["symbol"],
                                 line_hint=location["line_hint"],
                             ),
                             metadata={
-                                "scope": inter_scope,
-                                "trigger_refs": trigger_refs,
                                 "signal_id": signal_id,
                             },
                         )
@@ -1735,7 +1738,7 @@ class L2Planner:
                     exc_info=True,
                 )
 
-        if existing_work_item_status in {"MERGED", "DONE"}:
+        if existing_work_item_status == "DECIDED":
             return {
                 "action": "WAKE_IMMEDIATELY",
                 "monitors": [],
@@ -1747,7 +1750,7 @@ class L2Planner:
         monitor = {
             "type": "work_item_done",
             "work_item_id": work_item_id,
-            "required_status": "MERGED",
+            "required_status": "DECIDED",
             "kind": "work_item_status",
             "signal_id": signal_id,
             "run_id": str(getattr(ctx, "run_id", "") or "").strip(),
@@ -2020,15 +2023,17 @@ def _build_arch_decision_routing_payload(
         "work_item_id": work_item_id,
         "spec_text": summary,
         "owner_slice_id": owner_slice_id,
-        "status": "NEW",
+        "status": "OPEN",
         "kind": "ARCH_DECISION",
+        "scope": scope,
+        "trigger_refs": trigger_refs,
+        "required_constraints": [],
+        "candidate_refs": [],
+        "selected_candidate_ref": "",
         "location": {
             "file": str(location.get("file", "")).strip(),
             "symbol": str(location.get("symbol", "")).strip(),
             "line_hint": int(location.get("line_hint", 0) or 0),
         },
-        "metadata": {
-            "scope": scope,
-            "trigger_refs": trigger_refs,
-        },
+        "metadata": {},
     }

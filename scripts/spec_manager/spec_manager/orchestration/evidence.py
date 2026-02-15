@@ -193,6 +193,8 @@ class GapReportRef:
     path: str = ""
     open_gaps: list[dict[str, Any]] = field(default_factory=list)
     stagnation: dict[str, Any] = field(default_factory=dict)
+    analysis: dict[str, Any] = field(default_factory=dict)
+    planner_outputs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -201,6 +203,7 @@ class PlanRef:
 
     path: str = ""
     intentions: list[dict[str, Any]] = field(default_factory=list)
+    plan_artifacts: dict[str, Any] = field(default_factory=dict)
     edit_targets: list[dict[str, Any]] = field(default_factory=list)
     test_plan: list[dict[str, Any]] = field(default_factory=list)
     risks: list[dict[str, Any]] = field(default_factory=list)
