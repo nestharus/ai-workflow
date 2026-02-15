@@ -67,7 +67,7 @@ class VcsOperations(Protocol):
         """
         ...
 
-    def merge(self, worktree: Path, branch: str) -> tuple[bool, str]:
+    def merge(self, worktree: Path, branch: str, *, ff_only: bool = False) -> tuple[bool, str]:
         """Merge *branch* into *worktree*.
 
         Returns:
@@ -104,8 +104,17 @@ class VcsOperations(Protocol):
         """
         ...
 
-    def update_ref(self, branch: str, target_sha: str) -> tuple[bool, str]:
-        """Move *branch* to *target_sha* (fast-forward ref update).
+    def update_ref(
+        self,
+        branch: str,
+        target_sha: str,
+        *,
+        require_ff: bool = True,
+    ) -> tuple[bool, str]:
+        """Move *branch* to *target_sha*.
+
+        When ``require_ff`` is True, existing refs are updated only via
+        fast-forward.
 
         Returns:
             ``(success, error_message)``.
@@ -203,8 +212,9 @@ class GitVcs:
             return False, result.stderr.strip()
         return True, ""
 
-    def merge(self, worktree: Path, branch: str) -> tuple[bool, str]:
-        result = self._run(["merge", branch, "--no-ff"], cwd=worktree)
+    def merge(self, worktree: Path, branch: str, *, ff_only: bool = False) -> tuple[bool, str]:
+        merge_args = ["merge", branch, "--ff-only" if ff_only else "--no-ff"]
+        result = self._run(merge_args, cwd=worktree)
         if result.returncode != 0:
             self._run(["merge", "--abort"], cwd=worktree)
             return False, result.stderr.strip()
@@ -238,9 +248,36 @@ class GitVcs:
             return None
         return result.stdout.strip()
 
-    def update_ref(self, branch: str, target_sha: str) -> tuple[bool, str]:
+    def update_ref(
+        self,
+        branch: str,
+        target_sha: str,
+        *,
+        require_ff: bool = True,
+    ) -> tuple[bool, str]:
         ref = f"refs/heads/{branch}" if not branch.startswith("refs/") else branch
-        result = self._run(["update-ref", ref, target_sha])
+        current_sha = self.rev_parse(ref)
+        if require_ff and current_sha and current_sha != target_sha:
+            is_ancestor = self._run(["merge-base", "--is-ancestor", current_sha, target_sha])
+            if is_ancestor.returncode == 1:
+                return (
+                    False,
+                    (
+                        f"Ref update rejected (non-fast-forward): {ref} "
+                        f"{current_sha[:12]} -> {target_sha[:12]}"
+                    ),
+                )
+            if is_ancestor.returncode != 0:
+                return (
+                    False,
+                    is_ancestor.stderr.strip()
+                    or f"Unable to validate fast-forward ancestry for {ref}",
+                )
+
+        update_args = ["update-ref", ref, target_sha]
+        if current_sha:
+            update_args.append(current_sha)
+        result = self._run(update_args)
         if result.returncode != 0:
             return False, result.stderr.strip()
         return True, ""

@@ -23,8 +23,8 @@ State machine (per slice)::
     PROMOTE            (P4/P5 promotion + compliance gates + refinement)
       ├─ if gates fail → DEMOTE → RESTART_ITER
       ↓
-    INTEGRATE (CI)     (merge to parent + extract to clean + run tests)
-      ├─ if tests fail → DOWNWARD_FLOW → DEMOTE → RESTART_ITER
+    INTEGRATE          (merge to parent dirty + trigger CI tick)
+      ├─ if merge conflicts persist → DEMOTE + BLOCK
       ↓
     VERIFY             (P6 + P7 + architectural gates)
       ├─ if verify fails → DEMOTE → RESTART_ITER
@@ -45,10 +45,12 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from difflib import unified_diff
 from pathlib import Path
+from time import monotonic
 from typing import Any, Literal, Protocol, cast
 
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
@@ -553,6 +555,9 @@ class RunContext:
     )
     max_wait_cycles: int = 10
     config: dict[str, Any] = field(default_factory=dict)
+    ci_tick_callback: Callable[[str], None] | None = None
+    ci_periodic_tick_callback: Callable[[], None] | None = None
+    ci_periodic_tick_interval_sec: float = 20.0
 
 
 @dataclass
@@ -577,6 +582,9 @@ class SliceContext:
     lifecycle_mode: LifecycleRunMode = "build"
     workspace_root: str = ""
     config: dict[str, Any] = field(default_factory=dict)
+    ci_tick_callback: Callable[[str], None] | None = None
+    ci_periodic_tick_callback: Callable[[], None] | None = None
+    ci_periodic_tick_interval_sec: float = 20.0
     worktree_manager: Any | None = None
     workspace_manager: Any | None = None
     branch_manager: Any | None = None
@@ -4427,9 +4435,8 @@ class PromoteStep:
                             "agent_name": reviewer.agent_name,
                             "dimension": reviewer.dimension,
                             "description": (
-                                        f"Reviewer execution failed for "
-                                        f"{reviewer.reviewer_id}: {exc}"
-                                    ),
+                                f"Reviewer execution failed for {reviewer.reviewer_id}: {exc}"
+                            ),
                             "severity": "BLOCKER",
                             "category": "review_execution",
                             "required_change_type": "refactor_only",
@@ -4451,7 +4458,7 @@ class PromoteStep:
                                     {
                                         "description": (
                                             f"Reviewer execution failed for "
-                                                f"{reviewer.reviewer_id}: {exc}"
+                                            f"{reviewer.reviewer_id}: {exc}"
                                         ),
                                         "severity": "BLOCKER",
                                         "category": "review_execution",
@@ -5067,11 +5074,11 @@ class PromoteStep:
 
 
 class IntegrateStep:
-    """Merge slice into dirty, extract to clean sibling, and run CI.
+    """Merge completed slice work into the active layer's dirty branch.
 
-    On CI failure, invokes an Investigator agent (budget=2 attempts)
-    before falling through to demotion.  If the Investigator produces
-    a fix, the fix is applied and CI is retried.
+    This step is intentionally creative-only. Candidate snapshots, gates,
+    tests, clean advancement, and cross-layer propagation run in the CI
+    pipeline tick owned by lifecycle orchestration.
     """
 
     name = "INTEGRATE"
@@ -5080,9 +5087,7 @@ class IntegrateStep:
         self._investigator_budget = investigator_budget
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Merge grandchild → dirty, extract to clean, and run real tests."""
-        from spec_manager.core.testing.registry import TestRunnerRegistry
-
+        """Merge grandchild → dirty and hand off CI promotion to pipeline tick."""
         evidence_root = _evidence_base_path(
             slice_root=ctx.slice_root,
             workspace_root=ctx.workspace_root,
@@ -5100,202 +5105,17 @@ class IntegrateStep:
                     clean_root = Path(lane_map["clean"])
             return dirty_root, clean_root
 
-        def serialize_test_result(result: Any, *, scope: str, root: Path) -> dict[str, Any]:
-            failures = []
-            for failure in list(getattr(result, "failures", []) or []):
-                failures.append(
-                    {
-                        "test_id": getattr(failure, "test_id", None),
-                        "file": getattr(failure, "file", None),
-                        "message": getattr(failure, "message", ""),
-                        "raw_excerpt_path": getattr(failure, "raw_excerpt_path", ""),
-                    }
-                )
-            return {
-                "scope": scope,
-                "root": str(root),
-                "passed": bool(getattr(result, "passed", False)),
-                "runner_id": getattr(result, "runner_id", ""),
-                "command": list(getattr(result, "command", []) or []),
-                "stdout_path": getattr(result, "stdout_path", ""),
-                "stderr_path": getattr(result, "stderr_path", ""),
-                "total_tests": int(getattr(result, "total_tests", 0)),
-                "passed_tests": int(getattr(result, "passed_tests", 0)),
-                "failed_tests": int(getattr(result, "failed_tests", 0)),
-                "duration_ms": float(getattr(result, "duration_ms", 0.0)),
-                "failures": failures,
-            }
-
-        def run_ci_suite() -> dict[str, Any]:
-            dirty_root, clean_root = resolve_worktree_roots()
-            if clean_root is None or dirty_root is None:
-                return {
-                    "passed": False,
-                    "error": (
-                        "Layer worktree roots unavailable for integration CI "
-                        f"(dirty={dirty_root}, clean={clean_root})"
-                    ),
-                    "failure_refs": ["worktree_roots_unavailable"],
-                    "slice_tests": {},
-                    "full_tests": None,
-                    "dirty_root": str(dirty_root) if dirty_root else "",
-                    "clean_root": str(clean_root) if clean_root else "",
-                    "extraction": {"success": False, "error": "worktree roots unavailable"},
-                }
-
-            candidate_sha = wm.snapshot_candidate(ctx.layer)
-            if not candidate_sha:
-                return {
-                    "passed": False,
-                    "error": f"Failed to snapshot candidate for {ctx.layer}",
-                    "failure_refs": ["candidate_snapshot_failed"],
-                    "slice_tests": {},
-                    "full_tests": None,
-                    "dirty_root": str(dirty_root),
-                    "clean_root": str(clean_root),
-                    "extraction": {"success": False, "error": "candidate snapshot failed"},
-                }
-
-            promoted = wm.promote_dirty_to_clean(ctx.layer, gates=False, tests=False)
-            wm.clear_candidate(ctx.layer)
-            if not promoted.success:
-                return {
-                    "passed": False,
-                    "error": promoted.error or "Failed to extract dirty to clean sibling",
-                    "failure_refs": ["extract_to_clean_failed"],
-                    "slice_tests": {},
-                    "full_tests": None,
-                    "dirty_root": str(dirty_root),
-                    "clean_root": str(clean_root),
-                    "extraction": {
-                        "success": False,
-                        "candidate_sha": candidate_sha,
-                        "error": promoted.error,
-                    },
-                }
-
-            verify_root = clean_root if clean_root.exists() else dirty_root
-            runner = TestRunnerRegistry().pick(root=verify_root)
-
-            raw_slice_targets: Any = None
-            raw_full_targets: Any = None
-            full_test_every_n = 0
-            if isinstance(ctx.config, dict):
-                raw_slice_targets = ctx.config.get("integrate_slice_test_targets")
-                raw_full_targets = ctx.config.get("integrate_full_test_targets")
-                raw_full_cadence = ctx.config.get("integrate_full_test_every_n_iterations", 0)
-                try:
-                    full_test_every_n = int(raw_full_cadence)
-                except (TypeError, ValueError):
-                    full_test_every_n = 0
-                if full_test_every_n < 1:
-                    full_test_every_n = 0
-
-            slice_targets = (
-                [str(t) for t in raw_slice_targets if str(t).strip()]
-                if isinstance(raw_slice_targets, list)
-                else None
-            )
-            full_targets = (
-                [str(t) for t in raw_full_targets if str(t).strip()]
-                if isinstance(raw_full_targets, list)
-                else None
-            )
-
-            slice_result = runner.run(root=verify_root, scope="SLICE", targets=slice_targets)
-            slice_payload = serialize_test_result(slice_result, scope="SLICE", root=verify_root)
-
-            full_payload: dict[str, Any] | None = None
-            full_passed = True
-            run_full = full_test_every_n > 0 and bundle.iteration % full_test_every_n == 0
-            if run_full:
-                full_result = runner.run(root=verify_root, scope="FULL", targets=full_targets)
-                full_payload = serialize_test_result(full_result, scope="FULL", root=verify_root)
-                full_passed = bool(getattr(full_result, "passed", False))
-
-            refs: list[str] = []
-
-            def append_failure_refs(scope_payload: dict[str, Any], scope_label: str) -> None:
-                if not scope_payload or scope_payload.get("passed", True):
-                    return
-                failures = scope_payload.get("failures", []) or []
-                if failures:
-                    for failure in failures:
-                        test_id = str(failure.get("test_id") or failure.get("file") or "unknown")
-                        refs.append(f"{scope_label}:{test_id}")
-                    return
-                refs.append(f"{scope_label}:failed")
-
-            append_failure_refs(slice_payload, "slice")
-            if full_payload is not None:
-                append_failure_refs(full_payload, "full")
-
-            deduped_refs: list[str] = []
-            seen: set[str] = set()
-            for ref in refs:
-                if ref not in seen:
-                    seen.add(ref)
-                    deduped_refs.append(ref)
-
-            return {
-                "passed": bool(getattr(slice_result, "passed", False)) and full_passed,
-                "error": "",
-                "failure_refs": deduped_refs,
-                "slice_tests": slice_payload,
-                "full_tests": full_payload,
-                "dirty_root": str(dirty_root),
-                "clean_root": str(clean_root),
-                "extraction": {
-                    "success": True,
-                    "candidate_sha": candidate_sha,
-                    "clean_sha": promoted.clean_sha,
-                },
-            }
-
-        def build_downward_flow_report(
-            *,
-            merge: Any,
-            ci: dict[str, Any],
-            investigator: dict[str, Any] | None,
-        ) -> dict[str, Any]:
-            failed_scopes: list[str] = []
-            if isinstance(ci.get("slice_tests"), dict) and not ci["slice_tests"].get(
-                "passed", True
-            ):
-                failed_scopes.append("SLICE")
-            if isinstance(ci.get("full_tests"), dict) and not ci["full_tests"].get("passed", True):
-                failed_scopes.append("FULL")
-            return {
-                "run_id": ctx.run_id,
-                "slice_id": ctx.slice_id,
-                "layer": ctx.layer,
-                "merge": {
-                    "success": bool(getattr(merge, "success", False)),
-                    "merge_sha": getattr(merge, "merge_sha", ""),
-                    "error": getattr(merge, "error", ""),
-                },
-                "integration_roots": {
-                    "dirty_parent_root": ci.get("dirty_root", ""),
-                    "clean_sibling_root": ci.get("clean_root", ""),
-                },
-                "extraction": ci.get("extraction", {}),
-                "failed_scopes": failed_scopes,
-                "failure_refs": list(ci.get("failure_refs", []) or []),
-                "slice_tests": ci.get("slice_tests", {}),
-                "full_tests": ci.get("full_tests", {}),
-                "investigator": investigator or {},
-            }
-
         def record_artifacts(
             *,
             merge: Any | None,
-            ci: dict[str, Any] | None,
-            investigator: dict[str, Any] | None = None,
-            downward_flow: dict[str, Any] | None = None,
             emitted: list[DemotionTicket] | None = None,
             error: str = "",
             skipped: bool = False,
+            merge_attempts: list[dict[str, Any]] | None = None,
+            ci_tick_triggered: bool = False,
+            ci_tick_error: str = "",
         ) -> None:
+            dirty_root, clean_root = resolve_worktree_roots()
             integration_payload: dict[str, Any] = {
                 "slice_id": ctx.slice_id,
                 "layer": ctx.layer,
@@ -5304,20 +5124,18 @@ class IntegrateStep:
                 if merge is not None
                 else False,
                 "merge_error": getattr(merge, "error", "") if merge is not None else "",
-                "investigator": investigator or {},
+                "merge_sha": getattr(merge, "merge_sha", "") if merge is not None else "",
                 "demotion_count": len(emitted or []),
                 "error": error,
-                "downward_flow": downward_flow or {},
+                "dirty_root": str(dirty_root) if dirty_root else "",
+                "clean_root": str(clean_root) if clean_root else "",
+                "merge_attempts": list(merge_attempts or []),
+                "ci_tick": {
+                    "triggered": ci_tick_triggered,
+                    "error": ci_tick_error,
+                    "delegated_to_pipeline": True,
+                },
             }
-            if ci is not None:
-                integration_payload["ci"] = {
-                    "passed": bool(ci.get("passed", False)),
-                    "error": str(ci.get("error", "")),
-                    "failure_refs": list(ci.get("failure_refs", []) or []),
-                    "dirty_root": str(ci.get("dirty_root", "")),
-                    "clean_root": str(ci.get("clean_root", "")),
-                    "extraction": ci.get("extraction", {}),
-                }
             bundle.integration.path = _write_iteration_json(
                 bundle,
                 evidence_root,
@@ -5325,136 +5143,116 @@ class IntegrateStep:
                 integration_payload,
             )
 
-            tests_payload: dict[str, Any] = {"slice_id": ctx.slice_id, "layer": ctx.layer}
-            if ci is not None and isinstance(ci.get("slice_tests"), dict):
-                tests_payload["result"] = ci["slice_tests"]
-            else:
-                tests_payload["note"] = "No slice test result available"
+            tests_payload: dict[str, Any] = {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "note": "Per-slice integrate tests moved to batch pipeline tick",
+            }
             bundle.tests.slice_path = _write_iteration_json(
                 bundle,
                 evidence_root,
                 "tests.slice.json",
                 tests_payload,
             )
-            bundle.tests.full_path = ""
-            if ci is not None and isinstance(ci.get("full_tests"), dict):
-                bundle.tests.full_path = _write_iteration_json(
-                    bundle,
-                    evidence_root,
-                    "tests.full.json",
-                    {
-                        "slice_id": ctx.slice_id,
-                        "layer": ctx.layer,
-                        "result": ci["full_tests"],
-                    },
-                )
+            bundle.tests.full_path = _write_iteration_json(
+                bundle,
+                evidence_root,
+                "tests.full.json",
+                {
+                    "slice_id": ctx.slice_id,
+                    "layer": ctx.layer,
+                    "note": "Full-suite integrate tests moved to batch pipeline tick",
+                },
+            )
 
         if wm is None:
-            record_artifacts(merge=None, ci=None, skipped=True)
+            record_artifacts(merge=None, skipped=True)
             return StepResult(status="OK")
 
-        merge_strategy = "merge"
-        if isinstance(ctx.config, dict):
-            configured = str(ctx.config.get("merge_strategy", "merge")).lower()
-            if configured in {"merge", "rebase"}:
-                merge_strategy = configured
-
         # 1. Merge slice → layer dirty
-        merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy=merge_strategy)
+        merge_attempts: list[dict[str, Any]] = []
+        merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
+        merge_attempts.append(
+            {
+                "attempt": 1,
+                "strategy": "merge",
+                "success": bool(merge_result.success),
+                "error": str(merge_result.error or ""),
+            }
+        )
+
+        # 2. If merge fails, rebase slice onto dirty and retry merge once.
         if not merge_result.success:
+            rebase_ok = False
+            rebase_error = ""
+            slice_worktree = wm.get_slice_worktree(ctx.layer, ctx.slice_id)
+            if slice_worktree is None:
+                rebase_error = "Cannot locate slice worktree for rebase retry"
+            else:
+                dirty_branch = wm.layer_branch(ctx.layer, "dirty")
+                rebase_ok, rebase_error = wm.vcs.rebase(slice_worktree, dirty_branch)
+            merge_attempts.append(
+                {
+                    "attempt": 2,
+                    "strategy": "rebase_slice_onto_dirty",
+                    "success": bool(rebase_ok),
+                    "error": str(rebase_error or ""),
+                }
+            )
+
+            if rebase_ok:
+                merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
+                merge_attempts.append(
+                    {
+                        "attempt": 3,
+                        "strategy": "merge_after_rebase",
+                        "success": bool(merge_result.success),
+                        "error": str(merge_result.error or ""),
+                    }
+                )
+
+        if not merge_result.success:
+            ticket_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
             ticket = DemotionTicket(
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
                 source="TEST_FAILURE",
-                target_layer="L1",
+                origin_layer=ticket_layer,
+                target_layer=ticket_layer,
                 severity="BLOCKER",
-                diagnosis=f"Merge conflict: {merge_result.error}",
+                diagnosis=(
+                    "Merge conflict after rebase retry: "
+                    f"{merge_result.error or 'unknown merge error'}"
+                ),
             )
             record_artifacts(
                 merge=merge_result,
-                ci=None,
                 emitted=[ticket],
                 error=merge_result.error,
+                merge_attempts=merge_attempts,
             )
             return StepResult(
-                status="RETRY",
+                status="BLOCKED",
                 emitted_tickets=[ticket],
                 error=merge_result.error,
             )
 
-        # 2. Extract dirty -> clean and run real tests in clean sibling.
-        ci_result = run_ci_suite()
-        if ci_result.get("passed", False):
-            record_artifacts(merge=merge_result, ci=ci_result)
-            return StepResult(status="OK")
-
-        # 3. CI failed — try Investigator before demotion.
-        investigator_result = self._try_investigator(
-            ctx, list(ci_result.get("failure_refs", []) or [])
-        )
-        if investigator_result and investigator_result.get("fixed"):
-            ci_result = run_ci_suite()
-            if ci_result.get("passed", False):
-                record_artifacts(
-                    merge=merge_result,
-                    ci=ci_result,
-                    investigator=investigator_result,
-                )
-                return StepResult(status="OK")
-
-        # 4. Investigator failed or didn't fix — persist structured failure report.
-        downward_flow_report = build_downward_flow_report(
-            merge=merge_result,
-            ci=ci_result,
-            investigator=investigator_result,
-        )
-        downward_flow_path = _write_iteration_json(
-            bundle,
-            evidence_root,
-            "downward_flow.failure.json",
-            downward_flow_report,
-        )
-
-        # 5. Route to demotion tickets from structured failure refs.
-        tickets: list[DemotionTicket] = []
-        for dt_ref in list(ci_result.get("failure_refs", []) or []):
-            logger.warning("Integration demotion: %s", dt_ref)
-            tickets.append(
-                DemotionTicket(
-                    run_id=ctx.run_id,
-                    slice_id=ctx.slice_id,
-                    source="TEST_FAILURE",
-                    target_layer="L1",
-                    severity="BLOCKER",
-                    diagnosis=f"CI failure after integration: {dt_ref}",
-                    evidence_refs=[downward_flow_path],
-                )
-            )
-
-        if tickets:
-            record_artifacts(
-                merge=merge_result,
-                ci=ci_result,
-                investigator=investigator_result,
-                downward_flow={
-                    "path": downward_flow_path,
-                    "failure_refs": list(ci_result.get("failure_refs", []) or []),
-                },
-                emitted=tickets,
-                error=f"CI failed with {len(tickets)} demotion(s)",
-            )
-            return StepResult(
-                status="RETRY",
-                emitted_tickets=tickets,
-                error=f"CI failed with {len(tickets)} demotion(s)",
-            )
+        # 3. Trigger CI pipeline tick outside the creative step.
+        ci_tick_triggered = False
+        ci_tick_error = ""
+        if ctx.ci_tick_callback is not None:
+            try:
+                ctx.ci_tick_callback(ctx.slice_id)
+                ci_tick_triggered = True
+            except Exception as exc:
+                ci_tick_error = str(exc)
+                logger.exception("CI tick callback failed for slice '%s'", ctx.slice_id)
 
         record_artifacts(
             merge=merge_result,
-            ci=ci_result,
-            investigator=investigator_result,
-            downward_flow={"path": downward_flow_path},
-            error=ci_result.get("error", "") or "Integration CI failed without classified failures",
+            merge_attempts=merge_attempts,
+            ci_tick_triggered=ci_tick_triggered,
+            ci_tick_error=ci_tick_error,
         )
         return StepResult(status="OK")
 
@@ -5783,15 +5581,15 @@ class VerifyStep:
                 and full_test_result
                 and not bool(full_test_result.get("passed", False))
             ):
-                    emit_finding(
-                        dimension="CORRECTNESS",
-                        category="logic",
-                        severity="BLOCKER",
-                        required_change_type="behavior_change",
-                        evidence="L3 verify detected failing FULL tests after integration.",
-                        location={"file": ""},
-                        confidence=1.0,
-                    )
+                emit_finding(
+                    dimension="CORRECTNESS",
+                    category="logic",
+                    severity="BLOCKER",
+                    required_change_type="behavior_change",
+                    evidence="L3 verify detected failing FULL tests after integration.",
+                    location={"file": ""},
+                    confidence=1.0,
+                )
 
             reviewers = _configured_l3_review_pack(
                 ctx.config if isinstance(ctx.config, dict) else None,
@@ -6870,6 +6668,9 @@ class PromotionLoop:
             lifecycle_mode=self._normalize_lifecycle_mode(run_context.lifecycle_mode),
             workspace_root=run_context.workspace_root,
             config=run_context.config,
+            ci_tick_callback=run_context.ci_tick_callback,
+            ci_periodic_tick_callback=run_context.ci_periodic_tick_callback,
+            ci_periodic_tick_interval_sec=run_context.ci_periodic_tick_interval_sec,
             worktree_manager=self._wm,
             workspace_manager=self._workspace_manager,
             branch_manager=self._branch_manager,
@@ -6907,10 +6708,31 @@ class PromotionLoop:
         retry_budget = 3
 
         bundle: EvidenceBundle | None = None
+        periodic_tick_due_at: float | None = None
+        if ctx.ci_periodic_tick_callback is not None:
+            interval = max(float(ctx.ci_periodic_tick_interval_sec), 1.0)
+            periodic_tick_due_at = monotonic() + interval
+
+        def maybe_emit_periodic_ci_tick() -> None:
+            nonlocal periodic_tick_due_at
+            if ctx.ci_periodic_tick_callback is None or periodic_tick_due_at is None:
+                return
+            if monotonic() < periodic_tick_due_at:
+                return
+            try:
+                ctx.ci_periodic_tick_callback()
+            except Exception:
+                logger.exception(
+                    "Periodic CI tick callback failed for slice '%s'",
+                    ctx.slice_id,
+                )
+            interval = max(float(ctx.ci_periodic_tick_interval_sec), 1.0)
+            periodic_tick_due_at = monotonic() + interval
 
         while iteration < max_iters:
             iteration += 1
             logger.info("=== Slice '%s' iteration %d/%d ===", ctx.slice_id, iteration, max_iters)
+            maybe_emit_periodic_ci_tick()
 
             bundle = EvidenceBundle(
                 run_id=run_context.run_id,
@@ -6934,6 +6756,7 @@ class PromotionLoop:
             step_statuses: dict[str, str] = {}
 
             for step in active_steps:
+                maybe_emit_periodic_ci_tick()
                 logger.debug("Running step: %s", step.name)
                 result = step.run(ctx, bundle)
                 if step.name == "GAP_EXPLORATION" and result.status == "OK":

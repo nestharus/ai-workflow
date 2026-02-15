@@ -54,6 +54,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -306,6 +307,7 @@ class PddLifecycle:
             "max_pending_batches": 1,
             "run_gates": True,
             "run_tests": True,
+            "tick_interval_sec": 20,
         }
         if isinstance(existing_pipeline_ci, dict):
             pipeline_ci.update(existing_pipeline_ci)
@@ -1326,7 +1328,11 @@ class PddLifecycle:
         merge_error = ""
         if self.worktree_manager is not None and target_branch == "main":
             source_branch = self.worktree_manager.layer_branch("l3", "clean")
-            merge_result = vcs.merge(self.manager.workspace_path, source_branch)
+            merge_result = vcs.merge(
+                self.manager.workspace_path,
+                source_branch,
+                ff_only=True,
+            )
             if isinstance(merge_result, tuple) and len(merge_result) == 2:
                 merged, merge_error = bool(merge_result[0]), str(merge_result[1])
             elif isinstance(merge_result, bool):
@@ -1632,9 +1638,12 @@ class PddLifecycle:
 
         ci_ticks: list[dict[str, Any]] = []
         ci_tick_slices: set[str] = set()
+        ci_tick_lock = threading.Lock()
+        periodic_tick_counter = 0
         run_gates: bool | dict[str, Any] = True
         run_tests: bool | dict[str, Any] = True
         max_pending_batches = 1
+        tick_interval_sec = 20.0
         if isinstance(run_context.config, dict):
             pipeline_ci = run_context.config.get("pipeline_ci")
             if isinstance(pipeline_ci, dict):
@@ -1645,41 +1654,64 @@ class PddLifecycle:
                     max_pending_batches = max(0, int(raw_max_pending))
                 except (TypeError, ValueError):
                     max_pending_batches = 1
+                raw_tick_interval = pipeline_ci.get("tick_interval_sec", 20)
+                try:
+                    tick_interval_sec = max(float(raw_tick_interval), 1.0)
+                except (TypeError, ValueError):
+                    tick_interval_sec = 20.0
 
-        def record_ci_tick(slice_id: str) -> None:
+        def record_ci_tick(slice_id: str, *, trigger: str) -> None:
             wm = self.worktree_manager
             if wm is None:
                 return
 
-            tick = wm.tick_pipeline(
-                active_layer=layer,
-                max_pending_batches=max_pending_batches,
-                run_gates=run_gates,
-                run_tests=run_tests,
-            )
-            ci_ticks.append(
-                {
-                    "slice_id": slice_id,
-                    "main_updated": tick.main_updated,
-                    "demotions": len(tick.demotion_tickets),
-                }
-            )
-            ci_tick_slices.add(slice_id)
+            with ci_tick_lock:
+                tick = wm.tick_pipeline(
+                    active_layer=layer,
+                    max_pending_batches=max_pending_batches,
+                    run_gates=run_gates,
+                    run_tests=run_tests,
+                )
+                ci_ticks.append(
+                    {
+                        "slice_id": slice_id,
+                        "trigger": trigger,
+                        "main_updated": tick.main_updated,
+                        "demotions": len(tick.demotion_tickets),
+                    }
+                )
+                ci_tick_slices.add(slice_id)
 
-            # Write CI batch receipt
-            if hasattr(self, "_state_mgr"):
-                batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
-                batch_dir.mkdir(parents=True, exist_ok=True)
-                batch_id = f"batch_{slice_id}_{len(ci_ticks)}"
-                receipt = {
-                    "batch_id": batch_id,
-                    "slice_id": slice_id,
-                    "layer": layer,
-                    "main_updated": tick.main_updated,
-                    "demotions": len(tick.demotion_tickets),
-                }
-                receipt_path = batch_dir / f"{batch_id}.json"
-                receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+                # Write CI batch receipt
+                if hasattr(self, "_state_mgr"):
+                    batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
+                    batch_dir.mkdir(parents=True, exist_ok=True)
+                    batch_id = f"batch_{trigger}_{slice_id}_{len(ci_ticks)}"
+                    receipt = {
+                        "batch_id": batch_id,
+                        "slice_id": slice_id,
+                        "trigger": trigger,
+                        "layer": layer,
+                        "main_updated": tick.main_updated,
+                        "demotions": len(tick.demotion_tickets),
+                    }
+                    receipt_path = batch_dir / f"{batch_id}.json"
+                    receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+
+        def on_slice_merge(slice_id: str) -> None:
+            normalized = str(slice_id).strip()
+            if not normalized:
+                return
+            record_ci_tick(normalized, trigger="post_merge")
+
+        def on_periodic_tick() -> None:
+            nonlocal periodic_tick_counter
+            periodic_tick_counter += 1
+            record_ci_tick(f"periodic-{periodic_tick_counter}", trigger="periodic")
+
+        run_context.ci_tick_callback = on_slice_merge if self.worktree_manager else None
+        run_context.ci_periodic_tick_callback = on_periodic_tick if self.worktree_manager else None
+        run_context.ci_periodic_tick_interval_sec = tick_interval_sec
 
         def on_slice_result(result: Any) -> None:
             if str(getattr(result, "status", "")).upper() != "COMPLETE":
@@ -1687,11 +1719,14 @@ class PddLifecycle:
             slice_id = str(getattr(result, "slice_id", "")).strip()
             if not slice_id:
                 return
-            record_ci_tick(slice_id)
+            record_ci_tick(slice_id, trigger="on_complete")
 
         scheduler = ReactivePromotionScheduler(
             loop=loop,
-            config=SchedulerConfig(max_parallel=self.max_parallel),
+            config=SchedulerConfig(
+                max_parallel=self.max_parallel,
+                monitor_poll_interval_sec=max(1, int(tick_interval_sec)),
+            ),
             monitor_executor=monitor_executor,
             wake_queue=wake_queue,
         )
@@ -1711,7 +1746,7 @@ class PddLifecycle:
                     continue
                 if sr.slice_id in ci_tick_slices:
                     continue
-                record_ci_tick(sr.slice_id)
+                record_ci_tick(sr.slice_id, trigger="completion_fallback")
 
         # Per-layer demotion budget check (budget #3)
         total_layer_demotions = sum(len(sr.demotion_tickets) for sr in slice_results)
