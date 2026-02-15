@@ -3513,7 +3513,7 @@ class CoordinateStep:
 
     - L1: triage under-spec events as coordination signals and park slice in
       WAITING while monitors watch for dependencies to resolve.
-    - L2/L3: resolve under-spec events through UnderSpecManager (block-or-resolve).
+    - L2/L3: resolve under-spec events through UnderSpecManager (resolve/wait/block).
     """
 
     name = "COORDINATE"
@@ -4054,12 +4054,16 @@ class CoordinateStep:
         )
         outcome = manager.resolve(slice_id=ctx.slice_id, events=events, layer=ctx.layer)
 
+        resolved_ids = {event.event_id for event in outcome.resolved if event.event_id}
+        if resolved_ids:
+            bundle.implementation.under_spec_events = [
+                event
+                for event in (bundle.implementation.under_spec_events or [])
+                if str(event.get("event_id", "")).strip() not in resolved_ids
+            ]
+
         # Record decisions/blockers and under-spec artifacts in the bundle.
-        bundle.under_spec.decisions = (
-            list(outcome.decisions)
-            if outcome.decisions
-            else [{"event_id": e.event_id, "question": e.question} for e in outcome.resolved]
-        )
+        bundle.under_spec.decisions = list(outcome.decisions)
         bundle.under_spec.blockers = []
         for event in outcome.blocked:
             payload = event.to_dict()
@@ -4067,14 +4071,14 @@ class CoordinateStep:
                 payload["blocked_on"] = list(outcome.blocked_on)
             if outcome.resume_hint:
                 payload["resume_hint"] = dict(outcome.resume_hint)
-            if outcome.constraint_request_path:
-                payload["constraint_request_path"] = outcome.constraint_request_path
             bundle.under_spec.blockers.append(payload)
 
         if outcome.blockers_path:
             bundle.under_spec.path = outcome.blockers_path
         elif outcome.decisions_path:
             bundle.under_spec.path = outcome.decisions_path
+        elif outcome.expansion_path:
+            bundle.under_spec.path = outcome.expansion_path
 
         # Record new constraint refs
         if outcome.constraints:
@@ -4084,6 +4088,51 @@ class CoordinateStep:
             if constraint_path not in bundle.facts.constraints_refs:
                 bundle.facts.constraints_refs.append(constraint_path)
 
+        if outcome.is_waiting:
+            monitor_payloads = list(outcome.monitors)
+            if not monitor_payloads:
+                for event in outcome.blocked:
+                    canonical_key = (
+                        str((event.context or {}).get("canonical_key", "")).strip()
+                        if isinstance(event.context, dict)
+                        else ""
+                    )
+                    if not canonical_key:
+                        canonical_key = f"underspec.{event.event_id}".strip(".")
+                    monitor_payloads.append(
+                        {
+                            "signal_id": f"underspec:{ctx.slice_id}:{event.event_id}",
+                            "kind": "constraint_present",
+                            "type": "constraint_present",
+                            "constraint_key": canonical_key,
+                            "constraint_dir": "analysis/constraints",
+                            "constraint_id": event.event_id,
+                            "slice_id": ctx.slice_id,
+                            "mode": "hybrid",
+                            "event_triggers": ["SLICE_MERGED", "GIT_DIRTY_ADVANCED"],
+                            "poll_interval_sec": 20,
+                            "timeout_seconds": 3600,
+                        }
+                    )
+
+            registered_monitor_ids = self._register_l1_monitors(
+                ctx,
+                signal_id=f"underspec:{ctx.slice_id}",
+                monitors=monitor_payloads,
+            )
+            if registered_monitor_ids:
+                bundle.under_spec.decisions.append(
+                    {
+                        "action": "WAITING_FOR_CONSTRAINTS",
+                        "monitor_count": len(registered_monitor_ids),
+                    }
+                )
+            bundle.status = outcome.bundle_status
+            return StepResult(
+                status="WAITING",
+                error=f"Under-specification waiting on {len(outcome.blocked)} user questions",
+            )
+
         if outcome.is_blocked:
             bundle.status = outcome.bundle_status
             return StepResult(
@@ -4091,6 +4140,7 @@ class CoordinateStep:
                 error=f"Under-specification: {len(outcome.blocked)} unresolvable events",
             )
 
+        bundle.under_spec.blockers = []
         return StepResult(status="OK")
 
 

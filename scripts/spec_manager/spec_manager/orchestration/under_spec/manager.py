@@ -1,20 +1,16 @@
 """Under-specification manager.
 
-Implements hard-stop blocking for unresolved under-spec events. Resolution
-may produce either:
+Resolves under-spec events by either:
 
-* validated decision constraints, or
-* routed spec-expansion work-items + monitors (for provider-side updates).
+* routing planner-validated constraints through Planner-owned persistence, or
+* emitting UserQuestionSignals and pausing in ``WAITING`` until Planner
+  records authoritative answers.
 
 Modes:
-  * **interactive** — emits :class:`UserQuestionSignal` events to the
-    Intent Agent queue; unresolved events remain blocked.
+  * **interactive** — emits :class:`UserQuestionSignal` events only.
   * **auto** — delegates to Planner (preferred) or legacy coordinator;
-    low-confidence / contradictory expansions are escalated back to
-    interactive blocking instead of silently unblocking.
-
-Constraints are persisted in
-``<workspace>/analysis/constraints/<slice_id>.yaml``.
+    low-confidence / contradictory expansions are escalated to interactive
+    signal emission.
 """
 
 from __future__ import annotations
@@ -108,7 +104,7 @@ class UnderSpecOutcome:
     blockers_path: str = ""
     constraint_request_path: str = ""
     decisions_path: str = ""
-    bundle_status: Literal["IN_PROGRESS", "BLOCKED"] = "IN_PROGRESS"
+    bundle_status: Literal["IN_PROGRESS", "WAITING", "BLOCKED"] = "IN_PROGRESS"
     blocked_on: list[str] = field(default_factory=list)
     resume_hint: dict[str, str] = field(default_factory=dict)
     routing: list[dict[str, Any]] = field(default_factory=list)
@@ -118,7 +114,11 @@ class UnderSpecOutcome:
 
     @property
     def is_blocked(self) -> bool:
-        return len(self.blocked) > 0
+        return len(self.blocked) > 0 and self.bundle_status != "WAITING"
+
+    @property
+    def is_waiting(self) -> bool:
+        return self.bundle_status == "WAITING"
 
     @property
     def blocked_questions(self) -> list[str]:
@@ -170,13 +170,13 @@ class UnderSpecManager:
             raise TypeError("UnderSpecManager run_id must be a string")
         normalized_run_id = run_id.strip()
         if not normalized_run_id:
-            raise ValueError("UnderSpecManager requires a non-empty run_id")
+            normalized_run_id = "default"
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
         self._planner = planner
         self._run_id = normalized_run_id
-        self._last_constraint_request_path = ""
+        self._interactive_questions_emitted = False
 
     def resolve(
         self,
@@ -218,10 +218,14 @@ class UnderSpecManager:
         )
 
         # Phase 2: Attempt resolution of uncovered events
-        self._last_constraint_request_path = ""
+        self._interactive_questions_emitted = False
 
         if self._mode == "interactive":
-            constraints, blocked = self._resolve_interactive(slice_id, uncovered)
+            constraints, blocked = self._resolve_interactive(
+                slice_id,
+                uncovered,
+                layer=layer,
+            )
             resolution = _ResolutionPayload(constraints=constraints, blocked=blocked)
         else:
             resolution = self._resolve_auto(slice_id, uncovered, layer=layer)
@@ -233,18 +237,19 @@ class UnderSpecManager:
                     slice_id,
                 )
                 _, escalated_blocked = self._resolve_interactive(
-                    slice_id, resolution.needs_interactive_review
+                    slice_id,
+                    resolution.needs_interactive_review,
+                    layer=layer,
                 )
                 resolution.blocked.extend(escalated_blocked)
 
-        constraint_request_path = self._last_constraint_request_path
         new_constraints = resolution.constraints
         still_blocked = resolution.blocked
         routed_work_items = resolution.routing
         routed_monitors = resolution.monitors
         expansions = resolution.expansions
 
-        # Phase 3: Validate and persist new constraints
+        # Phase 3: Validate planner-returned constraints and persist through Planner.
         validated: list[Constraint] = []
         for c in new_constraints:
             if self._validate_constraint(c):
@@ -259,25 +264,32 @@ class UnderSpecManager:
                 matching = [e for e in uncovered if e.event_id == c.constraint_id]
                 still_blocked.extend(matching)
 
-        constraint_file_path = ""
-        if validated:
-            constraint_file_path = str(self._store.save(slice_id, validated))
-            logger.info(
-                "Saved %d new constraints for slice '%s'",
+        constraint_file_path = self._persist_constraints_via_planner(
+            slice_id=slice_id,
+            layer=layer,
+            constraints=validated,
+        )
+        persisted_ids = {c.constraint_id for c in validated} if constraint_file_path else set()
+        if validated and not persisted_ids:
+            logger.warning(
+                "Planner persistence unavailable for %d under-spec constraints (slice=%s); "
+                "keeping events in blocked state",
                 len(validated),
                 slice_id,
             )
+            still_blocked.extend(
+                event
+                for event in uncovered
+                if event.event_id in {c.constraint_id for c in validated}
+            )
+            validated = []
 
         still_blocked = self._dedupe_events(still_blocked)
-        newly_resolved = [
-            e for e in uncovered if e.event_id in {c.constraint_id for c in validated}
-        ]
+        newly_resolved = [e for e in uncovered if e.event_id in persisted_ids]
         decisions = self._build_decisions(validated)
         decisions.extend(self._build_expansion_decisions(expansions))
 
         decisions_path = ""
-        if decisions:
-            decisions_path = str(self._write_decisions(slice_id, decisions))
 
         expansion_path = ""
         if routed_work_items or routed_monitors or expansions:
@@ -290,31 +302,41 @@ class UnderSpecManager:
                 )
             )
 
-        if still_blocked and not constraint_request_path:
-            constraint_request_path = str(self._write_constraint_request(slice_id, still_blocked))
-
         blockers_path = ""
-        bundle_status: Literal["IN_PROGRESS", "BLOCKED"] = "IN_PROGRESS"
+        bundle_status: Literal["IN_PROGRESS", "WAITING", "BLOCKED"] = "IN_PROGRESS"
         blocked_on: list[str] = []
         resume_hint: dict[str, str] = {}
         if still_blocked:
             blocked_on = [e.question for e in still_blocked if e.question]
+            if self._interactive_questions_emitted and not routed_monitors:
+                routed_monitors = self._build_constraint_wait_monitors(
+                    slice_id=slice_id,
+                    blocked_events=still_blocked,
+                )
             resume_hint = {
                 "constraints_path": constraint_file_path or str(self._constraint_path(slice_id)),
-                "constraint_request_path": constraint_request_path,
-                "decisions_path": decisions_path,
+                "planner_updates_path": str(
+                    self._workspace
+                    / ".pdd_runs"
+                    / self._run_id
+                    / "coordination"
+                    / "planner_updates.jsonl"
+                ),
             }
             if expansion_path:
                 resume_hint["expansion_path"] = expansion_path
+            if routed_monitors:
+                resume_hint["monitor_count"] = str(len(routed_monitors))
+            bundle_status = "WAITING" if self._interactive_questions_emitted else "BLOCKED"
             blockers_path = str(
                 self._write_blockers(
                     slice_id=slice_id,
                     blocked_events=still_blocked,
                     blocked_on=blocked_on,
                     resume_hint=resume_hint,
+                    status=bundle_status,
                 )
             )
-            bundle_status = "BLOCKED"
 
         return UnderSpecOutcome(
             resolved=covered + newly_resolved,
@@ -322,7 +344,7 @@ class UnderSpecManager:
             constraints=validated,
             decisions=decisions,
             blockers_path=blockers_path,
-            constraint_request_path=constraint_request_path,
+            constraint_request_path="",
             decisions_path=decisions_path,
             bundle_status=bundle_status,
             blocked_on=blocked_on,
@@ -341,6 +363,8 @@ class UnderSpecManager:
         self,
         slice_id: str,
         events: list[UnderSpecEvent],
+        *,
+        layer: str = "any",
     ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
         """Emit UserQuestionSignals for the Intent Agent queue.
 
@@ -367,8 +391,7 @@ class UnderSpecManager:
 
         run_dir = self._workspace / ".pdd_runs" / self._run_id
         store = UserQuestionSignalStore(run_dir)
-        request_path = self._write_constraint_request(slice_id, events)
-        self._last_constraint_request_path = str(request_path)
+        self._interactive_questions_emitted = self._interactive_questions_emitted or bool(events)
 
         for event in events:
             signal = UserQuestionSignal(
@@ -376,12 +399,25 @@ class UnderSpecManager:
                 source=SignalSource(
                     kind="UNDER_SPEC",
                     slice_id=slice_id,
-                    layer="any",
+                    layer=layer,
                     trace_id=event.event_id,
+                    signal_id=f"underspec:{slice_id}:{event.event_id}",
                 ),
                 question=SignalQuestion(
                     text=event.question,
+                    taxonomy_hint=self._question_taxonomy_hint(event),
                     canonical_key_hint=f"underspec.{event.event_id}",
+                    answer_spec_hint={
+                        "preferred_kind": "free_text",
+                        "constraints": {
+                            "must_be_concrete": True,
+                            "max_choices": 3,
+                        },
+                        "choices": [
+                            {"id": option, "label": option}
+                            for option in self._extract_options(event.context)
+                        ],
+                    },
                 ),
                 context=SignalContext(
                     blocking=SignalBlocking(
@@ -458,6 +494,7 @@ class UnderSpecManager:
 
             event_dicts = [e.to_dict() for e in events]
             ctx = PlanningContext(
+                run_id=self._run_id,
                 slice_id=slice_id,
                 layer=layer,
                 mode="auto",
@@ -965,10 +1002,11 @@ class UnderSpecManager:
         blocked_events: list[UnderSpecEvent],
         blocked_on: list[str],
         resume_hint: dict[str, str],
+        status: Literal["WAITING", "BLOCKED"],
     ) -> Path:
         payload = {
             "slice_id": slice_id,
-            "status": "BLOCKED",
+            "status": status,
             "blocked_on": blocked_on,
             "resume_hint": resume_hint,
             "events": [event.to_dict() for event in blocked_events],
@@ -1049,16 +1087,74 @@ class UnderSpecManager:
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return path
 
-    def _write_decisions(self, slice_id: str, decisions: list[dict[str, Any]]) -> Path:
-        payload = {
-            "slice_id": slice_id,
-            "status": "RESOLVED",
-            "decisions": decisions,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-        path = self._under_spec_dir(slice_id) / "decisions.json"
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return path
+    @staticmethod
+    def _question_taxonomy_hint(event: UnderSpecEvent) -> str:
+        kind = str(event.kind).strip().upper()
+        if kind == "AMBIGUOUS_REQUIREMENT":
+            return "SCOPE"
+        if kind == "EXTERNAL_DEPENDENCY_UNKNOWN":
+            return "TRADEOFF"
+        return "CONSTRAINT"
+
+    @staticmethod
+    def _canonical_key_for_event(event: UnderSpecEvent) -> str:
+        return f"underspec.{event.event_id}".strip(".")
+
+    def _build_constraint_wait_monitors(
+        self,
+        *,
+        slice_id: str,
+        blocked_events: list[UnderSpecEvent],
+    ) -> list[dict[str, Any]]:
+        monitors: list[dict[str, Any]] = []
+        for event in blocked_events:
+            constraint_key = self._canonical_key_for_event(event)
+            monitors.append(
+                {
+                    "signal_id": f"underspec:{slice_id}:{event.event_id}",
+                    "kind": "constraint_present",
+                    "type": "constraint_present",
+                    "constraint_key": constraint_key,
+                    "constraint_dir": "analysis/constraints",
+                    "constraint_id": event.event_id,
+                    "slice_id": slice_id,
+                    "mode": "hybrid",
+                    "event_triggers": ["SLICE_MERGED", "GIT_DIRTY_ADVANCED"],
+                    "poll_interval_sec": 20,
+                    "timeout_seconds": 3600,
+                }
+            )
+        return monitors
+
+    def _persist_constraints_via_planner(
+        self,
+        *,
+        slice_id: str,
+        layer: str,
+        constraints: list[Constraint],
+    ) -> str:
+        if not constraints:
+            return ""
+        if self._planner is None or not hasattr(self._planner, "persist_under_spec_constraints"):
+            return ""
+        try:
+            result = self._planner.persist_under_spec_constraints(
+                run_id=self._run_id,
+                layer=layer,
+                slice_id=slice_id,
+                constraints=[constraint.to_dict() for constraint in constraints],
+            )
+        except Exception:
+            logger.warning(
+                "Planner constraint persistence failed for slice=%s layer=%s",
+                slice_id,
+                layer,
+                exc_info=True,
+            )
+            return ""
+        if not isinstance(result, dict):
+            return ""
+        return str(result.get("constraints_path", "")).strip()
 
     @staticmethod
     def _extract_options(context: dict[str, Any]) -> list[str]:

@@ -647,6 +647,20 @@ class PddLifecycle:
             l1_result, approval = self._run_l1_with_approval()
             pass_outcome["l1"] = l1_result
             pass_outcome["approval"] = approval
+            if str((approval or {}).get("status", "")).upper() == "WAITING":
+                waiting_reason = "L1 approval waiting for planner-recorded answers"
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "waiting",
+                        "reason": waiting_reason,
+                    }
+                )
+                results["awaiting_checkpoint"] = "l1_approval"
+                results["waiting"] = True
+                state_mgr.update_state(phase="waiting_l1_approval", active_layer="l1")
+                return results
             self._record_git_tag(f"pdd/{self.manager.run_id}/l1-approved")
             state_mgr.update_state(
                 layers_completed=["l1"],
@@ -792,6 +806,20 @@ class PddLifecycle:
             pass_outcome["l2"] = self._run_layer("l2")
             if self.mode == "interactive":
                 pass_outcome["l2_checkpoint"] = self._request_l2_checkpoint(pass_outcome["l2"])
+                if str(pass_outcome["l2_checkpoint"].get("status", "")).upper() == "WAITING":
+                    waiting_reason = "L2 checkpoint waiting for planner-recorded answers"
+                    results.update(pass_outcome)
+                    results["pipeline_pass_history"].append(
+                        {
+                            "pass": pipeline_pass,
+                            "status": "waiting",
+                            "reason": waiting_reason,
+                        }
+                    )
+                    results["awaiting_checkpoint"] = "l2_checkpoint"
+                    results["waiting"] = True
+                    state_mgr.update_state(phase="waiting_l2_checkpoint", active_layer="l2")
+                    return results
                 if bool(pass_outcome["l2_checkpoint"].get("approved", False)):
                     self._record_git_tag(f"pdd/{self.manager.run_id}/l2-approved")
             l2_termination = (
@@ -1112,6 +1140,18 @@ class PddLifecycle:
 
         # Release signoff (auto-approve in auto mode)
         results["release_signoff"] = self._request_release_signoff(results)
+        if str((results["release_signoff"] or {}).get("status", "")).upper() == "WAITING":
+            results["pipeline_pass_history"].append(
+                {
+                    "pass": pipeline_pass,
+                    "status": "waiting",
+                    "reason": "Release signoff waiting for planner-recorded answer",
+                }
+            )
+            results["awaiting_checkpoint"] = "release_signoff"
+            results["waiting"] = True
+            state_mgr.update_state(phase="waiting_release_signoff")
+            return results
         if not bool((results["release_signoff"] or {}).get("approved", False)):
             results["release_blocked"] = True
             results["release_blocked_reason"] = "Release signoff rejected"
@@ -3458,18 +3498,104 @@ class PddLifecycle:
     # L1 with human approval
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _canonical_key_matches(*, expected: str, observed: str) -> bool:
+        expected_norm = str(expected).strip().lower()
+        observed_norm = str(observed).strip().lower()
+        if not expected_norm or not observed_norm:
+            return False
+        return observed_norm == expected_norm or observed_norm.startswith(f"{expected_norm}.")
+
+    def _coordination_run_dir(self) -> Path:
+        if hasattr(self, "_state_mgr"):
+            return self._state_mgr.run_dir
+        return self.manager.workspace_path / ".pdd_runs" / self.manager.run_id
+
+    def _planner_has_canonical_resolution(self, canonical_key: str) -> bool:
+        from spec_manager.orchestration.intent_agent.signals import PlannerUpdateStore
+
+        run_dir = self._coordination_run_dir()
+        store = PlannerUpdateStore(run_dir)
+        read_result = store.read_all()
+        for event in read_result.events:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            keys: list[str] = []
+            canonical_keys = payload.get("canonical_keys", [])
+            if isinstance(canonical_keys, list):
+                keys.extend(str(item).strip() for item in canonical_keys if str(item).strip())
+            canonical_key_single = str(payload.get("canonical_key", "")).strip()
+            if canonical_key_single:
+                keys.append(canonical_key_single)
+            for candidate in keys:
+                if self._canonical_key_matches(expected=canonical_key, observed=candidate):
+                    return True
+        return False
+
+    def _signal_already_emitted(self, signal_id: str) -> bool:
+        from spec_manager.orchestration.intent_agent.signals import UserQuestionSignalStore
+
+        run_dir = self._coordination_run_dir()
+        store = UserQuestionSignalStore(run_dir)
+        read_result = store.read_all()
+        target = str(signal_id).strip()
+        if not target:
+            return False
+        return any(str(signal.source.signal_id).strip() == target for signal in read_result.signals)
+
+    def _emit_lifecycle_question_signal(
+        self,
+        *,
+        checkpoint: str,
+        signal_id: str,
+        layer: str,
+        taxonomy_hint: str,
+        canonical_key_hint: str,
+        text: str,
+        answer_spec_hint: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> bool:
+        if self._signal_already_emitted(signal_id):
+            return False
+
+        from spec_manager.orchestration.intent_agent.signals import (
+            SignalBlocking,
+            SignalContext,
+            SignalQuestion,
+            SignalSource,
+            UserQuestionSignal,
+            UserQuestionSignalStore,
+        )
+
+        run_dir = self._coordination_run_dir()
+        store = UserQuestionSignalStore(run_dir)
+        signal = UserQuestionSignal(
+            run_id=self.manager.run_id,
+            source=SignalSource(
+                kind="PDD_LIFECYCLE",
+                trace_id=checkpoint,
+                slice_id="__system__",
+                layer=layer,
+                signal_id=signal_id,
+            ),
+            question=SignalQuestion(
+                text=text,
+                taxonomy_hint=taxonomy_hint,
+                canonical_key_hint=canonical_key_hint,
+                answer_spec_hint=answer_spec_hint,
+            ),
+            context=SignalContext(
+                blocking=SignalBlocking(
+                    severity="BLOCKING",
+                    blocked_slices=[],
+                ),
+            ),
+            payload=payload,
+        )
+        store.write(signal)
+        return True
+
     def _run_l1_with_approval(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Run L1 layer with human approval loop.
-
-        Per ``simpler.md``: generate overview → human reviews → approve
-        or patch → repeat.
-
-        In ``"auto"`` and ``"steering"`` modes, approval is automatic.
-        In ``"interactive"`` mode, the user is prompted for approval.
-
-        Returns:
-            Tuple of ``(l1_result, approval_result)``.
-        """
+        """Run L1 layer and checkpoint via signal-based approval flow."""
         iteration = 0
         l1_result: dict[str, Any] = {}
 
@@ -3494,6 +3620,8 @@ class PddLifecycle:
             approval = self._request_approval(l1_result, iteration)
 
             if approval["approved"]:
+                return l1_result, approval
+            if str(approval.get("status", "")).upper() == "WAITING":
                 return l1_result, approval
 
             logger.info(
@@ -3575,137 +3703,275 @@ class PddLifecycle:
             )
             return {"approved": True, "iteration": iteration, "mode": self.mode}
 
-        # Interactive mode — prompt user
-        overview_result = result.get("overview", {})
-        overview_path = overview_result.get("overview_path", "")
+        checkpoint = "l1_approval"
+        signal_specs = [
+            {
+                "signal_id": f"{checkpoint}:validation:iter{iteration}",
+                "layer": "l1",
+                "taxonomy_hint": "VALIDATION",
+                "canonical_key_hint": "pdd.lifecycle.l1.validation",
+                "text": (
+                    "Does the L1 output align with your intent and acceptance expectations "
+                    "before moving to architecture work?"
+                ),
+                "answer_spec_hint": {
+                    "preferred_kind": "choice",
+                    "choices": [
+                        {"id": "align_yes", "label": "Aligned, proceed to L2"},
+                        {"id": "align_with_gaps", "label": "Proceed, record known gaps"},
+                        {"id": "align_no", "label": "Not aligned yet"},
+                    ],
+                },
+            },
+            {
+                "signal_id": f"{checkpoint}:scope:iter{iteration}",
+                "layer": "l1",
+                "taxonomy_hint": "SCOPE",
+                "canonical_key_hint": "pdd.lifecycle.l1.scope",
+                "text": (
+                    "Before L2 starts, confirm scope boundaries or list any scope adjustments "
+                    "that must be captured as constraints."
+                ),
+                "answer_spec_hint": {
+                    "preferred_kind": "choice_or_text",
+                    "choices": [
+                        {"id": "scope_no_change", "label": "Scope unchanged"},
+                        {"id": "scope_adjust", "label": "Scope needs adjustment"},
+                    ],
+                },
+            },
+        ]
 
-        print("\n" + "=" * 60)
-        print("PDD L1 (Code-as-Spec) COMPLETE — Review Required")
-        print("=" * 60)
-        if overview_path:
-            print(f"\nOverview document: {overview_path}")
-        print("\nPlease review the overview and library specs.")
-        print("Options:")
-        print("  [a] Approve — proceed to L2 (Architecture)")
-        print("  [f] Feedback — provide feedback for next iteration")
-        print("  [q] Quit — abort lifecycle")
-
-        try:
-            choice = input("\nYour choice [a/f/q]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            choice = "a"
-
-        if choice == "a" or choice == "":
+        pending_keys = [
+            spec["canonical_key_hint"]
+            for spec in signal_specs
+            if not self._planner_has_canonical_resolution(spec["canonical_key_hint"])
+        ]
+        if pending_keys:
+            emitted = 0
+            for spec in signal_specs:
+                if spec["canonical_key_hint"] not in pending_keys:
+                    continue
+                emitted += int(
+                    self._emit_lifecycle_question_signal(
+                        checkpoint=checkpoint,
+                        signal_id=spec["signal_id"],
+                        layer=spec["layer"],
+                        taxonomy_hint=spec["taxonomy_hint"],
+                        canonical_key_hint=spec["canonical_key_hint"],
+                        text=spec["text"],
+                        answer_spec_hint=spec["answer_spec_hint"],
+                        payload={
+                            "checkpoint": checkpoint,
+                            "iteration": iteration,
+                            "overview_ref": overview_ref,
+                            "alignment_ref": alignment_ref,
+                        },
+                    )
+                )
             self._write_approval_artifact(
                 "l1",
-                approved=True,
+                approved=False,
                 iteration=iteration,
+                checkpoint=checkpoint,
+                status="WAITING",
+                pending_canonical_keys=pending_keys,
+                emitted_signals=emitted,
                 overview_ref=overview_ref,
                 alignment_ref=alignment_ref,
             )
-            return {"approved": True, "iteration": iteration, "mode": "interactive"}
-
-        if choice == "q":
-            raise KeyboardInterrupt("User aborted lifecycle")
-
-        # Feedback mode
-        try:
-            feedback = input("Feedback: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            feedback = ""
-
-        # Write feedback to run-scoped reports directory
-        run_reports_dir.mkdir(parents=True, exist_ok=True)
-        feedback_path = run_reports_dir / f"feedback_iteration_{iteration}.txt"
-        feedback_path.write_text(feedback, encoding="utf-8")
+            return {
+                "approved": False,
+                "status": "WAITING",
+                "checkpoint": checkpoint,
+                "iteration": iteration,
+                "pending_canonical_keys": pending_keys,
+                "mode": "interactive",
+            }
 
         self._write_approval_artifact(
             "l1",
-            approved=False,
+            approved=True,
             iteration=iteration,
+            checkpoint=checkpoint,
+            status="APPROVED",
+            signal_flow=True,
             overview_ref=overview_ref,
             alignment_ref=alignment_ref,
-            feedback_path=str(feedback_path),
         )
         return {
-            "approved": False,
+            "approved": True,
+            "status": "APPROVED",
+            "checkpoint": checkpoint,
             "iteration": iteration,
-            "feedback": feedback,
-            "feedback_path": str(feedback_path),
             "mode": "interactive",
         }
 
     def _request_l2_checkpoint(self, l2_result: dict[str, Any]) -> dict[str, Any]:
-        """Optional L2 checkpoint: approve architecture topology before L3.
-
-        Only prompted in interactive mode.  Auto/steering modes auto-approve.
-
-        Args:
-            l2_result: Results from the L2 layer.
-
-        Returns:
-            Checkpoint result dict.
-        """
+        """Signal-based L2 checkpoint before L3 promotion."""
         if self.mode in ("auto", "steering"):
             self._write_approval_artifact("l2", approved=True)
             return {"approved": True, "mode": self.mode}
 
-        print("\n" + "=" * 60)
-        print("PDD L2 (Architecture) COMPLETE — Optional Checkpoint")
-        print("=" * 60)
-        print("\nArchitecture layer is done. Review component topology before L3.")
-        print("Options:")
-        print("  [a] Approve — proceed to L3 (Clean Code)")
-        print("  [q] Quit — abort lifecycle")
+        checkpoint = "l2_checkpoint"
+        layer_summary = (
+            {
+                "all_complete": bool(l2_result.get("all_complete", False)),
+                "slice_count": len(l2_result.get("slices", []) or []),
+                "waiting_slices": list(l2_result.get("waiting_slices", []) or []),
+            }
+            if isinstance(l2_result, dict)
+            else {}
+        )
+        signal_specs = [
+            {
+                "signal_id": f"{checkpoint}:tradeoff",
+                "taxonomy_hint": "TRADEOFF",
+                "canonical_key_hint": "pdd.lifecycle.l2.tradeoff",
+                "text": (
+                    "Are any architectural tradeoffs still unresolved and BLOCKING before L3?"
+                ),
+            },
+            {
+                "signal_id": f"{checkpoint}:constraint",
+                "taxonomy_hint": "CONSTRAINT",
+                "canonical_key_hint": "pdd.lifecycle.l2.constraint",
+                "text": (
+                    "Confirm whether any additional architecture constraints must be recorded "
+                    "before L3 implementation quality work proceeds."
+                ),
+            },
+            {
+                "signal_id": f"{checkpoint}:scope",
+                "taxonomy_hint": "SCOPE",
+                "canonical_key_hint": "pdd.lifecycle.l2.scope",
+                "text": "Confirm architecture scope boundaries before L3 begins.",
+            },
+        ]
+        pending_keys = [
+            spec["canonical_key_hint"]
+            for spec in signal_specs
+            if not self._planner_has_canonical_resolution(spec["canonical_key_hint"])
+        ]
+        if pending_keys:
+            emitted = 0
+            for spec in signal_specs:
+                if spec["canonical_key_hint"] not in pending_keys:
+                    continue
+                emitted += int(
+                    self._emit_lifecycle_question_signal(
+                        checkpoint=checkpoint,
+                        signal_id=spec["signal_id"],
+                        layer="l2",
+                        taxonomy_hint=spec["taxonomy_hint"],
+                        canonical_key_hint=spec["canonical_key_hint"],
+                        text=spec["text"],
+                        answer_spec_hint={
+                            "preferred_kind": "choice_or_text",
+                            "choices": [
+                                {"id": "resolved", "label": "Resolved"},
+                                {"id": "needs_input", "label": "Needs additional input"},
+                            ],
+                        },
+                        payload={
+                            "checkpoint": checkpoint,
+                            "layer_summary": layer_summary,
+                        },
+                    )
+                )
+            self._write_approval_artifact(
+                "l2",
+                approved=False,
+                checkpoint=checkpoint,
+                status="WAITING",
+                pending_canonical_keys=pending_keys,
+                emitted_signals=emitted,
+            )
+            return {
+                "approved": False,
+                "status": "WAITING",
+                "checkpoint": checkpoint,
+                "pending_canonical_keys": pending_keys,
+                "mode": "interactive",
+            }
 
-        try:
-            choice = input("\nYour choice [a/q]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            choice = "a"
-
-        if choice == "q":
-            raise KeyboardInterrupt("User aborted lifecycle at L2 checkpoint")
-
-        self._write_approval_artifact("l2", approved=True)
-        return {"approved": True, "mode": "interactive"}
+        self._write_approval_artifact(
+            "l2",
+            approved=True,
+            checkpoint=checkpoint,
+            status="APPROVED",
+            signal_flow=True,
+        )
+        return {
+            "approved": True,
+            "status": "APPROVED",
+            "checkpoint": checkpoint,
+            "mode": "interactive",
+        }
 
     def _request_release_signoff(self, results: dict[str, Any]) -> dict[str, Any]:
-        """Release signoff after L3 + final governance.
-
-        Auto-approve in auto/steering modes.
-
-        Args:
-            results: Full run results.
-
-        Returns:
-            Signoff result dict.
-        """
+        """Release signoff via VALIDATION signal and planner-recorded answer."""
         if self.mode in ("auto", "steering"):
             self._write_approval_artifact("l3", approved=True, checkpoint="release_signoff")
             return {"approved": True, "mode": self.mode}
 
+        checkpoint = "release_signoff"
+        canonical_key = "pdd.lifecycle.release.signoff"
         scorecard = results.get("scorecard", {})
-        passed = scorecard.get("overall_pass", True)
+        pending = not self._planner_has_canonical_resolution(canonical_key)
+        if pending:
+            emitted = int(
+                self._emit_lifecycle_question_signal(
+                    checkpoint=checkpoint,
+                    signal_id=f"{checkpoint}:validation",
+                    layer="l3",
+                    taxonomy_hint="VALIDATION",
+                    canonical_key_hint=canonical_key,
+                    text=("Does this meet your acceptance expectations for release?"),
+                    answer_spec_hint={
+                        "preferred_kind": "choice",
+                        "choices": [
+                            {"id": "approve", "label": "Approve"},
+                            {"id": "not_yet", "label": "Not yet - list up to 3 issues"},
+                            {"id": "approve_with_gaps", "label": "Approve with known gaps"},
+                        ],
+                    },
+                    payload={
+                        "checkpoint": checkpoint,
+                        "scorecard_overall_pass": bool(scorecard.get("overall_pass", True)),
+                        "final_governance": results.get("final_governance", {}),
+                    },
+                )
+            )
+            self._write_approval_artifact(
+                "l3",
+                approved=False,
+                checkpoint=checkpoint,
+                status="WAITING",
+                pending_canonical_keys=[canonical_key],
+                emitted_signals=emitted,
+            )
+            return {
+                "approved": False,
+                "status": "WAITING",
+                "checkpoint": checkpoint,
+                "pending_canonical_keys": [canonical_key],
+                "mode": "interactive",
+            }
 
-        print("\n" + "=" * 60)
-        print("PDD Pipeline COMPLETE — Release Signoff")
-        print("=" * 60)
-        print(f"\nOverall scorecard: {'PASS' if passed else 'FAIL'}")
-        final_gov = results.get("final_governance", {})
-        if not final_gov.get("passed", True):
-            print(f"Governance: FAIL — {final_gov.get('error', '')}")
-        print("\nOptions:")
-        print("  [a] Approve release")
-        print("  [r] Reject release")
-
-        try:
-            choice = input("\nYour choice [a/r]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            choice = "a"
-
-        approved = choice != "r"
-        self._write_approval_artifact("l3", approved=approved, checkpoint="release_signoff")
-        return {"approved": approved, "mode": "interactive"}
+        self._write_approval_artifact(
+            "l3",
+            approved=True,
+            checkpoint=checkpoint,
+            status="APPROVED",
+            signal_flow=True,
+        )
+        return {
+            "approved": True,
+            "status": "APPROVED",
+            "checkpoint": checkpoint,
+            "mode": "interactive",
+        }
 
     # ------------------------------------------------------------------
     # Intake

@@ -1467,6 +1467,86 @@ class Planner:
             status=result.status,
         )
 
+    def persist_under_spec_constraints(
+        self,
+        *,
+        run_id: str,
+        layer: str,
+        slice_id: str,
+        constraints: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist validated under-spec constraints through Planner authority."""
+        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+        from spec_manager.planner.constraints.types import ConstraintFact
+
+        facts: list[ConstraintFact] = []
+        canonical_keys: list[str] = []
+        constraint_ids: list[str] = []
+        target_slice = str(slice_id or "__system__").strip() or "__system__"
+        layer_token = str(layer or "any").strip().lower()
+        run_token = str(run_id or "").strip()
+
+        for row in constraints:
+            if not isinstance(row, dict):
+                continue
+            constraint_id = str(row.get("constraint_id", "")).strip()
+            question = str(row.get("question", "")).strip()
+            answer = str(row.get("answer", "")).strip()
+            if not (constraint_id and question and answer):
+                continue
+            raw_trace = row.get("trace", [])
+            trace = [str(item).strip() for item in raw_trace if str(item).strip()]
+            canonical_key = self._extract_trace_tag(trace, "canonical_key")
+            if not canonical_key:
+                canonical_key = f"underspec.{constraint_id}"
+                trace.append(f"canonical_key={canonical_key}")
+            confidence = self._clamp_confidence(row.get("confidence", 0.7))
+            authority_required = str(row.get("authority_required", "planner_ok")).strip()
+            if authority_required != "planner_ok":
+                continue
+
+            source = self._coerce_under_spec_constraint_source(row.get("source", "research"))
+            fact = ConstraintFact(
+                constraint_id=constraint_id,
+                question=question,
+                answer=answer,
+                source=source,
+                confidence=confidence,
+                validated=bool(row.get("validated", True)),
+                dimension="software",
+                authority_required="planner_ok",
+                scope=str(row.get("scope", "intra:LIB") or "intra:LIB"),
+                status="ACTIVE",
+                trace=[
+                    *trace,
+                    "ingest_capability=UNDER_SPEC",
+                    f"layer={layer_token}",
+                    f"slice_id={target_slice}",
+                ],
+            )
+            facts.append(fact)
+            constraint_ids.append(constraint_id)
+            canonical_keys.append(canonical_key)
+
+        if not facts:
+            return {"constraints_path": "", "constraint_ids": [], "canonical_keys": []}
+
+        context_token = ConstraintStoreAdapter.push_planner_update_context(
+            run_id=run_token,
+            layer=layer_token,
+            capability="UNDER_SPEC",
+        )
+        try:
+            saved_path = self._constraints_adapter.save_facts(target_slice, facts)
+        finally:
+            ConstraintStoreAdapter.pop_planner_update_context(context_token)
+
+        return {
+            "constraints_path": str(saved_path),
+            "constraint_ids": self._dedupe_preserve(constraint_ids),
+            "canonical_keys": self._dedupe_preserve(canonical_keys),
+        }
+
     def _normalize_under_spec_outputs(
         self,
         *,
@@ -1544,6 +1624,15 @@ class Planner:
             "confidence": max(0.0, min(1.0, confidence)),
             "contradictions": contradictions,
         }
+
+    @staticmethod
+    def _coerce_under_spec_constraint_source(
+        value: Any,
+    ) -> Literal["user", "research", "steering", "existing"]:
+        source = str(value or "").strip().lower()
+        if source in {"user", "steering", "existing"}:
+            return source
+        return "research"
 
     def _expand_under_spec_via_triage(
         self,
