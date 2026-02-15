@@ -58,33 +58,6 @@ class ConstraintPresentCondition(MonitorCondition):
     slice_id: str = ""
 
 
-@dataclass
-class SliceMergedCondition(MonitorCondition):
-    """True when a provider slice has been merged at a given layer."""
-
-    type: str = "slice_merged"
-    provider_slice_id: str = ""
-    layer: str = ""
-
-
-@dataclass
-class CompoundCondition(MonitorCondition):
-    """AND/OR composition over serialized sub-conditions."""
-
-    type: str = "compound"
-    operator: Literal["AND", "OR"] = "OR"
-    conditions: list[dict] = field(default_factory=list)
-
-
-@dataclass
-class UserQuestionAnsweredCondition(MonitorCondition):
-    """True when a user question has been answered and Planner has written the constraint."""
-
-    type: str = "user_question_answered"
-    question_id: str = ""
-    canonical_key: str = ""
-
-
 # ------------------------------------------------------------------
 # Factory
 # ------------------------------------------------------------------
@@ -93,9 +66,6 @@ _TYPE_MAP: dict[str, type[MonitorCondition]] = {
     "git_symbol_exists": GitSymbolExistsCondition,
     "work_item_done": WorkItemDoneCondition,
     "constraint_present": ConstraintPresentCondition,
-    "slice_merged": SliceMergedCondition,
-    "compound": CompoundCondition,
-    "user_question_answered": UserQuestionAnsweredCondition,
 }
 
 
@@ -124,21 +94,6 @@ def condition_from_dict(d: dict[str, Any]) -> MonitorCondition:
             constraint_dir=d.get("constraint_dir", "analysis/constraints"),
             constraint_id=d.get("constraint_id", ""),
             slice_id=d.get("slice_id", ""),
-        )
-    if cls is SliceMergedCondition:
-        return cls(
-            provider_slice_id=d.get("provider_slice_id", ""),
-            layer=d.get("layer", ""),
-        )
-    if cls is CompoundCondition:
-        return cls(
-            operator=d.get("operator", "OR"),
-            conditions=d.get("conditions", []),
-        )
-    if cls is UserQuestionAnsweredCondition:
-        return cls(
-            question_id=d.get("question_id", ""),
-            canonical_key=d.get("canonical_key", ""),
         )
     return MonitorCondition(type=cond_type)  # pragma: no cover
 
@@ -179,7 +134,7 @@ class MonitorStatus:
 
     state: Literal["ACTIVE", "FIRED", "EXPIRED", "FAILED", "CANCELLED"] = "ACTIVE"
     created_at: str = ""
-    last_checked_at: str = ""
+    last_checked_at: str | None = None
     check_count: int = 0
     failures: int = 0
 
@@ -266,6 +221,15 @@ class MonitorSpec:
         timeout_d = d.get("timeout", {})
         wake_d = d.get("wake", {})
         status_d = d.get("status", {})
+        created_at = status_d.get("created_at", "")
+        if not isinstance(created_at, str):
+            created_at = ""
+        last_checked_at_raw = status_d.get("last_checked_at")
+        last_checked_at = (
+            last_checked_at_raw
+            if isinstance(last_checked_at_raw, str) and last_checked_at_raw
+            else None
+        )
         return cls(
             monitor_version=d.get("monitor_version", 1),
             monitor_id=d.get("monitor_id", ""),
@@ -288,8 +252,8 @@ class MonitorSpec:
             ),
             status=MonitorStatus(
                 state=status_d.get("state", "ACTIVE"),
-                created_at=status_d.get("created_at", ""),
-                last_checked_at=status_d.get("last_checked_at", ""),
+                created_at=created_at,
+                last_checked_at=last_checked_at,
                 check_count=status_d.get("check_count", 0),
                 failures=status_d.get("failures", 0),
             ),
@@ -319,8 +283,15 @@ class MonitorRegistry:
     """
 
     def __init__(self, coordination_dir: Path) -> None:
+        self._coordination_dir = coordination_dir
         self._monitors_dir = coordination_dir / "monitors"
+        self._receipts_path = coordination_dir / "monitor_receipts.jsonl"
         self._monitors_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def coordination_dir(self) -> Path:
+        """Run-scoped coordination directory that owns this registry."""
+        return self._coordination_dir
 
     def register(self, spec: MonitorSpec) -> None:
         """Save a monitor spec to the registry."""
@@ -361,29 +332,86 @@ class MonitorRegistry:
                 return s
         return None
 
-    def update_status(self, monitor_id: str, state: str, **updates: Any) -> None:
+    def update_status(
+        self,
+        monitor_id: str,
+        state: str,
+        *,
+        receipt_event: str | None = None,
+        receipt_payload: dict[str, Any] | None = None,
+        **updates: Any,
+    ) -> None:
         """Update a monitor's status fields and re-save."""
         spec = self.get(monitor_id)
         if spec is None:
             return
+        previous_state = spec.status.state
         spec.status.state = state  # type: ignore[assignment]
         for key, val in updates.items():
             if hasattr(spec.status, key):
                 setattr(spec.status, key, val)
         spec.save(self._monitors_dir)
+        self._append_receipt(
+            spec,
+            previous_state=previous_state,
+            new_state=state,
+            event=receipt_event,
+            payload=receipt_payload,
+        )
 
     def fire(self, monitor_id: str) -> None:
         """Mark a monitor as FIRED."""
-        self.update_status(monitor_id, "FIRED")
+        self.update_status(monitor_id, "FIRED", receipt_event="monitor_fired")
 
     def cancel_for_signal(self, signal_id: str) -> None:
         """Cancel the monitor associated with *signal_id*."""
         spec = self.get_for_signal(signal_id)
         if spec is not None:
-            self.update_status(spec.monitor_id, "CANCELLED")
+            self.update_status(
+                spec.monitor_id,
+                "CANCELLED",
+                receipt_event="monitor_cancelled",
+                receipt_payload={"cancel_scope": "signal", "signal_id": signal_id},
+            )
 
     def cancel_for_slice(self, slice_id: str) -> None:
         """Cancel all active monitors for *slice_id*."""
         for spec in self.get_for_slice(slice_id):
             if spec.status.state == "ACTIVE":
-                self.update_status(spec.monitor_id, "CANCELLED")
+                self.update_status(
+                    spec.monitor_id,
+                    "CANCELLED",
+                    receipt_event="monitor_cancelled",
+                    receipt_payload={"cancel_scope": "slice", "slice_id": slice_id},
+                )
+
+    def _append_receipt(
+        self,
+        spec: MonitorSpec,
+        *,
+        previous_state: str,
+        new_state: str,
+        event: str | None,
+        payload: dict[str, Any] | None,
+    ) -> None:
+        terminal_states = {"FIRED", "CANCELLED", "EXPIRED", "FAILED"}
+        if new_state not in terminal_states or previous_state == new_state:
+            return
+
+        record: dict[str, Any] = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": event or f"monitor_{new_state.lower()}",
+            "monitor_id": spec.monitor_id,
+            "run_id": spec.run_id,
+            "signal_id": spec.signal_id,
+            "waiting_slice": spec.waiting_slice.to_dict(),
+            "condition_type": str(spec.condition.get("type", "")),
+            "previous_state": previous_state,
+            "new_state": new_state,
+        }
+        if payload:
+            record["payload"] = payload
+
+        self._receipts_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._receipts_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")

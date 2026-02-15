@@ -328,12 +328,12 @@ class L1Planner:
             candidate_matches = [m for m in [primary_match, *secondary_matches] if m is not None]
             active_matches = [m for m in candidate_matches if m.status not in ("MERGED", "DONE")]
             if active_matches:
-                monitor = _build_partial_match_monitor(
+                monitors = _build_partial_match_monitors(
                     signal=signal, matches=active_matches, ctx=ctx
                 )
                 return {
                     "action": "WAIT_ON_WORK_ITEM",
-                    "monitors": [monitor],
+                    "monitors": monitors,
                     "coverage": coverage,
                     "confidence": confidence,
                     "why": why,
@@ -555,38 +555,37 @@ def _build_work_item_monitor(
     }
 
 
-def _build_partial_match_monitor(
+def _build_partial_match_monitors(
     signal: dict[str, Any],
     matches: list[Any],
     ctx: Any,
-) -> dict[str, Any]:
-    """Build OR-monitor when multiple work items partially cover a need."""
-    sub_conditions: list[dict[str, Any]] = []
+) -> list[dict[str, Any]]:
+    """Build whitelisted work-item monitors for partial coverage matches."""
+    monitors: list[dict[str, Any]] = []
     for m in matches:
-        sub_conditions.append(
+        monitors.append(
             {
                 "type": "work_item_done",
                 "work_item_id": m.work_item_id,
                 "required_status": "MERGED",
+                "kind": "work_item_status",
+                "signal_id": signal.get("signal_id", ""),
+                "run_id": getattr(ctx, "run_id", ""),
+                "timeout_seconds": 3600,
             }
         )
-        sub_conditions.append(
+        monitors.append(
             {
                 "type": "work_item_done",
                 "work_item_id": m.work_item_id,
                 "required_status": "DONE",
+                "kind": "work_item_status",
+                "signal_id": signal.get("signal_id", ""),
+                "run_id": getattr(ctx, "run_id", ""),
+                "timeout_seconds": 3600,
             }
         )
-
-    return {
-        "type": "compound",
-        "operator": "OR",
-        "conditions": sub_conditions,
-        "kind": "work_item_status_any",
-        "signal_id": signal.get("signal_id", ""),
-        "run_id": getattr(ctx, "run_id", ""),
-        "timeout_seconds": 3600,
-    }
+    return monitors
 
 
 def _build_git_symbol_monitor(

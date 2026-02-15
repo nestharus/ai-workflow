@@ -10,19 +10,19 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+import re
+import subprocess
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .monitors import (
-    CompoundCondition,
     ConstraintPresentCondition,
     GitSymbolExistsCondition,
     MonitorCondition,
     MonitorRegistry,
     MonitorSpec,
-    SliceMergedCondition,
-    UserQuestionAnsweredCondition,
     WorkItemDoneCondition,
     condition_from_dict,
 )
@@ -47,12 +47,10 @@ class ConditionChecker:
         workspace_root: Path,
         work_item_store: Any = None,
         constraints_store: Any = None,
-        coordination_dir: Path | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._work_item_store = work_item_store
         self._constraints_store = constraints_store
-        self._coordination_dir = coordination_dir
 
     def check(self, condition: MonitorCondition) -> bool:
         """Dispatch to the appropriate checker."""
@@ -62,39 +60,38 @@ class ConditionChecker:
             return self._check_work_item_done(condition)
         if isinstance(condition, ConstraintPresentCondition):
             return self._check_constraint_present(condition)
-        if isinstance(condition, SliceMergedCondition):
-            return self._check_slice_merged(condition)
-        if isinstance(condition, CompoundCondition):
-            return self._check_compound(condition)
-        if isinstance(condition, UserQuestionAnsweredCondition):
-            return self._check_user_question_answered(condition)
         return False
 
     def _check_git_symbol_exists(self, cond: GitSymbolExistsCondition) -> bool:
-        """Scan files matching file_glob for symbol_fqn string.
-
-        For now this is a simple filesystem scan; a future version can
-        use ``git show {ref}:{file}`` to check at a specific ref.
-        """
-        from spec_manager.core.language import source_rglob
-
-        if not cond.symbol_fqn:
+        """Check for a symbol signature at a specific git ref (read-only)."""
+        if not cond.ref or not cond.symbol_fqn or not cond.signature_regex:
             return False
-        root = self._workspace_root
-        matched_files: list[Path] = []
-        if cond.file_glob:
-            for p in root.rglob("*"):
-                if p.is_file() and fnmatch.fnmatch(str(p.relative_to(root)), cond.file_glob):
-                    matched_files.append(p)
-        else:
-            matched_files = [p for p in source_rglob(root) if p.is_file()]
 
-        for f in matched_files:
-            try:
-                content = f.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+        try:
+            signature_re = re.compile(cond.signature_regex, flags=re.MULTILINE)
+        except re.error:
+            logger.warning(
+                "Monitor git_symbol_exists has invalid signature_regex for ref=%s: %r",
+                cond.ref,
+                cond.signature_regex,
+            )
+            return False
+
+        files = self._git_list_files(cond.ref)
+        if files is None:
+            return False
+        if cond.file_glob:
+            files = [path for path in files if fnmatch.fnmatch(path, cond.file_glob)]
+        if not files:
+            return False
+
+        for rel_path in files:
+            content = self._git_show_file(cond.ref, rel_path)
+            if content is None:
                 continue
-            if cond.symbol_fqn in content:
+            if cond.symbol_fqn not in content:
+                continue
+            if signature_re.search(content):
                 return True
         return False
 
@@ -132,87 +129,33 @@ class ConditionChecker:
             return False
         return any(cond.constraint_key in p.name for p in constraint_dir.iterdir())
 
-    def _check_slice_merged(self, cond: SliceMergedCondition) -> bool:
-        """Check if the provider slice's merge marker exists."""
-        if not cond.provider_slice_id:
-            return False
-        # Convention: merge marker at slices/<id>/merged_<layer>
-        marker = self._workspace_root / "slices" / cond.provider_slice_id / f"merged_{cond.layer}"
-        return marker.exists()
+    def _git_list_files(self, ref: str) -> list[str] | None:
+        output = self._run_git("ls-tree", "-r", "--name-only", ref)
+        if output is None:
+            return None
+        return [line.strip() for line in output.splitlines() if line.strip()]
 
-    def _check_user_question_answered(self, cond: UserQuestionAnsweredCondition) -> bool:
-        """Check if a user question has been answered and Planner has written the constraint.
+    def _git_show_file(self, ref: str, rel_path: str) -> str | None:
+        return self._run_git("show", f"{ref}:{rel_path}")
 
-        Primary: checks planner_updates.jsonl for a ``constraint_saved``
-        or ``decision_recorded`` signal matching the ``canonical_key``.
-        This is the clean signal-based wake path per response2.md.
-
-        Fallback: scans constraint traces for an exact
-        ``canonical_key=<key>`` entry (legacy path).
-        """
-        if not cond.canonical_key or not cond.question_id:
-            return False
-
-        # Primary: check planner_updates.jsonl for signal-based confirmation
-        if self._coordination_dir is not None:
-            updates_path = self._coordination_dir / "planner_updates.jsonl"
-            if updates_path.exists():
-                try:
-                    for line in updates_path.read_text(encoding="utf-8").splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        entry = json.loads(line)
-                        if (
-                            entry.get("type") in ("constraint_saved", "decision_recorded")
-                            and entry.get("canonical_key") == cond.canonical_key
-                        ):
-                            return True
-                except Exception:
-                    logger.debug("Failed to read planner_updates.jsonl", exc_info=True)
-
-        # Fallback: constraint trace check
-        if self._constraints_store is None:
-            return False
-
-        expected_trace = f"canonical_key={cond.canonical_key}"
-
-        # Check under the question_id (used as slice_id by ingest_user_answer)
-        # and the "global" fallback slice.
-        slice_ids_to_check = [cond.question_id]
-        if cond.question_id != "global":
-            slice_ids_to_check.append("global")
-
-        for sid in slice_ids_to_check:
-            try:
-                if hasattr(self._constraints_store, "load_merged"):
-                    constraints = self._constraints_store.load_merged(sid)
-                else:
-                    constraints = self._constraints_store.load(sid)
-            except Exception as e:
-                logger.debug("Failed to load constraints for slice %s: %s", sid, e)
-                continue
-            for c in constraints:
-                trace = getattr(c, "trace", [])
-                if expected_trace in trace:
-                    return True
-        return False
-
-    def _check_compound(self, cond: CompoundCondition) -> bool:
-        """Evaluate AND/OR over sub-conditions."""
-        if not cond.conditions:
-            return False
-        sub_results: list[bool] = []
-        for sub_dict in cond.conditions:
-            try:
-                sub_cond = condition_from_dict(sub_dict)
-                sub_results.append(self.check(sub_cond))
-            except (ValueError, KeyError):
-                sub_results.append(False)
-
-        if cond.operator == "AND":
-            return all(sub_results)
-        return any(sub_results)
+    def _run_git(self, *args: str) -> str | None:
+        proc = subprocess.run(
+            ["git", "-C", str(self._workspace_root), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode != 0:
+            logger.debug(
+                "git command failed (args=%s, code=%s): %s",
+                args,
+                proc.returncode,
+                proc.stderr.strip(),
+            )
+            return None
+        return proc.stdout
 
 
 # ------------------------------------------------------------------
@@ -223,6 +166,9 @@ class ConditionChecker:
 class MonitorExecutor:
     """Hybrid event/poll runtime that checks monitors and fires wake events."""
 
+    _FAILURE_THRESHOLD = 5
+    _MAX_BACKOFF_EXPONENT = 8
+
     def __init__(
         self,
         registry: MonitorRegistry,
@@ -232,13 +178,18 @@ class MonitorExecutor:
         self._registry = registry
         self._checker = checker
         self._wake_queue = wake_queue
+        self._planner_updates_path = self._registry.coordination_dir / "planner_updates.jsonl"
 
     def run_once(self) -> list[str]:
-        """Check all active monitors.  Return list of fired monitor_ids."""
+        """Poll active monitors that are poll-eligible and due."""
         fired: list[str] = []
         for spec in self._registry.get_active():
+            if spec.execution.mode not in {"poll", "hybrid"}:
+                continue
             if self._is_timed_out(spec):
                 self._handle_timeout(spec)
+                continue
+            if not self._is_poll_due(spec):
                 continue
             if self._check_and_fire(spec):
                 fired.append(spec.monitor_id)
@@ -251,12 +202,15 @@ class MonitorExecutor:
         """
         fired: list[str] = []
         for spec in self._registry.get_active():
-            if event_type in spec.execution.event_triggers:
-                if self._is_timed_out(spec):
-                    self._handle_timeout(spec)
-                    continue
-                if self._check_and_fire(spec):
-                    fired.append(spec.monitor_id)
+            if spec.execution.mode not in {"event", "hybrid"}:
+                continue
+            if event_type not in spec.execution.event_triggers:
+                continue
+            if self._is_timed_out(spec):
+                self._handle_timeout(spec)
+                continue
+            if self._check_and_fire(spec):
+                fired.append(spec.monitor_id)
         return fired
 
     def _check_and_fire(self, spec: MonitorSpec) -> bool:
@@ -270,23 +224,51 @@ class MonitorExecutor:
             result = self._checker.check(condition)
         except Exception:
             logger.exception("Monitor %s checker error", spec.monitor_id)
-            spec.status.failures += 1
-            spec.status.last_checked_at = now
-            spec.status.check_count += 1
+            failures = spec.status.failures + 1
+            check_count = spec.status.check_count + 1
+            if failures >= self._FAILURE_THRESHOLD:
+                self._registry.update_status(
+                    spec.monitor_id,
+                    "FAILED",
+                    failures=failures,
+                    last_checked_at=now,
+                    check_count=check_count,
+                    receipt_event="monitor_failed",
+                    receipt_payload={
+                        "reason": "checker_exception_threshold",
+                        "failure_count": failures,
+                    },
+                )
+                self._emit_planner_update(
+                    monitor=spec,
+                    event_type="monitor_failed",
+                    reason="checker_exception_threshold",
+                    extra={
+                        "failure_count": failures,
+                    },
+                )
+                return False
+
             self._registry.update_status(
                 spec.monitor_id,
                 "ACTIVE",
-                failures=spec.status.failures,
+                failures=failures,
                 last_checked_at=now,
-                check_count=spec.status.check_count,
+                check_count=check_count,
             )
             return False
 
-        spec.status.last_checked_at = now
-        spec.status.check_count += 1
+        check_count = spec.status.check_count + 1
 
         if result:
-            self._registry.fire(spec.monitor_id)
+            self._registry.update_status(
+                spec.monitor_id,
+                "FIRED",
+                last_checked_at=now,
+                check_count=check_count,
+                failures=0,
+                receipt_event="monitor_fired",
+            )
             wake = WakeEvent(
                 monitor_id=spec.monitor_id,
                 signal_id=spec.signal_id,
@@ -303,7 +285,8 @@ class MonitorExecutor:
             spec.monitor_id,
             "ACTIVE",
             last_checked_at=now,
-            check_count=spec.status.check_count,
+            check_count=check_count,
+            failures=0,
         )
         return False
 
@@ -311,20 +294,59 @@ class MonitorExecutor:
         """True if the monitor has exceeded its timeout."""
         if not spec.status.created_at:
             return False
-        try:
-            created = datetime.fromisoformat(spec.status.created_at)
-            elapsed = (datetime.now(UTC) - created).total_seconds()
-            return elapsed > spec.timeout.timeout_sec
-        except (ValueError, TypeError):
+        created = self._parse_timestamp(spec.status.created_at)
+        if created is None:
             return False
+        elapsed = (datetime.now(UTC) - created).total_seconds()
+        return elapsed > spec.timeout.timeout_sec
+
+    def _is_poll_due(self, spec: MonitorSpec) -> bool:
+        last_checked = self._parse_timestamp(spec.status.last_checked_at)
+        if last_checked is None:
+            return True
+        elapsed = (datetime.now(UTC) - last_checked).total_seconds()
+        return elapsed >= self._effective_poll_interval(spec)
+
+    def _effective_poll_interval(self, spec: MonitorSpec) -> int:
+        base_interval = max(1, int(spec.execution.poll_interval_sec))
+        exponent = min(max(spec.status.failures, 0), self._MAX_BACKOFF_EXPONENT)
+        return base_interval * (2**exponent)
+
+    @staticmethod
+    def _parse_timestamp(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except (ValueError, TypeError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     def _handle_timeout(self, spec: MonitorSpec) -> None:
         """Apply the timeout policy."""
         action = spec.timeout.on_timeout
         if action == "FAIL":
-            self._registry.update_status(spec.monitor_id, "FAILED")
+            self._registry.update_status(
+                spec.monitor_id,
+                "FAILED",
+                receipt_event="monitor_failed",
+                receipt_payload={"reason": "timeout_fail"},
+            )
         elif action == "ESCALATE":
-            self._registry.update_status(spec.monitor_id, "EXPIRED")
+            self._registry.update_status(
+                spec.monitor_id,
+                "EXPIRED",
+                receipt_event="monitor_expired",
+                receipt_payload={"reason": "timeout_escalate"},
+            )
+            self._emit_planner_update(
+                monitor=spec,
+                event_type="monitor_timeout",
+                reason="timeout_escalate",
+            )
         elif action == "RETRY":
             # Reset created_at to give it another window
             now = datetime.now(UTC).isoformat()
@@ -334,6 +356,48 @@ class MonitorExecutor:
                 created_at=now,
                 check_count=0,
                 failures=0,
+                last_checked_at=None,
             )
         else:
-            self._registry.update_status(spec.monitor_id, "EXPIRED")
+            self._registry.update_status(
+                spec.monitor_id,
+                "EXPIRED",
+                receipt_event="monitor_expired",
+                receipt_payload={"reason": "timeout_default"},
+            )
+
+    def _emit_planner_update(
+        self,
+        *,
+        monitor: MonitorSpec,
+        event_type: str,
+        reason: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        event: dict[str, Any] = {
+            "type": event_type,
+            "event_kind": event_type,
+            "event_id": f"mon_{uuid.uuid4().hex[:12]}",
+            "created_at": datetime.now(UTC).isoformat(),
+            "source": "MONITOR_EXECUTOR",
+            "classification": "MONITOR_FAILED",
+            "run_id": monitor.run_id,
+            "monitor_id": monitor.monitor_id,
+            "signal_id": monitor.signal_id,
+            "slice_id": monitor.waiting_slice.slice_id,
+            "layer": monitor.waiting_slice.layer,
+            "condition_type": str(monitor.condition.get("type", "")),
+            "reason": reason,
+        }
+        if extra:
+            event.update(extra)
+        try:
+            self._planner_updates_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._planner_updates_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+        except OSError:
+            logger.warning(
+                "Failed to append planner update for monitor %s",
+                monitor.monitor_id,
+                exc_info=True,
+            )
