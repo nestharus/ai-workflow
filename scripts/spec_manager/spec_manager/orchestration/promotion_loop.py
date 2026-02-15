@@ -46,6 +46,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from difflib import unified_diff
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -223,6 +224,9 @@ def _normalize_gap_record(gap: dict[str, Any]) -> dict[str, Any]:
     file_path = gap.get("file", "") or location.get("file", "")
     merged = dict(gap)
     merged["file"] = file_path
+    merged["component_id"] = str(merged.get("component_id", "")).strip()
+    merged["anchor"] = str(merged.get("anchor", "")).strip()
+    merged["expected"] = str(merged.get("expected", "")).strip()
     merged["span"] = normalized_span
     merged["location"] = {"file": file_path, **normalized_span}
     return merged
@@ -256,6 +260,87 @@ def _write_iteration_json(bundle: EvidenceBundle, evidence_root: Path, name: str
     path = iteration_dir / name
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return path.name
+
+
+def _read_json_file(path: Path) -> dict[str, Any] | list[Any] | None:
+    """Load JSON payload from *path* when present and valid."""
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(loaded, dict | list):
+        return loaded
+    return None
+
+
+def _run_component_manifest_path(workspace_root: Path, run_id: str) -> Path:
+    """Return canonical run-scoped component manifest path."""
+    return workspace_root / "reports" / "pdd" / run_id / "component_manifest.json"
+
+
+def _load_run_component_manifest(workspace_root: Path, run_id: str) -> list[dict[str, Any]]:
+    """Load normalized run-scoped component manifest records."""
+    payload = _read_json_file(_run_component_manifest_path(workspace_root, run_id))
+    if not isinstance(payload, dict):
+        return []
+
+    components_raw = payload.get("components", [])
+    if not isinstance(components_raw, list):
+        return []
+
+    components: list[dict[str, Any]] = []
+    for comp in components_raw:
+        if not isinstance(comp, dict):
+            continue
+        component_id = str(comp.get("component_id") or comp.get("id") or "").strip()
+        if not component_id:
+            continue
+        files = [str(path) for path in (comp.get("files") or []) if isinstance(path, str)]
+        owned_entrypoints = [
+            str(item) for item in (comp.get("owned_entrypoints") or []) if isinstance(item, str)
+        ]
+        pins_consumed = [
+            str(item) for item in (comp.get("pins_consumed") or []) if isinstance(item, str)
+        ]
+        components.append(
+            {
+                "component_id": component_id,
+                "files": files,
+                "owned_entrypoints": owned_entrypoints,
+                "pins_consumed": pins_consumed,
+                "upstream": [
+                    str(item) for item in (comp.get("upstream") or []) if isinstance(item, str)
+                ],
+                "downstream": [
+                    str(item) for item in (comp.get("downstream") or []) if isinstance(item, str)
+                ],
+            }
+        )
+    return components
+
+
+def _load_pin_registry_snapshot(slice_root: Path) -> dict[str, Any]:
+    """Load normalized pin/edge payload from ``.spec/pin_registry.json``."""
+    path = slice_root / ".spec" / "pin_registry.json"
+    payload = _read_json_file(path)
+    if not isinstance(payload, dict):
+        return {
+            "path": str(path),
+            "exists": False,
+            "pins": [],
+            "edges": [],
+        }
+
+    pins = [item for item in payload.get("pin_functions", []) if isinstance(item, dict)]
+    edges = [item for item in payload.get("import_edges", []) if isinstance(item, dict)]
+    return {
+        "path": str(path),
+        "exists": True,
+        "pins": pins,
+        "edges": edges,
+    }
 
 
 # ------------------------------------------------------------------
@@ -371,6 +456,92 @@ class CollectBaselineStep:
 
     name = "COLLECT_BASELINE"
 
+    @staticmethod
+    def _build_l2_component_inventory(
+        *,
+        ctx: SliceContext,
+        slice_root: Path,
+        files: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Build L2 component inventory and pin registry summary for baseline evidence."""
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else slice_root
+        manifest_components = _load_run_component_manifest(workspace, ctx.run_id)
+        pin_snapshot = _load_pin_registry_snapshot(slice_root)
+        file_set = {str(item.get("path", "")).strip() for item in files if item.get("path")}
+
+        inventory: list[dict[str, Any]] = []
+        for comp in manifest_components:
+            component_id = str(comp.get("component_id", "")).strip()
+            if not component_id:
+                continue
+            component_files = [
+                str(path).strip()
+                for path in comp.get("files", [])
+                if isinstance(path, str) and str(path).strip()
+            ]
+            in_scope = False
+            if component_files:
+                in_scope = bool(set(component_files) & file_set)
+            if not in_scope and ctx.slice_id:
+                normalized_slice = ctx.slice_id.removeprefix("arch-").lower()
+                in_scope = component_id.lower() in normalized_slice
+            if not in_scope:
+                continue
+            inventory.append(
+                {
+                    "component_id": component_id,
+                    "files": sorted(set(component_files)),
+                    "pins_referenced": sorted(
+                        {
+                            str(pin).strip()
+                            for pin in comp.get("pins_consumed", [])
+                            if isinstance(pin, str) and str(pin).strip()
+                        }
+                    ),
+                    "entrypoints": sorted(
+                        {
+                            str(ep).strip()
+                            for ep in comp.get("owned_entrypoints", [])
+                            if isinstance(ep, str) and str(ep).strip()
+                        }
+                    ),
+                }
+            )
+
+        fallback_component = (
+            ctx.slice_id.removeprefix("arch-") if ctx.slice_id.startswith("arch-") else ""
+        )
+        if not inventory and file_set:
+            inventory.append(
+                {
+                    "component_id": fallback_component or ctx.slice_id or "slice",
+                    "files": sorted(file_set),
+                    "pins_referenced": [],
+                    "entrypoints": [],
+                }
+            )
+
+        pin_ids = []
+        edge_targets = []
+        for pin in pin_snapshot.get("pins", []):
+            pin_id = str(pin.get("pin_func_id") or pin.get("pin_id") or pin.get("id") or "").strip()
+            if pin_id:
+                pin_ids.append(pin_id)
+        for edge in pin_snapshot.get("edges", []):
+            target = str(edge.get("arch_location") or edge.get("dst") or "").strip()
+            if target:
+                edge_targets.append(target)
+
+        pin_registry_summary = {
+            "path": pin_snapshot.get("path", ""),
+            "exists": bool(pin_snapshot.get("exists", False)),
+            "pin_count": len(pin_snapshot.get("pins", [])),
+            "edge_count": len(pin_snapshot.get("edges", [])),
+            "pin_ids": sorted(set(pin_ids))[:200],
+            "edge_targets": sorted(set(edge_targets))[:200],
+        }
+        return inventory, pin_registry_summary
+
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Collect file hashes and diff from previous iteration."""
         from spec_manager.orchestration.evidence import DiffRef, ManifestRef
@@ -438,9 +609,20 @@ class CollectBaselineStep:
         if not previous_manifest:
             changed_files = [item.get("path", "") for item in files if item.get("path")]
 
+        component_inventory: list[dict[str, Any]] = []
+        pin_registry_summary: dict[str, Any] = {}
+        if ctx.layer == "l2":
+            component_inventory, pin_registry_summary = self._build_l2_component_inventory(
+                ctx=ctx,
+                slice_root=slice_root,
+                files=files,
+            )
+
         bundle.manifest = ManifestRef(
             path="manifest.json",
             files=files,
+            component_inventory=component_inventory,
+            pin_registry_summary=pin_registry_summary,
         )
         bundle.diff = DiffRef(
             path="diff.json",
@@ -456,6 +638,8 @@ class CollectBaselineStep:
             "manifest.json",
             {
                 "files": bundle.manifest.files,
+                "component_inventory": bundle.manifest.component_inventory,
+                "pin_registry_summary": bundle.manifest.pin_registry_summary,
                 "slice_patterns": bundle.manifest.slice_patterns,
                 "generated_files": bundle.manifest.generated_files,
             },
@@ -735,6 +919,130 @@ class GapExplorationStep:
                 logger.debug("Failed reading architecture file %s: %s", candidate, exc)
         return artifacts
 
+    @staticmethod
+    def _l2_gap(
+        *,
+        kind: str,
+        component_id: str,
+        file_path: str,
+        anchor: str,
+        description: str,
+        expected: str,
+        severity: str = "MAJOR",
+        required_change_type: str = "wiring_only",
+    ) -> dict[str, Any]:
+        """Build a normalized L2 architecture continuity gap record."""
+        return _normalize_gap_record(
+            {
+                "kind": kind,
+                "component_id": component_id,
+                "file": file_path,
+                "anchor": anchor,
+                "description": description,
+                "expected": expected,
+                "severity": severity,
+                "required_change_type": required_change_type,
+                "span": {},
+                "location": {"file": file_path},
+            }
+        )
+
+    @staticmethod
+    def _topology_node_id(node: dict[str, Any]) -> str:
+        return str(node.get("id") or node.get("name") or node.get("symbol") or "").strip()
+
+    @staticmethod
+    def _topology_edge_endpoints(edge: dict[str, Any]) -> tuple[str, str]:
+        source = str(edge.get("source") or edge.get("src") or "").strip()
+        target = str(edge.get("target") or edge.get("dst") or "").strip()
+        return source, target
+
+    @staticmethod
+    def _load_previous_promoted_evidence(
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        *,
+        slice_root: Path,
+    ) -> dict[str, Any]:
+        """Load promoted pin/edge evidence from the previous iteration or pin registry."""
+        pins: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+
+        if bundle.iteration > 1:
+            evidence_root = _evidence_base_path(
+                slice_root=ctx.slice_root,
+                workspace_root=ctx.workspace_root,
+            )
+            prev_bundle_path = _bundle_json_path(
+                evidence_root,
+                bundle.run_id,
+                bundle.slice_id,
+                bundle.iteration - 1,
+            )
+            if prev_bundle_path.exists():
+                try:
+                    prev = EvidenceBundle.load(prev_bundle_path)
+                    prev_dir = prev.iter_dir(evidence_root)
+                    if prev.pins_snapshot.path:
+                        payload = _read_json_file(prev_dir / prev.pins_snapshot.path)
+                        if isinstance(payload, dict):
+                            pins = [
+                                item for item in payload.get("pins", []) if isinstance(item, dict)
+                            ]
+                    if prev.graph_snapshot.path:
+                        payload = _read_json_file(prev_dir / prev.graph_snapshot.path)
+                        if isinstance(payload, dict):
+                            edges = [
+                                item for item in payload.get("edges", []) if isinstance(item, dict)
+                            ]
+                except Exception as exc:
+                    logger.debug("Failed loading previous promoted evidence: %s", exc)
+
+        pin_registry_payload = _load_pin_registry_snapshot(slice_root)
+        if not pins:
+            pins = [item for item in pin_registry_payload.get("pins", []) if isinstance(item, dict)]
+        if not edges:
+            edges = [
+                item for item in pin_registry_payload.get("edges", []) if isinstance(item, dict)
+            ]
+
+        return {
+            "pins": pins,
+            "edges": edges,
+            "pin_registry": pin_registry_payload,
+        }
+
+    @classmethod
+    def _entrypoint_present(
+        cls,
+        *,
+        entrypoint: str,
+        topology_nodes: list[dict[str, Any]],
+        topology_edges: list[dict[str, Any]],
+        arch_artifacts: list[dict[str, str]],
+    ) -> bool:
+        """Heuristic check for whether an expected entrypoint appears in realized topology."""
+        needle = entrypoint.strip().lower()
+        if not needle:
+            return True
+
+        for node in topology_nodes:
+            node_id = cls._topology_node_id(node).lower()
+            if needle == node_id or needle in node_id:
+                return True
+
+        for edge in topology_edges:
+            src, dst = cls._topology_edge_endpoints(edge)
+            if needle in src.lower() or needle in dst.lower():
+                return True
+
+        for artifact in arch_artifacts:
+            content = str(artifact.get("content", "")).lower()
+            if needle in content:
+                return True
+
+        return False
+
     def _explore_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L1: detect executable gaps for the slice and update queue view."""
         from spec_manager.orchestration.evidence import GapReportRef
@@ -804,9 +1112,7 @@ class GapExplorationStep:
         return StepResult(status="OK")
 
     def _explore_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L2: architecture continuity gaps via manifest + topology analysis."""
-        import json
-
+        """L2: architecture continuity gaps using authority artifacts + topology deltas."""
         from spec_manager.orchestration.evidence import GapReportRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -823,187 +1129,311 @@ class GapExplorationStep:
             )
             return StepResult(status="OK")
 
+        component_manifest = _load_run_component_manifest(workspace, bundle.run_id)
+        promoted = self._load_previous_promoted_evidence(ctx, bundle, slice_root=slice_root)
+        promoted_pins = [item for item in promoted.get("pins", []) if isinstance(item, dict)]
+        promoted_edges = [item for item in promoted.get("edges", []) if isinstance(item, dict)]
+
         discovery = self._discover_l2_topology(ctx, bundle)
-        arch_files_raw = discovery.get("arch_files", [])
-        topology_nodes_raw = discovery.get("nodes", [])
-        topology_edges_raw = discovery.get("edges", [])
-        discovery_issues_raw = discovery.get("discovery_issues", [])
-        arch_files = [str(path) for path in arch_files_raw if isinstance(path, str)]
-        topology_nodes = [n for n in topology_nodes_raw if isinstance(n, dict)]
-        topology_edges = [e for e in topology_edges_raw if isinstance(e, dict)]
-        discovery_issues = [issue for issue in discovery_issues_raw if isinstance(issue, str)]
+        arch_files = [
+            str(path)
+            for path in discovery.get("arch_files", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        topology_nodes = [n for n in discovery.get("nodes", []) if isinstance(n, dict)]
+        topology_edges = [e for e in discovery.get("edges", []) if isinstance(e, dict)]
+        discovery_issues = [
+            issue for issue in discovery.get("discovery_issues", []) if isinstance(issue, str)
+        ]
         arch_artifacts = self._load_arch_artifacts(workspace, arch_files)
 
-        # Also include any open demotion tickets targeting L2 for this run.
-        open_tickets: list[str] = []
-        demotions_dir = workspace / ".pdd_runs" / bundle.run_id / "demotions" / "tickets"
-        if demotions_dir.exists():
-            for ticket_file in sorted(demotions_dir.glob("*.json")):
-                try:
-                    payload = json.loads(ticket_file.read_text(encoding="utf-8"))
-                    ticket = payload.get("ticket", payload)
-                    if ticket.get("target_layer") == "L2":
-                        open_tickets.append(ticket.get("diagnosis", ""))
-                except Exception as exc:
-                    logger.debug("Failed to read ticket file %s: %s", ticket_file, exc)
-                    continue
-
-        # Pattern library for review context
-        from spec_manager.orchestration.pattern_library import PatternLibrary
-
-        pattern_lib = PatternLibrary(library_path=self._pattern_library_path(workspace))
-        strategy_candidates_recorded = 0
-
-        all_gaps: list[dict[str, Any]] = []
-        if not arch_files:
-            all_gaps.append(
-                {
-                    "kind": "l2_manifest_missing",
-                    "file": "",
-                    "description": (
-                        "No L2 architecture manifest files were discovered "
-                        "(component_manifest/pins_registry/entrypoints/wiring)."
+        gaps: list[dict[str, Any]] = []
+        if not component_manifest:
+            gaps.append(
+                self._l2_gap(
+                    kind="l2_component_manifest_missing",
+                    component_id="",
+                    file_path=str(_run_component_manifest_path(workspace, bundle.run_id)),
+                    anchor="component_manifest",
+                    description="Component manifest missing for L2 continuity checks.",
+                    expected=(
+                        "Run-scoped component manifest with declared components "
+                        "and expected wiring."
                     ),
-                    "severity": "BLOCKER",
-                    "required_change_type": "wiring_only",
-                    "span": {},
-                    "location": {"file": ""},
-                }
+                    severity="BLOCKER",
+                )
             )
-        if not topology_nodes and not topology_edges:
-            all_gaps.append(
-                {
-                    "kind": "l2_topology_unobserved",
-                    "file": "",
-                    "description": (
-                        "L2 topology graph is empty; pin consumption and component coverage "
-                        "cannot be evaluated."
+        if not promoted_pins and not promoted_edges:
+            gaps.append(
+                self._l2_gap(
+                    kind="l2_promoted_evidence_missing",
+                    component_id="",
+                    file_path=str(slice_root / ".spec" / "pin_registry.json"),
+                    anchor="promoted_pin_edge_evidence",
+                    description="No promoted pins/edges were available in scope for this slice.",
+                    expected=(
+                        "Promoted pins and edges should be loaded before L2 "
+                        "continuity analysis."
                     ),
-                    "severity": "BLOCKER",
-                    "required_change_type": "wiring_only",
-                    "span": {},
-                    "location": {"file": ""},
-                }
+                    severity="BLOCKER",
+                )
             )
+
         for issue in discovery_issues:
-            all_gaps.append(
-                {
-                    "kind": "l2_discovery_issue",
-                    "file": "",
-                    "description": issue,
-                    "severity": "BLOCKER",
-                    "required_change_type": "wiring_only",
-                    "span": {},
-                    "location": {"file": ""},
-                }
-            )
-
-        topology_payload = {
-            "discovery_status": discovery.get("discovery_status", ""),
-            "arch_files": arch_files,
-            "nodes": topology_nodes[:150],
-            "edges": topology_edges[:300],
-            "node_count": len(topology_nodes),
-            "edge_count": len(topology_edges),
-            "discovery_issues": discovery_issues,
-        }
-
-        ticket_section = ""
-        if open_tickets:
-            ticket_section = "\n\n## OPEN DEMOTION TICKETS\n" + "\n".join(
-                f"- {t}" for t in open_tickets[:10]
-            )
-
-        for reviewer in L2_REVIEW_PACK:
-            pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
-            reviewer_prompt = (
-                f"## TASK\n"
-                f"Review this L2 architecture slice for {reviewer.dimension} findings.\n"
-                f"Objective: {reviewer.objective}\n"
-                f"Detect unconsumed pins, missing wiring/components, missing integration points, "
-                f"architecture-boundary violations, and governance gaps.\n\n"
-                f"{pattern_section}\n\n"
-                f"## ARCHITECTURE MANIFESTS\n"
-                f"{json.dumps(arch_artifacts, indent=2)}\n\n"
-                f"## TOPOLOGY GRAPH\n"
-                f"{json.dumps(topology_payload, indent=2)}\n"
-                f"{ticket_section}\n"
-                f'Return JSON: {{"findings": [...]}}.\n'
-            )
-
-            try:
-                from spec_manager.core.agent_utils import run_agent
-                from spec_manager.core.json_extraction import _extract_json_payload
-                from spec_manager.refinement.formats import _strip_code_fences
-
-                output = run_agent(
-                    agent_name=reviewer.agent_name,
-                    prompt=reviewer_prompt,
-                    workspace=workspace,
+            gaps.append(
+                self._l2_gap(
+                    kind="l2_discovery_issue",
+                    component_id="",
+                    file_path="",
+                    anchor="topology_discovery",
+                    description=issue,
+                    expected=(
+                        "Topology discovery should produce architecture files "
+                        "plus non-empty nodes/edges."
+                    ),
+                    severity="BLOCKER",
                 )
-                cleaned = _strip_code_fences(output)
-                data = json.loads(_extract_json_payload(cleaned))
-                findings = [f for f in data.get("findings", []) if isinstance(f, dict)]
-                strategy_candidates_recorded += self._record_strategy_candidates(
-                    pattern_lib,
-                    dimension=reviewer.dimension,
-                    findings=findings,
-                )
+            )
 
-                for finding in findings:
-                    location = finding.get("location", {}) or {}
-                    span = _location_span(
-                        start_line=location.get("start_line"),
-                        end_line=location.get("end_line"),
-                        start_col=location.get("start_col"),
-                        end_col=location.get("end_col"),
+        topology_node_ids: set[str] = set()
+        topology_component_ids: set[str] = set()
+        topology_pin_refs: set[str] = set()
+        for node in topology_nodes:
+            node_id = self._topology_node_id(node)
+            if node_id:
+                topology_node_ids.add(node_id)
+            node_type = str(node.get("type") or node.get("kind") or "").strip().lower()
+            if node_type == "component" and node_id:
+                topology_component_ids.add(node_id)
+            if node_type == "pin" and node_id:
+                topology_pin_refs.add(node_id)
+
+        for edge in topology_edges:
+            src, dst = self._topology_edge_endpoints(edge)
+            signal = str(edge.get("signal_type") or edge.get("type") or "").upper()
+            if src:
+                topology_pin_refs.add(src)
+            if dst:
+                topology_pin_refs.add(dst)
+            if signal == "EVENT" and (not src or not dst):
+                gaps.append(
+                    self._l2_gap(
+                        kind="l2_missing_event_handler",
+                        component_id="",
+                        file_path=str(edge.get("arch_file_path") or edge.get("file") or ""),
+                        anchor=str(edge.get("edge_id") or "event_edge"),
+                        description="Event wiring edge is missing source or destination endpoint.",
+                        expected="Event edges should connect a producer and a handler endpoint.",
                     )
-                    file_path = location.get("file", "")
-                    all_gaps.append(
-                        {
-                            "kind": f"l2_{reviewer.dimension.lower()}_finding",
-                            "reviewer": reviewer.reviewer_id,
-                            "agent_name": reviewer.agent_name,
-                            "dimension": reviewer.dimension,
-                            "component_id": location.get("symbol", ""),
-                            "file": file_path,
-                            "description": finding.get("evidence", finding.get("description", "")),
-                            "severity": finding.get("severity", "MINOR"),
-                            "required_change_type": finding.get(
-                                "required_change_type", reviewer.default_required_change_type
+                )
+
+        manifest_component_ids: set[str] = set()
+        manifest_files: set[str] = set()
+        component_for_pin: dict[str, str] = {}
+        for component in component_manifest:
+            component_id = str(component.get("component_id", "")).strip()
+            if not component_id:
+                continue
+            manifest_component_ids.add(component_id)
+
+            expected_files = [
+                str(path).strip()
+                for path in component.get("files", [])
+                if isinstance(path, str) and str(path).strip()
+            ]
+            manifest_files.update(expected_files)
+            for rel_path in expected_files:
+                if not (slice_root / rel_path).exists():
+                    gaps.append(
+                        self._l2_gap(
+                            kind="l2_missing_component_file",
+                            component_id=component_id,
+                            file_path=rel_path,
+                            anchor=f"component_manifest:{component_id}",
+                            description=f"Manifest-declared component file is missing: {rel_path}",
+                            expected=(
+                                "All component manifest files should exist in the "
+                                "slice baseline."
                             ),
-                            "suggested_fix": finding.get("suggested_fix", ""),
-                            "span": span,
-                            "location": {"file": file_path, **span},
-                        }
+                            severity="BLOCKER",
+                        )
                     )
-            except Exception as exc:
-                logger.warning("L2 reviewer %s failed: %s", reviewer.reviewer_id, exc)
-                all_gaps.append(
-                    {
-                        "kind": "l2_reviewer_execution_failure",
-                        "reviewer": reviewer.reviewer_id,
-                        "agent_name": reviewer.agent_name,
-                        "dimension": reviewer.dimension,
-                        "file": "",
-                        "description": (
-                            f"Reviewer execution failed for {reviewer.reviewer_id}: {exc}"
-                        ),
-                        "severity": "BLOCKER",
-                        "required_change_type": reviewer.default_required_change_type,
-                        "span": {},
-                        "location": {"file": ""},
-                    }
+
+            if (topology_nodes or topology_edges) and (
+                component_id not in topology_component_ids
+                and component_id not in topology_node_ids
+            ):
+                gaps.append(
+                    self._l2_gap(
+                        kind="l2_missing_component_node",
+                        component_id=component_id,
+                        file_path=expected_files[0] if expected_files else "",
+                        anchor=f"component:{component_id}",
+                        description=(
+                                "Manifest component is not represented in realized "
+                                "topology."
+                            ),
+                        expected=(
+                                "Every manifest component should appear in topology nodes/edges."
+                            ),
+                        severity="MAJOR",
+                    )
                 )
 
-        if strategy_candidates_recorded:
-            try:
-                pattern_lib.save()
-            except Exception as exc:
-                logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
+            for pin_ref in component.get("pins_consumed", []):
+                if not isinstance(pin_ref, str):
+                    continue
+                pin_id = pin_ref.strip()
+                if pin_id:
+                    component_for_pin.setdefault(pin_id, component_id)
 
-        bundle.gaps = GapReportRef(path="gaps.json", open_gaps=all_gaps)
+            for entrypoint in component.get("owned_entrypoints", []):
+                if not isinstance(entrypoint, str):
+                    continue
+                entrypoint_id = entrypoint.strip()
+                if not entrypoint_id:
+                    continue
+                if not self._entrypoint_present(
+                    entrypoint=entrypoint_id,
+                    topology_nodes=topology_nodes,
+                    topology_edges=topology_edges,
+                    arch_artifacts=arch_artifacts,
+                ):
+                    gaps.append(
+                        self._l2_gap(
+                            kind="l2_missing_handler_registration",
+                            component_id=component_id,
+                            file_path=expected_files[0] if expected_files else "",
+                            anchor=entrypoint_id,
+                            description=(
+                                "Expected entrypoint/handler is missing from realized "
+                                "architecture."
+                            ),
+                            expected=(
+                                "Manifest-owned entrypoints should be present in "
+                                "topology and wiring."
+                            ),
+                        )
+                    )
 
+        promoted_pin_ids: set[str] = set()
+        for pin in promoted_pins:
+            pin_id = str(pin.get("pin_func_id") or pin.get("pin_id") or pin.get("id") or "").strip()
+            if pin_id:
+                promoted_pin_ids.add(pin_id)
+        for edge in promoted_edges:
+            pin_id = str(edge.get("pin_func_id") or edge.get("src") or "").strip()
+            if pin_id:
+                promoted_pin_ids.add(pin_id)
+            arch_target = str(edge.get("arch_location") or edge.get("dst") or "").strip()
+            if arch_target:
+                topology_pin_refs.add(arch_target)
+
+        consumed_pin_ids = {
+            pin_id
+            for pin_id in promoted_pin_ids
+            if any(pin_id == ref or pin_id in ref for ref in topology_pin_refs)
+        }
+        for pin_id in sorted(promoted_pin_ids - consumed_pin_ids):
+            component_id = component_for_pin.get(pin_id, "")
+            gaps.append(
+                self._l2_gap(
+                    kind="l2_unconsumed_pin",
+                    component_id=component_id,
+                    file_path="",
+                    anchor=pin_id,
+                    description=f"Promoted pin is not consumed by realized architecture: {pin_id}",
+                    expected=(
+                        "Every promoted pin should appear in topology wiring or "
+                        "declared component consumption."
+                    ),
+                    severity="MAJOR",
+                )
+            )
+
+        if manifest_component_ids:
+            unexpected_components = sorted(
+                cid for cid in topology_component_ids if cid and cid not in manifest_component_ids
+            )
+            for component_id in unexpected_components:
+                gaps.append(
+                    self._l2_gap(
+                        kind="l2_manifest_drift_component",
+                        component_id=component_id,
+                        file_path="",
+                        anchor=f"topology_component:{component_id}",
+                        description="Topology contains a component not declared in the manifest.",
+                        expected=(
+                            "Realized topology components should match component "
+                            "manifest declarations."
+                        ),
+                        severity="MAJOR",
+                    )
+                )
+
+        for artifact in arch_artifacts:
+            rel_path = str(artifact.get("path", "")).strip()
+            if rel_path and manifest_files and rel_path not in manifest_files:
+                gaps.append(
+                    self._l2_gap(
+                        kind="l2_manifest_drift_file",
+                        component_id="",
+                        file_path=rel_path,
+                        anchor="manifest_drift:file",
+                        description=(
+                            "Architecture file exists outside declared component "
+                            "manifest ownership."
+                        ),
+                        expected=(
+                            "Architecture wiring files should be traceable to "
+                            "declared manifest components."
+                        ),
+                        severity="MINOR",
+                    )
+                )
+
+            content = str(artifact.get("content", ""))
+            lowered = content.lower()
+            logic_tokens = (" while ", " for ", " if ", " try:", " except ", " return ")
+            if any(token in f" {lowered} " for token in logic_tokens):
+                gaps.append(
+                    self._l2_gap(
+                        kind="l2_logic_like_architecture_code",
+                        component_id="",
+                        file_path=rel_path,
+                        anchor="architecture_pre_gate_warning",
+                        description=(
+                            "Architecture artifact appears to contain logic-like flow control; "
+                            "review for potential boundary violation."
+                        ),
+                        expected=(
+                            "L2 architectural files should focus on wiring and "
+                            "orchestration boundaries."
+                        ),
+                        severity="MINOR",
+                    )
+                )
+
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for gap in gaps:
+            fingerprint = json.dumps(
+                {
+                    "kind": gap.get("kind", ""),
+                    "component_id": gap.get("component_id", ""),
+                    "file": gap.get("file", ""),
+                    "anchor": gap.get("anchor", ""),
+                    "description": gap.get("description", ""),
+                    "expected": gap.get("expected", ""),
+                },
+                sort_keys=True,
+            )
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            deduped.append(gap)
+
+        bundle.gaps = GapReportRef(path="gaps.json", open_gaps=deduped)
         return StepResult(status="OK")
 
     def _explore_l3(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
@@ -1302,11 +1732,16 @@ class PlanStep:
         intentions = []
         for gap in gaps:
             component_id = gap.get("component_id", "")
+            target_files = gap.get("target_files", [])
+            if not isinstance(target_files, list):
+                target_files = []
+            if not target_files and gap.get("file"):
+                target_files = [str(gap.get("file", ""))]
             intentions.append(
                 {
                     "gap_id": gap.get("file", component_id or "unknown"),
                     "component_id": component_id,
-                    "target_file": gap.get("file", ""),
+                    "target_files": [str(path) for path in target_files if str(path).strip()],
                     "approach": f"Wire: {gap.get('description', '')}",
                     "acceptance_criteria": "Component assembled, pins connected, no inlined logic",
                     "layer_constraint": "wiring_only",
@@ -1453,6 +1888,95 @@ class ImplementStep:
         return merged
 
     @staticmethod
+    def _snapshot_text_files(slice_root: Path) -> dict[str, str]:
+        """Capture a best-effort UTF-8 snapshot of slice files."""
+        snapshot: dict[str, str] = {}
+        for file_path in sorted(slice_root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            if any(part.startswith(".") for part in file_path.parts):
+                continue
+            rel = _safe_rel(file_path, slice_root)
+            try:
+                snapshot[rel] = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        return snapshot
+
+    @staticmethod
+    def _collect_patch_targets(
+        *,
+        edits: list[dict[str, Any]],
+        intentions: list[dict[str, Any]],
+    ) -> set[str]:
+        """Collect file paths likely touched by implementation."""
+        targets: set[str] = set()
+        for edit in edits:
+            if not isinstance(edit, dict):
+                continue
+            rel = str(edit.get("file", "")).strip()
+            if rel:
+                targets.add(rel)
+        for intention in intentions:
+            if not isinstance(intention, dict):
+                continue
+            target_file = str(intention.get("target_file", "")).strip()
+            if target_file:
+                targets.add(target_file)
+            raw_target_files = intention.get("target_files", [])
+            if isinstance(raw_target_files, list):
+                for rel in raw_target_files:
+                    rel_str = str(rel).strip()
+                    if rel_str:
+                        targets.add(rel_str)
+        return targets
+
+    @staticmethod
+    def _write_patch_artifact(
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        before_snapshot: dict[str, str],
+        after_snapshot: dict[str, str],
+        target_paths: set[str],
+    ) -> str:
+        """Write a unified diff artifact and return relative artifact path."""
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+
+        candidate_paths = set(before_snapshot.keys()) | set(after_snapshot.keys())
+        if target_paths:
+            candidate_paths = {path for path in candidate_paths if path in target_paths}
+
+        patch_chunks: list[str] = []
+        for rel_path in sorted(candidate_paths):
+            before_text = before_snapshot.get(rel_path)
+            after_text = after_snapshot.get(rel_path)
+            if before_text == after_text:
+                continue
+            before_lines = (before_text or "").splitlines(keepends=True)
+            after_lines = (after_text or "").splitlines(keepends=True)
+            diff_lines = list(
+                unified_diff(
+                    before_lines,
+                    after_lines,
+                    fromfile=f"a/{rel_path}",
+                    tofile=f"b/{rel_path}",
+                )
+            )
+            if diff_lines:
+                patch_chunks.extend(diff_lines)
+
+        patch_text = "".join(patch_chunks)
+        patch_name = "implementation.patch.diff"
+        (iteration_dir / patch_name).write_text(patch_text, encoding="utf-8")
+        return patch_name
+
+    @staticmethod
     def _gaps_from_under_spec_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Project under-spec events into gap inventory records."""
         gaps: list[dict[str, Any]] = []
@@ -1513,6 +2037,8 @@ class ImplementStep:
             "manifest.json",
             {
                 "files": bundle.manifest.files,
+                "component_inventory": bundle.manifest.component_inventory,
+                "pin_registry_summary": bundle.manifest.pin_registry_summary,
                 "slice_patterns": bundle.manifest.slice_patterns,
                 "generated_files": bundle.manifest.generated_files,
             },
@@ -1715,6 +2241,7 @@ class ImplementStep:
         from spec_manager.orchestration.evidence import ImplementationRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        before_snapshot = self._snapshot_text_files(slice_root)
 
         # Gather current code for context
         code_summaries: list[str] = []
@@ -1769,8 +2296,22 @@ class ImplementStep:
             gap_inventory.extend(
                 self._gaps_from_under_spec_events(data.get("under_spec_events", []))
             )
+            applied_edits = [edit for edit in data.get("edits", []) if isinstance(edit, dict)]
+            target_paths = self._collect_patch_targets(
+                edits=applied_edits,
+                intentions=bundle.plan.intentions,
+            )
+            after_snapshot = self._snapshot_text_files(slice_root)
+            patch_path = self._write_patch_artifact(
+                ctx=ctx,
+                bundle=bundle,
+                before_snapshot=before_snapshot,
+                after_snapshot=after_snapshot,
+                target_paths=target_paths,
+            )
             bundle.implementation = ImplementationRef(
-                applied_edits=data.get("edits", []),
+                patch_path=patch_path,
+                applied_edits=applied_edits,
                 gap_inventory=gap_inventory,
                 pin_proposals=data.get("pin_proposals", []),
                 edge_proposals=data.get("edge_proposals", []),
@@ -2042,7 +2583,7 @@ class AnalyzeStep:
     """Analyze slice after implementation — layer-aware.
 
     - L1: P1 + P2 (parse_file adapters + analyze_source cache)
-    - L2: Same deterministic analyzer pipeline as L1, scoped by diff
+    - L2: Build architecture graph cache (components/entrypoints/pins + wiring edges)
     - L3: Compute diff summary + structural metrics (size, duplication
       hotspots, refactor impact candidates)
     """
@@ -2191,8 +2732,238 @@ class AnalyzeStep:
     def _analyze_l2(
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
     ) -> StepResult:
-        """L2: reuse deterministic source analysis pipeline (P1/P2 adapters)."""
-        return self._analyze_l1(ctx, bundle, slice_root)
+        """L2: build architecture graph cache for promote/verify continuity checks."""
+        from types import SimpleNamespace
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+
+        discovery: dict[str, Any] = {}
+        try:
+            from spec_manager.planner.layers.l2 import L2Planner
+
+            discovery = L2Planner().discover(
+                SimpleNamespace(workspace_root=str(workspace), slice_root=ctx.slice_root)
+            )
+        except Exception as exc:
+            logger.debug("L2 analyze discovery fallback failed: %s", exc)
+            discovery = {"nodes": [], "edges": [], "arch_files": [], "discovery_issues": [str(exc)]}
+
+        topology_nodes = [n for n in discovery.get("nodes", []) if isinstance(n, dict)]
+        topology_edges = [e for e in discovery.get("edges", []) if isinstance(e, dict)]
+        arch_files = [
+            str(path).strip()
+            for path in discovery.get("arch_files", [])
+            if isinstance(path, str) and str(path).strip()
+        ]
+
+        component_manifest = _load_run_component_manifest(workspace, bundle.run_id)
+        pin_registry = _load_pin_registry_snapshot(slice_root)
+        pin_functions = [item for item in pin_registry.get("pins", []) if isinstance(item, dict)]
+        import_edges = [item for item in pin_registry.get("edges", []) if isinstance(item, dict)]
+
+        graph_nodes: list[dict[str, Any]] = []
+        graph_edges: list[dict[str, Any]] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        def add_node(
+            *, node_id: str, node_type: str, file_path: str = "", metadata: Any = None
+        ) -> None:
+            normalized_id = node_id.strip()
+            if not normalized_id:
+                return
+            key = f"{node_type}:{normalized_id}"
+            if key in seen_nodes:
+                return
+            seen_nodes.add(key)
+            graph_nodes.append(
+                {
+                    "id": normalized_id,
+                    "type": node_type,
+                    "file": file_path,
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                }
+            )
+
+        def add_edge(
+            *,
+            source: str,
+            target: str,
+            edge_type: str,
+            file_path: str = "",
+            metadata: Any = None,
+        ) -> None:
+            src = source.strip()
+            dst = target.strip()
+            if not src or not dst:
+                return
+            edge_kind = edge_type.strip().lower() or "reference"
+            key = f"{src}|{edge_kind}|{dst}|{file_path}"
+            if key in seen_edges:
+                return
+            seen_edges.add(key)
+            graph_edges.append(
+                {
+                    "source": src,
+                    "target": dst,
+                    "type": edge_kind,
+                    "file": file_path,
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                }
+            )
+
+        for node in topology_nodes:
+            node_id = GapExplorationStep._topology_node_id(node)
+            node_type = str(node.get("type") or node.get("kind") or "unknown").strip().lower()
+            file_path = str(node.get("file") or node.get("arch_file_path") or "").strip()
+            if node_type in {"component", "pin", "handler", "route", "edge"}:
+                add_node(node_id=node_id, node_type=node_type, file_path=file_path, metadata=node)
+
+        for edge in topology_edges:
+            src, dst = GapExplorationStep._topology_edge_endpoints(edge)
+            edge_type = str(edge.get("type") or edge.get("signal_type") or "wired_to")
+            file_path = str(edge.get("file") or edge.get("arch_file_path") or "").strip()
+            add_edge(
+                source=src, target=dst, edge_type=edge_type, file_path=file_path, metadata=edge
+            )
+
+        for component in component_manifest:
+            component_id = str(component.get("component_id", "")).strip()
+            if not component_id:
+                continue
+            component_files = [
+                str(path).strip()
+                for path in component.get("files", [])
+                if isinstance(path, str) and str(path).strip()
+            ]
+            primary_file = component_files[0] if component_files else ""
+            add_node(
+                node_id=component_id,
+                node_type="component",
+                file_path=primary_file,
+                metadata={"files": component_files},
+            )
+            for entrypoint in component.get("owned_entrypoints", []):
+                if not isinstance(entrypoint, str):
+                    continue
+                entrypoint_id = entrypoint.strip()
+                if not entrypoint_id:
+                    continue
+                add_node(node_id=entrypoint_id, node_type="entrypoint", file_path=primary_file)
+                add_edge(
+                    source=entrypoint_id,
+                    target=component_id,
+                    edge_type="declared_in",
+                    file_path=primary_file,
+                )
+            for upstream in component.get("upstream", []):
+                if isinstance(upstream, str) and upstream.strip():
+                    add_edge(
+                        source=upstream,
+                        target=component_id,
+                        edge_type="dependency",
+                        file_path=primary_file,
+                    )
+            for downstream in component.get("downstream", []):
+                if isinstance(downstream, str) and downstream.strip():
+                    add_edge(
+                        source=component_id,
+                        target=downstream,
+                        edge_type="dependency",
+                        file_path=primary_file,
+                    )
+
+        for pin in pin_functions:
+            pin_id = str(pin.get("pin_func_id") or pin.get("pin_id") or pin.get("id") or "").strip()
+            file_path = str(pin.get("file_path") or pin.get("file") or "").strip()
+            add_node(node_id=pin_id, node_type="pin", file_path=file_path, metadata=pin)
+
+        for edge in import_edges:
+            src = str(edge.get("pin_func_id") or edge.get("src") or "").strip()
+            dst = str(edge.get("arch_location") or edge.get("dst") or "").strip()
+            file_path = str(edge.get("arch_file_path") or edge.get("file") or "").strip()
+            edge_type = str(edge.get("projection_type") or edge.get("signal_type") or "wired_to")
+            add_edge(
+                source=src, target=dst, edge_type=edge_type, file_path=file_path, metadata=edge
+            )
+
+        if bundle.manifest.component_inventory:
+            for component in bundle.manifest.component_inventory:
+                if not isinstance(component, dict):
+                    continue
+                component_id = str(component.get("component_id", "")).strip()
+                component_files = [
+                    str(path).strip()
+                    for path in component.get("files", [])
+                    if isinstance(path, str) and str(path).strip()
+                ]
+                add_node(
+                    node_id=component_id,
+                    node_type="component",
+                    file_path=component_files[0] if component_files else "",
+                    metadata={"source": "manifest.component_inventory"},
+                )
+
+        node_type_counts: dict[str, int] = {}
+        for node in graph_nodes:
+            node_type = str(node.get("type", "unknown"))
+            node_type_counts[node_type] = node_type_counts.get(node_type, 0) + 1
+
+        edge_type_counts: dict[str, int] = {}
+        for edge in graph_edges:
+            edge_type = str(edge.get("type", "reference"))
+            edge_type_counts[edge_type] = edge_type_counts.get(edge_type, 0) + 1
+
+        graph_payload = {
+            "schema_version": "1",
+            "slice_id": ctx.slice_id,
+            "run_id": ctx.run_id,
+            "layer": ctx.layer,
+            "arch_files": sorted(set(arch_files)),
+            "nodes": graph_nodes,
+            "edges": graph_edges,
+            "stats": {
+                "node_count": len(graph_nodes),
+                "edge_count": len(graph_edges),
+                "node_type_counts": node_type_counts,
+                "edge_type_counts": edge_type_counts,
+                "component_count": len(
+                    [node for node in graph_nodes if str(node.get("type")) == "component"]
+                ),
+                "pin_count": len([node for node in graph_nodes if str(node.get("type")) == "pin"]),
+                "entrypoint_count": len(
+                    [node for node in graph_nodes if str(node.get("type")) == "entrypoint"]
+                ),
+                "discovery_issues": [
+                    issue
+                    for issue in discovery.get("discovery_issues", [])
+                    if isinstance(issue, str)
+                ],
+            },
+        }
+
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        graph_path = _write_iteration_json(
+            bundle, evidence_root, "architecture.graph.json", graph_payload
+        )
+        graph_payload_json = json.dumps(graph_payload, indent=2)
+        bundle.source_index.entries = [
+            {
+                "path": graph_path,
+                "content_hash": _hash_text(graph_payload_json),
+                "analysis": {
+                    "type": "l2_architecture_graph",
+                    "graph_path": graph_path,
+                    "stats": graph_payload["stats"],
+                    "arch_files": graph_payload["arch_files"],
+                },
+            }
+        ]
+        bundle.source_index.path = "source_analysis.index.json"
+        return StepResult(status="OK")
 
     @staticmethod
     def _analysis_targets(bundle: EvidenceBundle, slice_root: Path) -> list[Path]:
@@ -2789,6 +3560,210 @@ class PromoteStep:
             "required_change_type": required_change_type,
         }
 
+    @staticmethod
+    def _l2_gate_required_change_type(gate_id: str) -> str:
+        """Classify L2 gate failure by fix authority."""
+        behavior_change_gates = {
+            "no_remaining_comments",
+            "no_stub_functions",
+            "call_graph_connected",
+            "store_monogamy",
+            "all_tests_pass",
+        }
+        return "behavior_change" if gate_id in behavior_change_gates else "wiring_only"
+
+    @staticmethod
+    def _load_l2_architecture_graph(ctx: SliceContext, bundle: EvidenceBundle) -> dict[str, Any]:
+        """Load architecture graph payload emitted by L2 ANALYZE."""
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+        for entry in bundle.source_index.entries or []:
+            if not isinstance(entry, dict):
+                continue
+            analysis = entry.get("analysis", {}) or {}
+            if not isinstance(analysis, dict):
+                continue
+            if analysis.get("type") != "l2_architecture_graph":
+                continue
+            graph_path = str(analysis.get("graph_path") or entry.get("path") or "").strip()
+            if not graph_path:
+                continue
+            payload = _read_json_file(iteration_dir / graph_path)
+            if isinstance(payload, dict):
+                return payload
+        return {}
+
+    @staticmethod
+    def _l2_finding_to_gap(finding: dict[str, Any]) -> dict[str, Any]:
+        """Project L2 reviewer finding into gap schema for next planning pass."""
+        location = finding.get("location", {}) or {}
+        file_path = str(location.get("file") or finding.get("file") or "").strip()
+        anchor = str(
+            finding.get("anchor") or location.get("symbol") or finding.get("reviewer") or ""
+        ).strip()
+        description = str(finding.get("description") or finding.get("evidence") or "").strip()
+        expected = str(finding.get("expected") or finding.get("suggested_fix") or "").strip()
+        return _normalize_gap_record(
+            {
+                "kind": str(finding.get("kind") or "l2_review_finding"),
+                "component_id": str(finding.get("component_id") or "").strip(),
+                "file": file_path,
+                "anchor": anchor,
+                "description": description,
+                "expected": expected,
+                "severity": str(finding.get("severity") or "MAJOR").upper(),
+                "required_change_type": str(
+                    finding.get("required_change_type") or "wiring_only"
+                ).strip(),
+                "location": location if isinstance(location, dict) else {"file": file_path},
+            }
+        )
+
+    def _run_l2_review_pack(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        architecture_graph: dict[str, Any],
+        arch_artifacts: list[dict[str, str]],
+        component_manifest: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Run L2 reviewer pack during PROMOTE and return normalized findings."""
+        import json
+
+        from spec_manager.orchestration.pattern_library import PatternLibrary
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        pattern_lib = PatternLibrary(
+            library_path=GapExplorationStep._pattern_library_path(workspace)
+        )
+        strategy_candidates_recorded = 0
+        findings_out: list[dict[str, Any]] = []
+
+        review_payload = {
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "graph_stats": architecture_graph.get("stats", {}),
+            "graph_nodes": architecture_graph.get("nodes", [])[:150],
+            "graph_edges": architecture_graph.get("edges", [])[:300],
+            "pins_snapshot": {
+                "path": bundle.pins_snapshot.path,
+                "hash": bundle.pins_snapshot.snapshot_hash,
+            },
+            "graph_snapshot": {
+                "path": bundle.graph_snapshot.path,
+                "hash": bundle.graph_snapshot.snapshot_hash,
+            },
+            "component_manifest": component_manifest,
+            "arch_artifacts": arch_artifacts,
+        }
+
+        for reviewer in L2_REVIEW_PACK:
+            pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
+            reviewer_prompt = (
+                "## TASK\n"
+                f"Review this L2 architecture slice for {reviewer.dimension}.\n"
+                f"Objective: {reviewer.objective}\n"
+                "You are running in PROMOTE: judge post-implementation readiness.\n"
+                "Return only unresolved findings.\n\n"
+                "For each finding include:\n"
+                "- severity (BLOCKER/MAJOR/MINOR)\n"
+                "- required_change_type (wiring_only/behavior_change)\n"
+                "- description\n"
+                "- expected\n"
+                "- location {file, symbol?, start_line?, end_line?}\n\n"
+                f"{pattern_section}\n\n"
+                "## EVIDENCE\n"
+                f"{json.dumps(review_payload, indent=2)}\n\n"
+                'Return JSON: {"findings": [...]}.\n'
+            )
+
+            try:
+                from spec_manager.core.agent_utils import run_agent
+                from spec_manager.core.json_extraction import _extract_json_payload
+                from spec_manager.refinement.formats import _strip_code_fences
+
+                output = run_agent(
+                    agent_name=reviewer.agent_name,
+                    prompt=reviewer_prompt,
+                    workspace=workspace,
+                )
+                cleaned = _strip_code_fences(output)
+                payload = json.loads(_extract_json_payload(cleaned))
+                findings = [item for item in payload.get("findings", []) if isinstance(item, dict)]
+                strategy_candidates_recorded += GapExplorationStep._record_strategy_candidates(
+                    pattern_lib,
+                    dimension=reviewer.dimension,
+                    findings=findings,
+                )
+                for finding in findings:
+                    location = finding.get("location", {}) or {}
+                    file_path = str(location.get("file") or finding.get("file") or "").strip()
+                    findings_out.append(
+                        {
+                            "kind": f"l2_{reviewer.dimension.lower()}_finding",
+                            "reviewer": reviewer.reviewer_id,
+                            "agent_name": reviewer.agent_name,
+                            "dimension": reviewer.dimension,
+                            "component_id": str(
+                                finding.get("component_id") or location.get("symbol") or ""
+                            ).strip(),
+                            "anchor": str(
+                                location.get("symbol") or finding.get("anchor") or ""
+                            ).strip(),
+                            "file": file_path,
+                            "location": location
+                            if isinstance(location, dict)
+                            else {"file": file_path},
+                            "description": str(
+                                finding.get("description") or finding.get("evidence") or ""
+                            ).strip(),
+                            "expected": str(
+                                finding.get("expected") or finding.get("suggested_fix") or ""
+                            ).strip(),
+                            "suggested_fix": str(finding.get("suggested_fix") or "").strip(),
+                            "severity": str(finding.get("severity", "MINOR")).upper(),
+                            "required_change_type": str(
+                                finding.get(
+                                    "required_change_type", reviewer.default_required_change_type
+                                )
+                            ).strip(),
+                        }
+                    )
+            except Exception as exc:
+                findings_out.append(
+                    {
+                        "kind": "l2_reviewer_execution_failure",
+                        "reviewer": reviewer.reviewer_id,
+                        "agent_name": reviewer.agent_name,
+                        "dimension": reviewer.dimension,
+                        "component_id": "",
+                        "anchor": reviewer.reviewer_id,
+                        "file": "",
+                        "location": {"file": ""},
+                        "description": (
+                            f"Reviewer execution failed for {reviewer.reviewer_id}: {exc}"
+                        ),
+                        "expected": (
+                            "Reviewer must execute to evaluate architecture "
+                            "continuity readiness."
+                        ),
+                        "severity": "BLOCKER",
+                        "required_change_type": reviewer.default_required_change_type,
+                    }
+                )
+
+        if strategy_candidates_recorded:
+            try:
+                pattern_lib.save()
+            except Exception as exc:
+                logger.warning("Failed to persist strategy candidates: %s", exc, exc_info=True)
+
+        return findings_out
+
     def _promote_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L1: verify evidence transaction integrity."""
         failures = self._validate_hash_consistency(bundle)
@@ -2895,57 +3870,105 @@ class PromoteStep:
                 gate_id=result.gate_id,
                 passed=bool(result.passed),
                 summary=result.summary,
-                required_change_type=(
-                    "behavior_change"
-                    if result.gate_id
-                    in {
-                        "no_remaining_comments",
-                        "no_stub_functions",
-                        "call_graph_connected",
-                        "store_monogamy",
-                        "all_tests_pass",
-                    }
-                    else "wiring_only"
-                ),
+                required_change_type=self._l2_gate_required_change_type(result.gate_id),
             )
             for result in report.gate_results
         ]
         bundle.gates.path = "gates.report.json"
 
-        if report.passed:
+        architecture_graph = self._load_l2_architecture_graph(ctx, bundle)
+        arch_files = [
+            str(path).strip()
+            for path in architecture_graph.get("arch_files", [])
+            if isinstance(path, str) and str(path).strip()
+        ]
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        arch_artifacts = GapExplorationStep._load_arch_artifacts(workspace, arch_files)
+        component_manifest = _load_run_component_manifest(workspace, bundle.run_id)
+        review_findings = self._run_l2_review_pack(
+            ctx=ctx,
+            bundle=bundle,
+            architecture_graph=architecture_graph,
+            arch_artifacts=arch_artifacts,
+            component_manifest=component_manifest,
+        )
+
+        findings_by_reviewer: dict[str, list[dict[str, Any]]] = {}
+        for finding in review_findings:
+            reviewer_id = str(finding.get("reviewer", "reviewer")).strip() or "reviewer"
+            findings_by_reviewer.setdefault(reviewer_id, []).append(finding)
+
+        for reviewer in L2_REVIEW_PACK:
+            reviewer_findings = findings_by_reviewer.get(reviewer.reviewer_id, [])
+            if not reviewer_findings:
+                bundle.gates.gates.append(
+                    self._to_gate(
+                        gate_id=f"l2_review_{reviewer.dimension.lower()}",
+                        passed=True,
+                        summary=f"{reviewer.reviewer_id}: no unresolved findings",
+                        required_change_type=reviewer.default_required_change_type,
+                    )
+                )
+                continue
+
+            required_change = "wiring_only"
+            if any(
+                str(item.get("required_change_type", "")).strip() == "behavior_change"
+                for item in reviewer_findings
+            ):
+                required_change = "behavior_change"
+            summaries = [
+                str(item.get("description") or item.get("expected") or "").strip()
+                for item in reviewer_findings[:3]
+            ]
+            bundle.gates.gates.append(
+                self._to_gate(
+                    gate_id=f"l2_review_{reviewer.dimension.lower()}",
+                    passed=False,
+                    summary="; ".join(summary for summary in summaries if summary)
+                    or f"{len(reviewer_findings)} unresolved findings",
+                    required_change_type=required_change,
+                )
+            )
+
+        if review_findings:
+            normalized_review_gaps = [self._l2_finding_to_gap(item) for item in review_findings]
+            bundle.gaps.open_gaps = normalized_review_gaps
+
+        failed_gates = [gate for gate in bundle.gates.gates if not gate.get("passed")]
+        if not failed_gates:
             return StepResult(status="OK")
 
-        tickets: list[DemotionTicket] = []
-        for blocker in report.blockers:
-            required_change_type = (
-                "behavior_change"
-                if blocker.gate_id
-                in {
-                    "no_remaining_comments",
-                    "no_stub_functions",
-                    "call_graph_connected",
-                    "store_monogamy",
-                    "all_tests_pass",
-                }
-                else "wiring_only"
+        behavior_change_failures = [
+            gate for gate in failed_gates if gate.get("required_change_type") == "behavior_change"
+        ]
+        tickets = [
+            DemotionTicket(
+                run_id=ctx.run_id,
+                slice_id=ctx.slice_id,
+                source="GATE_FAILURE",
+                gate=str(gate.get("gate_id", "")),
+                origin_layer="L2",
+                target_layer="L1",
+                severity="BLOCKER",
+                diagnosis=str(gate.get("summary", "L2 behavior-change gate failed")),
             )
-            tickets.append(
-                DemotionTicket(
-                    run_id=ctx.run_id,
-                    slice_id=ctx.slice_id,
-                    source="GATE_FAILURE",
-                    gate=blocker.gate_id,
-                    origin_layer="L2",
-                    target_layer="L1" if required_change_type == "behavior_change" else "L2",
-                    severity="BLOCKER",
-                    diagnosis=blocker.summary,
-                )
+            for gate in behavior_change_failures
+        ]
+
+        wiring_failures = len(failed_gates) - len(behavior_change_failures)
+        error_parts = []
+        if wiring_failures:
+            error_parts.append(f"{wiring_failures} wiring-only gate(s) require L2 retry")
+        if behavior_change_failures:
+            error_parts.append(
+                f"{len(behavior_change_failures)} gate(s) require L1 behavior-change demotion"
             )
 
         return StepResult(
             status="RETRY",
             emitted_tickets=tickets,
-            error="L2 promotion gates failed",
+            error="; ".join(error_parts) if error_parts else "L2 promotion gates failed",
         )
 
     def _promote_l3(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
@@ -4003,12 +5026,23 @@ class VerifyStep:
             )
 
         analyzed_components: list[dict[str, Any]] = []
+        architecture_graph_cache: dict[str, Any] = {}
         for entry in bundle.source_index.entries:
             if not isinstance(entry, dict):
                 continue
             analysis = entry.get("analysis")
             if isinstance(analysis, dict):
                 analyzed_components.append(analysis)
+                if analysis.get("type") == "l2_architecture_graph":
+                    graph_path = str(analysis.get("graph_path") or entry.get("path") or "").strip()
+                    if graph_path:
+                        evidence_root = _evidence_base_path(
+                            slice_root=ctx.slice_root,
+                            workspace_root=ctx.workspace_root,
+                        )
+                        graph_payload = _read_json_file(bundle.iter_dir(evidence_root) / graph_path)
+                        if isinstance(graph_payload, dict):
+                            architecture_graph_cache = graph_payload
 
         return {
             "slice": {
@@ -4031,6 +5065,7 @@ class VerifyStep:
             "analysis": {
                 "source_index_entries": len(bundle.source_index.entries or []),
                 "components": analyzed_components[:150],
+                "architecture_graph_cache": architecture_graph_cache,
             },
             "implementation_receipts": {
                 "applied_edits": list(bundle.implementation.applied_edits or []),
@@ -4215,6 +5250,7 @@ ARCHITECTURE_MODE_STEPS: tuple[type, ...] = (
     PromoteStep,
     IntegrateStep,
     VerifyStep,
+    AlignStep,
 )
 CODE_QUALITY_MODE_STEPS: tuple[type, ...] = DEFAULT_BUILD_STEPS
 
@@ -4453,6 +5489,8 @@ class PromotionLoop:
                 "manifest.json",
                 {
                     "files": bundle.manifest.files,
+                    "component_inventory": bundle.manifest.component_inventory,
+                    "pin_registry_summary": bundle.manifest.pin_registry_summary,
                     "slice_patterns": bundle.manifest.slice_patterns,
                     "generated_files": bundle.manifest.generated_files,
                 },

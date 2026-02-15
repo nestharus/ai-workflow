@@ -136,6 +136,8 @@ class ManifestRef:
 
     path: str = ""
     files: list[dict[str, Any]] = field(default_factory=list)
+    component_inventory: list[dict[str, Any]] = field(default_factory=list)
+    pin_registry_summary: dict[str, Any] = field(default_factory=dict)
     slice_patterns: list[str] = field(default_factory=list)
     generated_files: list[str] = field(default_factory=list)
 

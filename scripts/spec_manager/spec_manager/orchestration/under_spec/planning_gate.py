@@ -112,6 +112,14 @@ def run_planning_gate(
     """
     result = PlanningGateResult()
 
+    def _needed_for_target(intention: dict[str, Any]) -> Any:
+        target_files = intention.get("target_files", [])
+        if isinstance(target_files, list):
+            normalized = [str(item) for item in target_files if str(item).strip()]
+            if normalized:
+                return normalized
+        return intention.get("target_file", "")
+
     for intention in intentions:
         decision_reqs = intention.get("decision_requirements", [])
         if not decision_reqs:
@@ -145,7 +153,7 @@ def run_planning_gate(
                         "kind": "MISSING_CONSTRAINT",
                         "question": decision.get("question", ""),
                         "options": decision.get("options", []),
-                        "needed_for": decision.get("needed_for", intention.get("target_file", "")),
+                        "needed_for": decision.get("needed_for", _needed_for_target(intention)),
                         "evidence_paths": [],
                     }
                 )
