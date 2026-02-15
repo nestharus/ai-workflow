@@ -181,8 +181,13 @@ class CapabilityRouter:
         if capability == "TRIAGE_SIGNAL":
             signal = inputs.get("signal", {})
             triage_result = planner.triage_signal(ctx, signal)
-            action = triage_result.get("action", "NOOP")
-            status = "WAITING" if action != "NOOP" else "NOOP"
+            action = str(triage_result.get("action", "NOOP")).strip().upper()
+            if action == "NOOP":
+                status = "NOOP"
+            elif action == "WAKE_IMMEDIATELY":
+                status = "OK"
+            else:
+                status = "WAITING"
             return PlanningResult(status=status, outputs=triage_result)
 
         if capability == "INGEST_USER_ANSWER":

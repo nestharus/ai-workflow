@@ -165,10 +165,10 @@ class SearchCoverage:
 
     primary_match_id: str = ""
     secondary_match_ids: list[str] = field(default_factory=list)
-    coverage: Literal["FULL", "PARTIAL", "NONE"] = "NONE"
+    coverage: Literal["FULL_COVERAGE", "PARTIAL_COVERAGE", "NO_COVERAGE"] = "NO_COVERAGE"
     confidence: float = 0.0
     why: str = ""
-    missing_coverage: bool = False
+    missing_detail: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ class WorkItemStore:
         return outcome["results"]
 
     def search_with_coverage(self, query: SearchQuery) -> dict[str, Any]:
-        """Run retrieval and return matches plus FULL/PARTIAL/NONE coverage."""
+        """Run retrieval and return matches plus semantic coverage classification."""
         results: list[SearchResult] = []
         exact = self._search_exact(query)
         results.extend(exact)
@@ -266,7 +266,12 @@ class WorkItemStore:
                 results.extend(semantic_results)
                 results.extend(r for r in fuzzy if r.work_item.work_item_id not in semantic_ids)
             else:
-                coverage = SearchCoverage(coverage="NONE", missing_coverage=True)
+                coverage = SearchCoverage(
+                    coverage="NO_COVERAGE",
+                    confidence=0.0,
+                    why="no_semantic_candidates",
+                    missing_detail=self._default_missing_detail(query),
+                )
         else:
             coverage = SearchCoverage()
 
@@ -280,14 +285,11 @@ class WorkItemStore:
                 "results": capped,
                 "primary_match": primary,
                 "secondary_matches": [],
-                "coverage": "FULL",
+                "coverage": "FULL_COVERAGE",
                 "confidence": 1.0,
                 "why": "exact_spec_text_match",
-                "missing_coverage": False,
+                "missing_detail": "",
             }
-
-        if coverage.coverage == "NONE" and capped:
-            coverage = self._infer_coverage_from_ranked_results(capped)
 
         primary_match = (
             self._items.get(coverage.primary_match_id) if coverage.primary_match_id else None
@@ -302,7 +304,7 @@ class WorkItemStore:
             "coverage": coverage.coverage,
             "confidence": coverage.confidence,
             "why": coverage.why,
-            "missing_coverage": coverage.missing_coverage,
+            "missing_detail": coverage.missing_detail,
         }
 
     def rerank_with_llm(self, query: SearchQuery, candidates: list[WorkItem]) -> list[SearchResult]:
@@ -316,12 +318,31 @@ class WorkItemStore:
         candidates: list[WorkItem],
     ) -> tuple[list[SearchResult], SearchCoverage]:
         if not candidates:
-            return [], SearchCoverage(coverage="NONE", missing_coverage=True)
+            return (
+                [],
+                SearchCoverage(
+                    coverage="NO_COVERAGE",
+                    confidence=0.0,
+                    why="no_candidates",
+                    missing_detail=self._default_missing_detail(query),
+                ),
+            )
 
         parsed = self._call_semantic_reranker(query, candidates)
         if parsed is None:
             fallback = self._fallback_semantic_rerank(query, candidates)
-            return fallback, self._infer_coverage_from_ranked_results(fallback)
+            primary_id = fallback[0].work_item.work_item_id if fallback else ""
+            return (
+                fallback,
+                SearchCoverage(
+                    primary_match_id=primary_id,
+                    secondary_match_ids=[],
+                    coverage="NO_COVERAGE",
+                    confidence=0.0,
+                    why="semantic_classifier_unavailable",
+                    missing_detail=self._default_missing_detail(query),
+                ),
+            )
 
         candidate_ids = [c.work_item_id for c in candidates]
         primary_id = self._extract_candidate_id(
@@ -340,20 +361,20 @@ class WorkItemStore:
                 ):
                     secondary_ids.append(candidate_id)
 
-        coverage_raw = str(parsed.get("coverage", "NONE")).upper()
-        coverage_value: Literal["FULL", "PARTIAL", "NONE"] = (
-            coverage_raw if coverage_raw in {"FULL", "PARTIAL", "NONE"} else "NONE"
+        coverage_raw = str(parsed.get("coverage", "NO_COVERAGE")).upper()
+        coverage_value: Literal["FULL_COVERAGE", "PARTIAL_COVERAGE", "NO_COVERAGE"] = (
+            coverage_raw
+            if coverage_raw in {"FULL_COVERAGE", "PARTIAL_COVERAGE", "NO_COVERAGE"}
+            else "NO_COVERAGE"
         )
-        if not primary_id and coverage_value != "NONE" and candidate_ids:
+        if not primary_id and coverage_value != "NO_COVERAGE" and candidate_ids:
             primary_id = candidate_ids[0]
 
         confidence = self._safe_float(parsed.get("confidence", 0.0))
         why = str(parsed.get("why", parsed.get("rationale", "")))
-        missing_raw = parsed.get("missing_coverage", coverage_value != "FULL")
-        if isinstance(missing_raw, str):
-            missing_coverage = missing_raw.strip().lower() in {"1", "true", "yes"}
-        else:
-            missing_coverage = bool(missing_raw)
+        missing_detail = str(parsed.get("missing_detail", "")).strip()
+        if not missing_detail and coverage_value != "FULL_COVERAGE":
+            missing_detail = self._default_missing_detail(query)
 
         ordered_ids: list[str] = []
         if primary_id:
@@ -385,7 +406,7 @@ class WorkItemStore:
             coverage=coverage_value,
             confidence=max(0.0, min(confidence, 1.0)),
             why=why,
-            missing_coverage=missing_coverage,
+            missing_detail=missing_detail,
         )
         return reranked, coverage
 
@@ -619,10 +640,10 @@ class WorkItemStore:
             "Return strict JSON only with keys:\n"
             "primary_match_id (string or empty),\n"
             "secondary_match_ids (array of strings),\n"
-            "coverage (FULL|PARTIAL|NONE),\n"
+            "coverage (FULL_COVERAGE|PARTIAL_COVERAGE|NO_COVERAGE),\n"
             "confidence (0..1),\n"
             "why (short string),\n"
-            "missing_coverage (boolean).\n\n"
+            "missing_detail (string; what interface/behavior is still missing).\n\n"
             f"Need summary: {need_summary}\n"
             f"Artifact key: {artifact_key}\n"
             f"Spec text channel: {spec_text[:400]}\n"
@@ -683,7 +704,7 @@ class WorkItemStore:
                 work_item=item,
                 score=self._fuzzy_score(query, item),
                 match_stage="SEMANTIC",
-                match_reason="semantic_rerank_fallback",
+                match_reason="llm_rerank_placeholder",
             )
             for item in candidates
         ]
@@ -726,48 +747,13 @@ class WorkItemStore:
         except (TypeError, ValueError):
             return 0.0
 
-    def _infer_coverage_from_ranked_results(
-        self,
-        ranked: list[SearchResult],
-    ) -> SearchCoverage:
-        if not ranked:
-            return SearchCoverage(
-                coverage="NONE", confidence=0.0, why="no_candidates", missing_coverage=True
-            )
-
-        top = ranked[0]
-        second = ranked[1] if len(ranked) > 1 else None
-        score_gap = top.score - second.score if second is not None else top.score
-
-        if top.score >= 0.75 and score_gap >= 0.15:
-            return SearchCoverage(
-                primary_match_id=top.work_item.work_item_id,
-                secondary_match_ids=[],
-                coverage="FULL",
-                confidence=min(1.0, max(top.score, 0.85)),
-                why="single_clear_match",
-                missing_coverage=False,
-            )
-
-        if top.score >= 0.35:
-            secondary_ids = [
-                r.work_item.work_item_id for r in ranked[1:4] if r.score >= top.score - 0.1
-            ]
-            return SearchCoverage(
-                primary_match_id=top.work_item.work_item_id,
-                secondary_match_ids=secondary_ids,
-                coverage="PARTIAL",
-                confidence=max(0.0, min(top.score, 1.0)),
-                why="ambiguous_or_partial_match",
-                missing_coverage=True,
-            )
-
-        return SearchCoverage(
-            coverage="NONE",
-            confidence=max(0.0, min(top.score, 1.0)),
-            why="low_similarity_candidates",
-            missing_coverage=True,
-        )
+    def _default_missing_detail(self, query: SearchQuery) -> str:
+        """Return a concrete missing-detail statement for unresolved coverage."""
+        if query.need_summary and query.need_summary.strip():
+            return query.need_summary.strip()
+        if query.artifact_key and query.artifact_key.strip():
+            return f"Missing concrete interface/behavior for {query.artifact_key.strip()}."
+        return "Missing concrete interface/behavior details needed by the blocked consumer."
 
     # -- persistence -------------------------------------------------------
 

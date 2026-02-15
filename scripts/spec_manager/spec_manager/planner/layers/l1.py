@@ -251,7 +251,8 @@ class L1Planner:
         3. Return action + monitor specs
 
         Returns dict with:
-        - action: "WAIT_ON_WORK_ITEM" | "ROUTE_AND_WAIT" | "EXPAND_SPEC" | "NOOP"
+        - action: ("WAIT_ON_WORK_ITEM" | "ROUTE_AND_WAIT" | "EXPAND_SPEC"
+                  | "WAKE_IMMEDIATELY" | "NOOP")
         - monitors: list[dict]  (MonitorSpec-compatible dicts)
         - routing: list[dict]  (new work items to route, if any)
         - expansion: dict | None  (spec expansion details, if needed)
@@ -293,11 +294,12 @@ class L1Planner:
         secondary_matches = search_outcome.get("secondary_matches", [])
         if not isinstance(secondary_matches, list):
             secondary_matches = []
-        coverage = str(search_outcome.get("coverage", "NONE")).upper()
+        coverage = str(search_outcome.get("coverage", "NO_COVERAGE")).upper()
         confidence = float(search_outcome.get("confidence", 0.0) or 0.0)
         why = str(search_outcome.get("why", ""))
+        missing_detail = str(search_outcome.get("missing_detail", "")).strip()
 
-        if coverage == "FULL" and primary_match is not None:
+        if coverage == "FULL_COVERAGE" and primary_match is not None:
             if primary_match.status in ("MERGED", "DONE"):
                 return {
                     "action": "WAKE_IMMEDIATELY",
@@ -305,26 +307,40 @@ class L1Planner:
                     "coverage": coverage,
                     "confidence": confidence,
                     "why": why,
-                    "primary_match": primary_match.to_dict(),
+                    "missing_detail": "",
+                    "wake_instruction": _build_immediate_wake_instruction(
+                        signal=signal,
+                        work_item_dict=primary_match.to_dict(),
+                    ),
+                    "matched_work_item": primary_match.to_dict(),
                     "secondary_matches": [m.to_dict() for m in secondary_matches],
                 }
 
-            monitor = _build_work_item_monitor(
+            primary_match_dict = primary_match.to_dict()
+            monitor = _build_git_symbol_monitor(
                 signal=signal,
-                work_item_dict=primary_match.to_dict(),
+                need=need,
                 ctx=ctx,
+                work_item_dict=primary_match_dict,
             )
+            if monitor is None:
+                monitor = _build_work_item_monitor(
+                    signal=signal,
+                    work_item_dict=primary_match_dict,
+                    ctx=ctx,
+                )
             return {
                 "action": "WAIT_ON_WORK_ITEM",
                 "monitors": [monitor],
                 "coverage": coverage,
                 "confidence": confidence,
                 "why": why,
-                "primary_match": primary_match.to_dict(),
+                "missing_detail": "",
+                "matched_work_item": primary_match_dict,
                 "secondary_matches": [m.to_dict() for m in secondary_matches],
             }
 
-        if coverage == "PARTIAL":
+        if coverage == "PARTIAL_COVERAGE":
             candidate_matches = [m for m in [primary_match, *secondary_matches] if m is not None]
             active_matches = [m for m in candidate_matches if m.status not in ("MERGED", "DONE")]
             if active_matches:
@@ -337,31 +353,78 @@ class L1Planner:
                     "coverage": coverage,
                     "confidence": confidence,
                     "why": why,
-                    "primary_match": primary_match.to_dict() if primary_match is not None else None,
+                    "missing_detail": missing_detail,
+                    "matched_work_item": primary_match.to_dict()
+                    if primary_match is not None
+                    else None,
                     "secondary_matches": [m.to_dict() for m in secondary_matches],
                 }
 
         spec_match = _search_spec_catalog(workspace_root, need, spec_refs)
         if spec_match:
-            new_work_item = _create_work_item_from_spec(spec_match, ctx)
+            owner_slice_id = _resolve_owner_slice_id(
+                workspace_root=workspace_root,
+                run_id=str(getattr(ctx, "run_id", "") or ""),
+                spec_match=spec_match,
+                search_hints=search_hints if isinstance(search_hints, dict) else {},
+                fallback_slice_id=str(getattr(ctx, "slice_id", "") or ""),
+            )
+            new_work_item = _create_work_item_from_spec(
+                spec_match=spec_match,
+                owner_slice_id=owner_slice_id,
+            )
             monitor = _build_git_symbol_monitor(
                 signal=signal,
                 need=need,
                 ctx=ctx,
+                work_item_dict=new_work_item,
             )
+            if monitor is None:
+                monitor = _build_work_item_monitor(
+                    signal=signal,
+                    work_item_dict=new_work_item,
+                    ctx=ctx,
+                )
             return {
                 "action": "ROUTE_AND_WAIT",
                 "monitors": [monitor],
                 "routing": [new_work_item],
-                "coverage": "NONE",
+                "coverage": "NO_COVERAGE",
+                "confidence": confidence,
+                "why": why or "spec_found_unrouted",
+                "missing_detail": "",
             }
 
         expansion = _build_expansion(signal, need, ctx)
-        monitor = _build_expansion_monitor(signal, expansion, ctx)
+        expansion_owner_slice_id = _resolve_owner_slice_id(
+            workspace_root=workspace_root,
+            run_id=str(getattr(ctx, "run_id", "") or ""),
+            spec_match={},
+            search_hints=search_hints if isinstance(search_hints, dict) else {},
+            fallback_slice_id=str(getattr(ctx, "slice_id", "") or ""),
+        )
+        expansion_work_item = _create_expansion_work_item(
+            expansion=expansion,
+            signal=signal,
+            owner_slice_id=expansion_owner_slice_id,
+        )
+        monitor = _build_work_item_monitor(
+            signal=signal,
+            work_item_dict=expansion_work_item,
+            ctx=ctx,
+            monitor_kind="spec_expanded",
+        )
         return {
             "action": "EXPAND_SPEC",
             "monitors": [monitor],
+            "routing": [expansion_work_item],
             "expansion": expansion,
+            "coverage": "NO_COVERAGE",
+            "confidence": confidence,
+            "why": why or "underspecified_no_spec_match",
+            "missing_detail": missing_detail
+            or str(need.get("summary", "")).strip()
+            or "Missing spec-level behavior needed by blocked consumer.",
         }
 
 
@@ -535,6 +598,7 @@ def _build_work_item_monitor(
     signal: dict[str, Any],
     work_item_dict: dict[str, Any],
     ctx: Any,
+    monitor_kind: str = "work_item_status",
 ) -> dict[str, Any]:
     """Build a monitor payload that watches a work item for completion."""
     target_statuses = work_item_dict.get("target_statuses", [])
@@ -548,7 +612,7 @@ def _build_work_item_monitor(
         "work_item_id": work_item_dict.get("work_item_id", ""),
         "required_status": required_status,
         "target_statuses": target_statuses,
-        "kind": "work_item_status",
+        "kind": monitor_kind,
         "signal_id": signal.get("signal_id", ""),
         "run_id": getattr(ctx, "run_id", ""),
         "timeout_seconds": 3600,
@@ -592,13 +656,31 @@ def _build_git_symbol_monitor(
     signal: dict[str, Any],
     need: dict[str, Any],
     ctx: Any,
-) -> dict[str, Any]:
-    """Build a monitor payload that watches for a symbol to appear."""
-    artifact_key = need.get("artifact_key", "")
+    work_item_dict: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build a monitor payload that watches for an artifact symbol to appear."""
+    location = (
+        work_item_dict.get("location", {})
+        if isinstance(work_item_dict, dict) and isinstance(work_item_dict.get("location"), dict)
+        else {}
+    )
+    item_symbol = str(location.get("symbol", "")).strip()
+    item_file = str(location.get("file", "")).strip()
+    artifact_key = str(need.get("artifact_key", "")).strip()
+    symbol_fqn = item_symbol or artifact_key
+    if not symbol_fqn:
+        return None
+    if "." not in symbol_fqn and "::" not in symbol_fqn and symbol_fqn.lower() == symbol_fqn:
+        return None
+    file_glob = item_file or str(need.get("file_glob", "")).strip() or "**/*.py"
+    symbol_leaf = symbol_fqn.split(".")[-1] if "." in symbol_fqn else symbol_fqn
     return {
         "type": "git_symbol_exists",
-        "symbol_fqn": artifact_key,
-        "artifact_key": artifact_key,
+        "symbol_fqn": symbol_fqn,
+        "artifact_key": artifact_key or symbol_fqn,
+        "ref": "HEAD",
+        "file_glob": file_glob,
+        "signature_regex": rf"\b{re.escape(symbol_leaf)}\b",
         "kind": "symbol_available",
         "signal_id": signal.get("signal_id", ""),
         "run_id": getattr(ctx, "run_id", ""),
@@ -606,18 +688,30 @@ def _build_git_symbol_monitor(
     }
 
 
-def _build_expansion_monitor(
+def _build_immediate_wake_instruction(
     signal: dict[str, Any],
-    expansion: dict[str, Any],
-    ctx: Any,
+    work_item_dict: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build an expansion monitor payload."""
+    """Build consumer-facing wake guidance for already merged work."""
+    metadata = work_item_dict.get("metadata", {}) if isinstance(work_item_dict, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    target_ref = (
+        str(metadata.get("merged_ref", "")).strip()
+        or str(metadata.get("source_branch", "")).strip()
+        or "upstream/latest"
+    )
+    summary = str(work_item_dict.get("spec_text", "")).strip()
     return {
-        "kind": "spec_expanded",
-        "expansion_id": expansion.get("expansion_id", ""),
+        "operation": "rebase_or_pull",
+        "target_ref": target_ref,
+        "instruction": (
+            "Dependency is already merged/done. Sync your worktree with upstream "
+            "(pull --rebase or rebase onto target_ref) before retrying."
+        ),
+        "work_item_id": str(work_item_dict.get("work_item_id", "")).strip(),
+        "summary": summary,
         "signal_id": signal.get("signal_id", ""),
-        "run_id": getattr(ctx, "run_id", ""),
-        "timeout_seconds": 7200,
     }
 
 
@@ -651,6 +745,109 @@ def _extract_artifact_channel_tokens(artifact_key: str) -> list[str]:
     parts = re.split(r"[^a-zA-Z0-9]+", expanded)
     tokens = [part.lower() for part in parts if part]
     return _dedupe_preserve_order(tokens)
+
+
+def _resolve_owner_slice_id(
+    *,
+    workspace_root: Path,
+    run_id: str,
+    spec_match: dict[str, Any],
+    search_hints: dict[str, Any],
+    fallback_slice_id: str,
+) -> str:
+    """Resolve owner slice from hints and spec location, with deterministic fallback."""
+    raw_possible = (
+        search_hints.get("possible_owner_slices", []) if isinstance(search_hints, dict) else []
+    )
+    possible_owner_slices = (
+        _dedupe_preserve_order([str(v).strip() for v in raw_possible if str(v).strip()])
+        if isinstance(raw_possible, list)
+        else []
+    )
+    file_hint = str(spec_match.get("file", "")).strip()
+    discovered_slice_ids = _discover_l1_slice_ids(workspace_root=workspace_root, run_id=run_id)
+
+    if possible_owner_slices:
+        matched_preferred = _best_slice_match(
+            file_hint=file_hint, candidate_slice_ids=possible_owner_slices
+        )
+        if matched_preferred:
+            return matched_preferred
+        return possible_owner_slices[0]
+
+    matched_discovered = _best_slice_match(
+        file_hint=file_hint, candidate_slice_ids=discovered_slice_ids
+    )
+    if matched_discovered:
+        return matched_discovered
+
+    inferred_library_slice = _infer_library_slice_from_file(file_hint)
+    if inferred_library_slice:
+        return inferred_library_slice
+
+    return fallback_slice_id
+
+
+def _discover_l1_slice_ids(*, workspace_root: Path, run_id: str) -> list[str]:
+    """Discover L1 slice IDs from run state, then library directory names."""
+    candidates: list[str] = []
+    run_slices_dir = workspace_root / ".pdd_runs" / run_id / "slices"
+    if run_slices_dir.exists():
+        for child in sorted(run_slices_dir.iterdir()):
+            if child.is_dir():
+                candidates.append(child.name)
+    libraries_dir = workspace_root / "libraries"
+    if libraries_dir.exists():
+        for child in sorted(libraries_dir.iterdir()):
+            if child.is_dir():
+                candidates.append(child.name)
+    return _dedupe_preserve_order([c for c in candidates if c])
+
+
+def _best_slice_match(file_hint: str, candidate_slice_ids: list[str]) -> str:
+    """Return best matching slice ID for a file path hint."""
+    if not file_hint or not candidate_slice_ids:
+        return ""
+    normalized = file_hint.replace("\\", "/").strip().strip("/")
+    if not normalized:
+        return ""
+    path_segments = {seg.lower() for seg in normalized.split("/") if seg}
+
+    best_slice_id = ""
+    best_score = 0
+    for slice_id in candidate_slice_ids:
+        raw = str(slice_id).strip()
+        if not raw:
+            continue
+        tokens = [raw.lower()]
+        if raw.startswith("arch-"):
+            tokens.append(raw.removeprefix("arch-").lower())
+        if raw.startswith("cq-"):
+            tokens.append(raw.removeprefix("cq-").lower())
+        for token in _dedupe_preserve_order([t for t in tokens if t]):
+            if token in path_segments:
+                score = len(token) + 20
+            elif f"/{token}/" in f"/{normalized.lower()}/":
+                score = len(token) + 10
+            else:
+                score = 0
+            if score > best_score:
+                best_score = score
+                best_slice_id = raw
+    return best_slice_id
+
+
+def _infer_library_slice_from_file(file_hint: str) -> str:
+    """Infer slice ID from libraries/<lib-id>/... paths."""
+    if not file_hint:
+        return ""
+    parts = [p for p in file_hint.replace("\\", "/").split("/") if p]
+    lowered = [p.lower() for p in parts]
+    if "libraries" in lowered:
+        idx = lowered.index("libraries")
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    return ""
 
 
 def _strip_comment_prefix(line: str) -> str:
@@ -753,7 +950,7 @@ def _search_spec_catalog(
 
 def _create_work_item_from_spec(
     spec_match: dict[str, Any],
-    ctx: Any,
+    owner_slice_id: str,
 ) -> dict[str, Any]:
     """Create a work-item dict from a spec catalog match."""
     from spec_manager.orchestration.coordination.work_items import _fingerprint
@@ -770,7 +967,7 @@ def _create_work_item_from_spec(
         "work_item_id": work_item_id,
         "spec_text": spec_text,
         "file": file_path,
-        "owner_slice_id": getattr(ctx, "slice_id", ""),
+        "owner_slice_id": owner_slice_id,
         "status": "NEW",
         "location": {
             "file": file_path,
@@ -781,6 +978,57 @@ def _create_work_item_from_spec(
         "metadata": {
             "spec_fingerprint": spec_fingerprint,
             "matched_in": spec_match.get("matched_in", ""),
+        },
+    }
+
+
+def _create_expansion_work_item(
+    expansion: dict[str, Any],
+    signal: dict[str, Any],
+    owner_slice_id: str,
+) -> dict[str, Any]:
+    """Create a routed expansion work item for underspecified needs."""
+    from spec_manager.orchestration.coordination.work_items import _fingerprint
+
+    expansion_id = str(expansion.get("expansion_id", "")).strip()
+    artifact_key = str(expansion.get("artifact_key", "")).strip()
+    reason = str(expansion.get("reason", "underspecified")).strip() or "underspecified"
+    summary = str((signal.get("need") or {}).get("summary", "")).strip()
+    spec_text = summary or f"Expand spec coverage for {artifact_key or 'unspecified artifact'}."
+    identity_seed = f"expansion|{expansion_id}|{artifact_key}|{reason}|{spec_text}"
+    work_item_id = hashlib.sha256(identity_seed.encode("utf-8")).hexdigest()[:16]
+    spec_fingerprint = _fingerprint(spec_text)
+
+    spec_refs = signal.get("spec_refs", [])
+    first_ref = spec_refs[0] if isinstance(spec_refs, list) and spec_refs else {}
+    if not isinstance(first_ref, dict):
+        first_ref = {}
+    file_path = str(first_ref.get("source_file", "")).strip()
+    symbol = str(first_ref.get("source_symbol", "")).strip()
+    line_hint_raw = first_ref.get("source_line_hint", 0)
+    try:
+        line_hint = int(line_hint_raw or 0)
+    except (TypeError, ValueError):
+        line_hint = 0
+
+    return {
+        "work_item_id": work_item_id,
+        "spec_text": spec_text,
+        "owner_slice_id": owner_slice_id,
+        "status": "NEW",
+        "location": {
+            "file": file_path,
+            "symbol": symbol,
+            "line_hint": line_hint,
+        },
+        "kind": "EXPANSION",
+        "metadata": {
+            "spec_fingerprint": spec_fingerprint,
+            "expansion_id": expansion_id,
+            "artifact_key": artifact_key,
+            "reason": reason,
+            "requested_by_slice_id": str(signal.get("slice_id", "")).strip(),
+            "signal_id": str(signal.get("signal_id", "")).strip(),
         },
     }
 
