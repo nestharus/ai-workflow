@@ -108,23 +108,7 @@ class WorktreeManager:
 
         created: list[dict[str, str]] = []
         for layer in target_layers:
-            for lane in ("dirty", "clean"):
-                branch = self.layer_branch(layer, lane)
-                path = self.layer_worktree_path(layer, lane)
-
-                ok, err = self.vcs.create_worktree(path, branch, start_point=self._base_ref)
-                if not ok:
-                    raise RuntimeError(f"Failed to create {layer}/{lane} worktree: {err}")
-
-                if layer not in self._layer_worktrees:
-                    self._layer_worktrees[layer] = {}
-                if layer not in self._layer_branches:
-                    self._layer_branches[layer] = {}
-
-                self._layer_worktrees[layer][lane] = path
-                self._layer_branches[layer][lane] = branch
-                created.append({"layer": layer, "lane": lane, "path": str(path)})
-                logger.info("Created %s/%s worktree at %s", layer, lane, path)
+            created.extend(self._ensure_layer_worktrees(layer))
 
         self._layers_initialized = True
         return {"base_ref": self._base_ref, "worktrees": created}
@@ -214,14 +198,12 @@ class WorktreeManager:
         self,
         layer: Layer,
         slice_id: str,
-        base: Lane = "dirty",
     ) -> Path:
         """Create a grandchild worktree for a slice at a layer.
 
         Args:
             layer: Which layer this slice belongs to.
             slice_id: Unique slice identifier.
-            base: Which lane to branch from (default: dirty).
 
         Returns:
             Path to the slice worktree.
@@ -239,7 +221,7 @@ class WorktreeManager:
         branch = f"pdd/{self.run_id}/{layer}/slice/{slice_id}/{nonce}"
         path = self.worktrees_base / f"{self.run_id}-{layer}-slice-{slice_id}"
 
-        start = self.layer_branch(layer, base)
+        start = self.layer_branch(layer, "dirty")
 
         ok, err = self.vcs.create_worktree(path, branch, start_point=start)
         if not ok:
@@ -604,6 +586,16 @@ class WorktreeManager:
                 error="No next layer (already at L3)",
             )
 
+        try:
+            self._ensure_layer_worktrees(to_layer)
+        except RuntimeError as exc:
+            return PropagateResult(
+                success=False,
+                from_layer=from_layer,
+                to_layer=to_layer,
+                error=str(exc),
+            )
+
         to_dirty_path = self._layer_worktrees.get(to_layer, {}).get("dirty")
         if not to_dirty_path:
             return PropagateResult(
@@ -890,6 +882,32 @@ class WorktreeManager:
             return True
 
         return count <= max_pending
+
+    def _ensure_layer_worktrees(self, layer: Layer) -> list[dict[str, str]]:
+        """Ensure dirty/clean worktrees exist for *layer*.
+
+        Returns:
+            Metadata entries for worktrees created in this call.
+        """
+        created: list[dict[str, str]] = []
+        for lane in ("dirty", "clean"):
+            existing_path = self._layer_worktrees.get(layer, {}).get(lane)
+            if existing_path is not None:
+                self._layer_branches.setdefault(layer, {})[lane] = self.layer_branch(layer, lane)
+                continue
+
+            branch = self.layer_branch(layer, lane)
+            path = self.layer_worktree_path(layer, lane)
+            ok, err = self.vcs.create_worktree(path, branch, start_point=self._base_ref)
+            if not ok:
+                raise RuntimeError(f"Failed to create {layer}/{lane} worktree: {err}")
+
+            self._layer_worktrees.setdefault(layer, {})[lane] = path
+            self._layer_branches.setdefault(layer, {})[lane] = branch
+            created.append({"layer": layer, "lane": lane, "path": str(path)})
+            logger.info("Created %s/%s worktree at %s", layer, lane, path)
+
+        return created
 
     def _update_upstream_accepted(self, layer: Layer) -> None:
         """Update the upstream_accepted ref for the next layer."""
