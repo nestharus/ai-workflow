@@ -1592,9 +1592,7 @@ class GapExplorationStep:
             return StepResult(status="OK")
 
         slice_root = Path(ctx.slice_root)
-        from spec_manager.core.language import source_rglob
-
-        py_files = source_rglob(slice_root)
+        py_files = self._l1_gap_scan_targets(slice_root=slice_root, bundle=bundle)
         if not py_files:
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             self._merge_gap_queue(self._report_from_gap_records([]), bundle)
@@ -1639,6 +1637,47 @@ class GapExplorationStep:
             return StepResult(status="RETRY", error=f"L1 gap exploration failed: {exc}")
 
         return StepResult(status="OK")
+
+    @staticmethod
+    def _l1_gap_scan_targets(*, slice_root: Path, bundle: EvidenceBundle) -> list[Path]:
+        """Resolve gap scan targets from bundle evidence before falling back to deep scans."""
+        targets: list[Path] = []
+        seen: set[Path] = set()
+
+        source_entries = bundle.source_index.entries or []
+        for entry in source_entries:
+            if not isinstance(entry, dict):
+                continue
+            rel_path = str(entry.get("path", "")).strip()
+            if not rel_path or not rel_path.endswith(".py"):
+                continue
+            candidate = slice_root / rel_path
+            if candidate in seen or not candidate.exists() or not candidate.is_file():
+                continue
+            seen.add(candidate)
+            targets.append(candidate)
+
+        if targets:
+            return targets
+
+        for item in bundle.manifest.files or []:
+            if not isinstance(item, dict):
+                continue
+            rel_path = str(item.get("path", "")).strip()
+            if not rel_path or not rel_path.endswith(".py"):
+                continue
+            candidate = slice_root / rel_path
+            if candidate in seen or not candidate.exists() or not candidate.is_file():
+                continue
+            seen.add(candidate)
+            targets.append(candidate)
+
+        if targets:
+            return targets
+
+        from spec_manager.core.language import source_rglob
+
+        return source_rglob(slice_root)
 
     def _explore_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L2: architecture continuity gaps using authority artifacts + topology deltas."""
@@ -3247,10 +3286,8 @@ class ImplementStep:
 class CoordinateStep:
     """Resolve under-specification and coordination signals.
 
-    For L1: treats under_spec_events as coordination signals,
-    calls planner triage, registers monitors, returns WAITING.
-
-    For L2/L3: delegates to existing UnderSpecManager behavior.
+    Delegates all layers to UnderSpecManager so unresolved events block
+    promotion until constraints are provided.
     """
 
     name = "UNDER_SPEC_CHECK"
@@ -3259,75 +3296,12 @@ class CoordinateStep:
         self._planner = planner
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Dispatch to L1 coordination or L2/L3 under-spec resolution."""
-        if ctx.layer == "l1":
-            return self._coordinate_l1(ctx, bundle)
-        # L2/L3: existing under-spec behavior
+        """Resolve under-spec events for the active layer."""
         return self._resolve_under_spec(ctx, bundle)
 
     def _coordinate_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L1: convert under_spec_events to CoordinationSignals and triage.
-
-        If no signals/under_spec_events: return OK.
-        Otherwise: write signals to iteration dir and return WAITING.
-        """
-        from spec_manager.orchestration.coordination.signals import CoordinationSignal
-
-        raw_events = bundle.implementation.under_spec_events
-        if not raw_events:
-            return StepResult(status="OK")
-
-        # Convert under_spec_events to CoordinationSignals
-        signals: list[CoordinationSignal] = []
-        for event in raw_events:
-            # Map under-spec event kinds to signal classifications
-            kind = event.get("kind", "AMBIGUOUS_SPEC")
-            classification_map = {
-                "MISSING_CONSTRAINT": "MISSING_INTERFACE",
-                "AMBIGUITY": "AMBIGUOUS_SPEC",
-                "CONFLICTING": "CONFLICTING_REQUIREMENTS",
-                "INTERFACE_MISMATCH": "INTERFACE_MISMATCH",
-            }
-            classification = classification_map.get(kind, "AMBIGUOUS_SPEC")
-
-            from spec_manager.orchestration.coordination.signals import (
-                SignalNeed,
-                SpecRef,
-            )
-
-            signal = CoordinationSignal(
-                run_id=ctx.run_id,
-                layer=ctx.layer,
-                slice_id=ctx.slice_id,
-                classification=classification,
-                need=SignalNeed(
-                    summary=event.get("question", ""),
-                    artifact_type=event.get("kind", ""),
-                ),
-                spec_refs=[SpecRef(spec_text=event.get("context", ""))]
-                if event.get("context")
-                else [],
-            )
-            signals.append(signal)
-
-        # If planner available: triage each signal
-        if self._planner is not None:
-            for signal in signals:
-                try:
-                    self._planner.triage_signal(signal)
-                except Exception as exc:
-                    logger.debug("Planner triage failed for signal %s: %s", signal.signal_id, exc)
-
-        # Write signals to iteration dir
-        evidence_root = _evidence_base_path(
-            slice_root=ctx.slice_root,
-            workspace_root=ctx.workspace_root,
-        )
-        iteration_dir = bundle.iter_dir(evidence_root)
-        for signal in signals:
-            signal.write_to(iteration_dir)
-
-        return StepResult(status="WAITING")
+        """Compatibility shim; L1 now uses the unified under-spec resolver."""
+        return self._resolve_under_spec(ctx, bundle)
 
     def _resolve_under_spec(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L2/L3: resolve under-spec events via UnderSpecManager.
@@ -3351,6 +3325,7 @@ class CoordinateStep:
             workspace_root=workspace,
             mode=ctx.mode,
             planner=self._planner,
+            run_id=ctx.run_id,
         )
         outcome = manager.resolve(slice_id=ctx.slice_id, events=events, layer=ctx.layer)
 
@@ -4360,6 +4335,7 @@ class PromoteStep:
                 mode="both",
                 pin_proposals_path=pin_proposals_path,
                 edge_proposals_path=edge_proposals_path,
+                source_index_entries=bundle.source_index.entries,
             )
             registry_path = orchestrator.save_registry(registry)
         except Exception as exc:
@@ -5830,6 +5806,18 @@ class IntegrateStep:
             record_artifacts(merge=None, skipped=True)
             return StepResult(status="OK")
 
+        integration_lock: Any | None = None
+        if isinstance(ctx.config, dict):
+            lock_candidate = ctx.config.get("_integration_lock")
+            if hasattr(lock_candidate, "acquire") and hasattr(lock_candidate, "release"):
+                integration_lock = lock_candidate
+
+        def run_with_integration_lock(fn: Callable[[], Any]) -> Any:
+            if integration_lock is None:
+                return fn()
+            with integration_lock:
+                return fn()
+
         merge_attempts: list[dict[str, Any]] = []
         investigator_report_refs: list[str] = []
         failure_evidence: dict[str, Any] = {}
@@ -5913,7 +5901,7 @@ class IntegrateStep:
             name = f"investigator.{phase}.report.json"
             return _write_iteration_json(bundle, evidence_root, name, report)
 
-        merge_result = run_merge_cycle(cycle="initial")
+        merge_result = run_with_integration_lock(lambda: run_merge_cycle(cycle="initial"))
 
         if not merge_result.success:
             failure_evidence = {
@@ -5945,7 +5933,7 @@ class IntegrateStep:
                 investigator_report_refs=investigator_report_refs,
             )
             return StepResult(
-                status="BLOCKED",
+                status="RETRY",
                 emitted_tickets=[ticket],
                 error=merge_result.error,
             )
@@ -5954,8 +5942,9 @@ class IntegrateStep:
         ci_tick_error = ""
         ci_tick_receipt: dict[str, Any] = {}
         if ctx.ci_tick_callback is not None:
+            ci_callback = ctx.ci_tick_callback
             try:
-                tick_result = ctx.ci_tick_callback(ctx.slice_id)
+                tick_result = run_with_integration_lock(lambda: ci_callback(ctx.slice_id))
                 ci_tick_triggered = True
                 if isinstance(tick_result, dict):
                     ci_tick_receipt = tick_result
@@ -5995,8 +5984,9 @@ class IntegrateStep:
             ) -> tuple[bool, dict[str, Any]]:
                 if ctx.ci_tick_callback is None:
                     return True, {"note": "No CI callback available for retry verification"}
+                retry_callback = ctx.ci_tick_callback
                 try:
-                    retry_raw = ctx.ci_tick_callback(ctx.slice_id)
+                    retry_raw = run_with_integration_lock(lambda: retry_callback(ctx.slice_id))
                 except Exception as exc:
                     return False, {"error": str(exc)}
                 retry_receipt = retry_raw if isinstance(retry_raw, dict) else {}
@@ -6056,7 +6046,7 @@ class IntegrateStep:
                     investigator_report_refs=investigator_report_refs,
                 )
                 return StepResult(
-                    status="BLOCKED",
+                    status="RETRY",
                     emitted_tickets=[ticket],
                     error=diagnosis,
                 )

@@ -68,6 +68,7 @@ class PinFunctionOrchestrator:
         edge_proposals: list[dict[str, Any]] | None = None,
         pin_proposals_path: str | Path | None = None,
         edge_proposals_path: str | Path | None = None,
+        source_index_entries: list[dict[str, Any]] | None = None,
     ) -> PinFunctionRegistry:
         """Scan for pin-functions and merge LLM-sourced proposals.
 
@@ -88,6 +89,10 @@ class PinFunctionOrchestrator:
                 proposals. Loaded and merged with ``pin_proposals``.
             edge_proposals_path: Optional JSON file path containing edge
                 proposals. Loaded and merged with ``edge_proposals``.
+            source_index_entries: Optional precomputed source-analysis
+                entries (from PromotionLoop ``SourceIndexRef``). When
+                provided, scan reuses these entries instead of re-running
+                deep ``analyze_source`` directory walks.
 
         Returns:
             PinFunctionRegistry with all discovered pin-functions and edges.
@@ -97,20 +102,24 @@ class PinFunctionOrchestrator:
 
         # Phase 1: Filesystem scan — pins only, NO edges
         if mode in ("scan", "both"):
-            all_candidates: list[_AtomCandidate] = []
-            for atom_dir_name in self._config.atom_directories:
-                atom_dir = self._project_root / atom_dir_name
-                if atom_dir.is_dir():
-                    candidates = self._extract_from_directory(atom_dir)
-                    all_candidates.extend(candidates)
+            all_candidates: list[_AtomCandidate]
+            if source_index_entries:
+                all_candidates = self._extract_from_source_index(source_index_entries)
+            else:
+                all_candidates = []
+                for atom_dir_name in self._config.atom_directories:
+                    atom_dir = self._project_root / atom_dir_name
+                    if atom_dir.is_dir():
+                        candidates = self._extract_from_directory(atom_dir)
+                        all_candidates.extend(candidates)
 
-            root_candidates = self._extract_from_directory(self._project_root, recursive=True)
-            seen_keys: set[str] = {f"{c.file_path}:{c.function_name}" for c in all_candidates}
-            for c in root_candidates:
-                key = f"{c.file_path}:{c.function_name}"
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    all_candidates.append(c)
+                root_candidates = self._extract_from_directory(self._project_root, recursive=True)
+                seen_keys: set[str] = {f"{c.file_path}:{c.function_name}" for c in all_candidates}
+                for c in root_candidates:
+                    key = f"{c.file_path}:{c.function_name}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        all_candidates.append(c)
 
             pin_functions = self._candidates_to_pin_functions(all_candidates)
 
@@ -365,6 +374,110 @@ class PinFunctionOrchestrator:
         return merged, new_edges
 
     # --- Private: function extraction (replaces ast_extractor) ---
+
+    def _extract_from_source_index(
+        self,
+        source_index_entries: list[dict[str, Any]],
+    ) -> list[_AtomCandidate]:
+        """Extract atom candidates from precomputed source-index entries."""
+        candidates: list[_AtomCandidate] = []
+        seen_keys: set[tuple[str, str, int, int]] = set()
+        source_cache: dict[Path, list[str]] = {}
+
+        for entry in source_index_entries:
+            if not isinstance(entry, dict):
+                continue
+            rel_path = str(entry.get("path", "")).strip()
+            if not rel_path or not rel_path.endswith(".py"):
+                continue
+
+            file_path = self._project_root / rel_path
+            file_name = file_path.stem
+            if any(pattern in file_name for pattern in self._config.exclude_patterns):
+                continue
+
+            analysis = entry.get("analysis", {})
+            functions = analysis.get("functions", []) if isinstance(analysis, dict) else []
+            if not isinstance(functions, list) or not functions:
+                continue
+
+            if file_path not in source_cache:
+                try:
+                    source_cache[file_path] = file_path.read_text(encoding="utf-8").splitlines()
+                except (OSError, UnicodeDecodeError):
+                    source_cache[file_path] = []
+            source_lines = source_cache[file_path]
+
+            module_path = self._file_to_module(file_path)
+            is_convention = self._is_convention_directory(file_path)
+            is_shapes_dir = "shapes" in [p.lower() for p in file_path.parts]
+
+            for raw_func in functions:
+                if not isinstance(raw_func, dict):
+                    continue
+
+                func_name = str(raw_func.get("name", "")).strip()
+                if not func_name:
+                    continue
+
+                detection_method = self._classify_detection(func_name, is_convention)
+                if detection_method is None:
+                    continue
+
+                docstring = str(raw_func.get("docstring", "")).split("\n")[0].strip()
+                if (
+                    detection_method == "heuristic"
+                    and self._config.require_docstring
+                    and not docstring
+                ):
+                    continue
+
+                try:
+                    start_line = int(raw_func.get("start_line", 0))
+                    end_line = int(raw_func.get("end_line", 0))
+                except (TypeError, ValueError):
+                    continue
+                if start_line <= 0 or end_line <= 0:
+                    continue
+
+                body_lines = end_line - start_line + 1
+                if detection_method == "heuristic" and body_lines > self._config.max_function_lines:
+                    continue
+
+                line_start = max(start_line - 1, 0)
+                line_end = max(end_line, line_start)
+                body_source = "\n".join(source_lines[line_start:line_end]) if source_lines else ""
+
+                args_raw = raw_func.get("args", [])
+                args = [str(arg) for arg in args_raw] if isinstance(args_raw, list) else []
+                signature = f"({', '.join(args)})"
+                return_annotation = raw_func.get("return_annotation")
+                if isinstance(return_annotation, str) and return_annotation:
+                    signature += f" -> {return_annotation}"
+
+                qualified_raw = str(raw_func.get("qualified_name") or func_name).strip()
+                candidate_key = (str(file_path), func_name, start_line, end_line)
+                if candidate_key in seen_keys:
+                    continue
+                seen_keys.add(candidate_key)
+
+                candidates.append(
+                    _AtomCandidate(
+                        function_name=func_name,
+                        qualified_name=f"{module_path}.{qualified_raw}",
+                        file_path=str(file_path),
+                        module_path=module_path,
+                        line_start=start_line,
+                        line_end=end_line,
+                        signature=signature,
+                        docstring=docstring,
+                        body_source=body_source,
+                        is_shape=is_shapes_dir,
+                        detection_method=detection_method,
+                    )
+                )
+
+        return candidates
 
     def _extract_from_directory(
         self,

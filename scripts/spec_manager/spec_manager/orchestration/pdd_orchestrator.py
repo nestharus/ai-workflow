@@ -26,11 +26,12 @@ the PDD members.
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.workspace.manager import WorkspaceManager
-from spec_manager.refinement.workspace.state import Phase, PhaseStatus
+from spec_manager.refinement.workspace.state import Phase
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,8 @@ class PromotionLoopRunner:
             SchedulerConfig,
         )
 
+        self._prepare_slice_worktrees(slice_refs)
+
         loop = PromotionLoop(
             workspace_manager=self._manager,
             branch_manager=self._manager.branches,
@@ -93,6 +96,43 @@ class PromotionLoopRunner:
             "waiting_slices": sched_result.waiting_slices,
             "all_complete": sched_result.all_complete,
         }
+
+    def _prepare_slice_worktrees(self, slice_refs: list[Any]) -> None:
+        """Materialize isolated per-slice work directories for loop execution."""
+        worktree_root = (
+            self._manager.workspace_path
+            / ".pdd_runs"
+            / self._manager.run_id
+            / "slice_worktrees"
+            / "l1"
+        )
+        worktree_root.mkdir(parents=True, exist_ok=True)
+
+        for ref in slice_refs:
+            slice_id = str(getattr(ref, "slice_id", "")).strip()
+            source_raw = str(getattr(ref, "worktree_path", "")).strip()
+            if not slice_id or not source_raw:
+                continue
+
+            source = Path(source_raw)
+            if not source.exists() or not source.is_dir():
+                logger.warning(
+                    "Skipping isolated slice worktree creation for '%s': source missing at %s",
+                    slice_id,
+                    source,
+                )
+                continue
+
+            target = worktree_root / slice_id
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(source, target)
+            ref.worktree_path = str(target)
+            metadata = getattr(ref, "metadata", None)
+            if isinstance(metadata, dict):
+                metadata["source_slice_root"] = str(source)
+            else:
+                ref.metadata = {"source_slice_root": str(source)}
 
 
 class PddOrchestrator:
@@ -148,59 +188,22 @@ class PddOrchestrator:
         stop_on_failure: bool = True,
         mode: str = "loop",
     ) -> dict[str, Any]:
-        """Run PDD phases.
+        """Run PDD orchestration.
 
         Args:
-            start_phase: First phase to execute (default: first incomplete).
-            end_phase: Last phase to execute (default: CONTINUOUS_QA).
-            stop_on_failure: If True, stop on the first phase failure.
-            mode: Execution mode:
-                ``"loop"`` — per-slice iterative PromotionLoop (default).
-                ``"pipeline"`` — sequential P0-P10 (deprecated legacy).
+            start_phase: Reserved legacy argument (sequential pipeline retired).
+            end_phase: Reserved legacy argument (sequential pipeline retired).
+            stop_on_failure: Reserved legacy argument (sequential pipeline retired).
+            mode: Execution mode. Only ``"loop"`` is supported.
 
         Returns:
-            Summary dict with ``completed``, ``failed``, and ``skipped`` lists.
+            Loop summary dict from :meth:`run_loop`.
         """
-        if mode == "loop":
-            return self.run_loop()
-
-        start_idx = 0
-        end_idx = len(PDD_PHASE_ORDER) - 1
-
-        if start_phase is not None:
-            start_idx = PDD_PHASE_ORDER.index(start_phase)
-        if end_phase is not None:
-            end_idx = PDD_PHASE_ORDER.index(end_phase)
-
-        phases_to_run = PDD_PHASE_ORDER[start_idx : end_idx + 1]
-
-        completed: list[str] = []
-        failed: list[str] = []
-        skipped: list[str] = []
-
-        for pdd_phase in phases_to_run:
-            # Skip already-completed phases
-            phase_result = self.manager.state.phases.get(pdd_phase.value)
-            if phase_result and phase_result.status == PhaseStatus.COMPLETED:
-                skipped.append(pdd_phase.value)
-                logger.info("Phase %s already completed, skipping.", pdd_phase.value)
-                continue
-
-            logger.info("Starting phase: %s", pdd_phase.value)
-            try:
-                self.run_phase(pdd_phase)
-                completed.append(pdd_phase.value)
-            except Exception:
-                failed.append(pdd_phase.value)
-                logger.exception("Phase %s failed", pdd_phase.value)
-                if stop_on_failure:
-                    break
-
-        return {
-            "completed": completed,
-            "failed": failed,
-            "skipped": skipped,
-        }
+        if mode != "loop":
+            raise ValueError(
+                "PddOrchestrator sequential pipeline mode has been retired; use mode='loop'."
+            )
+        return self.run_loop()
 
     def run_phase(self, pdd_phase: Phase) -> dict[str, Any]:
         """Run a single PDD phase.

@@ -34,7 +34,7 @@ import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from spec_manager.orchestration.promotion_loop import (
@@ -545,7 +545,11 @@ class ReactivePromotionScheduler:
             )
 
         logger.info("Scheduler: starting slice '%s'", slice_ref.slice_id)
-        result = self._loop.run_slice(slice_ref, run_context)
+        ctx_config = dict(run_context.config) if isinstance(run_context.config, dict) else {}
+        if self._integration_lock is not None:
+            ctx_config["_integration_lock"] = self._integration_lock
+        slice_run_context = replace(run_context, config=ctx_config)
+        result = self._loop.run_slice(slice_ref, slice_run_context)
         logger.info(
             "Scheduler: slice '%s' finished with status %s (%d iterations)",
             slice_ref.slice_id,
