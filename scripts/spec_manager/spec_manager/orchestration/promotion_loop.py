@@ -2026,20 +2026,38 @@ class CoordinateStep:
         )
         outcome = manager.resolve(slice_id=ctx.slice_id, events=events, layer=ctx.layer)
 
-        # Record decisions in the bundle
-        bundle.under_spec.decisions = [
-            {"event_id": e.event_id, "question": e.question} for e in outcome.resolved
-        ]
-        bundle.under_spec.blockers = [e.to_dict() for e in outcome.blocked]
+        # Record decisions/blockers and under-spec artifacts in the bundle.
+        bundle.under_spec.decisions = (
+            list(outcome.decisions)
+            if outcome.decisions
+            else [{"event_id": e.event_id, "question": e.question} for e in outcome.resolved]
+        )
+        bundle.under_spec.blockers = []
+        for event in outcome.blocked:
+            payload = event.to_dict()
+            if outcome.blocked_on:
+                payload["blocked_on"] = list(outcome.blocked_on)
+            if outcome.resume_hint:
+                payload["resume_hint"] = dict(outcome.resume_hint)
+            if outcome.constraint_request_path:
+                payload["constraint_request_path"] = outcome.constraint_request_path
+            bundle.under_spec.blockers.append(payload)
+
+        if outcome.blockers_path:
+            bundle.under_spec.path = outcome.blockers_path
+        elif outcome.decisions_path:
+            bundle.under_spec.path = outcome.decisions_path
 
         # Record new constraint refs
         if outcome.constraints:
-            constraint_path = str(workspace / "analysis" / "constraints" / f"{ctx.slice_id}.json")
+            constraint_path = outcome.resume_hint.get("constraints_path") or str(
+                workspace / "analysis" / "constraints" / f"{ctx.slice_id}.yaml"
+            )
             if constraint_path not in bundle.facts.constraints_refs:
                 bundle.facts.constraints_refs.append(constraint_path)
 
         if outcome.is_blocked:
-            bundle.status = "BLOCKED"
+            bundle.status = outcome.bundle_status
             return StepResult(
                 status="BLOCKED",
                 error=f"Under-specification: {len(outcome.blocked)} unresolvable events",

@@ -19,8 +19,10 @@ iterations can pick them up deterministically.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -102,6 +104,13 @@ class UnderSpecOutcome:
     resolved: list[UnderSpecEvent] = field(default_factory=list)
     blocked: list[UnderSpecEvent] = field(default_factory=list)
     constraints: list[Constraint] = field(default_factory=list)
+    decisions: list[dict[str, Any]] = field(default_factory=list)
+    blockers_path: str = ""
+    constraint_request_path: str = ""
+    decisions_path: str = ""
+    bundle_status: Literal["IN_PROGRESS", "BLOCKED"] = "IN_PROGRESS"
+    blocked_on: list[str] = field(default_factory=list)
+    resume_hint: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_blocked(self) -> bool:
@@ -143,6 +152,7 @@ class UnderSpecManager:
         self._store = ConstraintsStore(workspace_root)
         self._planner = planner
         self._run_id = run_id
+        self._last_constraint_request_path = ""
 
     def resolve(
         self,
@@ -186,14 +196,17 @@ class UnderSpecManager:
         # Phase 2: Attempt resolution of uncovered events
         new_constraints: list[Constraint] = []
         still_blocked: list[UnderSpecEvent] = []
+        self._last_constraint_request_path = ""
 
         if self._mode == "interactive":
             new_constraints, still_blocked = self._resolve_interactive(slice_id, uncovered)
         else:
             new_constraints, still_blocked = self._resolve_auto(slice_id, uncovered, layer=layer)
 
+        constraint_request_path = self._last_constraint_request_path
+
         # Phase 3: Validate and persist new constraints
-        validated = []
+        validated: list[Constraint] = []
         for c in new_constraints:
             if self._validate_constraint(c):
                 c.validated = True
@@ -207,22 +220,60 @@ class UnderSpecManager:
                 matching = [e for e in uncovered if e.event_id == c.constraint_id]
                 still_blocked.extend(matching)
 
+        constraint_file_path = ""
         if validated:
-            self._store.save(slice_id, validated)
+            constraint_file_path = str(self._store.save(slice_id, validated))
             logger.info(
                 "Saved %d new constraints for slice '%s'",
                 len(validated),
                 slice_id,
             )
 
+        still_blocked = self._dedupe_events(still_blocked)
         newly_resolved = [
             e for e in uncovered if e.event_id in {c.constraint_id for c in validated}
         ]
+        decisions = self._build_decisions(validated)
+
+        decisions_path = ""
+        if decisions:
+            decisions_path = str(self._write_decisions(slice_id, decisions))
+
+        if still_blocked and not constraint_request_path:
+            constraint_request_path = str(self._write_constraint_request(slice_id, still_blocked))
+
+        blockers_path = ""
+        bundle_status: Literal["IN_PROGRESS", "BLOCKED"] = "IN_PROGRESS"
+        blocked_on: list[str] = []
+        resume_hint: dict[str, str] = {}
+        if still_blocked:
+            blocked_on = [e.question for e in still_blocked if e.question]
+            resume_hint = {
+                "constraints_path": constraint_file_path or str(self._constraint_path(slice_id)),
+                "constraint_request_path": constraint_request_path,
+                "decisions_path": decisions_path,
+            }
+            blockers_path = str(
+                self._write_blockers(
+                    slice_id=slice_id,
+                    blocked_events=still_blocked,
+                    blocked_on=blocked_on,
+                    resume_hint=resume_hint,
+                )
+            )
+            bundle_status = "BLOCKED"
 
         return UnderSpecOutcome(
             resolved=covered + newly_resolved,
             blocked=still_blocked,
             constraints=validated,
+            decisions=decisions,
+            blockers_path=blockers_path,
+            constraint_request_path=constraint_request_path,
+            decisions_path=decisions_path,
+            bundle_status=bundle_status,
+            blocked_on=blocked_on,
+            resume_hint=resume_hint,
         )
 
     # ------------------------------------------------------------------
@@ -259,6 +310,8 @@ class UnderSpecManager:
 
         run_dir = self._workspace / ".pdd_runs" / self._run_id
         store = UserQuestionSignalStore(run_dir)
+        request_path = self._write_constraint_request(slice_id, events)
+        self._last_constraint_request_path = str(request_path)
 
         for event in events:
             signal = UserQuestionSignal(
@@ -354,17 +407,33 @@ class UnderSpecManager:
 
             # Extract constraints from planner result
             for key, value in result.get("constraints", {}).items():
-                if isinstance(value, str) and value.strip():
+                answer = ""
+                confidence = 0.7
+                trace: list[str] = []
+
+                if isinstance(value, str):
+                    answer = value.strip()
+                elif isinstance(value, dict):
+                    answer = str(value.get("answer", "")).strip()
+                    raw_confidence = value.get("confidence")
+                    if isinstance(raw_confidence, (int, float)):
+                        confidence = float(raw_confidence)
+                    raw_trace = value.get("trace")
+                    if isinstance(raw_trace, list):
+                        trace = [str(item) for item in raw_trace]
+
+                if answer:
                     matching = [e for e in events if e.event_id == key or e.question == key]
                     for event in matching:
                         constraints.append(
                             Constraint(
                                 constraint_id=event.event_id,
                                 question=event.question,
-                                answer=value,
+                                answer=answer,
                                 source="planner",
-                                confidence=0.7,
+                                confidence=confidence,
                                 validated=False,
+                                trace=trace,
                             )
                         )
                         resolved_ids.add(event.event_id)
@@ -473,3 +542,148 @@ class UnderSpecManager:
 
         # Minimum length check
         return len(answer) >= 5
+
+    def _constraint_path(self, slice_id: str) -> Path:
+        return self._workspace / "analysis" / "constraints" / f"{slice_id}.yaml"
+
+    def _under_spec_dir(self, slice_id: str) -> Path:
+        path = self._workspace / "analysis" / "under_spec" / slice_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _dedupe_events(events: list[UnderSpecEvent]) -> list[UnderSpecEvent]:
+        deduped: list[UnderSpecEvent] = []
+        seen_ids: set[str] = set()
+        for event in events:
+            key = event.event_id or event.question
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            deduped.append(event)
+        return deduped
+
+    def _write_constraint_request(self, slice_id: str, events: list[UnderSpecEvent]) -> Path:
+        lines: list[str] = [
+            f"# Constraint Request: {slice_id}",
+            "",
+            "Status: BLOCKED",
+            f"Generated: {datetime.now(UTC).isoformat()}",
+            "",
+            "Provide constraints in YAML at:",
+            f"- `analysis/constraints/{slice_id}.yaml`",
+            "",
+            "## Questions",
+            "",
+        ]
+
+        for index, event in enumerate(events, start=1):
+            lines.append(
+                f"### {index}. [{event.event_id}] {event.question or '(no question text)'}"
+            )
+            lines.append(f"- Kind: `{event.kind}`")
+            if event.source_file:
+                lines.append(f"- Evidence file: `{event.source_file}:{event.source_line or 1}`")
+
+            options = self._extract_options(event.context)
+            if options:
+                lines.append("- Options:")
+                for option in options:
+                    lines.append(f"  - {option}")
+
+            evidence_refs = self._extract_evidence_refs(event.context)
+            if evidence_refs:
+                lines.append("- Evidence references:")
+                for ref in evidence_refs:
+                    lines.append(f"  - {ref}")
+
+            lines.append("")
+
+        lines.extend(
+            [
+                "## Required Decision Format",
+                "",
+                "YAML:",
+                "```yaml",
+                "constraints:",
+                "  - constraint_id: <event_id>",
+                "    question: <question>",
+                "    answer: <concrete testable answer>",
+                "    source: user",
+                "```",
+                "",
+                "JSON:",
+                "```json",
+                '{"constraints":[{"constraint_id":"<event_id>","question":"<question>","answer":"<answer>","source":"user"}]}',
+                "```",
+                "",
+            ]
+        )
+
+        path = self._under_spec_dir(slice_id) / "constraint_request.md"
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
+
+    def _write_blockers(
+        self,
+        *,
+        slice_id: str,
+        blocked_events: list[UnderSpecEvent],
+        blocked_on: list[str],
+        resume_hint: dict[str, str],
+    ) -> Path:
+        payload = {
+            "slice_id": slice_id,
+            "status": "BLOCKED",
+            "blocked_on": blocked_on,
+            "resume_hint": resume_hint,
+            "events": [event.to_dict() for event in blocked_events],
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        path = self._under_spec_dir(slice_id) / "blockers.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _build_decisions(constraints: list[Constraint]) -> list[dict[str, Any]]:
+        decisions: list[dict[str, Any]] = []
+        for constraint in constraints:
+            decisions.append(
+                {
+                    "event_id": constraint.constraint_id,
+                    "question": constraint.question,
+                    "answer": constraint.answer,
+                    "source": constraint.source,
+                    "confidence": constraint.confidence,
+                    "trace": list(constraint.trace),
+                }
+            )
+        return decisions
+
+    def _write_decisions(self, slice_id: str, decisions: list[dict[str, Any]]) -> Path:
+        payload = {
+            "slice_id": slice_id,
+            "status": "RESOLVED",
+            "decisions": decisions,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        path = self._under_spec_dir(slice_id) / "decisions.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _extract_options(context: dict[str, Any]) -> list[str]:
+        for key in ("options", "option_set", "choices"):
+            value = context.get(key)
+            if isinstance(value, list):
+                return [str(item) for item in value if str(item).strip()]
+        return []
+
+    @staticmethod
+    def _extract_evidence_refs(context: dict[str, Any]) -> list[str]:
+        refs: list[str] = []
+        for key in ("evidence_paths", "pin_ids", "gate_ids"):
+            value = context.get(key)
+            if isinstance(value, list):
+                refs.extend(str(item) for item in value if str(item).strip())
+        return refs

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
@@ -14,6 +16,9 @@ if TYPE_CHECKING:
 class InteractiveIO:
     """Handles interactive disambiguation via stdin/stdout."""
 
+    def __init__(self, workspace: Path | None = None) -> None:
+        self._workspace = workspace
+
     def ask(self, ambiguity: Ambiguity, question: str) -> SteeringResponse:
         """Present a question to the user and get a response.
 
@@ -24,6 +29,13 @@ class InteractiveIO:
         Returns:
             SteeringResponse with the user's answer.
         """
+        self._write_constraint_request(
+            request_id=ambiguity.ambiguity_id,
+            question=question,
+            options=[],
+            evidence_refs=[ambiguity.source_location] if ambiguity.source_location else [],
+        )
+
         print(f"\n--- Ambiguity Detected ({ambiguity.ambiguity_id}) ---")
         print(f"Type: {ambiguity.ambiguity_type}")
         print(f"Location: {ambiguity.source_location}")
@@ -50,6 +62,13 @@ class InteractiveIO:
             SteeringResponse with the user's answer and signal traceability.
         """
         ctx = signal.work_context
+
+        self._write_constraint_request(
+            request_id=signal.signal_id,
+            question=question,
+            options=list(signal.options),
+            evidence_refs=[signal.encountered_location] if signal.encountered_location else [],
+        )
 
         print(f"\n{'=' * 60}")
         print(f"Signal: {signal.signal_id} ({signal.signal_type})")
@@ -83,3 +102,52 @@ class InteractiveIO:
             source="interactive",
             signal=signal,
         )
+
+    def _write_constraint_request(
+        self,
+        *,
+        request_id: str,
+        question: str,
+        options: list[str],
+        evidence_refs: list[str],
+    ) -> None:
+        if self._workspace is None:
+            return
+
+        out_dir = self._workspace / "analysis" / "under_spec" / "interactive"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        safe_id = request_id.replace("/", "_").replace("\\", "_")
+        path = out_dir / f"{safe_id}_constraint_request.md"
+
+        lines = [
+            f"# Constraint Request: {request_id}",
+            "",
+            f"Generated: {datetime.now(UTC).isoformat()}",
+            "",
+            "## Question",
+            question,
+            "",
+        ]
+        if options:
+            lines.append("## Options")
+            lines.extend(f"- {opt}" for opt in options if opt)
+            lines.append("")
+        if evidence_refs:
+            lines.append("## Evidence References")
+            lines.extend(f"- {ref}" for ref in evidence_refs if ref)
+            lines.append("")
+
+        lines.extend(
+            [
+                "## Required Decision Format",
+                "```yaml",
+                "constraints:",
+                f"  - constraint_id: {request_id}",
+                f"    question: {question}",
+                "    answer: <concrete testable answer>",
+                "    source: user",
+                "```",
+            ]
+        )
+
+        path.write_text("\n".join(lines), encoding="utf-8")

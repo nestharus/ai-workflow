@@ -99,7 +99,12 @@ class PhaseResolver:
                 )
                 break
 
-            current_text = self._patcher.apply(current_text, responses)
+            current_text = self._patcher.apply(
+                current_text,
+                responses,
+                slice_id=library_id or phase_name,
+                workspace=workspace,
+            )
             logger.info(
                 "PhaseResolver %s: patched with %d responses",
                 phase_name,

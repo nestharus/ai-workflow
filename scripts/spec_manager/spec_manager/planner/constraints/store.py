@@ -6,11 +6,12 @@ constraint types under planner.constraints.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+import yaml
 
 if TYPE_CHECKING:
     from spec_manager.orchestration.under_spec.manager import UnderSpecEvent
@@ -34,7 +35,14 @@ class Constraint:
     constraint_id: str = ""
     question: str = ""
     answer: str = ""
-    source: Literal["user", "research", "steering", "existing"] = "existing"
+    source: Literal[
+        "user",
+        "research",
+        "steering",
+        "existing",
+        "planner",
+        "research_coordinator",
+    ] = "existing"
     confidence: float = 1.0
     validated: bool = True
     dimension: str = "software"
@@ -84,8 +92,7 @@ class Constraint:
 class ConstraintsStore:
     """File-based constraint persistence.
 
-    Constraints live in ``<workspace>/analysis/constraints/<slice_id>.yaml``
-    (or ``.json`` --- we use JSON for simplicity since YAML is optional).
+    Constraints live in ``<workspace>/analysis/constraints/<slice_id>.yaml``.
     """
 
     def __init__(self, workspace_root: Path) -> None:
@@ -97,14 +104,16 @@ class ConstraintsStore:
         Accepts both list format ``[{...}, ...]`` and dict format
         ``{"constraints": [{...}, ...]}``.
         """
-        path = self._root / f"{slice_id}.json"
+        path = self._root / f"{slice_id}.yaml"
         if not path.exists():
             return []
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if raw is None:
+                return []
             data = raw if isinstance(raw, list) else raw.get("constraints", [])
             return [Constraint.from_dict(c) for c in data]
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (yaml.YAMLError, KeyError, AttributeError, TypeError) as exc:
             logger.warning("Failed to load constraints for %s: %s", slice_id, exc)
             return []
 
@@ -138,9 +147,9 @@ class ConstraintsStore:
                 existing_ids.add(c.constraint_id)
 
         self._root.mkdir(parents=True, exist_ok=True)
-        path = self._root / f"{slice_id}.json"
+        path = self._root / f"{slice_id}.yaml"
         path.write_text(
-            json.dumps([c.to_dict() for c in merged], indent=2),
+            yaml.safe_dump([c.to_dict() for c in merged], sort_keys=False),
             encoding="utf-8",
         )
         return path

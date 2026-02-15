@@ -175,7 +175,7 @@ class InteractiveSignalResolver:
             evidence_index=evidence_index,
             use_research=use_research,
         )
-        self._interactive_io = InteractiveIO()
+        self._interactive_io = InteractiveIO(workspace=workspace)
         self._question_gen = QuestionGenerator()
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:

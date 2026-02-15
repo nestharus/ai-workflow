@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -71,7 +74,7 @@ class InteractiveWorkflow:
 
         self._detector = AmbiguityDetector()
         self._question_gen = QuestionGenerator()
-        self._patcher = SpecPatcher()
+        self._patcher = SpecPatcher(workspace)
 
         if signal_resolver is not None:
             self._resolver = signal_resolver
@@ -106,7 +109,13 @@ class InteractiveWorkflow:
                     evidence_index=evidence_index,
                 )
 
-    def run(self, spec_text: str) -> str:
+    def run(
+        self,
+        spec_text: str,
+        *,
+        slice_id: str = "__interactive__",
+        on_resume_requested: Callable[[dict[str, str]], None] | None = None,
+    ) -> str:
         """Run the interactive refinement workflow.
 
         Args:
@@ -147,7 +156,26 @@ class InteractiveWorkflow:
                 logger.info("No responses obtained - stopping")
                 break
 
-            current_spec = self._patcher.apply(current_spec, responses)
+            resolved_slice_id = slice_id
+            if resolved_slice_id == "__interactive__":
+                inferred_slice_id = self._infer_slice_id(signals)
+                if inferred_slice_id:
+                    resolved_slice_id = inferred_slice_id
+
+            current_spec = self._patcher.apply(
+                current_spec,
+                responses,
+                slice_id=resolved_slice_id,
+                workspace=self._workspace,
+            )
+            if self._patcher.last_constraints_path is not None:
+                resume_payload = self._write_resume_request(
+                    slice_id=resolved_slice_id,
+                    iteration=iteration,
+                    constraints_path=self._patcher.last_constraints_path,
+                )
+                if on_resume_requested is not None:
+                    on_resume_requested(resume_payload)
             logger.info("Patched spec with %d responses", len(responses))
 
         return current_spec
@@ -155,3 +183,31 @@ class InteractiveWorkflow:
     def _resolve_signal(self, signal: InputSignal) -> SteeringResponse | None:
         """Resolve a single signal."""
         return self._resolver.resolve(signal)
+
+    @staticmethod
+    def _infer_slice_id(signals: list[InputSignal]) -> str:
+        for signal in signals:
+            current_library = signal.work_context.current_library
+            if current_library:
+                return current_library
+        return ""
+
+    def _write_resume_request(
+        self,
+        *,
+        slice_id: str,
+        iteration: int,
+        constraints_path: Path,
+    ) -> dict[str, str]:
+        out_dir = self._workspace / "analysis" / "under_spec" / slice_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "resume_request.json"
+        payload = {
+            "action": "RETRY_FROM_PLAN",
+            "slice_id": slice_id,
+            "iteration": str(iteration),
+            "constraints_path": str(constraints_path),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return payload
