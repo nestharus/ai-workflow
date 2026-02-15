@@ -75,6 +75,7 @@ class Workflow(Base):
     )
 
     def __repr__(self) -> str:
+        """Return debug representation."""
         return f"<Workflow(id={self.id!r}, phase={self.phase!r}, status={self.status!r})>"
 
 
@@ -115,6 +116,7 @@ class Session(Base):
     )
 
     def __repr__(self) -> str:
+        """Return debug representation."""
         return f"<Session(id={self.id!r}, agent_type={self.agent_type!r}, status={self.status!r})>"
 
 
@@ -144,6 +146,7 @@ class ContextLog(Base):
     session: Mapped[Session] = relationship("Session", back_populates="context_logs")
 
     def __repr__(self) -> str:
+        """Return debug representation."""
         return f"<ContextLog(id={self.id}, event_type={self.event_type!r})>"
 
 
@@ -177,7 +180,11 @@ class InputRequest(Base):
     workflow: Mapped[Workflow] = relationship("Workflow", back_populates="input_requests")
 
     def __repr__(self) -> str:
-        return f"<InputRequest(id={self.id!r}, type={self.request_type!r}, responded={self.response is not None})>"
+        """Return debug representation."""
+        return (
+            f"<InputRequest(id={self.id!r}, type={self.request_type!r}, "
+            f"responded={self.response is not None})>"
+        )
 
 
 class Artifact(Base):
@@ -208,6 +215,7 @@ class Artifact(Base):
     session: Mapped[Session | None] = relationship("Session", back_populates="artifacts")
 
     def __repr__(self) -> str:
+        """Return debug representation."""
         return f"<Artifact(id={self.id!r}, type={self.artifact_type!r}, name={self.name!r})>"
 
 
@@ -234,4 +242,5 @@ class Checkpoint(Base):
     workflow: Mapped[Workflow] = relationship("Workflow", back_populates="checkpoints")
 
     def __repr__(self) -> str:
+        """Return debug representation."""
         return f"<Checkpoint(id={self.id!r}, phase={self.phase!r})>"

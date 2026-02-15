@@ -61,6 +61,7 @@ class DemotionTicket:
 
     diagnosis: str = ""
     evidence_refs: list[str] = field(default_factory=list)
+    investigator_report_ref: str = ""
 
     recommended_spec_patch: str | None = None
     recommended_code_patch: str | None = None
@@ -331,6 +332,7 @@ class DemotionManager:
             "severity": ticket.severity,
             "diagnosis": ticket.diagnosis[:500],
             "evidence_refs": ticket.evidence_refs,
+            "investigator_report_ref": ticket.investigator_report_ref,
             "failing_files": ticket.failing_files,
             "failing_pins": ticket.failing_pins,
             "failing_atoms": ticket.failing_atoms,

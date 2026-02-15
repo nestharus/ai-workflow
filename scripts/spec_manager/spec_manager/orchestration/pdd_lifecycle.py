@@ -56,6 +56,7 @@ import logging
 import re
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -173,6 +174,8 @@ class PddLifecycle:
         self._planner_override_provider = planner_override_provider
         self._compute_quality = False
         self._cost_ledger: Any | None = None
+        self.transition_investigator_budget = 2
+        self.readiness_investigator_budget = 1
 
     # ------------------------------------------------------------------
     # Planner construction
@@ -337,6 +340,70 @@ class PddLifecycle:
             return True, str(transition.get("error") or readiness_error or default_reason)
 
         return False, ""
+
+    def _resolve_layer_worktree(self, layer: Layer, lane: str = "dirty") -> Path | None:
+        """Resolve layer/lane worktree path across manager implementations."""
+        if not self.worktree_manager:
+            return None
+        getter = getattr(self.worktree_manager, "get_layer_worktree", None)
+        if callable(getter):
+            try:
+                path = getter(layer, lane)
+            except Exception:
+                path = None
+            if isinstance(path, Path):
+                return path
+            if path:
+                return Path(str(path))
+        lane_map = getattr(self.worktree_manager, "_layer_worktrees", {}).get(layer, {})
+        candidate = lane_map.get(str(lane))
+        if isinstance(candidate, Path):
+            return candidate
+        if candidate:
+            return Path(str(candidate))
+        return None
+
+    def _run_transition_investigator(
+        self,
+        *,
+        layer: Layer,
+        scope_id: str,
+        failure_refs: list[str],
+        failure_evidence: dict[str, Any],
+        investigator_budget: int,
+        verify_callback: Callable[[int, dict[str, Any]], tuple[bool, dict[str, Any]]] | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        """Run shared Investigator flow for transition/readiness recovery."""
+        from spec_manager.orchestration.promotion_loop import attempt_investigator_recovery
+
+        workspace_root = Path(self.manager.workspace_path)
+        layer_worktree = self._resolve_layer_worktree(layer, "dirty")
+        if layer_worktree is None:
+            report = {
+                "fixed": False,
+                "attempts": [],
+                "error": f"No dirty worktree for layer {layer}",
+                "layer": layer,
+                "scope_id": scope_id,
+            }
+        else:
+            report = attempt_investigator_recovery(
+                run_id=self.manager.run_id,
+                slice_id=scope_id,
+                layer=layer,
+                workspace_root=workspace_root,
+                layer_worktree=layer_worktree,
+                failure_refs=failure_refs,
+                failure_evidence=failure_evidence,
+                investigator_budget=investigator_budget,
+                verify_callback=verify_callback,
+            )
+            report["scope_id"] = scope_id
+
+        slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", scope_id).strip("_") or "transition"
+        report_name = f"{slug}_investigator_report.json"
+        self._write_run_report(report_name, report)
+        return report, self._run_report_relpath(report_name)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1574,7 +1641,6 @@ class PddLifecycle:
         # Propagate clean → next layer's dirty
         if self.worktree_manager:
             merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
-            prop = merge_prop
             merge_conflicts = [
                 self._normalize_conflict_path(path)
                 for path in (merge_prop.conflict_files or [])
@@ -1606,7 +1672,6 @@ class PddLifecycle:
                     "conflict_files": rebase_conflicts,
                 }
                 if rebase_prop.success:
-                    prop = rebase_prop
                     combined_conflicts: list[str] = []
                     seen_conflicts: set[str] = set()
                     for path in merge_conflicts + rebase_conflicts:
@@ -1658,52 +1723,188 @@ class PddLifecycle:
                     self._write_run_report(conflict_report_name, conflict_report_payload)
                     conflict_report_ref = self._run_report_relpath(conflict_report_name)
 
-                    demotion_summary = self._emit_transition_conflict_demotions(
-                        from_layer=from_layer,
-                        to_layer=to_layer,
-                        conflict_files=combined_conflicts,
-                        merge_error=merge_error,
-                        rebase_error=rebase_error,
-                        evidence_ref=conflict_report_ref,
-                    )
-                    propagation["demotion_tickets"] = demotion_summary.get("demotion_tickets", 0)
-                    propagation["affected_slices"] = demotion_summary.get("affected_slices", [])
+                    def verify_propagation_recovery(
+                        _: int,
+                        __: dict[str, Any],
+                    ) -> tuple[bool, dict[str, Any]]:
+                        if not self.worktree_manager:
+                            return False, {"error": "No worktree manager for propagation retry"}
+                        retry_merge = self.worktree_manager.propagate_clean_to_next_layer(
+                            from_layer
+                        )
+                        retry_payload: dict[str, Any] = {
+                            "retry_merge": {
+                                "success": bool(retry_merge.success),
+                                "error": str(retry_merge.error or ""),
+                                "merge_sha": retry_merge.merge_sha,
+                                "conflict_files": [
+                                    self._normalize_conflict_path(path)
+                                    for path in (retry_merge.conflict_files or [])
+                                    if self._normalize_conflict_path(path)
+                                ],
+                            }
+                        }
+                        if retry_merge.success:
+                            return True, retry_payload
 
-                    results["propagation_conflict"] = {
-                        **conflict_report_payload,
-                        **demotion_summary,
-                        "conflict_report_path": conflict_report_ref,
-                    }
-                    results["governance_blocked"] = True
-                    results["escalation_required"] = True
-                    results["error"] = (
-                        f"Transition {from_layer}→{to_layer} blocked by unresolved propagation "
-                        f"conflicts: {propagation['error']}"
+                        retry_rebase = self.worktree_manager.rebase_next_layer_dirty_onto_clean(
+                            from_layer
+                        )
+                        retry_payload["retry_rebase"] = {
+                            "success": bool(retry_rebase.success),
+                            "error": str(retry_rebase.error or ""),
+                            "merge_sha": retry_rebase.merge_sha,
+                            "conflict_files": [
+                                self._normalize_conflict_path(path)
+                                for path in (retry_rebase.conflict_files or [])
+                                if self._normalize_conflict_path(path)
+                            ],
+                        }
+                        if retry_rebase.success:
+                            return True, retry_payload
+                        return False, retry_payload
+
+                    investigator_refs = [
+                        f"merge_error:{merge_error}",
+                        f"rebase_error:{rebase_error}",
+                        *[f"conflict_file:{path}" for path in combined_conflicts[:12]],
+                    ]
+                    investigator_report, investigator_report_ref = (
+                        self._run_transition_investigator(
+                            layer=to_layer,
+                            scope_id=f"transition_{from_layer}_{to_layer}_propagation_conflict",
+                            failure_refs=investigator_refs,
+                            failure_evidence=conflict_report_payload,
+                            investigator_budget=self.transition_investigator_budget,
+                            verify_callback=verify_propagation_recovery,
+                        )
                     )
+                    propagation["investigator_report_path"] = investigator_report_ref
+
+                    if bool(investigator_report.get("fixed", False)):
+                        retry_payload = investigator_report.get("verification", {})
+                        retry_merge = (
+                            retry_payload.get("retry_merge", {})
+                            if isinstance(retry_payload, dict)
+                            else {}
+                        )
+                        propagation.update(
+                            {
+                                "success": True,
+                                "error": "",
+                                "strategy": "investigator_recovery",
+                                "merge_sha": str(retry_merge.get("merge_sha", "")).strip(),
+                                "conflict_files": list(retry_merge.get("conflict_files", []))
+                                if isinstance(retry_merge.get("conflict_files", []), list)
+                                else [],
+                            }
+                        )
+                        results["propagation_recovery"] = {
+                            "fixed": True,
+                            "investigator_report_path": investigator_report_ref,
+                            "verification": retry_payload,
+                        }
+                    else:
+                        demotion_summary = self._emit_transition_conflict_demotions(
+                            from_layer=from_layer,
+                            to_layer=to_layer,
+                            conflict_files=combined_conflicts,
+                            merge_error=merge_error,
+                            rebase_error=rebase_error,
+                            evidence_ref=conflict_report_ref,
+                            investigator_report_ref=investigator_report_ref,
+                        )
+                        propagation["demotion_tickets"] = demotion_summary.get(
+                            "demotion_tickets", 0
+                        )
+                        propagation["affected_slices"] = demotion_summary.get("affected_slices", [])
+
+                        results["propagation_conflict"] = {
+                            **conflict_report_payload,
+                            **demotion_summary,
+                            "conflict_report_path": conflict_report_ref,
+                            "investigator_report_path": investigator_report_ref,
+                        }
+                        results["governance_blocked"] = True
+                        results["escalation_required"] = True
+                        results["error"] = (
+                            f"Transition {from_layer}→{to_layer} blocked by unresolved propagation "
+                            f"conflicts: {propagation['error']}"
+                        )
 
             results["propagation"] = propagation
 
             # Downstream readiness CI: smoke test on the new dirty worktree
-            if prop.success:
+            if bool(propagation.get("success", False)):
                 readiness = self._run_readiness_ci(to_layer)
                 results["readiness_ci"] = readiness
                 if not readiness.get("passed", True):
-                    results["readiness_blocked"] = True
-                    results["governance_blocked"] = True
-                    results["escalation_required"] = True
                     readiness_error = str(
                         readiness.get("error") or "Downstream readiness CI failed"
                     )
-                    results["error"] = (
-                        f"Transition {from_layer}→{to_layer} blocked by downstream readiness CI: "
-                        f"{readiness_error}"
+                    readiness_refs = [f"readiness_error:{readiness_error}"]
+                    for row in readiness.get("tiers", []):
+                        if not isinstance(row, dict):
+                            continue
+                        if bool(row.get("passed", False)):
+                            continue
+                        tier = row.get("tier")
+                        failure_detail = str(row.get("error") or row.get("output") or "").strip()
+                        readiness_refs.append(
+                            f"tier={tier}:{failure_detail[:500]}"
+                            if failure_detail
+                            else f"tier={tier}"
+                        )
+
+                    def verify_readiness_recovery(
+                        _: int,
+                        __: dict[str, Any],
+                    ) -> tuple[bool, dict[str, Any]]:
+                        retry = self._run_readiness_ci(to_layer)
+                        return bool(retry.get("passed", False)), {"readiness_retry": retry}
+
+                    readiness_report, readiness_report_ref = self._run_transition_investigator(
+                        layer=to_layer,
+                        scope_id=f"transition_{from_layer}_{to_layer}_readiness_ci",
+                        failure_refs=readiness_refs,
+                        failure_evidence={
+                            "from_layer": from_layer,
+                            "to_layer": to_layer,
+                            "readiness_ci": readiness,
+                        },
+                        investigator_budget=self.readiness_investigator_budget,
+                        verify_callback=verify_readiness_recovery,
                     )
-                    logger.warning(
-                        "Downstream readiness CI failed for %s dirty — transition %s→%s blocked",
-                        to_layer,
-                        from_layer,
-                        to_layer,
-                    )
+                    results["readiness_investigator"] = {
+                        "fixed": bool(readiness_report.get("fixed", False)),
+                        "investigator_report_path": readiness_report_ref,
+                        "verification": readiness_report.get("verification", {}),
+                    }
+
+                    if bool(readiness_report.get("fixed", False)):
+                        verification = readiness_report.get("verification", {})
+                        retry_payload = (
+                            verification.get("readiness_retry", {})
+                            if isinstance(verification, dict)
+                            else {}
+                        )
+                        if isinstance(retry_payload, dict) and retry_payload:
+                            results["readiness_ci"] = retry_payload
+                    else:
+                        results["readiness_blocked"] = True
+                        results["governance_blocked"] = True
+                        results["escalation_required"] = True
+                        results["error"] = (
+                            f"Transition {from_layer}→{to_layer} blocked by downstream "
+                            f"readiness CI: {readiness_error}"
+                        )
+                        logger.warning(
+                            "Downstream readiness CI failed for %s dirty — "
+                            "transition %s→%s blocked",
+                            to_layer,
+                            from_layer,
+                            to_layer,
+                        )
 
         return results
 
@@ -1797,6 +1998,7 @@ class PddLifecycle:
         merge_error: str,
         rebase_error: str,
         evidence_ref: str,
+        investigator_report_ref: str = "",
     ) -> dict[str, Any]:
         """Emit demotion tickets for unresolved cross-layer propagation conflicts."""
         from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
@@ -1838,6 +2040,9 @@ class PddLifecycle:
         gate_name = f"TRANSITION::{from_layer.upper()}->{to_layer.upper()}::PROPAGATION_CONFLICT"
         for slice_id, failing_files in ticket_specs:
             file_hint = failing_files[0] if failing_files else ""
+            evidence_refs = [evidence_ref] if evidence_ref else []
+            if investigator_report_ref:
+                evidence_refs.append(investigator_report_ref)
             ticket = DemotionTicket(
                 run_id=self.manager.run_id,
                 slice_id=slice_id,
@@ -1849,7 +2054,8 @@ class PddLifecycle:
                 severity="BLOCKER",
                 diagnosis=diagnosis,
                 failing_files=failing_files,
-                evidence_refs=[evidence_ref] if evidence_ref else [],
+                evidence_refs=evidence_refs,
+                investigator_report_ref=investigator_report_ref,
             )
             try:
                 apply_result = demotion_manager.apply(
@@ -1965,27 +2171,40 @@ class PddLifecycle:
                 except (TypeError, ValueError):
                     tick_interval_sec = 20.0
 
-        def record_ci_tick(slice_id: str, *, trigger: str) -> None:
+        def record_ci_tick(slice_id: str, *, trigger: str) -> dict[str, Any]:
             wm = self.worktree_manager
             if wm is None:
-                return
+                return {}
 
             with ci_tick_lock:
-                tick = wm.tick_pipeline(
-                    active_layer=layer,
-                    max_pending_batches=max_pending_batches,
-                    run_gates=run_gates,
-                    run_tests=run_tests,
-                )
-                ci_ticks.append(
-                    {
+                batch_id = f"batch_{trigger}_{slice_id}_{len(ci_ticks) + 1}"
+                try:
+                    tick = wm.tick_pipeline(
+                        active_layer=layer,
+                        max_pending_batches=max_pending_batches,
+                        run_gates=run_gates,
+                        run_tests=run_tests,
+                    )
+                except Exception as exc:
+                    receipt: dict[str, Any] = {
+                        "batch_id": batch_id,
                         "slice_id": slice_id,
                         "trigger": trigger,
-                        "main_updated": tick.main_updated,
-                        "demotions": len(tick.demotion_tickets),
+                        "layer": layer,
+                        "failed": True,
+                        "failure_summary": str(exc),
+                        "failure_refs": [f"ci_tick_exception:{exc}"],
+                        "failure_evidence": {"exception": str(exc)},
                     }
-                )
-                ci_tick_slices.add(slice_id)
+                    ci_ticks.append(receipt)
+                    ci_tick_slices.add(slice_id)
+                    if hasattr(self, "_state_mgr"):
+                        batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
+                        batch_dir.mkdir(parents=True, exist_ok=True)
+                        receipt_path = batch_dir / f"{batch_id}.json"
+                        receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+                        receipt["receipt_path"] = str(receipt_path)
+                    return receipt
 
                 layer_batch: Any | None = None
                 layer_results = getattr(tick, "layer_results", None)
@@ -1994,30 +2213,99 @@ class PddLifecycle:
 
                 candidate_sha = getattr(layer_batch, "candidate_sha", None)
                 base_clean_sha = getattr(layer_batch, "base_clean_sha", None)
+                batch_success = (
+                    bool(getattr(layer_batch, "success", True)) if layer_batch is not None else True
+                )
+                batch_error = str(getattr(layer_batch, "error", "") or "")
+                batch_demotion_tickets = (
+                    [str(item) for item in (getattr(layer_batch, "demotion_tickets", []) or [])]
+                    if layer_batch is not None
+                    else []
+                )
+                gates_passed = (
+                    bool(getattr(layer_batch, "gates_passed", True)) if layer_batch else True
+                )
+                tests_passed = (
+                    bool(getattr(layer_batch, "tests_passed", True)) if layer_batch else True
+                )
 
-                # Write CI batch receipt
+                propagation_failures: list[dict[str, Any]] = []
+                for prop in getattr(tick, "propagation_results", []) or []:
+                    if str(getattr(prop, "from_layer", "")) != str(layer):
+                        continue
+                    if bool(getattr(prop, "success", True)):
+                        continue
+                    propagation_failures.append(
+                        {
+                            "from_layer": getattr(prop, "from_layer", ""),
+                            "to_layer": getattr(prop, "to_layer", ""),
+                            "error": str(getattr(prop, "error", "") or ""),
+                            "conflict_files": list(getattr(prop, "conflict_files", []) or []),
+                        }
+                    )
+
+                failed = (not batch_success) or bool(propagation_failures)
+                failure_refs: list[str] = []
+                if batch_error:
+                    failure_refs.append(f"batch_error:{batch_error}")
+                for ticket_ref in batch_demotion_tickets:
+                    if ticket_ref:
+                        failure_refs.append(f"batch_ticket:{ticket_ref}")
+                for prop_failure in propagation_failures:
+                    prop_error = str(prop_failure.get("error", "")).strip()
+                    hop = f"{prop_failure.get('from_layer')}->{prop_failure.get('to_layer')}"
+                    if prop_error:
+                        failure_refs.append(f"propagation:{hop}:{prop_error}")
+                    for path in prop_failure.get("conflict_files", []) or []:
+                        failure_refs.append(f"propagation_conflict_file:{path}")
+
+                failure_summary = ""
+                if failed:
+                    segments: list[str] = []
+                    if batch_error:
+                        segments.append(batch_error)
+                    if propagation_failures and not batch_error:
+                        segments.append("cross-layer propagation failed")
+                    failure_summary = "; ".join(segments) if segments else "CI tick failed"
+
+                receipt = {
+                    "batch_id": batch_id,
+                    "slice_id": slice_id,
+                    "trigger": trigger,
+                    "layer": layer,
+                    "main_updated": tick.main_updated,
+                    "main_sha": getattr(tick, "main_sha", None),
+                    "demotions": len(tick.demotion_tickets),
+                    "candidate_sha": candidate_sha,
+                    "base_clean_sha": base_clean_sha,
+                    "failed": failed,
+                    "failure_summary": failure_summary,
+                    "failure_refs": failure_refs[:24],
+                    "failure_evidence": {
+                        "batch_success": batch_success,
+                        "batch_error": batch_error,
+                        "batch_demotion_tickets": batch_demotion_tickets,
+                        "gates_passed": gates_passed,
+                        "tests_passed": tests_passed,
+                        "propagation_failures": propagation_failures,
+                    },
+                }
+                ci_ticks.append(receipt)
+                ci_tick_slices.add(slice_id)
+
                 if hasattr(self, "_state_mgr"):
                     batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
                     batch_dir.mkdir(parents=True, exist_ok=True)
-                    batch_id = f"batch_{trigger}_{slice_id}_{len(ci_ticks)}"
-                    receipt = {
-                        "batch_id": batch_id,
-                        "slice_id": slice_id,
-                        "trigger": trigger,
-                        "layer": layer,
-                        "main_updated": tick.main_updated,
-                        "demotions": len(tick.demotion_tickets),
-                        "candidate_sha": candidate_sha,
-                        "base_clean_sha": base_clean_sha,
-                    }
                     receipt_path = batch_dir / f"{batch_id}.json"
                     receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+                    receipt["receipt_path"] = str(receipt_path)
+                return receipt
 
-        def on_slice_merge(slice_id: str) -> None:
+        def on_slice_merge(slice_id: str) -> dict[str, Any] | None:
             normalized = str(slice_id).strip()
             if not normalized:
-                return
-            record_ci_tick(normalized, trigger="post_merge")
+                return None
+            return record_ci_tick(normalized, trigger="post_merge")
 
         def on_periodic_tick() -> None:
             nonlocal periodic_tick_counter
@@ -3411,7 +3699,7 @@ class PddLifecycle:
         if not self.worktree_manager:
             return {"passed": True, "note": "No worktree manager — skipping readiness CI"}
 
-        dirty_path = self.worktree_manager.get_layer_worktree(layer, "dirty")
+        dirty_path = self._resolve_layer_worktree(layer, "dirty")
         if not dirty_path or not dirty_path.exists():
             return {"passed": True, "note": f"No dirty worktree for {layer}"}
 

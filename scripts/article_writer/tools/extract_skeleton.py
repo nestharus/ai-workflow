@@ -3,7 +3,8 @@
 
 Skeleton = heading outline + first sentence of each paragraph.
 
-Also produces a "borders" view: last sentence of one section paired with the first sentence of the next.
+Also produces a "borders" view: last sentence of one section paired with
+the first sentence of the next.
 
 Usage:
   python extract_skeleton.py path/to/draft.md --outdir out
@@ -34,6 +35,8 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
 @dataclass
 class Section:
+    """A section of the Markdown document bounded by headings."""
+
     level: int
     title: str
     start_offset: int
@@ -79,6 +82,11 @@ def _first_sentence_of_paragraph(paragraph: str, base_offset: int) -> str | None
 
 
 def build_skeleton(md: str) -> tuple[str, str, dict]:
+    """Extract skeleton, borders, and outline from Markdown.
+
+    Returns:
+        Tuple of (skeleton markdown, borders markdown, outline dict)
+    """
     text = strip_code_blocks(md)
     sections = find_sections(md)
 
@@ -171,9 +179,11 @@ def build_skeleton(md: str) -> tuple[str, str, dict]:
 
 
 def main() -> int:
+    """CLI entry point for extracting skeleton from Markdown."""
     ap = argparse.ArgumentParser()
     ap.add_argument("path", help="Path to Markdown draft")
     ap.add_argument("--outdir", default=".", help="Directory for outputs")
+    """CLI entry point for extracting skeleton from Markdown."""
     args = ap.parse_args()
 
     with open(args.path, encoding="utf-8") as f:

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Shortcut script for running Codex CLI with second OAuth account and --yolo flag
+#
+# This script ALWAYS runs with --yolo to bypass sandboxing.
+# To run codex WITHOUT --yolo, invoke the codex binary directly.
+#
+# Usage:
+#   ./codex2 [args...]    - Runs: codex --yolo [args...] (second account)
+#   codex [args...]       - Standard codex (use this if you don't want --yolo)
+
+export CODEX_HOME="$HOME/.codex2"
+codex --yolo "$@"

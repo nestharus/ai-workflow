@@ -56,10 +56,12 @@ class InvariantResult:
 
     @property
     def has_unfixable(self) -> bool:
+        """Return True if there are unfixable violations."""
         return len(self.unfixable_violations) > 0
 
     @property
     def all_passed(self) -> bool:
+        """Return True if all checks passed or were fixed."""
         return all(c.status in ("pass", "fixed") for c in self.checks)
 
 
@@ -84,7 +86,7 @@ class DynamicInvariantSystem:
         llm_runner: Callable[[str, Path, str], str],
         package_root: Path,
         workspace: Path,
-    ):
+    ) -> None:
         """Initialize the system.
 
         Args:
@@ -271,10 +273,7 @@ class DynamicInvariantSystem:
         """Parse invariant reviewer LLM output."""
         # Extract JSON from output
         json_match = re.search(r"```json\s*\n(.*?)\n```", output, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            json_str = output.strip()
+        json_str = json_match.group(1) if json_match else output.strip()
 
         try:
             data = json.loads(json_str)
@@ -327,12 +326,16 @@ class InvariantSet:
     max_words: int | None = None
 
     def add(self, invariant: Invariant) -> None:
+        """Add an invariant to the set."""
         self.invariants.append(invariant)
 
     def to_prompt_section(self) -> str:
+        """Format invariants as a prompt section."""
         lines = ["## Invariants (MUST be enforced)", ""]
         if self.max_characters:
             lines.append(f"- Maximum {self.max_characters} characters")
+        """Format invariants as a prompt section."""
+        """Format invariants as a prompt section."""
         if self.max_words:
             lines.append(f"- Maximum {self.max_words} words")
         if self.platform:
@@ -416,7 +419,10 @@ def check_all_invariants(text: str, inv_set: InvariantSet) -> list[InvariantViol
                 violations.append(
                     InvariantViolation(
                         invariant=inv,
-                        message=f"Text is {char_count} characters, max is {inv_set.max_characters} ({char_count - inv_set.max_characters} over)",
+                        message=(
+                            f"Text is {char_count} characters, max is {inv_set.max_characters} "
+                            f"({char_count - inv_set.max_characters} over)"
+                        ),
                         fixable=False,
                     )
                 )

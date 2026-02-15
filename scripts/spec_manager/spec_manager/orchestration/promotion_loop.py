@@ -41,9 +41,12 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
+import subprocess
+import tempfile
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -278,6 +281,278 @@ def _read_json_file(path: Path) -> dict[str, Any] | list[Any] | None:
     if isinstance(loaded, dict | list):
         return loaded
     return None
+
+
+def _run_git_in_worktree(
+    worktree: Path,
+    args: list[str],
+) -> tuple[bool, str, str]:
+    """Run a git command in a worktree and return ``(ok, stdout, stderr)``."""
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return False, "", str(exc)
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
+    return completed.returncode == 0, stdout, stderr
+
+
+def _apply_investigator_patch(
+    *,
+    layer_worktree: Path,
+    patch: str,
+    run_id: str,
+    layer: Layer,
+    slice_id: str,
+    attempt: int,
+) -> dict[str, Any]:
+    """Apply investigator patch in the active layer worktree and commit it."""
+    if not patch.strip():
+        return {"applied": False, "error": "Investigator returned an empty patch"}
+    if not layer_worktree.exists() or not layer_worktree.is_dir():
+        return {
+            "applied": False,
+            "error": f"Layer worktree does not exist: {layer_worktree}",
+        }
+
+    patch_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            delete=False,
+            dir=layer_worktree,
+            prefix="investigator_",
+            suffix=".diff",
+        ) as handle:
+            handle.write(patch)
+            patch_path = Path(handle.name)
+
+        ok, _, err = _run_git_in_worktree(layer_worktree, ["apply", "--check", str(patch_path)])
+        if not ok:
+            return {"applied": False, "error": err or "git apply --check failed"}
+
+        ok, _, err = _run_git_in_worktree(layer_worktree, ["apply", str(patch_path)])
+        if not ok:
+            return {"applied": False, "error": err or "git apply failed"}
+
+        ok, _, err = _run_git_in_worktree(layer_worktree, ["add", "-A"])
+        if not ok:
+            return {"applied": False, "error": err or "git add failed"}
+
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=layer_worktree,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if staged.returncode not in (0, 1):
+            return {
+                "applied": False,
+                "error": staged.stderr.strip() or "Unable to inspect staged changes",
+            }
+        if staged.returncode == 0:
+            return {
+                "applied": False,
+                "error": "Investigator patch produced no staged changes",
+            }
+
+        message = (
+            f"pdd investigator recovery run={run_id} layer={layer} "
+            f"slice={slice_id} attempt={attempt}"
+        )
+        ok, _, err = _run_git_in_worktree(layer_worktree, ["commit", "-m", message])
+        if not ok:
+            return {"applied": False, "error": err or "git commit failed"}
+
+        _, sha, _ = _run_git_in_worktree(layer_worktree, ["rev-parse", "HEAD"])
+        return {"applied": True, "head_sha": sha}
+    finally:
+        if patch_path is not None:
+            with contextlib.suppress(OSError):
+                patch_path.unlink()
+
+
+def attempt_investigator_recovery(
+    *,
+    run_id: str,
+    slice_id: str,
+    layer: Layer,
+    workspace_root: Path,
+    layer_worktree: Path,
+    failure_refs: list[str],
+    failure_evidence: dict[str, Any] | None = None,
+    investigator_budget: int = 2,
+    verify_callback: Callable[[int, dict[str, Any]], tuple[bool, dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Run bounded investigator recovery with patch apply + optional verification."""
+    from spec_manager.core.agent_utils import run_agent
+    from spec_manager.core.json_extraction import _extract_json_payload
+    from spec_manager.refinement.formats import _strip_code_fences
+
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        return {
+            "fixed": False,
+            "attempts": [],
+            "error": f"Workspace root does not exist: {workspace_root}",
+        }
+    if not layer_worktree.exists() or not layer_worktree.is_dir():
+        return {
+            "fixed": False,
+            "attempts": [],
+            "error": f"Layer worktree does not exist: {layer_worktree}",
+        }
+
+    failure_refs = [str(ref).strip() for ref in failure_refs if str(ref).strip()]
+    if not failure_refs:
+        failure_refs = ["investigator-triggered-without-explicit-failure-ref"]
+    evidence_payload = failure_evidence if isinstance(failure_evidence, dict) else {}
+    evidence_json = json.dumps(evidence_payload, indent=2, ensure_ascii=False)
+
+    layer_rules = (
+        "- L1: may change function bodies\n"
+        "- L2: wiring only, no new logic\n"
+        "- L3: refactor only, no behavior change\n"
+    )
+    max_refs = 12
+    report: dict[str, Any] = {
+        "fixed": False,
+        "run_id": run_id,
+        "slice_id": slice_id,
+        "layer": layer,
+        "layer_worktree": str(layer_worktree),
+        "budget": max(1, int(investigator_budget)),
+        "attempts": [],
+        "failure_refs": failure_refs[:max_refs],
+    }
+
+    for attempt in range(1, max(1, int(investigator_budget)) + 1):
+        logger.info(
+            "Investigator attempt %d/%d for layer '%s' slice '%s'",
+            attempt,
+            max(1, int(investigator_budget)),
+            layer,
+            slice_id,
+        )
+        attempt_entry: dict[str, Any] = {
+            "attempt": attempt,
+            "fixed": False,
+            "patch_applied": False,
+        }
+        try:
+            prompt = (
+                "## TASK\n"
+                "CI/integration failure occurred. Investigate and produce a legal "
+                "layer-scoped fix.\n"
+                "You are operating inside the active layer worktree.\n\n"
+                f"Run ID: {run_id}\n"
+                f"Slice ID: {slice_id}\n"
+                f"Layer: {layer}\n\n"
+                "Layer legality constraints:\n"
+                f"{layer_rules}\n"
+                "Failure refs:\n"
+                + "\n".join(f"- {ref}" for ref in failure_refs[:max_refs])
+                + "\n\nFailure evidence JSON:\n"
+                + evidence_json[:12000]
+                + "\n\nReturn ONLY JSON with this schema:\n"
+                '{"fixed": true|false, "root_cause": "...", '
+                '"reproduction_steps": ["..."], "patch": "...unified diff...", '
+                '"evidence_refs": ["..."]}\n'
+                "If not fixed, set fixed=false and still include root_cause, "
+                "reproduction_steps, and evidence_refs."
+            )
+            output = run_agent(
+                agent_name="pdd-investigator",
+                prompt=prompt,
+                workspace=layer_worktree,
+            )
+            cleaned = _strip_code_fences(output)
+            raw = json.loads(_extract_json_payload(cleaned))
+            root_cause = str(raw.get("root_cause", "")).strip()
+
+            reproduction_raw = raw.get("reproduction_steps", [])
+            if isinstance(reproduction_raw, str):
+                reproduction_steps = [reproduction_raw.strip()] if reproduction_raw.strip() else []
+            elif isinstance(reproduction_raw, list):
+                reproduction_steps = [
+                    str(step).strip() for step in reproduction_raw if str(step).strip()
+                ]
+            else:
+                reproduction_steps = []
+
+            refs_raw = raw.get("evidence_refs", [])
+            if isinstance(refs_raw, str):
+                evidence_refs = [refs_raw.strip()] if refs_raw.strip() else []
+            elif isinstance(refs_raw, list):
+                evidence_refs = [str(ref).strip() for ref in refs_raw if str(ref).strip()]
+            else:
+                evidence_refs = []
+
+            patch = str(raw.get("patch", "")).strip()
+            fixed = bool(raw.get("fixed", False))
+            normalized = {
+                "fixed": fixed,
+                "root_cause": root_cause,
+                "reproduction_steps": reproduction_steps,
+                "patch": patch,
+                "evidence_refs": evidence_refs,
+            }
+            attempt_entry["result"] = {
+                "root_cause": root_cause,
+                "reproduction_steps": reproduction_steps,
+                "evidence_refs": evidence_refs,
+                "fixed": fixed,
+            }
+
+            if not fixed:
+                report["attempts"].append(attempt_entry)
+                continue
+
+            patch_result = _apply_investigator_patch(
+                layer_worktree=layer_worktree,
+                patch=patch,
+                run_id=run_id,
+                layer=layer,
+                slice_id=slice_id,
+                attempt=attempt,
+            )
+            attempt_entry["patch_result"] = patch_result
+            if not patch_result.get("applied", False):
+                report["attempts"].append(attempt_entry)
+                continue
+            attempt_entry["patch_applied"] = True
+
+            verified = True
+            verification_details: dict[str, Any] = {}
+            if verify_callback is not None:
+                try:
+                    verified, verification_details = verify_callback(attempt, normalized)
+                except Exception as exc:
+                    verified, verification_details = False, {"error": str(exc)}
+            attempt_entry["verified"] = bool(verified)
+            attempt_entry["verification"] = verification_details
+            report["attempts"].append(attempt_entry)
+
+            if verified:
+                attempt_entry["fixed"] = True
+                report["fixed"] = True
+                report["resolved_at_attempt"] = attempt
+                report["investigator_result"] = normalized
+                report["verification"] = verification_details
+                return report
+        except Exception as exc:
+            attempt_entry["error"] = str(exc)
+            report["attempts"].append(attempt_entry)
+
+    report["fixed"] = False
+    return report
 
 
 def _quality_receipts_iteration_path(
@@ -555,7 +830,7 @@ class RunContext:
     )
     max_wait_cycles: int = 10
     config: dict[str, Any] = field(default_factory=dict)
-    ci_tick_callback: Callable[[str], None] | None = None
+    ci_tick_callback: Callable[[str], dict[str, Any] | None] | None = None
     ci_periodic_tick_callback: Callable[[], None] | None = None
     ci_periodic_tick_interval_sec: float = 20.0
 
@@ -582,7 +857,7 @@ class SliceContext:
     lifecycle_mode: LifecycleRunMode = "build"
     workspace_root: str = ""
     config: dict[str, Any] = field(default_factory=dict)
-    ci_tick_callback: Callable[[str], None] | None = None
+    ci_tick_callback: Callable[[str], dict[str, Any] | None] | None = None
     ci_periodic_tick_callback: Callable[[], None] | None = None
     ci_periodic_tick_interval_sec: float = 20.0
     worktree_manager: Any | None = None
@@ -5076,9 +5351,9 @@ class PromoteStep:
 class IntegrateStep:
     """Merge completed slice work into the active layer's dirty branch.
 
-    This step is intentionally creative-only. Candidate snapshots, gates,
-    tests, clean advancement, and cross-layer propagation run in the CI
-    pipeline tick owned by lifecycle orchestration.
+    Merge is still delegated to the lifecycle-owned CI tick, but integrate
+    now handles immediate failure recovery by invoking Investigator before
+    demotion/escalation.
     """
 
     name = "INTEGRATE"
@@ -5087,7 +5362,7 @@ class IntegrateStep:
         self._investigator_budget = investigator_budget
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Merge grandchild → dirty and hand off CI promotion to pipeline tick."""
+        """Merge grandchild → dirty and run Investigator-first recovery on failures."""
         evidence_root = _evidence_base_path(
             slice_root=ctx.slice_root,
             workspace_root=ctx.workspace_root,
@@ -5114,6 +5389,9 @@ class IntegrateStep:
             merge_attempts: list[dict[str, Any]] | None = None,
             ci_tick_triggered: bool = False,
             ci_tick_error: str = "",
+            ci_tick_receipt: dict[str, Any] | None = None,
+            failure_evidence: dict[str, Any] | None = None,
+            investigator_report_refs: list[str] | None = None,
         ) -> None:
             dirty_root, clean_root = resolve_worktree_roots()
             integration_payload: dict[str, Any] = {
@@ -5134,7 +5412,10 @@ class IntegrateStep:
                     "triggered": ci_tick_triggered,
                     "error": ci_tick_error,
                     "delegated_to_pipeline": True,
+                    "receipt": ci_tick_receipt or {},
                 },
+                "failure_evidence": failure_evidence or {},
+                "investigator_report_refs": list(investigator_report_refs or []),
             }
             bundle.integration.path = _write_iteration_json(
                 bundle,
@@ -5169,20 +5450,25 @@ class IntegrateStep:
             record_artifacts(merge=None, skipped=True)
             return StepResult(status="OK")
 
-        # 1. Merge slice → layer dirty
         merge_attempts: list[dict[str, Any]] = []
-        merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
-        merge_attempts.append(
-            {
-                "attempt": 1,
-                "strategy": "merge",
-                "success": bool(merge_result.success),
-                "error": str(merge_result.error or ""),
-            }
-        )
+        investigator_report_refs: list[str] = []
+        failure_evidence: dict[str, Any] = {}
+        dirty_root, _ = resolve_worktree_roots()
 
-        # 2. If merge fails, rebase slice onto dirty and retry merge once.
-        if not merge_result.success:
+        def run_merge_cycle(*, cycle: str) -> Any:
+            merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
+            merge_attempts.append(
+                {
+                    "attempt": len(merge_attempts) + 1,
+                    "cycle": cycle,
+                    "strategy": "merge",
+                    "success": bool(merge_result.success),
+                    "error": str(merge_result.error or ""),
+                }
+            )
+            if merge_result.success:
+                return merge_result
+
             rebase_ok = False
             rebase_error = ""
             slice_worktree = wm.get_slice_worktree(ctx.layer, ctx.slice_id)
@@ -5193,23 +5479,72 @@ class IntegrateStep:
                 rebase_ok, rebase_error = wm.vcs.rebase(slice_worktree, dirty_branch)
             merge_attempts.append(
                 {
-                    "attempt": 2,
+                    "attempt": len(merge_attempts) + 1,
+                    "cycle": cycle,
                     "strategy": "rebase_slice_onto_dirty",
                     "success": bool(rebase_ok),
                     "error": str(rebase_error or ""),
                 }
             )
+            if not rebase_ok:
+                return merge_result
 
-            if rebase_ok:
-                merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
-                merge_attempts.append(
-                    {
-                        "attempt": 3,
-                        "strategy": "merge_after_rebase",
-                        "success": bool(merge_result.success),
-                        "error": str(merge_result.error or ""),
-                    }
-                )
+            merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
+            merge_attempts.append(
+                {
+                    "attempt": len(merge_attempts) + 1,
+                    "cycle": cycle,
+                    "strategy": "merge_after_rebase",
+                    "success": bool(merge_result.success),
+                    "error": str(merge_result.error or ""),
+                }
+            )
+            return merge_result
+
+        def write_investigator_report(phase: str, report: dict[str, Any] | None) -> str:
+            if not isinstance(report, dict) or not report:
+                return ""
+            name = f"investigator.{phase}.report.json"
+            return _write_iteration_json(bundle, evidence_root, name, report)
+
+        merge_result = run_merge_cycle(cycle="initial")
+
+        if not merge_result.success:
+            merge_failure_refs = [
+                f"{entry.get('strategy')}:{entry.get('error')}"
+                for entry in merge_attempts
+                if str(entry.get("error", "")).strip()
+            ]
+            failure_evidence = {
+                "phase": "merge_failure",
+                "merge_error": str(merge_result.error or ""),
+                "merge_attempts": merge_attempts,
+            }
+            latest_merge_result = {"result": merge_result}
+
+            def verify_merge_recovery(
+                attempt: int,
+                _: dict[str, Any],
+            ) -> tuple[bool, dict[str, Any]]:
+                retry_result = run_merge_cycle(cycle=f"investigator_merge_retry_{attempt}")
+                latest_merge_result["result"] = retry_result
+                return bool(retry_result.success), {
+                    "merge_success": bool(retry_result.success),
+                    "merge_error": str(retry_result.error or ""),
+                    "merge_sha": str(getattr(retry_result, "merge_sha", "") or ""),
+                }
+
+            merge_recovery_report = self._try_investigator(
+                ctx,
+                failure_refs=merge_failure_refs,
+                failure_evidence=failure_evidence,
+                layer_worktree=dirty_root,
+                verify_callback=verify_merge_recovery,
+            )
+            merge_report_ref = write_investigator_report("merge", merge_recovery_report)
+            if merge_report_ref:
+                investigator_report_refs.append(merge_report_ref)
+            merge_result = latest_merge_result["result"]
 
         if not merge_result.success:
             ticket_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
@@ -5221,15 +5556,21 @@ class IntegrateStep:
                 target_layer=ticket_layer,
                 severity="BLOCKER",
                 diagnosis=(
-                    "Merge conflict after rebase retry: "
+                    "Merge conflict after investigator recovery attempts: "
                     f"{merge_result.error or 'unknown merge error'}"
                 ),
+                evidence_refs=list(investigator_report_refs),
+                investigator_report_ref=investigator_report_refs[-1]
+                if investigator_report_refs
+                else "",
             )
             record_artifacts(
                 merge=merge_result,
                 emitted=[ticket],
                 error=merge_result.error,
                 merge_attempts=merge_attempts,
+                failure_evidence=failure_evidence,
+                investigator_report_refs=investigator_report_refs,
             )
             return StepResult(
                 status="BLOCKED",
@@ -5237,94 +5578,154 @@ class IntegrateStep:
                 error=merge_result.error,
             )
 
-        # 3. Trigger CI pipeline tick outside the creative step.
         ci_tick_triggered = False
         ci_tick_error = ""
+        ci_tick_receipt: dict[str, Any] = {}
         if ctx.ci_tick_callback is not None:
             try:
-                ctx.ci_tick_callback(ctx.slice_id)
+                tick_result = ctx.ci_tick_callback(ctx.slice_id)
                 ci_tick_triggered = True
+                if isinstance(tick_result, dict):
+                    ci_tick_receipt = tick_result
             except Exception as exc:
                 ci_tick_error = str(exc)
                 logger.exception("CI tick callback failed for slice '%s'", ctx.slice_id)
+
+        ci_failed = bool(ci_tick_error)
+        if isinstance(ci_tick_receipt, dict):
+            ci_failed = ci_failed or bool(ci_tick_receipt.get("failed", False))
+
+        if ci_failed:
+            refs: list[str] = []
+            if isinstance(ci_tick_receipt.get("failure_refs"), list):
+                refs.extend(
+                    str(item).strip()
+                    for item in ci_tick_receipt.get("failure_refs", [])
+                    if str(item).strip()
+                )
+            summary = str(ci_tick_receipt.get("failure_summary", "")).strip()
+            if summary:
+                refs.append(summary)
+            if ci_tick_error:
+                refs.append(ci_tick_error)
+
+            failure_evidence = {
+                "phase": "ci_tick_failure",
+                "ci_tick_error": ci_tick_error,
+                "ci_tick_receipt": ci_tick_receipt,
+                "merge_attempts": merge_attempts,
+            }
+            retry_receipt_holder: dict[str, Any] = {}
+
+            def verify_ci_recovery(
+                _: int,
+                __: dict[str, Any],
+            ) -> tuple[bool, dict[str, Any]]:
+                if ctx.ci_tick_callback is None:
+                    return True, {"note": "No CI callback available for retry verification"}
+                try:
+                    retry_raw = ctx.ci_tick_callback(ctx.slice_id)
+                except Exception as exc:
+                    return False, {"error": str(exc)}
+                retry_receipt = retry_raw if isinstance(retry_raw, dict) else {}
+                retry_receipt_holder["receipt"] = retry_receipt
+                retry_failed = bool(retry_receipt.get("failed", False))
+                return (not retry_failed), {"retry_receipt": retry_receipt}
+
+            ci_recovery_report = self._try_investigator(
+                ctx,
+                failure_refs=refs,
+                failure_evidence=failure_evidence,
+                layer_worktree=dirty_root,
+                verify_callback=verify_ci_recovery,
+            )
+            ci_report_ref = write_investigator_report("ci", ci_recovery_report)
+            if ci_report_ref:
+                investigator_report_refs.append(ci_report_ref)
+
+            if bool((ci_recovery_report or {}).get("fixed", False)):
+                ci_tick_error = ""
+                if isinstance(retry_receipt_holder.get("receipt"), dict):
+                    ci_tick_receipt = cast("dict[str, Any]", retry_receipt_holder["receipt"])
+            else:
+                ticket_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
+                diagnosis = summary or ci_tick_error or "CI tick failed after integrate"
+                ticket = DemotionTicket(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    source="TEST_FAILURE",
+                    origin_layer=ticket_layer,
+                    target_layer=ticket_layer,
+                    severity="BLOCKER",
+                    diagnosis=diagnosis,
+                    evidence_refs=list(investigator_report_refs),
+                    investigator_report_ref=investigator_report_refs[-1]
+                    if investigator_report_refs
+                    else "",
+                )
+                merge_attempts.append(
+                    {
+                        "attempt": len(merge_attempts) + 1,
+                        "cycle": "ci_tick",
+                        "strategy": "ci_tick_callback",
+                        "success": False,
+                        "error": diagnosis,
+                    }
+                )
+                record_artifacts(
+                    merge=merge_result,
+                    emitted=[ticket],
+                    error=diagnosis,
+                    merge_attempts=merge_attempts,
+                    ci_tick_triggered=ci_tick_triggered,
+                    ci_tick_error=ci_tick_error,
+                    ci_tick_receipt=ci_tick_receipt,
+                    failure_evidence=failure_evidence,
+                    investigator_report_refs=investigator_report_refs,
+                )
+                return StepResult(
+                    status="BLOCKED",
+                    emitted_tickets=[ticket],
+                    error=diagnosis,
+                )
 
         record_artifacts(
             merge=merge_result,
             merge_attempts=merge_attempts,
             ci_tick_triggered=ci_tick_triggered,
             ci_tick_error=ci_tick_error,
+            ci_tick_receipt=ci_tick_receipt,
+            investigator_report_refs=investigator_report_refs,
         )
         return StepResult(status="OK")
 
     def _try_investigator(
-        self, ctx: SliceContext, failure_refs: list[str]
-    ) -> dict[str, Any] | None:
-        """Invoke Investigator agent to fix CI failures.
-
-        Args:
-            ctx: Slice context.
-            failure_refs: Structured refs for failing tests/checks.
-
-        Returns:
-            Dict with ``fixed`` bool, or None if investigator unavailable.
-        """
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
-        if not workspace:
-            return None
-
-        for attempt in range(1, self._investigator_budget + 1):
-            logger.info(
-                "Investigator attempt %d/%d for slice '%s'",
-                attempt,
-                self._investigator_budget,
-                ctx.slice_id,
-            )
-            try:
-                import json
-
-                from spec_manager.core.agent_utils import run_agent
-                from spec_manager.core.json_extraction import _extract_json_payload
-                from spec_manager.refinement.formats import _strip_code_fences
-
-                prompt = (
-                    "## TASK\n"
-                    "CI tests failed after integrating a slice. Investigate and fix.\n"
-                    "You must respect layer constraints:\n"
-                    f"- Current layer: {ctx.layer}\n"
-                    "- L1: may change function bodies\n"
-                    "- L2: wiring only, no new logic\n"
-                    "- L3: refactor only, no behavior change\n\n"
-                    'Return JSON: {"fixed": true/false, "patch": "...", '
-                    '"root_cause": "...", "evidence": "..."}\n\n'
-                    f"Failing refs: {(failure_refs or [])[:8]}\n"
-                    f"Slice: {ctx.slice_id}\n"
-                )
-
-                output = run_agent(
-                    agent_name="pdd-investigator",
-                    prompt=prompt,
-                    workspace=workspace,
-                )
-                cleaned = _strip_code_fences(output)
-                data = json.loads(_extract_json_payload(cleaned))
-
-                if data.get("fixed"):
-                    logger.info(
-                        "Investigator fixed CI failure (attempt %d): %s",
-                        attempt,
-                        data.get("root_cause", "unknown"),
-                    )
-                    return {"fixed": True, "attempt": attempt, "data": data}
-
-            except Exception as exc:
-                logger.debug("Investigator attempt %d failed: %s", attempt, exc)
-
-        logger.info(
-            "Investigator exhausted budget (%d attempts) for slice '%s'",
-            self._investigator_budget,
-            ctx.slice_id,
+        self,
+        ctx: SliceContext,
+        *,
+        failure_refs: list[str],
+        failure_evidence: dict[str, Any] | None = None,
+        layer_worktree: Path | None = None,
+        verify_callback: Callable[[int, dict[str, Any]], tuple[bool, dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
+        """Invoke bounded investigator recovery in the layer worktree."""
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        candidate_worktree = layer_worktree
+        if candidate_worktree is None and ctx.dirty_parent_root:
+            candidate_worktree = Path(ctx.dirty_parent_root)
+        if candidate_worktree is None:
+            return {"fixed": False, "attempts": [], "error": "No investigator worktree"}
+        return attempt_investigator_recovery(
+            run_id=ctx.run_id,
+            slice_id=ctx.slice_id,
+            layer=ctx.layer,
+            workspace_root=workspace,
+            layer_worktree=candidate_worktree,
+            failure_refs=failure_refs,
+            failure_evidence=failure_evidence,
+            investigator_budget=self._investigator_budget,
+            verify_callback=verify_callback,
         )
-        return {"fixed": False}
 
 
 class VerifyStep:

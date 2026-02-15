@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Run Claude Code with second OAuth account and all permissions skipped
+export CLAUDE_CONFIG_DIR="$HOME/.claude2"
+claude --dangerously-skip-permissions "$@"

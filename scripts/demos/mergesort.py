@@ -1,6 +1,12 @@
+"""Visualize merge sort algorithm with animation."""
+
+from collections.abc import Iterator
+from typing import Any
+
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
 
 # --- Configuration ---
 N = 32
@@ -17,10 +23,11 @@ LINE_WIDTH = 6.0
 UNIT_H = 14.0
 CURSOR_SIZE = 6
 
-# --- Helper Functions ---
+# --- Helper Functions
 
 
-def get_alignment_signal(arr):
+def get_alignment_signal(arr: np.ndarray) -> np.ndarray:
+    """Generate alignment signal array from input array."""
     if len(arr) <= 1:
         return np.array([0.0])
     signal = []
@@ -31,11 +38,13 @@ def get_alignment_signal(arr):
     return np.array(signal)
 
 
-def interpolate_arrays(arr_start, arr_end, t):
+def interpolate_arrays(arr_start: np.ndarray, arr_end: np.ndarray, t: float) -> np.ndarray:
+    """Interpolate between two arrays."""
     return arr_start * (1 - t) + arr_end * t
 
 
-def build_layout(n):
+def build_layout(n: int) -> list[dict[str, Any]]:
+    """Build node layout for merge sort visualization tree."""
     # Validate that n is a positive power of 2
     if n <= 0:
         raise ValueError(f"n must be positive, got {n}")
@@ -60,10 +69,11 @@ def build_layout(n):
     return levels
 
 
-# --- Animation Generator ---
+# --- Animation Generator
 
 
-def scanner_sorter_gen(source_data):
+def scanner_sorter_gen(source_data: np.ndarray) -> Iterator:
+    """Generator yielding animation frames for merge sort visualization."""
     unsorted_tree = []
     curr = [source_data.copy()]
     unsorted_tree.append(curr)
@@ -124,10 +134,8 @@ def scanner_sorter_gen(source_data):
         cursors = [[0.0, 0.0] for _ in range(num_pairs)]
 
         while True:
-            remaining = False
             moves = []
 
-            step_active = False
             for p_idx in range(num_pairs):
                 l_idx, r_idx = p_idx * 2, p_idx * 2 + 1
                 L, R = tree_data[d][l_idx], tree_data[d][r_idx]
@@ -139,23 +147,10 @@ def scanner_sorter_gen(source_data):
                     moves.append(None)
                     continue
 
-                step_active = True
-                remaining = True
-
-                winner_side = None
                 if cL < len(L) and cR < len(R):
-                    if L[cL] <= R[cR]:
-                        winner_side = 0
-                    else:
-                        winner_side = 1
-                elif cL < len(L):
-                    winner_side = 0
-                elif cR < len(R):
-                    winner_side = 1
-
-                moves.append(winner_side)
-
-            if not step_active:
+                    0 if L[cL] <= R[cR] else 1
+                elif cL < len(L) or cR < len(R):
+                    pass
                 break
 
             # Interpolate Move
@@ -217,10 +212,20 @@ def scanner_sorter_gen(source_data):
     yield "done", 0, 0, tree_data, None, None
 
 
-# --- Plotting Functions ---
+# --- Plotting Functions
 
 
-def plot_horz_interpolated(ax, cx, cy, data, camera_y, start_sig, end_sig, progress):
+def plot_horz_interpolated(
+    ax: Axes,
+    cx: float,
+    cy: float,
+    data: list[float],
+    camera_y: float,
+    start_sig: np.ndarray | None,
+    end_sig: np.ndarray | None,
+    progress: float,
+) -> None:
+    """Plot horizontally interpolated array visualization."""
     if not data:
         return
     if len(data) == 1:
@@ -244,11 +249,15 @@ def plot_horz_interpolated(ax, cx, cy, data, camera_y, start_sig, end_sig, progr
     ax.plot(cx + x_rel, (cy - camera_y) + y_rel, color="red", linewidth=LINE_WIDTH)
 
 
-def plot_horz_signal(ax, cx, cy, data, camera_y):
+def plot_horz_signal(ax: Axes, cx: float, cy: float, data: list[float], camera_y: float) -> None:
+    """Plot horizontal array visualization."""
     plot_horz_interpolated(ax, cx, cy, data, camera_y, None, None, 0)
 
 
-def plot_rotated_signal(ax, cx, cy, data, angle, camera_y):
+def plot_rotated_signal(
+    ax: Axes, cx: float, cy: float, data: list[float], angle: float, camera_y: float
+) -> None:
+    """Plot rotated array visualization."""
     if not data:
         return
     if len(data) == 1:
@@ -268,19 +277,27 @@ def plot_rotated_signal(ax, cx, cy, data, angle, camera_y):
     ax.plot(cx + rx, (cy - camera_y) + ry, color="red", linewidth=LINE_WIDTH)
 
 
-def draw_segment(ax, cx, y_top, y_bot):
+def draw_segment(ax: Axes, cx: float, y_top: float, y_bot: float) -> None:
     """Draw a single vertical line segment."""
     ax.plot([cx, cx], [y_bot, y_top], color="red", linewidth=LINE_WIDTH, solid_capstyle="butt")
 
 
-def draw_cursor(ax, cx, y):
+def draw_cursor(ax: Axes, cx: float, y: float) -> None:
     """Draw cursor marker at position."""
     ax.plot(cx, y, marker="o", color="white", markersize=CURSOR_SIZE, zorder=10)
 
 
 def plot_scanner_active(
-    ax, cx, cy, source_data, history_data, cursor_val, is_moving, anim_progress, camera_y
-):
+    ax: Axes,
+    cx: float,
+    cy: float,
+    source_data: list[float],
+    history_data: list[float],
+    cursor_val: float,
+    is_moving: bool,
+    anim_progress: float,
+    camera_y: float,
+) -> None:
     """Renders a scanner with items passing through a gate.
 
     Model:
@@ -290,9 +307,13 @@ def plot_scanner_active(
     - During animation: active item slides up, inactive side's source slides down
 
     Args:
+        ax: Matplotlib axes object for drawing
+        cx: X-coordinate of node center
+        cy: Y-coordinate of node center
+        camera_y: Current camera Y position for rendering offset
         source_data: Original array of items for this side
+        cursor_val: Float, items consumed from this side (may have fraction)
         history_data: List of 1.0 (drew item) or -1.0 (gap) for each comparison
-        cursor_val: Float, number of items consumed from this side (may have fraction during animation)
         is_moving: True if this side is currently animating
         anim_progress: 0-1 progress of current comparison (shared between both sides)
     """
@@ -373,7 +394,8 @@ ax.set_ylim(-VIEW_H / 2, VIEW_H / 2)
 sorter_gen = scanner_sorter_gen(data)
 
 
-def update(frame_data):
+def update(frame_data: tuple[str, int, float, Any, Any, Any]) -> None:
+    """Update animation frame."""
     ax.clear()
     ax.set_axis_off()
     ax.set_xlim(-800, 800)
