@@ -454,21 +454,18 @@ class IntentAgentOrchestrator:
         }
 
         if self._on_planner_signal is None:
-            logger.debug(
-                "No planner signal callback configured; dropped follow-up quality signal "
-                "for parent_question_id=%s",
-                parent_question_id,
+            raise RuntimeError(
+                "Failed follow-up question cannot be routed to Planner: "
+                "on_planner_signal callback is required"
             )
-            return
 
         try:
             self._on_planner_signal(payload)
-        except Exception:
-            logger.warning(
-                "on_planner_signal callback failed for follow-up quality signal (parent=%s)",
-                parent_question_id,
-                exc_info=True,
-            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed follow-up question could not be routed to Planner "
+                f"(parent_question_id={parent_question_id})"
+            ) from exc
 
     def _emit_ingest_quality_reformulation(
         self,
@@ -2242,7 +2239,6 @@ class IntentAgentOrchestrator:
 
         # 2. Produce AnswerTranslation via strategy.
         if self._answer_translate is not None and question is not None:
-            recursion_budget = RecursionBudget(max_followups=2, used_followups=0)
             pf = self._state.problem_frame
             frame_dict = {
                 "current_restatement": pf.current_restatement,
@@ -2261,12 +2257,10 @@ class IntentAgentOrchestrator:
                 selected_choice_id=selected_choice_id,
                 problem_frame=frame_dict,
                 concept_map=concept_dict,
-                recursion_budget=recursion_budget,
+                recursion_budget=RecursionBudget(max_followups=2, used_followups=0),
                 run_agent=self._run_agent,
             )
-            recursion_budget = translation.recursion_budget
         else:
-            recursion_budget = RecursionBudget(max_followups=2, used_followups=0)
             from spec_manager.orchestration.intent_agent.answer_translation import (
                 ExtractedContent,
                 UserAnswer,
@@ -2349,10 +2343,6 @@ class IntentAgentOrchestrator:
             return translation
 
         # 5. Handle follow-up question drafts (quality gate each, enqueue if pass).
-        remaining_followups = max(
-            0,
-            recursion_budget.max_followups - recursion_budget.used_followups,
-        )
         followup_candidates = sorted(
             translation.extracted.followup_question_drafts,
             key=lambda draft: (
@@ -2361,7 +2351,7 @@ class IntentAgentOrchestrator:
                 self._coerce_str(draft.text),
                 self._coerce_str(draft.draft_id),
             ),
-        )[:remaining_followups]
+        )
         seen_followups: set[tuple[str, str, str, str]] = set()
 
         for fq_draft in followup_candidates:

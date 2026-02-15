@@ -61,6 +61,7 @@ class ConstraintCandidate:
 class ScopeCandidate:
     """Non-authoritative scope candidate extracted from user answer."""
 
+    # Wire format uses keys "in"/"out"; dataclass fields avoid reserved keyword.
     scope_in: list[str] = field(default_factory=list)
     scope_out: list[str] = field(default_factory=list)
 
@@ -85,16 +86,25 @@ class ValidationCandidate:
 class FollowupQuestionDraft:
     """Draft follow-up question; must pass the same quality gate before enqueue."""
 
+    taxonomy_type: str
+    canonical_key_hint: str
+    text: str
+    scenario: str
+    answer_spec: dict[str, Any]
     draft_id: str = ""
-    taxonomy_type: str = "CONSTRAINT"
-    canonical_key_hint: str = ""
-    text: str = ""
-    scenario: str = ""
-    answer_spec: dict[str, Any] = field(default_factory=lambda: {"kind": "choice"})
 
     def __post_init__(self) -> None:
         if not self.draft_id:
             self.draft_id = f"fq_{uuid.uuid4().hex[:8]}"
+        if not isinstance(self.taxonomy_type, str) or not self.taxonomy_type.strip():
+            raise ValueError("followup_question_draft.taxonomy_type is required")
+        if not isinstance(self.scenario, str) or not self.scenario.strip():
+            raise ValueError("followup_question_draft.scenario is required")
+        normalized_answer_spec = _normalize_followup_answer_spec(self.answer_spec)
+        if normalized_answer_spec is None:
+            raise ValueError("followup_question_draft.answer_spec is invalid")
+        self.taxonomy_type = normalize_user_facing_taxonomy(self.taxonomy_type)
+        self.answer_spec = normalized_answer_spec
 
 
 @dataclass
@@ -125,6 +135,16 @@ class RecursionBudget:
 
     max_followups: int = 2
     used_followups: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.max_followups, int):
+            raise TypeError("recursion_budget.max_followups must be an integer")
+        if self.max_followups != 2:
+            raise ValueError("recursion_budget.max_followups must be exactly 2")
+        if not isinstance(self.used_followups, int):
+            raise TypeError("recursion_budget.used_followups must be an integer")
+        if self.used_followups < 0:
+            raise ValueError("recursion_budget.used_followups must be >= 0")
 
     @property
     def remaining(self) -> int:
@@ -203,8 +223,8 @@ class AnswerTranslation:
                 ],
                 "scope_candidates": [
                     {
-                        "scope_in": s.scope_in,
-                        "scope_out": s.scope_out,
+                        "in": s.scope_in,
+                        "out": s.scope_out,
                     }
                     for s in self.extracted.scope_candidates
                 ],
@@ -249,7 +269,16 @@ class AnswerTranslation:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AnswerTranslation:
         """Reconstruct an AnswerTranslation from a plain dict."""
-        required_fields = ("translation_id", "question_id", "created_at", "extracted")
+        required_fields = (
+            "translation_id",
+            "run_id",
+            "session_id",
+            "question_id",
+            "answer_id",
+            "created_at",
+            "user_answer",
+            "extracted",
+        )
         missing_fields = [field_name for field_name in required_fields if field_name not in d]
         if missing_fields:
             raise ValueError(
@@ -258,32 +287,73 @@ class AnswerTranslation:
             )
 
         translation_id = d["translation_id"]
+        run_id = d["run_id"]
+        session_id = d["session_id"]
         question_id = d["question_id"]
+        answer_id = d["answer_id"]
         created_at = d["created_at"]
+        ua_raw = d["user_answer"]
         ext_raw = d["extracted"]
         if not isinstance(translation_id, str) or not translation_id:
             raise ValueError(
                 "AnswerTranslation deserialization invalid required field: translation_id",
             )
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError(
+                "AnswerTranslation deserialization invalid required field: run_id",
+            )
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError(
+                "AnswerTranslation deserialization invalid required field: session_id",
+            )
         if not isinstance(question_id, str) or not question_id:
             raise ValueError(
                 "AnswerTranslation deserialization invalid required field: question_id",
             )
+        if not isinstance(answer_id, str) or not answer_id:
+            raise ValueError(
+                "AnswerTranslation deserialization invalid required field: answer_id",
+            )
         if not isinstance(created_at, str) or not created_at:
             raise ValueError(
                 "AnswerTranslation deserialization invalid required field: created_at",
+            )
+        if not isinstance(ua_raw, dict):
+            raise TypeError(
+                "AnswerTranslation deserialization invalid required field: user_answer",
             )
         if not isinstance(ext_raw, dict):
             raise TypeError(
                 "AnswerTranslation deserialization invalid required field: extracted",
             )
 
-        ua_raw = d.get("user_answer", {})
+        if "raw_text" not in ua_raw:
+            raise ValueError(
+                "AnswerTranslation deserialization missing required field: user_answer.raw_text",
+            )
+        raw_text = ua_raw["raw_text"]
+        if not isinstance(raw_text, str):
+            raise TypeError(
+                "AnswerTranslation deserialization invalid required field: user_answer.raw_text",
+            )
         user_answer = UserAnswer(
-            raw_text=ua_raw.get("raw_text", ""),
+            raw_text=raw_text,
             selected_choice_id=ua_raw.get("selected_choice_id", ""),
             parsed_values=ua_raw.get("parsed_values", {}),
         )
+
+        followup_question_drafts, followup_omission_records = _parse_followup_question_drafts(
+            ext_raw.get("followup_question_drafts", []),
+        )
+        existing_followup_omissions = ext_raw.get("followup_omissions", [])
+        if not isinstance(existing_followup_omissions, list):
+            existing_followup_omissions = [
+                {
+                    "reason": "invalid_followup_omissions_container",
+                    "container_type": type(existing_followup_omissions).__name__,
+                    "dropped_count": 1,
+                }
+            ]
 
         extracted = ExtractedContent(
             constraint_candidates=[
@@ -291,8 +361,8 @@ class AnswerTranslation:
             ],
             scope_candidates=[
                 ScopeCandidate(
-                    scope_in=s.get("scope_in", []),
-                    scope_out=s.get("scope_out", []),
+                    scope_in=s.get("in", []),
+                    scope_out=s.get("out", []),
                 )
                 for s in ext_raw.get("scope_candidates", [])
             ],
@@ -302,22 +372,8 @@ class AnswerTranslation:
             validation_candidates=[
                 ValidationCandidate(**v) for v in ext_raw.get("validation_candidates", [])
             ],
-            followup_question_drafts=[
-                FollowupQuestionDraft(
-                    draft_id=fq.get("draft_id", ""),
-                    taxonomy_type=normalize_user_facing_taxonomy(
-                        fq.get("taxonomy_type", "CONSTRAINT"),
-                    ),
-                    canonical_key_hint=fq.get("canonical_key_hint", ""),
-                    text=fq.get("text", ""),
-                    scenario=fq.get("scenario", ""),
-                    answer_spec=_normalize_followup_answer_spec(
-                        fq.get("answer_spec"),
-                    ),
-                )
-                for fq in ext_raw.get("followup_question_drafts", [])
-            ],
-            followup_omissions=ext_raw.get("followup_omissions", []),
+            followup_question_drafts=followup_question_drafts,
+            followup_omissions=existing_followup_omissions + followup_omission_records,
             translation_failures=ext_raw.get("translation_failures", []),
         )
 
@@ -336,11 +392,11 @@ class AnswerTranslation:
         return cls(
             version=d.get("version", 1),
             translation_id=translation_id,
-            run_id=d.get("run_id", ""),
-            session_id=d.get("session_id", ""),
+            run_id=run_id,
+            session_id=session_id,
             question_id=question_id,
             canonical_key_hint=d.get("canonical_key_hint", ""),
-            answer_id=d.get("answer_id", ""),
+            answer_id=answer_id,
             created_at=created_at,
             translation_status=d.get("translation_status", TRANSLATION_STATUS_SUCCEEDED),
             user_answer=user_answer,
@@ -459,7 +515,7 @@ class AnswerTranslateStrategy:
             "question (str), answer (str), scope_kind (SYSTEM_WIDE|FEATURE_SPECIFIC), "
             "target_slice_id (str, empty if unknown), confidence (0.0-1.0), "
             "rationale (str)\n"
-            "2. scope_candidates — each with: scope_in (list[str]), scope_out (list[str])\n"
+            "2. scope_candidates — each with: in (list[str]), out (list[str])\n"
             "3. tradeoff_candidates — each with: axis (str), preference (str), "
             "confidence (0.0-1.0)\n"
             "4. validation_candidates — each with: acceptance_statement (str)\n"
@@ -535,8 +591,8 @@ class AnswerTranslateStrategy:
 
         scope_candidates = [
             ScopeCandidate(
-                scope_in=s.get("scope_in", []),
-                scope_out=s.get("scope_out", []),
+                scope_in=s.get("in", []),
+                scope_out=s.get("out", []),
             )
             for s in data.get("scope_candidates", [])
             if isinstance(s, dict)
@@ -594,19 +650,10 @@ class AnswerTranslateStrategy:
                     )
                 raw_followups = raw_followups[:remaining_followups]
 
-        followup_question_drafts = [
-            FollowupQuestionDraft(
-                taxonomy_type=normalize_user_facing_taxonomy(
-                    fq.get("taxonomy_type", "CONSTRAINT"),
-                ),
-                canonical_key_hint=fq.get("canonical_key_hint", ""),
-                text=fq.get("text", ""),
-                scenario=fq.get("scenario", ""),
-                answer_spec=_normalize_followup_answer_spec(fq.get("answer_spec")),
-            )
-            for fq in raw_followups
-            if isinstance(fq, dict)
-        ]
+        followup_question_drafts, followup_metadata_omissions = _parse_followup_question_drafts(
+            raw_followups,
+        )
+        followup_omissions.extend(followup_metadata_omissions)
 
         extracted = ExtractedContent(
             constraint_candidates=constraint_candidates,
@@ -632,13 +679,96 @@ class AnswerTranslateStrategy:
         )
 
 
-def _normalize_followup_answer_spec(raw_spec: Any) -> dict[str, Any]:
-    if not isinstance(raw_spec, dict):
-        return {"kind": "choice"}
+def _parse_followup_question_drafts(
+    raw_followups: Any,
+) -> tuple[list[FollowupQuestionDraft], list[dict[str, Any]]]:
+    drafts: list[FollowupQuestionDraft] = []
+    omissions: list[dict[str, Any]] = []
+    if not isinstance(raw_followups, list):
+        omissions.append(
+            {
+                "reason": "invalid_followup_container",
+                "container_type": type(raw_followups).__name__,
+                "dropped_count": 1,
+            }
+        )
+        return drafts, omissions
 
-    kind = str(raw_spec.get("kind", "choice")).strip().lower()
+    for index, raw_followup in enumerate(raw_followups):
+        if not isinstance(raw_followup, dict):
+            omissions.append(
+                {
+                    "reason": "invalid_followup_item",
+                    "index": index,
+                    "item_type": type(raw_followup).__name__,
+                    "dropped_count": 1,
+                }
+            )
+            continue
+
+        missing_fields: list[str] = []
+        invalid_fields: list[str] = []
+
+        taxonomy_value = raw_followup.get("taxonomy_type")
+        if not isinstance(taxonomy_value, str) or not taxonomy_value.strip():
+            missing_fields.append("taxonomy_type")
+
+        scenario_value = raw_followup.get("scenario")
+        if not isinstance(scenario_value, str) or not scenario_value.strip():
+            missing_fields.append("scenario")
+
+        if "answer_spec" not in raw_followup:
+            missing_fields.append("answer_spec")
+            normalized_answer_spec = None
+        else:
+            normalized_answer_spec = _normalize_followup_answer_spec(
+                raw_followup.get("answer_spec")
+            )
+            if normalized_answer_spec is None:
+                invalid_fields.append("answer_spec")
+
+        if missing_fields or invalid_fields:
+            omission_record: dict[str, Any] = {
+                "reason": "incomplete_followup_metadata",
+                "index": index,
+                "dropped_count": 1,
+            }
+            if missing_fields:
+                omission_record["missing_fields"] = missing_fields
+            if invalid_fields:
+                omission_record["invalid_fields"] = invalid_fields
+            omissions.append(omission_record)
+            continue
+
+        draft_id = raw_followup.get("draft_id", "")
+        canonical_key_hint = raw_followup.get("canonical_key_hint", "")
+        text = raw_followup.get("text", "")
+        drafts.append(
+            FollowupQuestionDraft(
+                draft_id=draft_id if isinstance(draft_id, str) else "",
+                taxonomy_type=normalize_user_facing_taxonomy(taxonomy_value),
+                canonical_key_hint=(
+                    canonical_key_hint if isinstance(canonical_key_hint, str) else ""
+                ),
+                text=text if isinstance(text, str) else "",
+                scenario=scenario_value,
+                answer_spec=normalized_answer_spec,
+            )
+        )
+
+    return drafts, omissions
+
+
+def _normalize_followup_answer_spec(raw_spec: Any) -> dict[str, Any] | None:
+    if not isinstance(raw_spec, dict):
+        return None
+
+    kind_raw = raw_spec.get("kind")
+    if not isinstance(kind_raw, str) or not kind_raw.strip():
+        return None
+    kind = kind_raw.strip().lower()
     if kind not in _VALID_FOLLOWUP_ANSWER_SPEC_KINDS:
-        kind = "choice"
+        return None
 
     normalized: dict[str, Any] = {"kind": kind}
     if kind == "choice":
