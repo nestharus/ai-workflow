@@ -589,7 +589,7 @@ class PddLifecycle:
         # Bootstrap constraints from intake artifacts only when intake ran.
         if intake_ran:
             try:
-                from spec_manager.planner.constraints.bootstrap import (
+                from spec_manager.orchestration.under_spec.bootstrap import (
                     bootstrap_constraints_from_intake,
                 )
 

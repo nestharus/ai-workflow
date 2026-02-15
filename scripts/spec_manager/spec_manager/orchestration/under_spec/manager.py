@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
+from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +330,7 @@ class UnderSpecManager:
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
+        self._constraints_adapter = ConstraintStoreAdapter(workspace_root)
         self._planner = planner
         self._run_id = normalized_run_id
         self._interactive_questions_emitted = False
@@ -356,7 +358,7 @@ class UnderSpecManager:
             return UnderSpecOutcome()
 
         # Phase 1: Check existing constraints
-        covered, uncovered = self._store.find_covering(slice_id, events)
+        covered, uncovered = self._find_covering(slice_id, events)
         refinement_candidates = self._build_refinement_candidates(
             slice_id=slice_id,
             covered_events=covered,
@@ -686,7 +688,7 @@ class UnderSpecManager:
                     "authority_required": constraint.authority_required,
                     "scope": constraint.scope,
                 }
-                for constraint in self._store.load_merged(slice_id)
+                for constraint in self._load_merged_constraints(slice_id)
             ]
             local_context = [
                 {
@@ -1481,7 +1483,7 @@ class UnderSpecManager:
     def _policy_dimensions_for_slice(self, slice_id: str) -> set[str]:
         """Return non-software dimensions covered by explicit human policy."""
         policy_dimensions: set[str] = set()
-        for constraint in self._store.load_merged(slice_id):
+        for constraint in self._load_merged_constraints(slice_id):
             if str(constraint.status).strip().upper() != "ACTIVE":
                 continue
             dimension = _normalize_dimension(constraint.dimension, fallback="")
@@ -1727,7 +1729,114 @@ class UnderSpecManager:
             if isinstance(persisted_constraint_ids_raw, list)
             else set()
         )
+        if persisted_constraint_ids and not self._planner_has_constraint_saved_callback():
+            self._emit_constraint_saved_wake_events(
+                slice_id=slice_id,
+                layer=layer,
+                constraints=constraints,
+                persisted_constraint_ids=persisted_constraint_ids,
+            )
         return str(result.get("constraints_path", "")).strip(), persisted_constraint_ids
+
+    def _load_merged_constraints(self, slice_id: str) -> list[Any]:
+        """Load constraints from merged system + slice view with safe fallback."""
+        try:
+            return self._constraints_adapter.load_merged(slice_id)
+        except Exception:
+            logger.warning(
+                "Adapter merged load failed for slice '%s'; using store fallback",
+                slice_id,
+                exc_info=True,
+            )
+            return self._store.load_merged(slice_id)
+
+    def _find_covering(
+        self,
+        slice_id: str,
+        events: list[UnderSpecEvent],
+    ) -> tuple[list[UnderSpecEvent], list[UnderSpecEvent]]:
+        constraints = self._load_merged_constraints(slice_id)
+        active_constraint_ids = {
+            str(constraint.constraint_id).strip()
+            for constraint in constraints
+            if str(constraint.constraint_id).strip()
+            and str(getattr(constraint, "status", "ACTIVE")).strip().upper() == "ACTIVE"
+        }
+
+        covered: list[UnderSpecEvent] = []
+        uncovered: list[UnderSpecEvent] = []
+        for event in events:
+            if event.event_id in active_constraint_ids:
+                covered.append(event)
+            else:
+                uncovered.append(event)
+        return covered, uncovered
+
+    def _planner_has_constraint_saved_callback(self) -> bool:
+        adapter = getattr(self._planner, "_constraints_adapter", None)
+        callback = getattr(adapter, "_on_constraint_saved", None)
+        return callable(callback)
+
+    def _emit_constraint_saved_wake_events(
+        self,
+        *,
+        slice_id: str,
+        layer: str,
+        constraints: list[Constraint],
+        persisted_constraint_ids: set[str],
+    ) -> None:
+        try:
+            from spec_manager.orchestration.coordination.wake_queue import WakeEvent, WakeQueue
+        except Exception:
+            logger.warning(
+                "Wake queue import failed while emitting fallback constraint_saved wake events",
+                exc_info=True,
+            )
+            return
+
+        if not persisted_constraint_ids:
+            return
+
+        canonical_by_id: dict[str, str] = {}
+        for constraint in constraints:
+            constraint_id = str(constraint.constraint_id).strip()
+            if not constraint_id:
+                continue
+            canonical_by_id[constraint_id] = self._canonical_key_for_constraint(constraint)
+
+        coordination_dir = self._workspace / ".pdd_runs" / self._run_id / "coordination"
+        try:
+            queue = WakeQueue(coordination_dir)
+            for constraint_id in sorted(persisted_constraint_ids):
+                canonical_key = canonical_by_id.get(constraint_id, f"underspec.{constraint_id}")
+                queue.enqueue(
+                    WakeEvent(
+                        signal_id=f"underspec:{slice_id}:{constraint_id}",
+                        slice_id=slice_id,
+                        layer=str(layer),
+                        reason="constraint_saved_fallback",
+                        artifact_key=f"constraint:{constraint_id}",
+                        wake_payload={
+                            "constraint_id": constraint_id,
+                            "canonical_key": canonical_key,
+                            "source_slice_id": slice_id,
+                        },
+                    )
+                )
+        except Exception:
+            logger.warning(
+                "Failed to emit fallback constraint_saved wake events for slice '%s'",
+                slice_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _canonical_key_for_constraint(constraint: Constraint) -> str:
+        for token in constraint.trace:
+            token_text = str(token).strip()
+            if token_text.startswith("canonical_key="):
+                return token_text.split("=", 1)[1].strip()
+        return f"underspec.{constraint.constraint_id}"
 
     @staticmethod
     def _constraint_event_id(constraint: Constraint) -> str:
@@ -1748,7 +1857,7 @@ class UnderSpecManager:
         if not covered_events:
             return []
 
-        constraints = self._store.load(slice_id)
+        constraints = self._load_merged_constraints(slice_id)
         active_constraints = {
             constraint.constraint_id: constraint
             for constraint in constraints

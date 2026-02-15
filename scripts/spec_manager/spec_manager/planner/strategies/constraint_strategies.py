@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from spec_manager.planner.constraints.impact import classify_impact
+from spec_manager.planner.constraints.non_software import (
+    build_non_software_checklist_requirements,
+)
 from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
     ConflictReport,
@@ -27,8 +30,6 @@ from .protocol import PlanningSession
 
 logger = logging.getLogger(__name__)
 
-# Non-software dimensions that trigger checklist items.
-_NON_SOFTWARE_DIMENSIONS = ("legal", "economic", "organizational", "temporal", "operational")
 _SECURITY_PRIVACY_COMPLIANCE_KEYWORDS = (
     "security",
     "privacy",
@@ -180,32 +181,14 @@ class NonSoftwareChecklistStrategy:
         if not _impact_at_least_medium(session):
             return session
 
-        existing_dimensions = {dr.dimension for dr in session.decision_requirements}
-
-        for dim in _NON_SOFTWARE_DIMENSIONS:
-            if dim in existing_dimensions:
-                continue
-
-            # Check if gaps or context mention this dimension
-            gap_text = " ".join(
-                g.get("description", "") + " " + g.get("target", "") for g in session.gaps
-            ).lower()
-
-            ctx_text = json.dumps(session.ctx).lower() if session.ctx else ""
-
-            if dim in gap_text or dim in ctx_text:
-                session.decision_requirements.append(
-                    DecisionRequirement(
-                        decision_id=f"NSC-{dim.upper()[:4]}",
-                        question=f"Has the {dim} dimension been considered for this change?",
-                        kind="non_software_checklist",
-                        dimension=dim,
-                        scope=session.ctx.get("scope", "intra:LIB"),
-                        impact=session.impact.impact if session.impact else "MEDIUM",
-                        options=["yes_addressed", "not_applicable", "needs_review"],
-                        needed_for=[session.ctx.get("slice_id", "unknown")],
-                    )
-                )
+        session.decision_requirements.extend(
+            build_non_software_checklist_requirements(
+                gaps=session.gaps,
+                context=session.ctx,
+                existing_requirements=session.decision_requirements,
+                impact=session.impact.impact if session.impact else "MEDIUM",
+            )
+        )
 
         return session
 
