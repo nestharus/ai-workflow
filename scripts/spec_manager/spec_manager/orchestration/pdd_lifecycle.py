@@ -556,6 +556,26 @@ class PddLifecycle:
             if l2_transition_blocked:
                 pass_outcome["l2_blocked"] = True
                 pass_outcome["l2_blocked_reason"] = l2_transition_reason
+                l1_l2_transition = pass_outcome.get("l1_l2_transition", {})
+                if isinstance(l1_l2_transition, dict) and bool(
+                    l1_l2_transition.get("escalation_required", False)
+                ):
+                    pass_outcome["l2_blocked_reason"] = (
+                        f"{l2_transition_reason} (interactive approval required)"
+                    )
+                    results.update(pass_outcome)
+                    results["pipeline_pass_history"].append(
+                        {
+                            "pass": pipeline_pass,
+                            "status": "blocked",
+                            "reason": pass_outcome["l2_blocked_reason"],
+                        }
+                    )
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
+                    results["escalation_required"] = True
+                    state_mgr.update_state(phase="blocked_transition_escalation")
+                    return results
                 results.update(pass_outcome)
                 results["pipeline_pass_history"].append(
                     {
@@ -624,6 +644,26 @@ class PddLifecycle:
             if l3_transition_blocked:
                 pass_outcome["l3_blocked"] = True
                 pass_outcome["l3_blocked_reason"] = l3_transition_reason
+                l2_l3_transition = pass_outcome.get("l2_l3_transition", {})
+                if isinstance(l2_l3_transition, dict) and bool(
+                    l2_l3_transition.get("escalation_required", False)
+                ):
+                    pass_outcome["l3_blocked_reason"] = (
+                        f"{l3_transition_reason} (interactive approval required)"
+                    )
+                    results.update(pass_outcome)
+                    results["pipeline_pass_history"].append(
+                        {
+                            "pass": pipeline_pass,
+                            "status": "blocked",
+                            "reason": pass_outcome["l3_blocked_reason"],
+                        }
+                    )
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l3_blocked_reason"]
+                    results["escalation_required"] = True
+                    state_mgr.update_state(phase="blocked_transition_escalation")
+                    return results
                 results.update(pass_outcome)
                 results["pipeline_pass_history"].append(
                     {
@@ -1677,63 +1717,63 @@ class PddLifecycle:
 
         # Propagate clean → next layer's dirty
         if self.worktree_manager:
-            merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
-            merge_conflicts = [
+            rebase_prop = self.worktree_manager.rebase_next_layer_dirty_onto_clean(from_layer)
+            rebase_conflicts = [
                 self._normalize_conflict_path(path)
-                for path in (merge_prop.conflict_files or [])
+                for path in (rebase_prop.conflict_files or [])
                 if self._normalize_conflict_path(path)
             ]
             propagation: dict[str, Any] = {
-                "success": merge_prop.success,
-                "from_layer": merge_prop.from_layer,
-                "to_layer": merge_prop.to_layer,
-                "merge_sha": merge_prop.merge_sha,
-                "error": merge_prop.error,
-                "strategy": "merge",
-                "conflict_files": merge_conflicts,
+                "success": rebase_prop.success,
+                "from_layer": rebase_prop.from_layer,
+                "to_layer": rebase_prop.to_layer,
+                "merge_sha": rebase_prop.merge_sha,
+                "error": rebase_prop.error,
+                "strategy": "rebase",
+                "conflict_files": rebase_conflicts,
             }
 
-            if not merge_prop.success:
-                rebase_prop = self.worktree_manager.rebase_next_layer_dirty_onto_clean(from_layer)
-                rebase_conflicts = [
+            if not rebase_prop.success:
+                merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
+                merge_conflicts = [
                     self._normalize_conflict_path(path)
-                    for path in (rebase_prop.conflict_files or [])
+                    for path in (merge_prop.conflict_files or [])
                     if self._normalize_conflict_path(path)
                 ]
-                propagation["rebase_fallback"] = {
-                    "success": rebase_prop.success,
-                    "from_layer": rebase_prop.from_layer,
-                    "to_layer": rebase_prop.to_layer,
-                    "merge_sha": rebase_prop.merge_sha,
-                    "error": rebase_prop.error,
-                    "conflict_files": rebase_conflicts,
+                propagation["merge_fallback"] = {
+                    "success": merge_prop.success,
+                    "from_layer": merge_prop.from_layer,
+                    "to_layer": merge_prop.to_layer,
+                    "merge_sha": merge_prop.merge_sha,
+                    "error": merge_prop.error,
+                    "conflict_files": merge_conflicts,
                 }
-                if rebase_prop.success:
+                if merge_prop.success:
                     combined_conflicts: list[str] = []
                     seen_conflicts: set[str] = set()
-                    for path in merge_conflicts + rebase_conflicts:
+                    for path in rebase_conflicts + merge_conflicts:
                         if path and path not in seen_conflicts:
                             seen_conflicts.add(path)
                             combined_conflicts.append(path)
                     propagation.update(
                         {
                             "success": True,
-                            "merge_sha": rebase_prop.merge_sha,
+                            "merge_sha": merge_prop.merge_sha,
                             "error": "",
-                            "strategy": "rebase_fallback",
-                            "merge_error": merge_prop.error,
+                            "strategy": "merge_fallback",
+                            "rebase_error": rebase_prop.error,
                             "conflict_files": combined_conflicts,
                         }
                     )
                 else:
-                    merge_error = merge_prop.error or "merge propagation failed"
-                    rebase_error = rebase_prop.error or "rebase fallback failed"
+                    rebase_error = rebase_prop.error or "rebase propagation failed"
+                    merge_error = merge_prop.error or "merge fallback failed"
                     combined_conflicts: list[str] = []
                     seen_conflicts: set[str] = set()
                     for path in (
-                        merge_conflicts
-                        + rebase_conflicts
-                        + self._extract_conflict_files_from_errors(merge_error, rebase_error)
+                        rebase_conflicts
+                        + merge_conflicts
+                        + self._extract_conflict_files_from_errors(rebase_error, merge_error)
                     ):
                         normalized = self._normalize_conflict_path(path)
                         if normalized and normalized not in seen_conflicts:
@@ -1742,7 +1782,7 @@ class PddLifecycle:
                     conflict_slice_ids = self._infer_conflict_slice_ids(
                         to_layer, combined_conflicts
                     )
-                    propagation["error"] = f"{merge_error}; {rebase_error}"
+                    propagation["error"] = f"{rebase_error}; {merge_error}"
                     propagation["conflict_files"] = combined_conflicts
 
                     conflict_report_name = (
@@ -1751,26 +1791,58 @@ class PddLifecycle:
                     conflict_report_payload = {
                         "from_layer": from_layer,
                         "to_layer": to_layer,
-                        "strategy": "merge_then_rebase_fallback",
-                        "merge_error": merge_error,
+                        "strategy": "rebase_then_merge_fallback",
                         "rebase_error": rebase_error,
+                        "merge_error": merge_error,
                         "conflict_files": combined_conflicts,
                         "affected_slices": conflict_slice_ids,
                     }
+                    scope_assessment = self._assess_transition_conflict_scope(
+                        to_layer=to_layer,
+                        conflict_files=combined_conflicts,
+                        affected_slices=conflict_slice_ids,
+                    )
+                    conflict_report_payload["scope_assessment"] = scope_assessment
                     self._write_run_report(conflict_report_name, conflict_report_payload)
                     conflict_report_ref = self._run_report_relpath(conflict_report_name)
+                    propagation["scope_assessment"] = scope_assessment
 
-                    def verify_propagation_recovery(
-                        _: int,
-                        __: dict[str, Any],
-                    ) -> tuple[bool, dict[str, Any]]:
-                        if not self.worktree_manager:
-                            return False, {"error": "No worktree manager for propagation retry"}
-                        retry_merge = self.worktree_manager.propagate_clean_to_next_layer(
-                            from_layer
-                        )
-                        retry_payload: dict[str, Any] = {
-                            "retry_merge": {
+                    investigator_attempted = False
+                    investigator_report_ref = ""
+                    resolved_by_investigator = False
+                    retry_payload: dict[str, Any] = {}
+
+                    if bool(scope_assessment.get("llm_merge_allowed", False)):
+                        investigator_attempted = True
+
+                        def verify_propagation_recovery(
+                            _: int,
+                            __: dict[str, Any],
+                        ) -> tuple[bool, dict[str, Any]]:
+                            if not self.worktree_manager:
+                                return False, {"error": "No worktree manager for propagation retry"}
+                            retry_rebase = self.worktree_manager.rebase_next_layer_dirty_onto_clean(
+                                from_layer
+                            )
+                            retry_payload_local: dict[str, Any] = {
+                                "retry_rebase": {
+                                    "success": bool(retry_rebase.success),
+                                    "error": str(retry_rebase.error or ""),
+                                    "merge_sha": retry_rebase.merge_sha,
+                                    "conflict_files": [
+                                        self._normalize_conflict_path(path)
+                                        for path in (retry_rebase.conflict_files or [])
+                                        if self._normalize_conflict_path(path)
+                                    ],
+                                }
+                            }
+                            if retry_rebase.success:
+                                return True, retry_payload_local
+
+                            retry_merge = self.worktree_manager.propagate_clean_to_next_layer(
+                                from_layer
+                            )
+                            retry_payload_local["retry_merge"] = {
                                 "success": bool(retry_merge.success),
                                 "error": str(retry_merge.error or ""),
                                 "merge_sha": retry_merge.merge_sha,
@@ -1780,68 +1852,62 @@ class PddLifecycle:
                                     if self._normalize_conflict_path(path)
                                 ],
                             }
-                        }
-                        if retry_merge.success:
-                            return True, retry_payload
+                            if retry_merge.success:
+                                return True, retry_payload_local
+                            return False, retry_payload_local
 
-                        retry_rebase = self.worktree_manager.rebase_next_layer_dirty_onto_clean(
-                            from_layer
+                        investigator_refs = [
+                            f"rebase_error:{rebase_error}",
+                            f"merge_error:{merge_error}",
+                            *[f"conflict_file:{path}" for path in combined_conflicts[:12]],
+                        ]
+                        investigator_report, investigator_report_ref = (
+                            self._run_transition_investigator(
+                                layer=to_layer,
+                                scope_id=f"transition_{from_layer}_{to_layer}_propagation_conflict",
+                                failure_refs=investigator_refs,
+                                failure_evidence=conflict_report_payload,
+                                investigator_budget=self.transition_investigator_budget,
+                                verify_callback=verify_propagation_recovery,
+                            )
                         )
-                        retry_payload["retry_rebase"] = {
-                            "success": bool(retry_rebase.success),
-                            "error": str(retry_rebase.error or ""),
-                            "merge_sha": retry_rebase.merge_sha,
-                            "conflict_files": [
-                                self._normalize_conflict_path(path)
-                                for path in (retry_rebase.conflict_files or [])
-                                if self._normalize_conflict_path(path)
-                            ],
-                        }
-                        if retry_rebase.success:
-                            return True, retry_payload
-                        return False, retry_payload
-
-                    investigator_refs = [
-                        f"merge_error:{merge_error}",
-                        f"rebase_error:{rebase_error}",
-                        *[f"conflict_file:{path}" for path in combined_conflicts[:12]],
-                    ]
-                    investigator_report, investigator_report_ref = (
-                        self._run_transition_investigator(
-                            layer=to_layer,
-                            scope_id=f"transition_{from_layer}_{to_layer}_propagation_conflict",
-                            failure_refs=investigator_refs,
-                            failure_evidence=conflict_report_payload,
-                            investigator_budget=self.transition_investigator_budget,
-                            verify_callback=verify_propagation_recovery,
-                        )
-                    )
-                    propagation["investigator_report_path"] = investigator_report_ref
-
-                    if bool(investigator_report.get("fixed", False)):
-                        retry_payload = investigator_report.get("verification", {})
-                        retry_merge = (
-                            retry_payload.get("retry_merge", {})
-                            if isinstance(retry_payload, dict)
-                            else {}
-                        )
-                        propagation.update(
-                            {
-                                "success": True,
-                                "error": "",
-                                "strategy": "investigator_recovery",
-                                "merge_sha": str(retry_merge.get("merge_sha", "")).strip(),
-                                "conflict_files": list(retry_merge.get("conflict_files", []))
-                                if isinstance(retry_merge.get("conflict_files", []), list)
-                                else [],
+                        propagation["investigator_report_path"] = investigator_report_ref
+                        resolved_by_investigator = bool(investigator_report.get("fixed", False))
+                        if resolved_by_investigator:
+                            retry_payload = investigator_report.get("verification", {})
+                            retry_rebase = (
+                                retry_payload.get("retry_rebase", {})
+                                if isinstance(retry_payload, dict)
+                                else {}
+                            )
+                            retry_merge = (
+                                retry_payload.get("retry_merge", {})
+                                if isinstance(retry_payload, dict)
+                                else {}
+                            )
+                            winning = (
+                                retry_rebase
+                                if bool(retry_rebase.get("success", False))
+                                else retry_merge
+                            )
+                            propagation.update(
+                                {
+                                    "success": True,
+                                    "error": "",
+                                    "strategy": "investigator_recovery",
+                                    "merge_sha": str(winning.get("merge_sha", "")).strip(),
+                                    "conflict_files": list(winning.get("conflict_files", []))
+                                    if isinstance(winning.get("conflict_files", []), list)
+                                    else [],
+                                }
+                            )
+                            results["propagation_recovery"] = {
+                                "fixed": True,
+                                "investigator_report_path": investigator_report_ref,
+                                "verification": retry_payload,
                             }
-                        )
-                        results["propagation_recovery"] = {
-                            "fixed": True,
-                            "investigator_report_path": investigator_report_ref,
-                            "verification": retry_payload,
-                        }
-                    else:
+
+                    if not resolved_by_investigator:
                         demotion_summary = self._emit_transition_conflict_demotions(
                             from_layer=from_layer,
                             to_layer=to_layer,
@@ -1861,7 +1927,13 @@ class PddLifecycle:
                             **demotion_summary,
                             "conflict_report_path": conflict_report_ref,
                             "investigator_report_path": investigator_report_ref,
+                            "investigator_attempted": investigator_attempted,
                         }
+                        if not investigator_attempted:
+                            results["propagation_conflict"]["investigator_skipped_reason"] = (
+                                "Conflict scope not limited to non-ambiguous "
+                                "wiring_only/refactor_only regions."
+                            )
                         results["governance_blocked"] = True
                         results["escalation_required"] = True
                         results["error"] = (
@@ -2203,6 +2275,148 @@ class PddLifecycle:
 
         return sorted(matched)
 
+    @staticmethod
+    def _classify_transition_conflict_change_type(
+        *,
+        to_layer: Layer,
+        conflict_path: str,
+    ) -> str:
+        """Classify conflict scope into change-type buckets for recovery gating."""
+        normalized = str(conflict_path or "").strip().lower().replace("\\", "/")
+        if not normalized:
+            return "unknown"
+
+        safe_extensions = (
+            ".md",
+            ".rst",
+            ".txt",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".ini",
+            ".cfg",
+            ".lock",
+        )
+        code_extensions = (
+            ".py",
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".c",
+            ".cc",
+            ".cpp",
+            ".h",
+            ".hpp",
+        )
+        wiring_markers = (
+            "/wiring/",
+            "/topology/",
+            "/route/",
+            "/routes/",
+            "/router/",
+            "/handler/",
+            "/handlers/",
+            "/adapter/",
+            "/adapters/",
+            "/graph/",
+            "/pin/",
+            "/pins/",
+            "/edge/",
+            "/edges/",
+            "wiring",
+            "topology",
+            "manifest",
+        )
+        refactor_markers = (
+            "/refactor/",
+            "refactor",
+            "/cleanup/",
+            "cleanup",
+            "/format/",
+            "format",
+        )
+
+        if normalized.endswith(safe_extensions):
+            if to_layer == "l2":
+                return "wiring_only"
+            if to_layer == "l3":
+                return "refactor_only"
+            return "unknown"
+
+        if any(marker in normalized for marker in wiring_markers):
+            return "wiring_only"
+        if any(marker in normalized for marker in refactor_markers):
+            return "refactor_only"
+
+        if normalized.endswith(code_extensions):
+            return "unknown"
+
+        if to_layer == "l2":
+            return "wiring_only"
+        if to_layer == "l3":
+            return "refactor_only"
+        return "unknown"
+
+    def _assess_transition_conflict_scope(
+        self,
+        *,
+        to_layer: Layer,
+        conflict_files: list[str],
+        affected_slices: list[str],
+    ) -> dict[str, Any]:
+        """Assess whether unresolved propagation conflicts are safe for LLM merge recovery."""
+        normalized_conflicts = [
+            self._normalize_conflict_path(path)
+            for path in conflict_files
+            if self._normalize_conflict_path(path)
+        ]
+        required_change_types: dict[str, str] = {}
+        for path in normalized_conflicts:
+            required_change_types[path] = self._classify_transition_conflict_change_type(
+                to_layer=to_layer,
+                conflict_path=path,
+            )
+        unknown_files = [
+            path for path, change_type in required_change_types.items() if change_type == "unknown"
+        ]
+        behavior_change_files = [
+            path
+            for path, change_type in required_change_types.items()
+            if change_type == "behavior_change"
+        ]
+        distinct_types = sorted(set(required_change_types.values()))
+        ambiguous = bool(
+            behavior_change_files
+            or unknown_files
+            or not normalized_conflicts
+            or (normalized_conflicts and not affected_slices)
+        )
+        llm_merge_allowed = bool(
+            normalized_conflicts
+            and affected_slices
+            and not ambiguous
+            and set(distinct_types).issubset({"wiring_only", "refactor_only"})
+        )
+        overall_change_type = "mixed"
+        if len(distinct_types) == 1:
+            overall_change_type = distinct_types[0]
+        elif not distinct_types:
+            overall_change_type = "unknown"
+        return {
+            "overall_required_change_type": overall_change_type,
+            "required_change_types_by_file": required_change_types,
+            "unknown_files": unknown_files,
+            "behavior_change_files": behavior_change_files,
+            "behavior_ambiguity": ambiguous,
+            "llm_merge_allowed": llm_merge_allowed,
+        }
+
     def _emit_transition_conflict_demotions(
         self,
         *,
@@ -2234,14 +2448,14 @@ class PddLifecycle:
         diagnosis_parts = [
             (
                 f"Cross-layer propagation {from_layer.upper()}→{to_layer.upper()} failed after "
-                "merge and rebase conflict-recovery attempts."
+                "rebase and merge conflict-recovery attempts."
             ),
             "Downstream work must be regenerated from the updated upstream baseline.",
         ]
-        if merge_error:
-            diagnosis_parts.append(f"merge_error={merge_error}")
         if rebase_error:
             diagnosis_parts.append(f"rebase_error={rebase_error}")
+        if merge_error:
+            diagnosis_parts.append(f"merge_error={merge_error}")
         if conflict_files:
             diagnosis_parts.append("conflict_files=" + ", ".join(conflict_files))
         diagnosis = " ".join(diagnosis_parts)

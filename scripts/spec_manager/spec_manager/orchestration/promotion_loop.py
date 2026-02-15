@@ -5499,9 +5499,9 @@ class PromoteStep:
 class IntegrateStep:
     """Merge completed slice work into the active layer's dirty branch.
 
-    Merge is still delegated to the lifecycle-owned CI tick, but integrate
-    now handles immediate failure recovery by invoking Investigator before
-    demotion/escalation.
+    Merge is still delegated to the lifecycle-owned CI tick. For merge
+    conflicts, integrate performs a single rebase+remerge cycle and then
+    emits demotion/blocking if conflicts persist.
     """
 
     name = "INTEGRATE"
@@ -5510,7 +5510,7 @@ class IntegrateStep:
         self._investigator_budget = investigator_budget
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Merge grandchild → dirty and run Investigator-first recovery on failures."""
+        """Merge grandchild → dirty with single rebase retry for merge conflicts."""
         evidence_root = _evidence_base_path(
             slice_root=ctx.slice_root,
             workspace_root=ctx.workspace_root,
@@ -5658,43 +5658,11 @@ class IntegrateStep:
         merge_result = run_merge_cycle(cycle="initial")
 
         if not merge_result.success:
-            merge_failure_refs = [
-                f"{entry.get('strategy')}:{entry.get('error')}"
-                for entry in merge_attempts
-                if str(entry.get("error", "")).strip()
-            ]
             failure_evidence = {
                 "phase": "merge_failure",
                 "merge_error": str(merge_result.error or ""),
                 "merge_attempts": merge_attempts,
             }
-            latest_merge_result = {"result": merge_result}
-
-            def verify_merge_recovery(
-                attempt: int,
-                _: dict[str, Any],
-            ) -> tuple[bool, dict[str, Any]]:
-                retry_result = run_merge_cycle(cycle=f"investigator_merge_retry_{attempt}")
-                latest_merge_result["result"] = retry_result
-                return bool(retry_result.success), {
-                    "merge_success": bool(retry_result.success),
-                    "merge_error": str(retry_result.error or ""),
-                    "merge_sha": str(getattr(retry_result, "merge_sha", "") or ""),
-                }
-
-            merge_recovery_report = self._try_investigator(
-                ctx,
-                failure_refs=merge_failure_refs,
-                failure_evidence=failure_evidence,
-                layer_worktree=dirty_root,
-                verify_callback=verify_merge_recovery,
-            )
-            merge_report_ref = write_investigator_report("merge", merge_recovery_report)
-            if merge_report_ref:
-                investigator_report_refs.append(merge_report_ref)
-            merge_result = latest_merge_result["result"]
-
-        if not merge_result.success:
             ticket_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
             ticket = DemotionTicket(
                 run_id=ctx.run_id,
@@ -5704,13 +5672,11 @@ class IntegrateStep:
                 target_layer=ticket_layer,
                 severity="BLOCKER",
                 diagnosis=(
-                    "Merge conflict after investigator recovery attempts: "
+                    "Merge conflict after rebase retry: "
                     f"{merge_result.error or 'unknown merge error'}"
                 ),
-                evidence_refs=list(investigator_report_refs),
-                investigator_report_ref=investigator_report_refs[-1]
-                if investigator_report_refs
-                else "",
+                evidence_refs=[],
+                investigator_report_ref="",
             )
             record_artifacts(
                 merge=merge_result,
