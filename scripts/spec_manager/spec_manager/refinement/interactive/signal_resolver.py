@@ -93,48 +93,15 @@ class PlannerSignalResolver:
             research_tool=research_tool,
             evidence_tool=evidence_tool,
         )
-        self._research_tool = research_tool
-        self._research_dimension = "web" if use_research else "local"
-        self._use_research = use_research
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:
         from spec_manager.planner.api import PlanningContext
-        from spec_manager.planner.tools.research_tool import ResearchQuery
 
-        # Try planner layer-specific resolution first
+        # Planner is the single decision authority for auto-mode signal handling.
         ctx = PlanningContext(layer="any", mode="auto")
         response = self._planner.resolve_signal(signal, ctx)
         if response is not None:
             return self._to_steering_response(signal, response, source="planner")
-
-        # Fall back to research tool (steering → evidence → web)
-        question = getattr(signal, "question", "") or getattr(signal, "suggested_question", "")
-        if not question:
-            question = getattr(signal, "encountered_text", str(signal))
-
-        result = self._research_tool.research(
-            ResearchQuery(
-                question=question,
-                context=getattr(signal, "source_text", "")
-                if hasattr(signal, "source_text")
-                else "",
-                dimension=self._research_dimension,
-            )
-        )
-        if result.has_answer:
-            finding_source = result.findings[0].source if result.findings else "unknown"
-            source = {
-                "steering": "research_steering",
-                "evidence_store": "research_evidence",
-                "web_research": "research_web",
-                "external": "research_external",
-            }.get(finding_source, f"research_{finding_source}")
-            return self._to_steering_response(
-                signal,
-                result.synthesis,
-                source=source,
-            )
-
         return None
 
     @staticmethod
