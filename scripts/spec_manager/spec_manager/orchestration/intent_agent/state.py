@@ -7,7 +7,7 @@ tradeoff positions, or planning decisions.
 Persistent artifacts:
     .pdd_runs/<run_id>/intent/session_state.json  (snapshot)
     .pdd_runs/<run_id>/intent/events.jsonl         (append-only log)
-    .pdd_runs/<run_id>/intent/skeleton/analysis/intent/question_queue.json  (queue snapshot)
+    .pdd_runs/<run_id>/intent/question_queue.json  (queue snapshot)
     .pdd_runs/<run_id>/intent/answers.jsonl         (raw answers)
     .pdd_runs/<run_id>/intent/answer_translations/<id>.json
     .pdd_runs/<run_id>/intent/skeleton/...
@@ -187,17 +187,8 @@ class QuestionQueueStateProjection:
     open_ids: list[str] = field(default_factory=list)
     closed_ids: list[str] = field(default_factory=list)
     stale_ids: list[str] = field(default_factory=list)
-    open_constraint_question_ids: list[str] = field(default_factory=list)
-    closed_constraint_question_ids: list[str] = field(default_factory=list)
-    open_constraint_dimensions: list[str] = field(default_factory=list)
-    closed_constraint_dimensions: list[str] = field(default_factory=list)
-    unaskable_question_ids: list[str] = field(default_factory=list)
-    skeleton_input_signature: str = ""
     last_presented_question_id: str = ""
     active_batch_id: str = ""
-    resume_progress_summary: ResumeProgressSummaryProjection = field(
-        default_factory=ResumeProgressSummaryProjection
-    )
     _passthrough_fields: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -205,15 +196,8 @@ class QuestionQueueStateProjection:
             "open_ids": _clone_shallow(self.open_ids),
             "closed_ids": _clone_shallow(self.closed_ids),
             "stale_ids": _clone_shallow(self.stale_ids),
-            "open_constraint_question_ids": _clone_shallow(self.open_constraint_question_ids),
-            "closed_constraint_question_ids": _clone_shallow(self.closed_constraint_question_ids),
-            "open_constraint_dimensions": _clone_shallow(self.open_constraint_dimensions),
-            "closed_constraint_dimensions": _clone_shallow(self.closed_constraint_dimensions),
-            "unaskable_question_ids": _clone_shallow(self.unaskable_question_ids),
-            "skeleton_input_signature": self.skeleton_input_signature,
             "last_presented_question_id": self.last_presented_question_id,
             "active_batch_id": self.active_batch_id,
-            "resume_progress_summary": self.resume_progress_summary.to_dict(),
         }
         data.update({key: _clone_shallow(value) for key, value in self._passthrough_fields.items()})
         return data
@@ -227,37 +211,15 @@ class QuestionQueueStateProjection:
             "open_ids",
             "closed_ids",
             "stale_ids",
-            "open_constraint_question_ids",
-            "closed_constraint_question_ids",
-            "open_constraint_dimensions",
-            "closed_constraint_dimensions",
-            "unaskable_question_ids",
-            "skeleton_input_signature",
             "last_presented_question_id",
             "active_batch_id",
-            "resume_progress_summary",
         }
         projection = cls(
             open_ids=_clone_shallow(raw.get("open_ids", [])),
             closed_ids=_clone_shallow(raw.get("closed_ids", [])),
             stale_ids=_clone_shallow(raw.get("stale_ids", [])),
-            open_constraint_question_ids=_clone_shallow(
-                raw.get("open_constraint_question_ids", [])
-            ),
-            closed_constraint_question_ids=_clone_shallow(
-                raw.get("closed_constraint_question_ids", [])
-            ),
-            open_constraint_dimensions=_clone_shallow(raw.get("open_constraint_dimensions", [])),
-            closed_constraint_dimensions=_clone_shallow(
-                raw.get("closed_constraint_dimensions", [])
-            ),
-            unaskable_question_ids=_clone_shallow(raw.get("unaskable_question_ids", [])),
-            skeleton_input_signature=raw.get("skeleton_input_signature", ""),
             last_presented_question_id=raw.get("last_presented_question_id", ""),
             active_batch_id=raw.get("active_batch_id", ""),
-            resume_progress_summary=ResumeProgressSummaryProjection.from_dict(
-                raw.get("resume_progress_summary")
-            ),
         )
         projection._passthrough_fields = {
             key: _clone_shallow(value) for key, value in raw.items() if key not in recognized_keys
@@ -310,7 +272,6 @@ class IntentSessionState:
         default_factory=QuestionQueueStateProjection
     )
     question_key_map: dict[str, QuestionKeyRef] = field(default_factory=dict)
-    # Derived from intent/answers.jsonl during load; not serialized in session_state.json.
     answer_provenance: list[AnswerProvenance] = field(default_factory=list)
     skeleton_state: SkeletonState = field(default_factory=SkeletonState)
     watermarks: Watermarks = field(default_factory=Watermarks)
@@ -367,6 +328,17 @@ class IntentSessionState:
                 }
                 for k, v in self.question_key_map.items()
             },
+            "answer_provenance": [
+                {
+                    "answer_id": answer.answer_id,
+                    "question_id": answer.question_id,
+                    "raw_text": answer.raw_text,
+                    "created_at": answer.created_at,
+                    "answer_translation_ref": answer.answer_translation_ref,
+                    "planner_ingest_trace_id": answer.planner_ingest_trace_id,
+                }
+                for answer in self.answer_provenance
+            ],
             "skeleton_state": {
                 "revision": self.skeleton_state.revision,
                 "structure_kind": self.skeleton_state.structure_kind,
@@ -416,29 +388,87 @@ class IntentSessionState:
         source_suffix: str,
     ) -> tuple[int, str]:
         # Version validation
-        version = d.get("version", 1)
-        if version != 1:
+        version = d.get("version")
+        if not isinstance(version, int):
+            raise TypeError(
+                "IntentSessionState field 'version' must be an integer "
+                f"(got {type(version).__name__}){source_suffix}"
+            )
+        if version < 1:
             raise ValueError(
-                f"Unsupported IntentSessionState version {version!r} (expected 1){source_suffix}"
+                f"IntentSessionState field 'version' must be >= 1 (got {version!r}){source_suffix}"
             )
 
         # Required-shape validation (authoritative fields only).
         # Missing shape indicates a corrupted/incompatible artifact.
-        _required = ("session_id", "problem_frame", "watermarks")
+        _required = (
+            "version",
+            "run_id",
+            "session_id",
+            "phase",
+            "original_intent",
+            "problem_frame",
+            "concept_map",
+            "question_queue_state",
+            "question_key_map",
+            "answer_provenance",
+            "skeleton_state",
+            "watermarks",
+        )
         missing_fields = [field_name for field_name in _required if field_name not in d]
         if missing_fields:
             raise ValueError(
                 f"IntentSessionState missing required field(s) {missing_fields!r}{source_suffix}"
+            )
+        if not isinstance(d["run_id"], str):
+            raise TypeError(
+                "IntentSessionState field 'run_id' must be a string "
+                f"(got {type(d['run_id']).__name__}){source_suffix}"
             )
         if not isinstance(d["session_id"], str):
             raise TypeError(
                 "IntentSessionState field 'session_id' must be a string "
                 f"(got {type(d['session_id']).__name__}){source_suffix}"
             )
+        if not isinstance(d["phase"], str):
+            raise TypeError(
+                "IntentSessionState field 'phase' must be a string "
+                f"(got {type(d['phase']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["original_intent"], dict):
+            raise TypeError(
+                "IntentSessionState field 'original_intent' must be an object "
+                f"(got {type(d['original_intent']).__name__}){source_suffix}"
+            )
         if not isinstance(d["problem_frame"], dict):
             raise TypeError(
                 "IntentSessionState field 'problem_frame' must be an object "
                 f"(got {type(d['problem_frame']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["concept_map"], dict):
+            raise TypeError(
+                "IntentSessionState field 'concept_map' must be an object "
+                f"(got {type(d['concept_map']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["question_queue_state"], dict):
+            raise TypeError(
+                "IntentSessionState field 'question_queue_state' must be an object "
+                f"(got {type(d['question_queue_state']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["question_key_map"], dict):
+            raise TypeError(
+                "IntentSessionState field 'question_key_map' must be an object "
+                f"(got {type(d['question_key_map']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["answer_provenance"], list):
+            raise TypeError(
+                "IntentSessionState field 'answer_provenance' must be an array "
+                f"(got {type(d['answer_provenance']).__name__}){source_suffix}"
+            )
+        if not isinstance(d["skeleton_state"], dict):
+            raise TypeError(
+                "IntentSessionState field 'skeleton_state' must be an object "
+                f"(got {type(d['skeleton_state']).__name__}){source_suffix}"
             )
         if not isinstance(d["watermarks"], dict):
             raise TypeError(
@@ -455,7 +485,7 @@ class IntentSessionState:
 
         # Phase validation
         _valid_phases = ("INTAKE", "EXECUTION")
-        raw_phase = d.get("phase", "INTAKE")
+        raw_phase = d["phase"]
         if raw_phase not in _valid_phases:
             raise ValueError(
                 f"Unrecognized IntentSessionState phase {raw_phase!r} "
@@ -476,13 +506,6 @@ class IntentSessionState:
         *,
         source_suffix: str,
     ) -> dict[str, Any]:
-        if "answer_provenance" in d:
-            raise ValueError(
-                "IntentSessionState contains deprecated field 'answer_provenance'; "
-                "remove this field and rely on authoritative records in "
-                f"intent/answers.jsonl before loading{source_suffix}"
-            )
-
         canonical = dict(d)
         canonical_problem_frame = dict(d["problem_frame"])
         if "scope_in" in canonical_problem_frame or "scope_out" in canonical_problem_frame:
@@ -571,6 +594,8 @@ class IntentSessionState:
             "in": scope_raw.get("in", []),
             "out": scope_raw.get("out", []),
         }
+        valid_frame_assumption_statuses = {"HYPOTHESIS", "CONFIRMED", "REJECTED"}
+        valid_frame_assumption_sources = {"user", "intent_agent"}
         frame_assumptions_raw = pf_raw.get("frame_assumptions", [])
         for index, frame_assumption_raw in enumerate(frame_assumptions_raw):
             _merge_unrecognized_fields(
@@ -579,6 +604,24 @@ class IntentSessionState:
                 raw=frame_assumption_raw,
                 recognized_keys={"text", "status", "source", "created_at"},
             )
+            status = frame_assumption_raw.get("status", "HYPOTHESIS")
+            if status not in valid_frame_assumption_statuses:
+                raise ValueError(
+                    "IntentSessionState field "
+                    f"'problem_frame.frame_assumptions[{index}].status' has "
+                    f"unrecognized value {status!r} "
+                    f"(expected one of {sorted(valid_frame_assumption_statuses)})"
+                    f"{source_suffix}"
+                )
+            source = frame_assumption_raw.get("source", "intent_agent")
+            if source not in valid_frame_assumption_sources:
+                raise ValueError(
+                    "IntentSessionState field "
+                    f"'problem_frame.frame_assumptions[{index}].source' has "
+                    f"unrecognized value {source!r} "
+                    f"(expected one of {sorted(valid_frame_assumption_sources)})"
+                    f"{source_suffix}"
+                )
         problem_frame = ProblemFrame(
             current_restatement=pf_raw.get("current_restatement", ""),
             goals=pf_raw.get("goals", []),
@@ -644,6 +687,33 @@ class IntentSessionState:
             for k, v in qkm_raw.items()
         }
 
+        answer_provenance_raw = d.get("answer_provenance", [])
+        for index, answer in enumerate(answer_provenance_raw):
+            _merge_unrecognized_fields(
+                unrecognized_fields,
+                context=f"answer_provenance[{index}]",
+                raw=answer,
+                recognized_keys={
+                    "answer_id",
+                    "question_id",
+                    "raw_text",
+                    "created_at",
+                    "answer_translation_ref",
+                    "planner_ingest_trace_id",
+                },
+            )
+        answer_provenance = [
+            AnswerProvenance(
+                answer_id=answer.get("answer_id", ""),
+                question_id=answer.get("question_id", ""),
+                raw_text=answer.get("raw_text", ""),
+                created_at=answer.get("created_at", ""),
+                answer_translation_ref=answer.get("answer_translation_ref", ""),
+                planner_ingest_trace_id=answer.get("planner_ingest_trace_id", ""),
+            )
+            for answer in answer_provenance_raw
+        ]
+
         ss_raw = d.get("skeleton_state", {})
         _merge_unrecognized_fields(
             unrecognized_fields,
@@ -651,9 +721,17 @@ class IntentSessionState:
             raw=ss_raw,
             recognized_keys={"revision", "structure_kind", "artifact_paths", "last_generated_at"},
         )
+        valid_structure_kinds = {"PRE_DECOMPOSITION", "PHASE0_LIBRARIES"}
+        raw_structure_kind = ss_raw.get("structure_kind", "PRE_DECOMPOSITION")
+        if raw_structure_kind not in valid_structure_kinds:
+            raise ValueError(
+                "IntentSessionState field 'skeleton_state.structure_kind' has "
+                f"unrecognized value {raw_structure_kind!r} "
+                f"(expected one of {sorted(valid_structure_kinds)}){source_suffix}"
+            )
         skeleton_state = SkeletonState(
             revision=ss_raw.get("revision", 0),
-            structure_kind=ss_raw.get("structure_kind", "PRE_DECOMPOSITION"),
+            structure_kind=raw_structure_kind,
             artifact_paths=ss_raw.get("artifact_paths", []),
             last_generated_at=ss_raw.get("last_generated_at", ""),
         )
@@ -682,7 +760,7 @@ class IntentSessionState:
             concept_map=concept_map,
             question_queue_state=QuestionQueueStateProjection.from_dict(raw_question_queue_state),
             question_key_map=question_key_map,
-            answer_provenance=[],
+            answer_provenance=answer_provenance,
             skeleton_state=skeleton_state,
             watermarks=watermarks,
             _unrecognized_fields=unrecognized_fields,
@@ -706,9 +784,7 @@ class IntentSessionState:
         path = Path(run_dir) / "intent" / "session_state.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         logger.debug("Loaded IntentSessionState from %s", path)
-        state = cls.from_dict(data, source=str(path))
-        state.answer_provenance = load_answers(run_dir)
-        return state
+        return cls.from_dict(data, source=str(path))
 
 
 # ---------------------------------------------------------------------------
@@ -823,14 +899,17 @@ def load_answers(run_dir: Path) -> list[AnswerProvenance]:
     path = Path(run_dir) / "intent" / "answers.jsonl"
     if not path.exists():
         return []
-    recognized_keys = {
+    required_keys = {
         "answer_id",
         "question_id",
         "raw_text",
         "created_at",
+    }
+    optional_keys = {
         "answer_translation_ref",
         "planner_ingest_trace_id",
     }
+    recognized_keys = required_keys | optional_keys
     answers: list[AnswerProvenance] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = line.strip()
@@ -850,7 +929,7 @@ def load_answers(run_dir: Path) -> list[AnswerProvenance]:
                 line_number,
                 dropped_fields,
             )
-        missing_fields = sorted(key for key in recognized_keys if key not in d)
+        missing_fields = sorted(key for key in required_keys if key not in d)
         if missing_fields:
             raise ValueError(
                 f"Answer record at {path}:{line_number} missing required field(s): {missing_fields}"
@@ -861,8 +940,8 @@ def load_answers(run_dir: Path) -> list[AnswerProvenance]:
                 question_id=d["question_id"],
                 raw_text=d["raw_text"],
                 created_at=d["created_at"],
-                answer_translation_ref=d["answer_translation_ref"],
-                planner_ingest_trace_id=d["planner_ingest_trace_id"],
+                answer_translation_ref=d.get("answer_translation_ref", ""),
+                planner_ingest_trace_id=d.get("planner_ingest_trace_id", ""),
             )
         )
     return sorted(
