@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -96,6 +97,11 @@ _REDEFINITION_UPDATE_SOURCES = frozenset({"PLANNER"})
 _CANONICAL_ORIGIN_KINDS = frozenset(
     {"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP", "PDD_LIFECYCLE", "SLICE_AGENT"}
 )
+_CANONICAL_KEY_INVALID_CHARS_RE = re.compile(r"[^a-z0-9._-]+")
+_CANONICAL_KEY_DOT_RUN_RE = re.compile(r"\.+")
+_CANONICAL_KEY_UNDERSCORE_RUN_RE = re.compile(r"_+")
+_CANONICAL_KEY_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_AUTO_RESOLUTION_MIN_CONFIDENCE = 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -406,9 +412,15 @@ class IntentAgentOrchestrator:
         if self._state is None:
             return
 
-        canonical_key = self._coerce_str(draft.canonical_key_hint)
-        if not canonical_key:
-            canonical_key = f"intent.followup.{parent_question_id}"
+        canonical_hint = self._coerce_str(
+            draft.canonical_key_hint,
+            f"intent.followup.{parent_question_id}",
+        )
+        canonical_key = self._normalize_canonical_key(
+            canonical_hint,
+            taxonomy_type=draft.taxonomy_type,
+            text=draft.text,
+        )
 
         reason = self._coerce_str(
             records[-1].reason if records else "quality gate failed",
@@ -458,6 +470,69 @@ class IntentAgentOrchestrator:
                 exc_info=True,
             )
 
+    def _emit_ingest_quality_reformulation(
+        self,
+        *,
+        signal: UserQuestionSignal,
+        question_id: str,
+        canonical_key: str,
+        taxonomy_type: str,
+        question_text: str,
+        scenario: str,
+        reason: str,
+        attempts: int,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit planner-directed escalation for unaskable ingest questions."""
+        if self._state is None:
+            return
+
+        question_type = self._coerce_str(taxonomy_type, "CONSTRAINT")
+        question_type = normalize_user_facing_taxonomy(question_type)
+        payload: dict[str, Any] = {
+            "signal_type": "INGEST_QUALITY_GATE_FAILED",
+            "source": "INTENT_AGENT",
+            "target": "PLANNER",
+            "run_id": self._state.run_id,
+            "session_id": self._state.session_id,
+            "created_at": datetime.now(UTC).isoformat(),
+            "question_id": question_id,
+            "signal_id": signal.uq_id,
+            "canonical_key": self._normalize_canonical_key(
+                canonical_key,
+                taxonomy_type=question_type,
+                text=question_text,
+            ),
+            "question_type": question_type,
+            "question_text": self._coerce_str(question_text, signal.question.text),
+            "reason": self._coerce_str(reason, "quality gate failed"),
+            "details": {
+                "taxonomy_type": question_type,
+                "scenario": self._coerce_str(scenario),
+                "attempts": max(0, int(attempts)),
+                "source_kind": self._coerce_str(signal.source.kind, "UNKNOWN"),
+            },
+        }
+        if details:
+            payload["details"].update(details)
+
+        if self._on_planner_signal is None:
+            logger.debug(
+                "No planner signal callback configured; dropped ingest quality signal "
+                "for signal_id=%s",
+                signal.uq_id,
+            )
+            return
+
+        try:
+            self._on_planner_signal(payload)
+        except Exception:
+            logger.warning(
+                "on_planner_signal callback failed for ingest quality signal (signal_id=%s)",
+                signal.uq_id,
+                exc_info=True,
+            )
+
     def _coerce_str(self, value: Any, default: str = "") -> str:
         if not isinstance(value, str):
             return default
@@ -493,6 +568,84 @@ class IntentAgentOrchestrator:
         if isinstance(value, str):
             return value.strip().lower() in {"true", "1", "yes", "y", "on"}
         return False
+
+    @staticmethod
+    def _coerce_optional_bool(value: Any) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes", "y", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "n", "off"}:
+                return False
+        return None
+
+    def _normalize_canonical_key(
+        self,
+        value: Any,
+        *,
+        taxonomy_type: str = "",
+        text: str = "",
+    ) -> str:
+        """Normalize/validate canonical-key hints into stable dedup keys."""
+        normalized = self._coerce_str(value).lower()
+        if normalized:
+            normalized = normalized.replace("::", ".").replace("/", ".").replace(" ", "_")
+            normalized = _CANONICAL_KEY_INVALID_CHARS_RE.sub("_", normalized)
+            normalized = _CANONICAL_KEY_UNDERSCORE_RUN_RE.sub("_", normalized)
+            normalized = _CANONICAL_KEY_DOT_RUN_RE.sub(".", normalized)
+            normalized = normalized.strip("._-")
+            if normalized:
+                return normalized
+
+        taxonomy_key = normalize_user_facing_taxonomy(taxonomy_type).lower()
+        if taxonomy_key not in {"intent", "constraint", "tradeoff", "scope", "validation"}:
+            taxonomy_key = "constraint"
+        token_source = self._coerce_str(text).lower()
+        tokens = _CANONICAL_KEY_TOKEN_RE.findall(token_source)
+        slug = "_".join(tokens[:6]) if tokens else "question"
+        return f"intent.{taxonomy_key}.{slug}"
+
+    def _normalize_canonical_key_candidate(self, value: Any) -> str:
+        normalized = self._coerce_str(value).lower()
+        if not normalized:
+            return ""
+        normalized = normalized.replace("::", ".").replace("/", ".").replace(" ", "_")
+        normalized = _CANONICAL_KEY_INVALID_CHARS_RE.sub("_", normalized)
+        normalized = _CANONICAL_KEY_UNDERSCORE_RUN_RE.sub("_", normalized)
+        normalized = _CANONICAL_KEY_DOT_RUN_RE.sub(".", normalized)
+        return normalized.strip("._-")
+
+    def _record_new_blocking_arrival(self, question_id: str) -> None:
+        if self._state is None:
+            return
+        normalized_question_id = self._coerce_str(question_id)
+        if not normalized_question_id:
+            return
+        queue_state = self._state.question_queue_state
+        arrivals = queue_state._passthrough_fields.setdefault(
+            "new_blocking_arrival_question_ids", []
+        )
+        if not isinstance(arrivals, list):
+            arrivals = []
+            queue_state._passthrough_fields["new_blocking_arrival_question_ids"] = arrivals
+        if normalized_question_id not in arrivals:
+            arrivals.append(normalized_question_id)
+
+    def _consume_new_blocking_arrivals(self) -> list[str]:
+        if self._state is None:
+            return []
+        queue_state = self._state.question_queue_state
+        arrivals = self._coerce_str_list(
+            queue_state._passthrough_fields.get("new_blocking_arrival_question_ids", []),
+        )
+        queue_state._passthrough_fields["new_blocking_arrival_question_ids"] = []
+        return arrivals
 
     def _record_presented_action(
         self,
@@ -933,6 +1086,7 @@ class IntentAgentOrchestrator:
             closed_constraint_dims
         )
         queue_state._passthrough_fields.setdefault("unaskable_question_ids", [])
+        queue_state._passthrough_fields.setdefault("new_blocking_arrival_question_ids", [])
         queue_state._passthrough_fields.setdefault("skeleton_input_signature", "")
 
         # Active batch metadata is only valid while the anchor question remains OPEN.
@@ -1241,19 +1395,277 @@ class IntentAgentOrchestrator:
             return None
         return item.question_id
 
+    def _related_planner_updates_for_question(
+        self,
+        *,
+        question_id: str,
+        item: QuestionItem | None,
+        updates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        normalized_question_id = self._coerce_str(question_id)
+        normalized_canonical_key = (
+            self._normalize_canonical_key_candidate(item.canonical_key) if item is not None else ""
+        )
+        related_decision_ids: set[str] = set()
+        related_constraint_ids: set[str] = set()
+        if self._state is not None and normalized_canonical_key:
+            key_ref = self._state.question_key_map.get(normalized_canonical_key)
+            if key_ref is None:
+                for raw_key, raw_ref in self._state.question_key_map.items():
+                    if self._normalize_canonical_key_candidate(raw_key) == normalized_canonical_key:
+                        key_ref = raw_ref
+                        break
+            if key_ref is not None:
+                if isinstance(key_ref, dict):
+                    related_decision_ids = set(
+                        self._coerce_update_ids(key_ref.get("planner_decision_ids", [])),
+                    )
+                    related_constraint_ids = set(
+                        self._coerce_update_ids(key_ref.get("planner_constraint_ids", [])),
+                    )
+                else:
+                    related_decision_ids = set(
+                        self._coerce_update_ids(getattr(key_ref, "planner_decision_ids", [])),
+                    )
+                    related_constraint_ids = set(
+                        self._coerce_update_ids(getattr(key_ref, "planner_constraint_ids", [])),
+                    )
+
+        related_updates: list[dict[str, Any]] = []
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+
+            update_question_ids = set(
+                self._coerce_update_ids(update.get("question_id", ""))
+                + self._coerce_update_ids(update.get("question_ids", []))
+                + self._coerce_update_ids(update.get("affected_question_ids", []))
+                + self._coerce_update_ids(update.get("superseded_question_ids", []))
+            )
+            update_canonical_keys = {
+                normalized
+                for normalized in (
+                    self._normalize_canonical_key_candidate(raw_key)
+                    for raw_key in (
+                        self._coerce_update_ids(update.get("canonical_key", ""))
+                        + self._coerce_update_ids(update.get("canonical_keys", []))
+                        + self._coerce_update_ids(update.get("affected_canonical_keys", []))
+                        + self._coerce_update_ids(update.get("superseded_canonical_keys", []))
+                    )
+                )
+                if normalized
+            }
+            update_decision_ids = set(
+                self._coerce_update_ids(update.get("decision_id", ""))
+                + self._coerce_update_ids(update.get("decision_ids", []))
+                + self._coerce_update_ids(update.get("affected_decision_ids", []))
+            )
+            update_constraint_ids = set(
+                self._coerce_update_ids(update.get("constraint_id", ""))
+                + self._coerce_update_ids(update.get("constraint_ids", []))
+                + self._coerce_update_ids(update.get("affected_constraint_ids", []))
+            )
+            if normalized_question_id and normalized_question_id in update_question_ids:
+                related_updates.append(update)
+                continue
+            if normalized_canonical_key and normalized_canonical_key in update_canonical_keys:
+                related_updates.append(update)
+                continue
+            if related_decision_ids and (related_decision_ids & update_decision_ids):
+                related_updates.append(update)
+                continue
+            if related_constraint_ids and (related_constraint_ids & update_constraint_ids):
+                related_updates.append(update)
+                continue
+        return related_updates
+
+    def _extract_auto_resolution_flags(
+        self,
+        action: dict[str, Any],
+        related_updates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        payloads: list[dict[str, Any]] = [action]
+        for payload in (action, *related_updates):
+            if not isinstance(payload, dict):
+                continue
+            for key in (
+                "auto_resolution",
+                "resolution",
+                "resolution_evidence",
+                "eligibility",
+                "authority",
+                "payload",
+            ):
+                nested = payload.get(key)
+                if isinstance(nested, dict):
+                    payloads.append(nested)
+            signal_payload = payload.get("user_question_signal")
+            if isinstance(signal_payload, dict):
+                payloads.append(signal_payload)
+                signal_context = signal_payload.get("payload")
+                if isinstance(signal_context, dict):
+                    payloads.append(signal_context)
+
+        def _first_bool(keys: tuple[str, ...]) -> bool | None:
+            for payload in payloads:
+                for key in keys:
+                    if key not in payload:
+                        continue
+                    parsed = self._coerce_optional_bool(payload.get(key))
+                    if parsed is not None:
+                        return parsed
+            return None
+
+        requires_human_authority = _first_bool(
+            (
+                "requires_human_authority",
+                "human_authority_required",
+                "requires_user_authority",
+                "requires_human_review",
+            ),
+        )
+        review_required = _first_bool(
+            ("review_required", "requires_review", "needs_review", "needs_human_review"),
+        )
+        if review_required is True:
+            requires_human_authority = True
+        elif review_required is False and requires_human_authority is None:
+            requires_human_authority = False
+
+        if requires_human_authority is None:
+            for payload in payloads:
+                authority_required = self._coerce_str(
+                    payload.get("authority_required", payload.get("authority", "")),
+                ).lower()
+                if not authority_required:
+                    continue
+                if authority_required in {"human_required", "user_required"}:
+                    requires_human_authority = True
+                    break
+                if authority_required in {"planner_ok", "auto_ok", "none", "not_required"}:
+                    requires_human_authority = False
+                    break
+
+        tool_resolvable = _first_bool(
+            (
+                "tool_resolvable",
+                "research_resolvable",
+                "resolvable_with_tools",
+                "can_resolve_with_research",
+                "can_resolve_with_tools",
+            ),
+        )
+        if tool_resolvable is None:
+            for payload in payloads:
+                resolution_method = self._coerce_str(
+                    payload.get("resolution_method", payload.get("method", "")),
+                ).lower()
+                if not resolution_method:
+                    continue
+                if any(token in resolution_method for token in ("tool", "research", "evidence")):
+                    tool_resolvable = True
+                    break
+                if any(token in resolution_method for token in ("manual", "human")):
+                    tool_resolvable = False
+                    break
+
+        confidence_checked = _first_bool(
+            (
+                "confidence_checked",
+                "confident_inference",
+                "confidence_ok",
+                "inference_confident",
+                "confidence_verified",
+            ),
+        )
+        if confidence_checked is None:
+            for payload in payloads:
+                for key in ("confidence", "inference_confidence", "resolution_confidence"):
+                    raw_value = payload.get(key)
+                    if not isinstance(raw_value, (int, float)):
+                        continue
+                    confidence_checked = float(raw_value) >= _AUTO_RESOLUTION_MIN_CONFIDENCE
+                    break
+                if confidence_checked is not None:
+                    break
+
+        ambiguity_safe = _first_bool(
+            (
+                "ambiguity_safe",
+                "block_on_ambiguity_passed",
+                "ambiguity_resolved",
+                "ambiguity_clear",
+            ),
+        )
+        if ambiguity_safe is None:
+            for payload in payloads:
+                ambiguity_status = self._coerce_str(payload.get("ambiguity_status", "")).lower()
+                if ambiguity_status in {"clear", "resolved", "none"}:
+                    ambiguity_safe = True
+                    break
+                if ambiguity_status in {"open", "unresolved", "blocked", "unknown"}:
+                    ambiguity_safe = False
+                    break
+            if ambiguity_safe is None:
+                for payload in payloads:
+                    combined_text = " ".join(
+                        [
+                            self._coerce_str(payload.get("reason")),
+                            self._coerce_str(payload.get("failure_reason")),
+                        ],
+                    ).lower()
+                    if "ambigu" not in combined_text:
+                        continue
+                    ambiguity_safe = False
+                    break
+
+        return {
+            "requires_human_authority": requires_human_authority,
+            "tool_resolvable": tool_resolvable,
+            "confidence_checked": confidence_checked,
+            "ambiguity_safe": ambiguity_safe,
+        }
+
+    def _auto_resolution_eligibility(
+        self,
+        action: dict[str, Any],
+        related_updates: list[dict[str, Any]],
+    ) -> tuple[bool, dict[str, Any]]:
+        flags = self._extract_auto_resolution_flags(action, related_updates)
+        authority_safe = flags["requires_human_authority"] is False
+        tool_resolvable = flags["tool_resolvable"] is True
+        confidence_checked = flags["confidence_checked"] is True
+        ambiguity_safe = flags["ambiguity_safe"] is True
+        eligible = authority_safe and tool_resolvable and confidence_checked and ambiguity_safe
+        return eligible, {
+            "eligible": eligible,
+            "requires_human_authority": flags["requires_human_authority"],
+            "tool_resolvable": flags["tool_resolvable"],
+            "confidence_checked": flags["confidence_checked"],
+            "ambiguity_safe": flags["ambiguity_safe"],
+            "checks": {
+                "authority_safe": authority_safe,
+                "tool_resolvable": tool_resolvable,
+                "confidence_checked": confidence_checked,
+                "ambiguity_safe": ambiguity_safe,
+            },
+        }
+
     def _apply_auto_mode_planner_outcomes(
         self,
         updates: list[dict[str, Any]],
         reassessment: dict[str, Any],
     ) -> dict[str, Any]:
-        if not self.is_auto_mode or self._queue is None:
+        if self._mode != "auto" or self._queue is None:
             return {
                 "auto_answered_question_ids": [],
+                "auto_resolution_rejected_question_ids": [],
                 "review_decision_question_ids": [],
             }
 
         actions = reassessment.get("actions", [])
         auto_answered_ids: list[str] = []
+        rejected_ids: list[str] = []
         for action in actions:
             if not isinstance(action, dict):
                 continue
@@ -1263,6 +1675,24 @@ class IntentAgentOrchestrator:
             if not question_id:
                 continue
             item = self._queue.get_item(question_id)
+            related_updates = self._related_planner_updates_for_question(
+                question_id=question_id,
+                item=item,
+                updates=updates,
+            )
+            eligible, eligibility = self._auto_resolution_eligibility(action, related_updates)
+            action["auto_resolution_eligibility"] = eligibility
+            if not eligible:
+                rejection_reason = "auto resolution rejected: eligibility gate failed"
+                if item is not None and item.status == "ANSWERED":
+                    item.status = "OPEN"
+                    item.last_transition_reason = rejection_reason
+                    item.timestamps["updated_at"] = datetime.now(UTC).isoformat()
+                action["action"] = "KEEP"
+                action["reason"] = rejection_reason
+                action["provenance"] = "auto resolution rejected"
+                rejected_ids.append(question_id)
+                continue
             if item is None or item.status != "ANSWERED":
                 continue
             item.last_transition_reason = "auto resolution"
@@ -1279,6 +1709,7 @@ class IntentAgentOrchestrator:
 
         return {
             "auto_answered_question_ids": sorted(set(auto_answered_ids)),
+            "auto_resolution_rejected_question_ids": sorted(set(rejected_ids)),
             "review_decision_question_ids": sorted(set(review_question_ids)),
         }
 
@@ -1547,6 +1978,12 @@ class IntentAgentOrchestrator:
                 scenario_from_reframe = f"{reframe_failure_reason} Original input: {question_text}"
                 reframed_taxonomy = QuestionTaxonomy.CONSTRAINT
 
+        canonical_key_hint = self._normalize_canonical_key(
+            signal.question.canonical_key_hint,
+            taxonomy_type=reframed_taxonomy.value,
+            text=reframed_text,
+        )
+
         # 3. Draft user question via QuestionDraftStrategy.
         if self._question_draft is not None:
             concept_terms = list(self._state.concept_map.user_introduced_terms)
@@ -1558,7 +1995,7 @@ class IntentAgentOrchestrator:
             candidate = self._question_draft.draft(
                 signal_text=reframed_text,
                 taxonomy_hint=reframed_taxonomy.value,
-                canonical_key_hint=signal.question.canonical_key_hint,
+                canonical_key_hint=canonical_key_hint,
                 context=signal.payload,
                 problem_frame=frame_dict,
                 concept_map_user_terms=concept_terms,
@@ -1611,7 +2048,11 @@ class IntentAgentOrchestrator:
             )
             final_taxonomy = final_candidate.taxonomy_type
             scope = classify_scope(final_candidate.text)
-            canonical_key = self._coerce_str(signal.question.canonical_key_hint)
+            canonical_key = self._normalize_canonical_key(
+                canonical_key_hint,
+                taxonomy_type=final_taxonomy,
+                text=final_candidate.text,
+            )
             system_binding = self._normalize_question_binding(
                 signal.payload,
                 taxonomy_type=final_taxonomy,
@@ -1679,6 +2120,8 @@ class IntentAgentOrchestrator:
                 item.user_prompt.text = final_candidate.text
                 item.user_prompt.scenario = final_candidate.scenario
             self._apply_quality_pass_to_item(item, final_candidate, records)
+            if item.status == "OPEN" and item.blockers.severity == "BLOCKING":
+                self._record_new_blocking_arrival(item.question_id)
         else:
             # 6. FAIL after retries — mark UNASKABLE.
             failed_candidate = final_candidate or candidate
@@ -1686,7 +2129,11 @@ class IntentAgentOrchestrator:
                 failed_candidate.taxonomy_type,
             )
             failed_text = self._coerce_str(failed_candidate.text, question_text)
-            canonical_key = self._coerce_str(signal.question.canonical_key_hint)
+            canonical_key = self._normalize_canonical_key(
+                canonical_key_hint,
+                taxonomy_type=failed_taxonomy,
+                text=failed_text,
+            )
             system_binding = self._normalize_question_binding(
                 signal.payload,
                 taxonomy_type=failed_taxonomy,
@@ -1730,6 +2177,17 @@ class IntentAgentOrchestrator:
                 question_id,
                 source="ingest_signal",
                 reason=failure_reason,
+                details=failure_details,
+            )
+            self._emit_ingest_quality_reformulation(
+                signal=signal,
+                question_id=question_id,
+                canonical_key=canonical_key,
+                taxonomy_type=failed_taxonomy,
+                question_text=failed_text,
+                scenario=scenario_from_reframe,
+                reason=failure_reason,
+                attempts=len(records),
                 details=failure_details,
             )
 
@@ -2258,6 +2716,26 @@ class IntentAgentOrchestrator:
                 "action": action,
                 "reason": reason,
             }
+            for passthrough_key in (
+                "auto_resolution",
+                "resolution",
+                "resolution_evidence",
+                "eligibility",
+                "authority",
+                "payload",
+                "confidence",
+                "confidence_checked",
+                "confident_inference",
+                "tool_resolvable",
+                "research_resolvable",
+                "ambiguity_safe",
+                "review_required",
+                "human_authority_required",
+                "authority_required",
+                "resolution_method",
+            ):
+                if passthrough_key in result:
+                    action_record[passthrough_key] = result[passthrough_key]
 
             replacement = result.get("replacement")
             if isinstance(replacement, dict):
@@ -2508,15 +2986,27 @@ class IntentAgentOrchestrator:
                     return {"action": "skeleton"}
             return {"action": "wait"}
 
-        # Immediate-ask rule: if a BLOCKING question exists and last presented
-        # was INFO (or queue was empty), present the BLOCKING question immediately.
-        blocking_items = [it for it in open_items if it.blockers.severity == "BLOCKING"]
+        # Immediate-ask rule applies only to newly-arrived BLOCKING questions.
+        newly_arrived_blocking_ids = (
+            self._consume_new_blocking_arrivals() if self._state is not None else []
+        )
+        if newly_arrived_blocking_ids and self._state is not None:
+            arrival_set = set(newly_arrived_blocking_ids)
+            blocking_items = [
+                item
+                for item in open_items
+                if item.question_id in arrival_set and item.blockers.severity == "BLOCKING"
+            ]
+        else:
+            blocking_items = []
+
         if blocking_items and self._state is not None:
             queue_state = self._state.question_queue_state
             last_presented_id = self._coerce_str(queue_state.last_presented_question_id)
             last_item = self._queue.get_item(last_presented_id) if last_presented_id else None
-            last_was_info = last_item is None or last_item.blockers.severity == "INFO"
-            if last_was_info:
+            queue_is_idle = last_item is None
+            last_was_info = last_item is not None and last_item.blockers.severity == "INFO"
+            if queue_is_idle or last_was_info:
                 # Preempt: present the highest-priority BLOCKING question
                 next_q = blocking_items[0]
                 queue_state.last_presented_question_id = next_q.question_id
@@ -3087,11 +3577,10 @@ class IntentAgentOrchestrator:
 
     @property
     def is_auto_mode(self) -> bool:
-        """Check if running in auto mode.
+        """Check if prompt output should be suppressed.
 
-        In auto mode, questions are generated and quality-gated for internal
-        documentation but not emitted as user prompts.  Questions requiring
-        human authority remain unresolved; the Planner blocks or makes
-        best-effort where authority policy permits.
+        Both ``auto`` and ``steering`` suppress prompt emission. Autonomous
+        self-resolution eligibility is stricter and is enforced only when
+        ``self._mode == "auto"``.
         """
         return self._mode in ("auto", "steering")
