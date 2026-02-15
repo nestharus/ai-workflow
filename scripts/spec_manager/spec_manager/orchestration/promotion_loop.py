@@ -2495,7 +2495,7 @@ class GapExplorationStep:
 class PlanStep:
     """Generate implementation plan from gaps — layer-aware.
 
-    - L1: Convert spec gaps into function implementation intentions (P8)
+    - L1: No-op. Spec comments are authoritative and drive implementation directly.
     - L2: Convert architecture gaps into a wiring plan (which component
       to adjust, how to connect pins, handlers/routes to add)
     - L3: Convert quality findings into a refactor plan (group by
@@ -2571,15 +2571,18 @@ class PlanStep:
         """Generate layer-appropriate implementation plan from gaps."""
         from spec_manager.orchestration.evidence import PlanRef
 
+        # SEC-067 invariant: L1 PLAN is a no-op; implementation works directly from
+        # gap/spec-comment authority without intermediate planning intentions.
+        if ctx.layer == "l1":
+            bundle.plan = PlanRef(path="plan.json", intentions=[])
+            return StepResult(status="OK")
+
         if not bundle.gaps.open_gaps:
             bundle.plan = PlanRef(path="plan.json", intentions=[])
             return StepResult(status="OK")
 
-        # L1: generate function-oriented intentions from current open gaps.
-        if ctx.layer == "l1":
-            intentions = self._plan_l1(bundle.gaps.open_gaps)
         # Route through planner if available (L2/L3 only)
-        elif self._planner is not None:
+        if self._planner is not None:
             intentions = self._plan_via_planner(ctx, bundle)
         elif ctx.layer == "l2":
             intentions = self._plan_l2(bundle.gaps.open_gaps)
@@ -2620,46 +2623,6 @@ class PlanStep:
                 logger.debug("Planning gate skipped: %s", exc)
 
         return StepResult(status="OK")
-
-    @staticmethod
-    def _plan_l1(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """L1: convert executable gaps into concrete implementation intentions."""
-        intentions: list[dict[str, Any]] = []
-        for idx, gap in enumerate(gaps, start=1):
-            file_path = str(gap.get("file", "")).strip()
-            kind = str(gap.get("kind", "gap")).strip() or "gap"
-            description = str(gap.get("description", "")).strip()
-            location = gap.get("location", {}) or {}
-            span = gap.get("span", {}) or {}
-            target_function = (
-                str(gap.get("function", "")).strip() or str(location.get("symbol", "")).strip()
-            )
-            target_id = file_path or target_function or f"gap-{idx}"
-            approach_parts = [f"Resolve {kind}"]
-            if target_function:
-                approach_parts.append(f"in {target_function}")
-            if file_path:
-                approach_parts.append(f"at {file_path}")
-            if description:
-                approach_parts.append(f"by implementing: {description}")
-            intentions.append(
-                {
-                    "intention_id": f"l1-intention-{idx}",
-                    "gap_id": target_id,
-                    "target_file": file_path,
-                    "target_function": target_function,
-                    "approach": " ".join(approach_parts),
-                    "acceptance_criteria": "Executable gap no longer appears in GAP_EXPLORATION",
-                    "layer_constraint": "implementation_only",
-                    "required_change_type": gap.get("required_change_type", "behavior_change"),
-                    "source_gap": {
-                        "kind": kind,
-                        "description": description,
-                        "span": span,
-                    },
-                }
-            )
-        return intentions
 
     def _plan_via_planner(self, ctx: SliceContext, bundle: EvidenceBundle) -> list[dict[str, Any]]:
         """Route plan generation through the planner module."""
@@ -3265,7 +3228,7 @@ class ImplementStep:
             run_result = runner.run_for_slice(
                 slice_root=slice_root,
                 iteration_dir=iteration_dir,
-                plan_intentions=bundle.plan.intentions,
+                plan_intentions=[],
                 gap_report=self._prioritize_gap_report(bundle.gaps.open_gaps, focus_targets),
             )
 
