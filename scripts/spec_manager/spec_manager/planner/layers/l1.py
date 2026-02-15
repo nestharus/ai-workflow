@@ -143,7 +143,7 @@ class L1Planner:
         if not _should_run_l1_planning_session(ctx, gaps):
             return plan
 
-        pipeline_outputs = self._build_plan_via_strategies(ctx, gaps, discovery)
+        pipeline_outputs = self._build_plan_via_strategies(ctx, gaps, discovery, intentions)
         for key in (
             "decision_requirements",
             "new_constraints",
@@ -159,11 +159,13 @@ class L1Planner:
         ctx: Any,
         gaps: list[dict[str, Any]],
         discovery: dict[str, Any],
+        base_intentions: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Run the shared planning-session strategies for L1 decisions."""
         from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
         from spec_manager.planner.strategies.constraint_strategies import (
-            ConstraintCollectionStrategy,
+            CandidateEvaluatorStrategy,
+            ConstraintBootstrapStrategy,
             ConstraintEnricherStrategy,
             ImpactClassifierStrategy,
             NonSoftwareChecklistStrategy,
@@ -203,14 +205,16 @@ class L1Planner:
             ctx=session_ctx,
             gaps=gaps,
             discovery=discovery,
+            intentions=[dict(i) for i in base_intentions],
         )
         strategies = [
             ImpactClassifierStrategy(),
-            ConstraintCollectionStrategy(workspace_root),
-            TradeoffMapperStrategy(workspace_root),
             ProblemFramerStrategy(run_agent=self._research_tool),
+            ConstraintBootstrapStrategy(workspace_root),
             ConstraintEnricherStrategy(run_agent=self._research_tool),
+            TradeoffMapperStrategy(workspace_root),
             NonSoftwareChecklistStrategy(),
+            CandidateEvaluatorStrategy(),
             AuthorityDeciderStrategy(workspace_root),
             QuestionComposerStrategy(run_agent=self._research_tool),
         ]

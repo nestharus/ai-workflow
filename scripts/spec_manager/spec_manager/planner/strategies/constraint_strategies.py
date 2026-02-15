@@ -1,8 +1,8 @@
 """Constraint-related planning strategies.
 
-Six strategies that handle impact classification, constraint loading,
-problem framing, constraint enrichment, non-software checklist detection,
-and question composition for under-spec events.
+Strategies in this module classify impact, bootstrap constraints, frame and
+enrich the problem space, surface non-software dimensions, evaluate candidates,
+map tradeoffs, and compose under-spec questions.
 """
 
 from __future__ import annotations
@@ -60,12 +60,12 @@ class ImpactClassifierStrategy:
         return session
 
 
-class ConstraintCollectionStrategy:
-    """Always runs. Loads constraints from the store into the session."""
+class ConstraintBootstrapStrategy:
+    """Always runs. Bootstraps constraints from the store into the session."""
 
     @property
     def name(self) -> str:
-        return "constraint_collection"
+        return "constraint_bootstrap"
 
     def __init__(self, workspace_root: Path) -> None:
         self._adapter = ConstraintStoreAdapter(workspace_root)
@@ -185,6 +185,142 @@ class NonSoftwareChecklistStrategy:
                 )
 
         return session
+
+
+class CandidateEvaluatorStrategy:
+    """Evaluates candidates against constraints, coupling, and blast radius."""
+
+    @property
+    def name(self) -> str:
+        return "candidate_evaluator"
+
+    def run(self, session: PlanningSession) -> PlanningSession:
+        evaluations: list[dict[str, Any]] = []
+        try:
+            touched_files = max(int(session.ctx.get("touched_files_count", 0) or 0), 0)
+        except (TypeError, ValueError):
+            touched_files = 0
+
+        for index, intention in enumerate(session.intentions):
+            if not isinstance(intention, dict):
+                continue
+            evaluations.append(
+                self._evaluate_intention_candidate(
+                    index=index,
+                    candidate=intention,
+                    touched_files=touched_files,
+                    session=session,
+                )
+            )
+
+        for outcome in session.decision_outcomes:
+            evaluations.append(self._evaluate_decision_outcome(outcome.to_dict(), session))
+
+        session.candidate_evaluations = evaluations
+        return session
+
+    @staticmethod
+    def _evaluate_intention_candidate(
+        *,
+        index: int,
+        candidate: dict[str, Any],
+        touched_files: int,
+        session: PlanningSession,
+    ) -> dict[str, Any]:
+        candidate_id = (
+            str(candidate.get("id", "")).strip()
+            or str(candidate.get("function_name", "")).strip()
+            or str(candidate.get("component_id", "")).strip()
+            or str(candidate.get("file", "")).strip()
+            or f"candidate-{index + 1}"
+        )
+
+        dependencies = candidate.get("dependencies", [])
+        if not isinstance(dependencies, list):
+            dependencies = []
+
+        target_files = candidate.get("target_files", [])
+        if not isinstance(target_files, list):
+            target_files = []
+        if candidate.get("file"):
+            target_files = [candidate.get("file")]
+
+        graph_targets = candidate.get("graph_targets", {})
+        if not isinstance(graph_targets, dict):
+            graph_targets = {}
+        graph_edges = graph_targets.get("edges", [])
+        if not isinstance(graph_edges, list):
+            graph_edges = []
+
+        coupling_score = len(dependencies) + len(graph_edges)
+        blast_radius = max(len(target_files), touched_files)
+        recommendation = "accept"
+        reasons: list[str] = []
+
+        approach_text = str(
+            candidate.get("approach", candidate.get("refactor_approach", ""))
+        ).strip()
+        if not approach_text and session.gaps:
+            recommendation = "needs_human"
+            reasons.append("candidate lacks implementation approach detail")
+
+        if session.conflict_report and session.conflict_report.conflicts:
+            recommendation = "needs_human"
+            reasons.append("constraint conflicts are unresolved")
+
+        if blast_radius > 30 or coupling_score > 8:
+            recommendation = "needs_human"
+            reasons.append("candidate exceeds safe blast-radius/coupling threshold")
+
+        return {
+            "candidate_id": candidate_id,
+            "source": "intention",
+            "coupling_score": coupling_score,
+            "blast_radius": blast_radius,
+            "constraints_checked": CandidateEvaluatorStrategy._constraint_count(session),
+            "recommendation": recommendation,
+            "reasons": reasons,
+        }
+
+    @staticmethod
+    def _evaluate_decision_outcome(
+        outcome: dict[str, Any],
+        session: PlanningSession,
+    ) -> dict[str, Any]:
+        decision_id = str(outcome.get("decision_id", "")).strip() or "architecture-decision"
+        under_spec_events = outcome.get("under_spec_events", [])
+        if not isinstance(under_spec_events, list):
+            under_spec_events = []
+        requirements = outcome.get("decision_requirements", [])
+        if not isinstance(requirements, list):
+            requirements = []
+        wiring_intentions = outcome.get("wiring_intentions", [])
+        if not isinstance(wiring_intentions, list):
+            wiring_intentions = []
+
+        recommendation = "accept"
+        reasons: list[str] = []
+        if under_spec_events or requirements or not bool(outcome.get("committed", False)):
+            recommendation = "needs_human"
+            reasons.append("architecture decision outcome remains unresolved")
+
+        return {
+            "candidate_id": decision_id,
+            "source": "decision_outcome",
+            "coupling_score": len(wiring_intentions),
+            "blast_radius": len(wiring_intentions),
+            "constraints_checked": CandidateEvaluatorStrategy._constraint_count(session),
+            "recommendation": recommendation,
+            "reasons": reasons,
+        }
+
+    @staticmethod
+    def _constraint_count(session: PlanningSession) -> int:
+        if session.constraint_context is None:
+            return 0
+        return len(session.constraint_context.authoritative) + len(
+            session.constraint_context.decisions
+        )
 
 
 class TradeoffMapperStrategy:

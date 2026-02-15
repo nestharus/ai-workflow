@@ -46,12 +46,14 @@ class PlanningSession:
         discovery: Discovery graph data.
         impact: Impact classification (set by ImpactClassifierStrategy).
         problem_frame: Problem framing (set by ProblemFramerStrategy).
-        constraint_context: Loaded constraints (set by ConstraintCollectionStrategy).
+        constraint_context: Loaded constraints (set by ConstraintBootstrapStrategy).
         hypotheses: Inferred hypotheses (set by ConstraintEnricherStrategy).
         decision_requirements: Decisions needed (accumulated by strategies).
         conflict_report: Detected conflicts (set by ConstraintEnricherStrategy).
         decision_outcomes: Architecture decision outcomes (set by ArchitecturePlannerStrategy).
         intentions: Planning intentions (accumulated by strategies).
+        candidate_evaluations: Evaluations for planning candidates
+            (set by CandidateEvaluatorStrategy).
         under_spec_events: Events for human review (accumulated by strategies).
         new_constraints: New constraint facts to persist (accumulated by strategies).
     """
@@ -67,6 +69,7 @@ class PlanningSession:
     conflict_report: ConflictReport | None = None
     decision_outcomes: list[DecisionOutcome] = field(default_factory=list)
     intentions: list[dict[str, Any]] = field(default_factory=list)
+    candidate_evaluations: list[dict[str, Any]] = field(default_factory=list)
     under_spec_events: list[dict[str, Any]] = field(default_factory=list)
     new_constraints: list[ConstraintFact] = field(default_factory=list)
     tradeoff_axes: list[str] = field(default_factory=list)

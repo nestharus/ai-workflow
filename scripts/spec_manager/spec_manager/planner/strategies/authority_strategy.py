@@ -109,5 +109,48 @@ class AuthorityDeciderStrategy:
                 escalated_requirements.append(dr)
 
         session.decision_requirements = escalated_requirements
+        self._escalate_candidate_evaluations(session)
 
         return session
+
+    def _escalate_candidate_evaluations(self, session: PlanningSession) -> None:
+        """Escalate candidate evaluations that require human authority."""
+        if not session.candidate_evaluations:
+            return
+
+        existing_keys = {
+            (
+                str(event.get("type", "")),
+                str(event.get("candidate_id", "")),
+            )
+            for event in session.under_spec_events
+            if isinstance(event, dict)
+        }
+
+        for evaluation in session.candidate_evaluations:
+            if not isinstance(evaluation, dict):
+                continue
+            recommendation = str(evaluation.get("recommendation", "")).strip().lower()
+            if recommendation not in {"needs_human", "reject"}:
+                continue
+
+            candidate_id = str(evaluation.get("candidate_id", "")).strip()
+            key = ("candidate_evaluation", candidate_id)
+            if key in existing_keys:
+                continue
+
+            session.under_spec_events.append(
+                {
+                    "type": "candidate_evaluation",
+                    "candidate_id": candidate_id,
+                    "source": evaluation.get("source", "unknown"),
+                    "question": ("Candidate requires human review before authority decision."),
+                    "reason": "; ".join(
+                        str(reason).strip()
+                        for reason in evaluation.get("reasons", [])
+                        if str(reason).strip()
+                    )
+                    or "candidate evaluation requested human review",
+                }
+            )
+            existing_keys.add(key)

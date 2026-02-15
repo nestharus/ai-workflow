@@ -378,7 +378,8 @@ class L2Planner:
         )
         from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
         from spec_manager.planner.strategies.constraint_strategies import (
-            ConstraintCollectionStrategy,
+            CandidateEvaluatorStrategy,
+            ConstraintBootstrapStrategy,
             ConstraintEnricherStrategy,
             ImpactClassifierStrategy,
             NonSoftwareChecklistStrategy,
@@ -417,10 +418,10 @@ class L2Planner:
 
         strategies = [
             ImpactClassifierStrategy(),
-            ConstraintCollectionStrategy(workspace_root),
-            TradeoffMapperStrategy(workspace_root),
             ProblemFramerStrategy(run_agent=run_agent),
+            ConstraintBootstrapStrategy(workspace_root),
             ConstraintEnricherStrategy(run_agent=run_agent),
+            TradeoffMapperStrategy(workspace_root),
             NonSoftwareChecklistStrategy(),
             ArchitecturePlannerStrategy(
                 workspace_root,
@@ -428,6 +429,7 @@ class L2Planner:
                 work_item_store=self._work_item_store,
                 wait_graph=self._wait_graph,
             ),
+            CandidateEvaluatorStrategy(),
             AuthorityDeciderStrategy(workspace_root),
             QuestionComposerStrategy(run_agent=run_agent),
         ]
