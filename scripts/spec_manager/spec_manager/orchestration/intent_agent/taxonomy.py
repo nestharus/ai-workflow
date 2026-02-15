@@ -289,26 +289,30 @@ def infer_constraint_dimensions_with_key(
                     matched.add(dim.value)
                     break
 
-    if not canonical_key:
-        return normalize_constraint_dimensions(sorted(matched))
+    if canonical_key:
+        canonical_text = re.sub(r"[^a-z0-9_]", " ", canonical_key.lower())
+        if re.search(r"operat|performance|latenc|throughput|rto|rpo|batch", canonical_text):
+            matched.add(ConstraintDimension.OPERATIONAL.value)
+        if re.search(r"regulat|privacy|audit|compliance|sox|gdpr|resid", canonical_text):
+            matched.add(ConstraintDimension.REGULATORY.value)
+        if re.search(r"org|team|ops|owner|sre|people", canonical_text):
+            matched.add(ConstraintDimension.ORGANIZATIONAL.value)
+        if re.search(r"legal|licen|vendor|contract|source_code", canonical_text):
+            matched.add(ConstraintDimension.LEGAL_LICENSING.value)
+        if re.search(r"budget|cost|spend|pay|money|financial|fees|price", canonical_text):
+            matched.add(ConstraintDimension.FINANCIAL.value)
+        if re.search(
+            r"platform|cloud|on_prem|onprem|provider|host|identity|vendor", canonical_text
+        ):
+            matched.add(ConstraintDimension.PLATFORM.value)
+        if re.search(r"data|pii|retention|lineage|access|volume|record", canonical_text):
+            matched.add(ConstraintDimension.DATA.value)
 
-    canonical_text = re.sub(r"[^a-z0-9_]", " ", canonical_key.lower())
-    if re.search(r"operat|performance|latenc|throughput|rto|rpo|batch", canonical_text):
-        matched.add(ConstraintDimension.OPERATIONAL.value)
-    if re.search(r"regulat|privacy|audit|compliance|sox|gdpr|resid", canonical_text):
-        matched.add(ConstraintDimension.REGULATORY.value)
-    if re.search(r"org|team|ops|owner|sre|people", canonical_text):
-        matched.add(ConstraintDimension.ORGANIZATIONAL.value)
-    if re.search(r"legal|licen|vendor|contract|source_code", canonical_text):
-        matched.add(ConstraintDimension.LEGAL_LICENSING.value)
-    if re.search(r"budget|cost|spend|pay|money|financial|fees|price", canonical_text):
-        matched.add(ConstraintDimension.FINANCIAL.value)
-    if re.search(r"platform|cloud|on_prem|onprem|provider|host|identity|vendor", canonical_text):
-        matched.add(ConstraintDimension.PLATFORM.value)
-    if re.search(r"data|pii|retention|lineage|access|volume|record", canonical_text):
-        matched.add(ConstraintDimension.DATA.value)
-
-    return normalize_constraint_dimensions(sorted(matched))
+    normalized = normalize_constraint_dimensions(sorted(matched))
+    if normalized:
+        return normalized
+    # CONSTRAINT questions must map to at least one dimension.
+    return [ConstraintDimension.OPERATIONAL.value]
 
 
 def normalize_user_facing_taxonomy(raw_taxonomy: Any) -> str:

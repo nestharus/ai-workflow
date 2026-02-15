@@ -86,6 +86,7 @@ from spec_manager.orchestration.intent_agent.taxonomy import (
     is_prohibited,
     is_vague_user_input,
     normalize_constraint_dimensions,
+    normalize_taxonomy_type,
     normalize_user_facing_taxonomy,
     reframe_to_user_valid,
 )
@@ -407,6 +408,8 @@ class IntentAgentOrchestrator:
         parent_question_id: str,
         draft: FollowupQuestionDraft,
         records: list[QualityCheckRecord],
+        *,
+        reason_override: str = "",
     ) -> None:
         """Emit a planner-directed signal for failed follow-up reformulation."""
         if self._state is None:
@@ -420,10 +423,11 @@ class IntentAgentOrchestrator:
             canonical_hint,
             taxonomy_type=draft.taxonomy_type,
             text=draft.text,
+            scope_kind=classify_scope(draft.text).value,
         )
 
         reason = self._coerce_str(
-            records[-1].reason if records else "quality gate failed",
+            reason_override or (records[-1].reason if records else "quality gate failed"),
             "quality gate failed",
         )
         question_type = self._coerce_str(
@@ -499,6 +503,7 @@ class IntentAgentOrchestrator:
                 canonical_key,
                 taxonomy_type=question_type,
                 text=question_text,
+                scope_kind=classify_scope(question_text).value,
             ),
             "question_type": question_type,
             "question_text": self._coerce_str(question_text, signal.question.text),
@@ -588,8 +593,14 @@ class IntentAgentOrchestrator:
         *,
         taxonomy_type: str = "",
         text: str = "",
+        scope_kind: str = "",
     ) -> str:
         """Normalize/validate canonical-key hints into stable dedup keys."""
+        resolved_scope_kind = self._coerce_str(scope_kind).upper()
+        if resolved_scope_kind not in {"SYSTEM_WIDE", "FEATURE_SPECIFIC"}:
+            resolved_scope_kind = classify_scope(text).value if text else "FEATURE_SPECIFIC"
+        scope_token = resolved_scope_kind.lower()
+
         normalized = self._coerce_str(value).lower()
         if normalized:
             normalized = normalized.replace("::", ".").replace("/", ".").replace(" ", "_")
@@ -598,7 +609,18 @@ class IntentAgentOrchestrator:
             normalized = _CANONICAL_KEY_DOT_RUN_RE.sub(".", normalized)
             normalized = normalized.strip("._-")
             if normalized:
-                return normalized
+                key_parts = [part for part in normalized.split(".") if part]
+                if not key_parts:
+                    key_parts = ["intent", scope_token]
+                elif key_parts[0] != "intent":
+                    key_parts = ["intent", scope_token, *key_parts]
+                elif len(key_parts) == 1:
+                    key_parts.extend([scope_token])
+                elif key_parts[1] in {"system_wide", "feature_specific"}:
+                    key_parts[1] = scope_token
+                else:
+                    key_parts.insert(1, scope_token)
+                return ".".join(key_parts)
 
         taxonomy_key = normalize_user_facing_taxonomy(taxonomy_type).lower()
         if taxonomy_key not in {"intent", "constraint", "tradeoff", "scope", "validation"}:
@@ -606,7 +628,7 @@ class IntentAgentOrchestrator:
         token_source = self._coerce_str(text).lower()
         tokens = _CANONICAL_KEY_TOKEN_RE.findall(token_source)
         slug = "_".join(tokens[:6]) if tokens else "question"
-        return f"intent.{taxonomy_key}.{slug}"
+        return f"intent.{scope_token}.{taxonomy_key}.{slug}"
 
     def _normalize_canonical_key_candidate(self, value: Any) -> str:
         normalized = self._coerce_str(value).lower()
@@ -824,6 +846,12 @@ class IntentAgentOrchestrator:
             replacement.get("new_canonical_key"),
             f"{source_item.canonical_key}.replacement",
         )
+        canonical_key = self._normalize_canonical_key(
+            canonical_key,
+            taxonomy_type=source_item.taxonomy_type,
+            text=new_text,
+            scope_kind=source_item.scope_kind,
+        )
         question_id = self._coerce_str(replacement.get("new_question_id"), "")
 
         if not question_id:
@@ -951,12 +979,15 @@ class IntentAgentOrchestrator:
         if persisted_dims:
             return persisted_dims
 
-        return normalize_constraint_dimensions(
+        inferred_dims = normalize_constraint_dimensions(
             infer_constraint_dimensions_with_key(
                 item.user_prompt.text,
                 canonical_key=item.canonical_key,
             )
         )
+        if inferred_dims:
+            return inferred_dims
+        return ["operational"]
 
     def _normalize_binding_str_list(
         self,
@@ -1002,10 +1033,13 @@ class IntentAgentOrchestrator:
                 text,
                 canonical_key=canonical_key,
             )
-            normalized_binding["constraint_key_hints"] = normalize_constraint_dimensions(
+            normalized_dims = normalize_constraint_dimensions(
                 normalize_constraint_dimensions(normalized_binding.get("constraint_key_hints", []))
                 + inferred,
             )
+            if not normalized_dims:
+                normalized_dims = ["operational"]
+            normalized_binding["constraint_key_hints"] = normalized_dims
         return normalized_binding
 
     def _coerce_answer_spec_kind(self, answer_spec_kind: Any) -> str:
@@ -1979,6 +2013,7 @@ class IntentAgentOrchestrator:
             signal.question.canonical_key_hint,
             taxonomy_type=reframed_taxonomy.value,
             text=reframed_text,
+            scope_kind=classify_scope(reframed_text).value,
         )
 
         # 3. Draft user question via QuestionDraftStrategy.
@@ -2035,6 +2070,34 @@ class IntentAgentOrchestrator:
             # from downstream consumption until classification ambiguity is resolved.
             passed = False
 
+        if passed and final_candidate is not None:
+            candidate_taxonomy = QuestionTaxonomy(
+                normalize_taxonomy_type(final_candidate.taxonomy_type),
+            )
+            if is_prohibited(candidate_taxonomy):
+                reframed_candidate = reframe_to_user_valid(
+                    final_candidate.text,
+                    candidate_taxonomy,
+                    context=signal.payload,
+                    run_agent=self._run_agent,
+                )
+                if reframed_candidate is None:
+                    reframe_failure_reason = (
+                        "Prohibited taxonomy persisted after quality "
+                        "repair and could not be reframed."
+                    )
+                    passed = False
+                else:
+                    final_candidate.text = self._coerce_str(
+                        reframed_candidate.reframed_text,
+                        final_candidate.text,
+                    )
+                    final_candidate.scenario = self._coerce_str(
+                        reframed_candidate.scenario,
+                        final_candidate.scenario,
+                    )
+                    final_candidate.taxonomy_type = reframed_candidate.reframed_type.value
+
         # 5. If PASS, dedup check and enqueue.
         if passed and final_candidate is not None:
             final_candidate.taxonomy_type = normalize_user_facing_taxonomy(
@@ -2049,6 +2112,7 @@ class IntentAgentOrchestrator:
                 canonical_key_hint,
                 taxonomy_type=final_taxonomy,
                 text=final_candidate.text,
+                scope_kind=scope.value,
             )
             system_binding = self._normalize_question_binding(
                 signal.payload,
@@ -2126,10 +2190,12 @@ class IntentAgentOrchestrator:
                 failed_candidate.taxonomy_type,
             )
             failed_text = self._coerce_str(failed_candidate.text, question_text)
+            failed_scope_kind = classify_scope(failed_text).value
             canonical_key = self._normalize_canonical_key(
                 canonical_key_hint,
                 taxonomy_type=failed_taxonomy,
                 text=failed_text,
+                scope_kind=failed_scope_kind,
             )
             system_binding = self._normalize_question_binding(
                 signal.payload,
@@ -2141,6 +2207,7 @@ class IntentAgentOrchestrator:
                 question_id=question_id,
                 status="UNASKABLE",
                 taxonomy_type=failed_taxonomy,
+                scope_kind=failed_scope_kind,
                 canonical_key=canonical_key,
                 user_prompt=UserPrompt(
                     text=failed_text,
@@ -2347,7 +2414,7 @@ class IntentAgentOrchestrator:
             translation.extracted.followup_question_drafts,
             key=lambda draft: (
                 self._coerce_str(draft.canonical_key_hint),
-                normalize_user_facing_taxonomy(draft.taxonomy_type),
+                normalize_taxonomy_type(draft.taxonomy_type),
                 self._coerce_str(draft.text),
                 self._coerce_str(draft.draft_id),
             ),
@@ -2355,9 +2422,10 @@ class IntentAgentOrchestrator:
         seen_followups: set[tuple[str, str, str, str]] = set()
 
         for fq_draft in followup_candidates:
+            draft_taxonomy = normalize_taxonomy_type(fq_draft.taxonomy_type)
             followup_key = (
                 self._coerce_str(fq_draft.canonical_key_hint),
-                normalize_user_facing_taxonomy(fq_draft.taxonomy_type),
+                draft_taxonomy,
                 self._coerce_str(fq_draft.text),
                 self._coerce_str(fq_draft.scenario),
             )
@@ -2365,14 +2433,58 @@ class IntentAgentOrchestrator:
                 continue
             seen_followups.add(followup_key)
 
-            fq_taxonomy = normalize_user_facing_taxonomy(fq_draft.taxonomy_type)
+            fq_taxonomy_enum = QuestionTaxonomy(draft_taxonomy)
+            fq_text = self._coerce_str(fq_draft.text)
+            fq_scenario = self._coerce_str(fq_draft.scenario)
+            if is_prohibited(fq_taxonomy_enum):
+                reframe_context = {
+                    "question_text": question.user_prompt.text if question is not None else "",
+                    "prior_classifications": [question.taxonomy_type]
+                    if question is not None
+                    else [],
+                    "domain_hints": list(self._state.concept_map.user_introduced_terms),
+                }
+                reframed_followup = reframe_to_user_valid(
+                    fq_text,
+                    fq_taxonomy_enum,
+                    context=reframe_context,
+                    run_agent=self._run_agent,
+                )
+                if reframed_followup is None:
+                    fq_id = f"q_{uuid.uuid4().hex[:12]}"
+                    reframe_reason = (
+                        "Prohibited follow-up taxonomy could not be reframed to a user-valid type."
+                    )
+                    self._mark_unaskable(
+                        fq_id,
+                        source="followup_question",
+                        reason=reframe_reason,
+                        details={
+                            "translation_id": translation.translation_id,
+                            "parent_question_id": question_id,
+                            "original_taxonomy_type": fq_taxonomy_enum.value,
+                            "attempts": 0,
+                        },
+                    )
+                    self._emit_followup_quality_reformulation(
+                        parent_question_id=question_id,
+                        draft=fq_draft,
+                        records=[],
+                        reason_override=reframe_reason,
+                    )
+                    continue
+                fq_text = self._coerce_str(reframed_followup.reframed_text, fq_text)
+                fq_scenario = self._coerce_str(reframed_followup.scenario, fq_scenario)
+                fq_taxonomy_enum = reframed_followup.reframed_type
+
+            fq_taxonomy = normalize_user_facing_taxonomy(fq_taxonomy_enum.value)
             fq_answer_spec_kind = self._coerce_answer_spec_kind(
                 fq_draft.answer_spec.get("kind", "choice"),
             )
 
             fq_candidate = QualityCheckCandidate(
-                text=self._coerce_str(fq_draft.text),
-                scenario=self._coerce_str(fq_draft.scenario),
+                text=fq_text,
+                scenario=fq_scenario,
                 answer_spec_kind=fq_answer_spec_kind,
                 taxonomy_type=fq_taxonomy,
             )
@@ -2391,15 +2503,21 @@ class IntentAgentOrchestrator:
             self._log_quality_checks(fq_records)
 
             if fq_passed and fq_final is not None:
-                canonical_key = self._coerce_str(fq_draft.canonical_key_hint)
+                fq_final.taxonomy_type = normalize_user_facing_taxonomy(fq_final.taxonomy_type)
                 fq_final.answer_spec_kind = self._coerce_answer_spec_kind(
                     fq_final.answer_spec_kind,
                 )
                 scope = classify_scope(fq_final.text)
+                canonical_key = self._normalize_canonical_key(
+                    fq_draft.canonical_key_hint,
+                    taxonomy_type=fq_final.taxonomy_type,
+                    text=fq_final.text,
+                    scope_kind=scope.value,
+                )
                 fq_item = QuestionItem(
                     question_id=fq_id,
                     status="OPEN",
-                    taxonomy_type=fq_taxonomy,
+                    taxonomy_type=fq_final.taxonomy_type,
                     scope_kind=scope.value,
                     canonical_key=canonical_key,
                     user_prompt=UserPrompt(
@@ -2409,7 +2527,7 @@ class IntentAgentOrchestrator:
                     ),
                     system_binding=self._normalize_question_binding(
                         {},
-                        taxonomy_type=fq_taxonomy,
+                        taxonomy_type=fq_final.taxonomy_type,
                         text=fq_final.text,
                         canonical_key=canonical_key,
                     ),
@@ -2789,7 +2907,12 @@ class IntentAgentOrchestrator:
                         item.user_prompt.text = prompt_text
                     new_canonical_key = str(replacement.get("new_canonical_key", "")).strip()
                     if new_canonical_key:
-                        item.canonical_key = new_canonical_key
+                        item.canonical_key = self._normalize_canonical_key(
+                            new_canonical_key,
+                            taxonomy_type=item.taxonomy_type,
+                            text=item.user_prompt.text,
+                            scope_kind=item.scope_kind,
+                        )
                 actions.append(action_record)
                 continue
 
@@ -3084,13 +3207,20 @@ class IntentAgentOrchestrator:
         self._log_quality_checks(records)
 
         used_candidate = final_candidate if passed and final_candidate else candidate
+        used_candidate_taxonomy = normalize_user_facing_taxonomy("INTENT")
+        canonical_key = self._normalize_canonical_key(
+            "intent.disambiguation",
+            taxonomy_type=used_candidate_taxonomy,
+            text=used_candidate.text,
+            scope_kind="SYSTEM_WIDE",
+        )
 
         item = QuestionItem(
             question_id=question_id,
             status="OPEN" if passed else "UNASKABLE",
-            taxonomy_type=normalize_user_facing_taxonomy("INTENT"),
+            taxonomy_type=used_candidate_taxonomy,
             scope_kind="SYSTEM_WIDE",
-            canonical_key="intent.disambiguation",
+            canonical_key=canonical_key,
             user_prompt=UserPrompt(
                 text=used_candidate.text,
                 scenario=used_candidate.scenario,
@@ -3197,6 +3327,12 @@ class IntentAgentOrchestrator:
         scope_kind = self._coerce_str(trigger.get("scope_kind"), "SYSTEM_WIDE").upper()
         if scope_kind not in {"SYSTEM_WIDE", "FEATURE_SPECIFIC"}:
             scope_kind = "SYSTEM_WIDE"
+        canonical_key = self._normalize_canonical_key(
+            canonical_key,
+            taxonomy_type=question_type,
+            text=stage or trigger_type,
+            scope_kind=scope_kind,
+        )
 
         existing_id = self._coerce_str(trigger.get("question_id"), "")
         replacement_id = self._coerce_str(

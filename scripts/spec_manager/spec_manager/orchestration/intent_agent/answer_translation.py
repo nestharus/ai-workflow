@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.orchestration.intent_agent.taxonomy import normalize_user_facing_taxonomy
+from spec_manager.orchestration.intent_agent.taxonomy import normalize_taxonomy_type
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,8 @@ class FollowupQuestionDraft:
         normalized_answer_spec = _normalize_followup_answer_spec(self.answer_spec)
         if normalized_answer_spec is None:
             raise ValueError("followup_question_draft.answer_spec is invalid")
-        self.taxonomy_type = normalize_user_facing_taxonomy(self.taxonomy_type)
+        # Keep internal-only taxonomy labels so the enqueue path can reframe-or-reject.
+        self.taxonomy_type = normalize_taxonomy_type(self.taxonomy_type)
         self.answer_spec = normalized_answer_spec
 
 
@@ -746,7 +747,7 @@ def _parse_followup_question_drafts(
         drafts.append(
             FollowupQuestionDraft(
                 draft_id=draft_id if isinstance(draft_id, str) else "",
-                taxonomy_type=normalize_user_facing_taxonomy(taxonomy_value),
+                taxonomy_type=taxonomy_value,
                 canonical_key_hint=(
                     canonical_key_hint if isinstance(canonical_key_hint, str) else ""
                 ),
