@@ -7,6 +7,7 @@ manages WaitGraph edges for blocked decisions.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +18,7 @@ from spec_manager.planner.architecture.decision_detector import DecisionPointDet
 from spec_manager.planner.architecture.evaluator import CandidateEvaluator
 from spec_manager.planner.architecture.proposer import ProposerOrchestrator
 from spec_manager.planner.architecture.types import DecisionOutcome, ScopePacket
+from spec_manager.planner.constraints.types import ConstraintFact
 
 from .protocol import PlanningSession
 
@@ -53,11 +55,13 @@ class ArchitecturePlannerStrategy:
         run_agent: Callable[..., str] | None = None,
         work_item_store: Any = None,
         wait_graph: Any = None,
+        evidence_tool: Any = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._run_agent = run_agent
         self._work_item_store = work_item_store
         self._wait_graph = wait_graph
+        self._evidence_tool = evidence_tool
 
     def run(self, session: PlanningSession) -> PlanningSession:
         if not self._should_run(session):
@@ -71,6 +75,8 @@ class ArchitecturePlannerStrategy:
         if session.constraint_context:
             auth_constraints = session.constraint_context.authoritative
 
+        evidence_refs = self._collect_slice_evidence_refs(session, slice_id)
+
         # 1. Detect decision points
         detector = DecisionPointDetector(
             workspace_root=self._workspace_root,
@@ -80,6 +86,7 @@ class ArchitecturePlannerStrategy:
             slice_id=slice_id,
             gaps=session.gaps,
             discovery=session.discovery,
+            evidence_refs=evidence_refs,
             authoritative_constraints=auth_constraints,
         )
 
@@ -137,6 +144,17 @@ class ArchitecturePlannerStrategy:
 
             if outcome.committed:
                 session.intentions.extend(outcome.wiring_intentions)
+                new_facts = self._materialize_outcome_constraints(dp, outcome, candidates)
+                if new_facts:
+                    existing_constraint_ids = {
+                        fact.constraint_id for fact in session.new_constraints if fact.constraint_id
+                    }
+                    for fact in new_facts:
+                        if fact.constraint_id in existing_constraint_ids:
+                            continue
+                        session.new_constraints.append(fact)
+                        auth_constraints.append(fact)
+                        existing_constraint_ids.add(fact.constraint_id)
 
             if outcome.under_spec_events:
                 session.under_spec_events.extend(outcome.under_spec_events)
@@ -175,8 +193,8 @@ class ArchitecturePlannerStrategy:
         elif scope.startswith("inter:"):
             source_artifacts = self._load_inter_artifacts(scope)
 
-        # Current arch state refs from discovery
-        arch_refs = list(session.discovery.get("arch_files", []))
+        # Current arch state refs from routed discovery + scope artifacts
+        arch_refs = self._project_arch_refs(source_artifacts, session.discovery)
 
         # Tradeoff assignment from session axes
         tradeoff_assignment: dict[str, str] = {}
@@ -192,6 +210,271 @@ class ArchitecturePlannerStrategy:
             authoritative_constraints=auth_constraints,
             current_arch_state_refs=arch_refs,
             tradeoff_assignment=tradeoff_assignment,
+        )
+
+    @staticmethod
+    def _project_arch_refs(
+        source_artifacts: dict[str, Any],
+        discovery: dict[str, Any],
+    ) -> list[str]:
+        refs: list[str] = []
+        arch_payload = source_artifacts.get("arch_files")
+        if isinstance(arch_payload, dict | list):
+            refs.extend(str(name).strip() for name in arch_payload if str(name).strip())
+
+        if not refs:
+            for lib_payload in source_artifacts.values():
+                if not isinstance(lib_payload, dict):
+                    continue
+                nested = lib_payload.get("arch_files")
+                if isinstance(nested, dict):
+                    refs.extend(str(name).strip() for name in nested if str(name).strip())
+
+        if not refs:
+            discovery_refs = discovery.get("arch_files", [])
+            if isinstance(discovery_refs, list):
+                refs.extend(str(name).strip() for name in discovery_refs if str(name).strip())
+
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for ref in refs:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            deduped.append(ref)
+        return deduped
+
+    def _collect_slice_evidence_refs(self, session: PlanningSession, slice_id: str) -> list[str]:
+        refs: list[str] = []
+        for gap in session.gaps:
+            if not isinstance(gap, dict):
+                continue
+            self._extend_refs(refs, gap.get("evidence_refs"))
+            self._extend_refs(refs, gap.get("trigger_evidence"))
+            self._extend_refs(refs, gap.get("source_refs"))
+            self._extend_refs(refs, gap.get("target_files"))
+            self._extend_refs(refs, gap.get("file"))
+
+        self._extend_refs(refs, session.ctx.get("evidence_refs"))
+        bundle_ref = session.ctx.get("bundle_ref")
+        if bundle_ref is not None:
+            self._extend_refs(refs, self._collect_bundle_evidence_refs(bundle_ref))
+
+        self._extend_refs(refs, self._query_evidence_tool(slice_id, session.ctx))
+
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for ref in refs:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            deduped.append(ref)
+        return deduped
+
+    @staticmethod
+    def _extend_refs(refs: list[str], value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                refs.append(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                ArchitecturePlannerStrategy._extend_refs(refs, item)
+            return
+        if isinstance(value, (tuple, set)):
+            for item in value:
+                ArchitecturePlannerStrategy._extend_refs(refs, item)
+            return
+        if isinstance(value, dict):
+            for key in ("ref", "path", "evidence_ref", "evidence_path", "file"):
+                if key in value:
+                    ArchitecturePlannerStrategy._extend_refs(refs, value.get(key))
+            return
+
+    @staticmethod
+    def _collect_bundle_evidence_refs(bundle_ref: Any) -> list[str]:
+        refs: list[str] = []
+        facts = getattr(bundle_ref, "facts", None)
+        if facts is None and isinstance(bundle_ref, dict):
+            facts = bundle_ref.get("facts")
+        if isinstance(facts, dict):
+            claims = facts.get("llm_claims", [])
+            constraints_refs = facts.get("constraints_refs", [])
+        else:
+            claims = getattr(facts, "llm_claims", []) if facts is not None else []
+            constraints_refs = getattr(facts, "constraints_refs", []) if facts is not None else []
+
+        ArchitecturePlannerStrategy._extend_refs(refs, constraints_refs)
+        for claim in claims if isinstance(claims, list) else []:
+            if not isinstance(claim, dict):
+                continue
+            ArchitecturePlannerStrategy._extend_refs(refs, claim.get("evidence_refs"))
+            ArchitecturePlannerStrategy._extend_refs(refs, claim.get("file"))
+
+        source_index = getattr(bundle_ref, "source_index", None)
+        if source_index is None and isinstance(bundle_ref, dict):
+            source_index = bundle_ref.get("source_index")
+        entries = (
+            source_index.get("entries", [])
+            if isinstance(source_index, dict)
+            else getattr(source_index, "entries", [])
+        )
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            ArchitecturePlannerStrategy._extend_refs(refs, entry.get("path"))
+
+        return refs
+
+    def _query_evidence_tool(self, slice_id: str, ctx: dict[str, Any]) -> list[str]:
+        if self._evidence_tool is None:
+            return []
+
+        refs: list[str] = []
+        query = f"{slice_id} architecture decision evidence"
+        try:
+            if callable(self._evidence_tool):
+                raw = self._evidence_tool(
+                    query=query,
+                    layer="l2",
+                    ctx_metadata=ctx,
+                )
+            elif hasattr(self._evidence_tool, "search"):
+                raw = self._evidence_tool.search(query, max_results=5)
+            else:
+                raw = None
+        except Exception:
+            logger.debug("Failed querying evidence tool for slice %s", slice_id, exc_info=True)
+            return []
+
+        if raw is None:
+            return []
+        if isinstance(raw, dict):
+            self._extend_refs(refs, raw.get("evidence_refs"))
+            self._extend_refs(refs, raw.get("hits"))
+            return refs
+        hits = getattr(raw, "hits", None)
+        if isinstance(hits, list):
+            for hit in hits:
+                if isinstance(hit, dict):
+                    self._extend_refs(refs, hit.get("section_path"))
+                    self._extend_refs(refs, hit.get("lib_id"))
+                else:
+                    self._extend_refs(refs, getattr(hit, "section_path", ""))
+                    self._extend_refs(refs, getattr(hit, "lib_id", ""))
+            return refs
+        return refs
+
+    def _materialize_outcome_constraints(
+        self,
+        decision_point: Any,
+        outcome: DecisionOutcome,
+        candidates: list[Any],
+    ) -> list[ConstraintFact]:
+        if not outcome.committed or not outcome.new_constraints:
+            return []
+
+        selected = None
+        for candidate in candidates:
+            if candidate.candidate_id == outcome.selected_candidate_id:
+                selected = candidate
+                break
+        if selected is None:
+            return []
+
+        software_constraints = selected.constraints_introduced.get("software", {})
+        non_software_constraints = selected.constraints_introduced.get("non_software", {})
+        if not isinstance(software_constraints, dict):
+            software_constraints = {}
+        if not isinstance(non_software_constraints, dict):
+            non_software_constraints = {}
+
+        facts: list[ConstraintFact] = []
+        for constraint_id in outcome.new_constraints:
+            cid = str(constraint_id).strip()
+            if not cid:
+                continue
+            if cid in software_constraints:
+                fact = self._build_constraint_fact(
+                    constraint_id=cid,
+                    payload=software_constraints.get(cid),
+                    scope=decision_point.scope,
+                    dimension="software",
+                    decision_id=decision_point.decision_id,
+                    candidate_id=selected.candidate_id,
+                )
+            else:
+                fact = self._build_constraint_fact(
+                    constraint_id=cid,
+                    payload=non_software_constraints.get(cid),
+                    scope=decision_point.scope,
+                    dimension="operational",
+                    decision_id=decision_point.decision_id,
+                    candidate_id=selected.candidate_id,
+                )
+            if fact is not None:
+                facts.append(fact)
+        return facts
+
+    @staticmethod
+    def _build_constraint_fact(
+        *,
+        constraint_id: str,
+        payload: Any,
+        scope: str,
+        dimension: str,
+        decision_id: str,
+        candidate_id: str,
+    ) -> ConstraintFact | None:
+        question = f"Architecture decision constraint {constraint_id}"
+        answer = ""
+        resolved_dimension = dimension
+
+        if isinstance(payload, dict):
+            text_question = str(payload.get("question", "")).strip()
+            text_answer = str(payload.get("answer", payload.get("value", ""))).strip()
+            payload_dimension = str(payload.get("dimension", "")).strip().lower()
+            if text_question:
+                question = text_question
+            answer = text_answer or json.dumps(payload, sort_keys=True)
+            if payload_dimension in {
+                "software",
+                "legal",
+                "economic",
+                "organizational",
+                "temporal",
+                "operational",
+            }:
+                resolved_dimension = payload_dimension
+        elif isinstance(payload, str):
+            answer = payload.strip()
+        elif payload is not None:
+            answer = str(payload).strip()
+
+        if not answer:
+            answer = f"Constraint committed by {decision_id}/{candidate_id}"
+
+        return ConstraintFact(
+            constraint_id=constraint_id,
+            question=question,
+            answer=answer,
+            source="research",
+            confidence=1.0,
+            validated=True,
+            dimension=resolved_dimension,  # type: ignore[arg-type]
+            authority_required="planner_ok",
+            decision_type="architecture_decision",
+            scope=scope or "system",
+            applies_to_layers=["L2"],
+            status="ACTIVE",
+            trace=[
+                f"decision_id={decision_id}",
+                f"candidate_id={candidate_id}",
+                "origin=architecture_planner",
+            ],
         )
 
     def _load_intra_artifacts(self, lib_name: str) -> dict[str, Any]:

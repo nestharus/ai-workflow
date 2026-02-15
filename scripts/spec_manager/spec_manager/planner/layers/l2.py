@@ -1,10 +1,9 @@
 """L2 (architecture) layer planner.
 
-L2 operates on *component manifests*, *pins registries*, *entrypoints*,
-and *wiring declarations*.  Its discovery phase builds an architecture
-topology graph (nodes: component, pin, edge, handler, route; edges:
-provides, consumes, wired_to, declared_in) and its plan phase produces
-wiring intentions that reference graph edges, pins, and components.
+L2 routes architecture source artifacts (manifests, pin registries,
+entrypoints, wiring declarations) into a decision-point planning loop.
+Discovery is scoped to the current slice context rather than scanning
+the full workspace graph up front.
 
 Tools (research, integration, evidence) are injected at construction
 time and are optional -- ``None`` means "skip that capability for now".
@@ -85,21 +84,26 @@ def _empty_topology() -> dict[str, Any]:
     }
 
 
-def _discover_arch_files(workspace_root: str) -> list[str]:
-    """Return relative paths for architecture-relevant files in *workspace_root*.
+def _is_relative_to(path: Path, candidate_parent: Path) -> bool:
+    try:
+        path.relative_to(candidate_parent)
+    except ValueError:
+        return False
+    return True
 
-    Uses simple glob expansion; no language-specific parsing.
-    """
-    if not workspace_root:
-        return []
-    root = Path(workspace_root)
-    if not root.is_dir():
-        return []
 
+def _discover_arch_files(*, workspace_root: Path | None, scope_roots: list[Path]) -> list[str]:
+    """Return architecture file paths scoped to the current slice roots."""
     found: list[str] = []
-    for pattern in _ARCH_FILE_GLOBS:
-        for match in sorted(root.glob(pattern)):
-            found.append(str(match.relative_to(root)))
+    for scope_root in scope_roots:
+        if not scope_root.is_dir():
+            continue
+        for pattern in _ARCH_FILE_GLOBS:
+            for match in sorted(scope_root.glob(pattern)):
+                if workspace_root is not None and _is_relative_to(match, workspace_root):
+                    found.append(str(match.relative_to(workspace_root)))
+                else:
+                    found.append(str(match.relative_to(scope_root)))
     # Deduplicate while preserving order.
     seen: set[str] = set()
     unique: list[str] = []
@@ -162,23 +166,24 @@ class L2Planner:
     # ------------------------------------------------------------------
 
     def discover(self, ctx: Any) -> dict[str, Any]:
-        """Scan the workspace for arch files and build a topology summary.
-
-        If an ``integration_tool`` is available it is invoked with the
-        discovered file list to produce a richer topology graph.
-        Otherwise a lightweight skeleton listing the arch files is
-        returned.
-        """
-        workspace_root = getattr(ctx, "workspace_root", "") or ""
-        arch_files = _discover_arch_files(workspace_root)
+        """Route slice-scoped architecture artifacts into a discovery summary."""
+        workspace_root, scope_roots = self._resolve_discovery_roots(ctx)
+        arch_files = _discover_arch_files(
+            workspace_root=workspace_root,
+            scope_roots=scope_roots,
+        )
 
         topology = _empty_topology()
         topology["arch_files"] = arch_files
+        topology["scope_roots"] = [str(root) for root in scope_roots]
         discovery_issues: list[str] = []
+
+        if not scope_roots:
+            discovery_issues.append("No scoped architecture roots were resolved for this slice.")
 
         if not arch_files:
             discovery_issues.append(
-                "No architecture manifest files were discovered "
+                "No architecture manifest files were discovered in scoped roots "
                 "(component_manifest/pins_registry/entrypoints/wiring)."
             )
 
@@ -189,14 +194,21 @@ class L2Planner:
                 enriched: Any
                 if callable(self._integration_tool):
                     enriched = self._integration_tool(
-                        workspace_root=workspace_root,
+                        workspace_root=str(workspace_root) if workspace_root is not None else "",
+                        scope_roots=[str(root) for root in scope_roots],
                         arch_files=arch_files,
                     )
                 elif hasattr(self._integration_tool, "build_graph"):
                     absolute_arch_files = [
-                        str((Path(workspace_root) / rel).resolve()) for rel in arch_files if rel
+                        str((workspace_root / rel).resolve())
+                        for rel in arch_files
+                        if rel and workspace_root is not None
                     ]
-                    enriched = self._integration_tool.build_graph(absolute_arch_files)
+                    enriched = (
+                        self._integration_tool.build_graph(absolute_arch_files)
+                        if absolute_arch_files
+                        else {}
+                    )
                     if hasattr(enriched, "to_dict"):
                         enriched = enriched.to_dict()
                 else:
@@ -217,7 +229,7 @@ class L2Planner:
                 )
                 discovery_issues.append(
                     "Integration tool failed during topology discovery; "
-                    "graph enrichment unavailable."
+                    "topology enrichment unavailable."
                 )
 
         if not topology["nodes"] and not topology["edges"]:
@@ -229,7 +241,8 @@ class L2Planner:
         topology["discovery_issues"] = discovery_issues
 
         logger.debug(
-            "L2 discover: %d arch files, %d nodes, %d edges, %d issues",
+            "L2 discover: %d scoped roots, %d arch files, %d nodes, %d edges, %d issues",
+            len(scope_roots),
             len(arch_files),
             len(topology["nodes"]),
             len(topology["edges"]),
@@ -249,132 +262,76 @@ class L2Planner:
         strategy pipeline (impact classification, constraint loading,
         problem framing, architecture decisions, authority checks).
 
-        Without a store adapter, this method still runs deterministic impact
-        classification first and only invokes ``research_tool`` for
-        MEDIUM/HIGH impact. It always retains a local topology-aware fallback.
+        Without a store adapter, this method still uses the same
+        decision-point planning structure with lighter internals.
         """
         if self._constraints_store_adapter is not None:
             return self._build_plan_via_strategies(ctx, gaps, discovery)
 
-        impact_level = self._classify_fallback_impact(ctx, gaps, discovery)
-        if self._research_tool is not None and impact_level in {"MEDIUM", "HIGH"}:
-            try:
-                result = self._research_tool(
-                    layer="l2",
-                    gaps=gaps,
-                    topology=discovery,
-                    ctx_metadata=getattr(ctx, "metadata", {}),
-                )
-                if isinstance(result, dict):
-                    return result
-            except Exception:
-                logger.warning(
-                    "L2 research_tool failed in build_plan; falling back to local mapping",
-                    exc_info=True,
-                )
+        return self._build_plan_without_store(ctx, gaps, discovery)
 
-        return self._build_local_topology_fallback_plan(gaps, discovery)
-
-    def _build_local_topology_fallback_plan(
+    def _build_plan_without_store(
         self,
+        ctx: Any,
         gaps: list[dict[str, Any]],
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
-        """Produce topology-aware intentions without strategy/session orchestration."""
-        nodes = [n for n in discovery.get("nodes", []) if isinstance(n, dict)]
-        edges = [e for e in discovery.get("edges", []) if isinstance(e, dict)]
-        pin_node_ids = {
-            str(n.get("id") or n.get("name") or "")
-            for n in nodes
-            if str(n.get("type", n.get("kind", ""))).lower() == "pin"
-        }
+        """Run L2 architecture decisions without constraint-store bootstrapping."""
+        from spec_manager.planner.constraints.types import ImpactClassification
+        from spec_manager.planner.strategies.architecture_strategy import (
+            ArchitecturePlannerStrategy,
+        )
+        from spec_manager.planner.strategies.protocol import PlanningSession
 
-        intentions: list[dict[str, Any]] = []
-        for gap in gaps:
-            text_bits: list[str] = []
-            for key in ("description", "summary", "component_id", "id", "target", "file"):
-                value = gap.get(key)
-                if isinstance(value, str) and value.strip():
-                    text_bits.append(value.strip())
-            for list_key in ("pin_refs", "target_files", "dependencies"):
-                value = gap.get(list_key)
-                if isinstance(value, list):
-                    text_bits.extend(str(item) for item in value if item)
-            search_text = " ".join(text_bits).lower()
+        impact_level = self._classify_fallback_impact(ctx, gaps, discovery)
+        run_agent = self._research_tool if impact_level in {"MEDIUM", "HIGH"} else None
+        effective_impact = impact_level if impact_level in {"MEDIUM", "HIGH"} else "MEDIUM"
 
-            matched_nodes: list[str] = []
-            matched_files: list[str] = []
-            for node in nodes:
-                node_id = str(node.get("id") or node.get("name") or "")
-                node_fields = [
-                    node_id,
-                    str(node.get("name", "")),
-                    str(node.get("type", node.get("kind", ""))),
-                    str(node.get("file", "")),
-                ]
-                if not node_id:
-                    continue
-                if any(field and field.lower() in search_text for field in node_fields):
-                    matched_nodes.append(node_id)
-                    node_file = str(node.get("file", "")).strip()
-                    if node_file:
-                        matched_files.append(node_file)
+        metadata = getattr(ctx, "metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
 
-            matched_node_set = set(matched_nodes)
-            matched_edges: list[str] = []
-            for edge in edges:
-                source = str(edge.get("source", "")).strip()
-                target = str(edge.get("target", "")).strip()
-                edge_type = str(edge.get("type", edge.get("edge_type", ""))).strip()
-                edge_ref = f"{source}->{target}:{edge_type}" if source or target else edge_type
-                if not edge_ref:
-                    continue
-                if (
-                    source in matched_node_set
-                    or target in matched_node_set
-                    or edge_ref.lower() in search_text
-                    or edge_type.lower() in search_text
-                ):
-                    matched_edges.append(edge_ref)
+        workspace_root = Path(getattr(ctx, "workspace_root", "") or "")
+        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
+        session = PlanningSession(
+            ctx={
+                "layer": "L2",
+                "slice_id": getattr(ctx, "slice_id", ""),
+                "run_id": getattr(ctx, "run_id", "default"),
+                "workspace_root": str(workspace_root),
+                "mode": mode,
+                "interactive": mode == "interactive",
+                "touched_files_count": _estimate_touched_files(gaps),
+                "bundle_ref": getattr(ctx, "bundle_ref", None),
+                "metadata": metadata,
+            },
+            gaps=gaps,
+            discovery=discovery,
+            impact=ImpactClassification(
+                impact=effective_impact,
+                blast_radius="SLICE",
+            ),
+        )
+        strategy = ArchitecturePlannerStrategy(
+            workspace_root=workspace_root,
+            run_agent=run_agent,
+            work_item_store=self._work_item_store,
+            wait_graph=self._wait_graph,
+            evidence_tool=self._evidence_tool,
+        )
+        session = strategy.run(session)
 
-            target_files = gap.get("target_files", [])
-            if not target_files and matched_files:
-                target_files = sorted(set(matched_files))
-
-            component_id = gap.get("component_id", "")
-            if not component_id and matched_nodes:
-                component_id = matched_nodes[0]
-
-            pin_refs = [str(p) for p in gap.get("pin_refs", []) if p]
-            pin_refs.extend(node_id for node_id in matched_nodes if node_id in pin_node_ids)
-            pin_refs = sorted(set(pin_refs))
-
-            dependencies = [str(dep) for dep in gap.get("dependencies", []) if dep]
-            dependencies.extend(edge for edge in matched_edges if edge)
-            dependencies = sorted(set(dependencies))
-
-            approach = gap.get("description", gap.get("summary", ""))
-            if matched_edges:
-                approach = (
-                    f"{approach} (graph refs: {', '.join(matched_edges[:3])})"
-                    if approach
-                    else f"Wire graph refs: {', '.join(matched_edges[:3])}"
-                )
-
-            intentions.append(
-                {
-                    "component_id": component_id or gap.get("id", ""),
-                    "target_files": target_files,
-                    "approach": approach,
-                    "pin_refs": pin_refs,
-                    "dependencies": dependencies,
-                    "graph_targets": {
-                        "nodes": matched_nodes,
-                        "edges": matched_edges,
-                    },
-                }
-            )
-        return {"intentions": intentions}
+        normalized_intentions = self._normalize_decision_loop_intentions(session.intentions, gaps)
+        result: dict[str, Any] = {"intentions": normalized_intentions}
+        if session.decision_requirements:
+            result["decision_requirements"] = [dr.to_dict() for dr in session.decision_requirements]
+        if session.new_constraints:
+            result["new_constraints"] = [c.to_dict() for c in session.new_constraints]
+        if session.under_spec_events:
+            result["under_spec_events"] = session.under_spec_events
+        if session.decision_outcomes:
+            result["decision_outcomes"] = [o.to_dict() for o in session.decision_outcomes]
+        return result
 
     def _classify_fallback_impact(
         self,
@@ -417,6 +374,116 @@ class L2Planner:
         if session.impact is None:
             return "LOW"
         return session.impact.impact
+
+    @staticmethod
+    def _normalize_decision_loop_intentions(
+        intentions: list[dict[str, Any]],
+        gaps: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Project decision-loop outputs onto the L2 wiring intention contract."""
+        normalized: list[dict[str, Any]] = []
+        for index, intention in enumerate(intentions):
+            if not isinstance(intention, dict):
+                continue
+            if "component_id" in intention:
+                normalized.append(dict(intention))
+                continue
+
+            gap = gaps[index] if index < len(gaps) and isinstance(gaps[index], dict) else {}
+            target_files = gap.get("target_files", [])
+            if not isinstance(target_files, list):
+                target_files = []
+            if (
+                not target_files
+                and isinstance(gap.get("file"), str)
+                and gap.get("file", "").strip()
+            ):
+                target_files = [gap["file"]]
+
+            approach = str(intention.get("approach", "")).strip()
+            if approach in {"stub_proposal", "parse_error"}:
+                approach = ""
+            if not approach:
+                approach = str(intention.get("details", "")).strip()
+            if approach == "No LLM available":
+                approach = ""
+            if not approach:
+                approach = str(gap.get("description", gap.get("summary", ""))).strip()
+
+            normalized.append(
+                {
+                    "component_id": str(
+                        gap.get("component_id") or gap.get("id") or intention.get("source") or ""
+                    ).strip(),
+                    "target_files": [
+                        str(path).strip() for path in target_files if str(path).strip()
+                    ],
+                    "approach": approach,
+                    "pin_refs": [
+                        str(ref).strip() for ref in gap.get("pin_refs", []) if str(ref).strip()
+                    ]
+                    if isinstance(gap.get("pin_refs"), list)
+                    else [],
+                    "dependencies": [
+                        str(dep).strip() for dep in gap.get("dependencies", []) if str(dep).strip()
+                    ]
+                    if isinstance(gap.get("dependencies"), list)
+                    else [],
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _resolve_discovery_roots(ctx: Any) -> tuple[Path | None, list[Path]]:
+        """Resolve directory roots to scan for architecture artifacts."""
+        roots: list[Path] = []
+        seen: set[Path] = set()
+
+        workspace_value = str(getattr(ctx, "workspace_root", "") or "").strip()
+        workspace_root = Path(workspace_value) if workspace_value else None
+        if workspace_root is not None:
+            try:
+                workspace_root = workspace_root.resolve()
+            except OSError:
+                workspace_root = None
+        if workspace_root is not None and not workspace_root.is_dir():
+            workspace_root = None
+
+        def _append_root(path: Path | None) -> None:
+            if path is None:
+                return
+            try:
+                resolved = path.resolve()
+            except OSError:
+                return
+            if not resolved.is_dir() or resolved in seen:
+                return
+            seen.add(resolved)
+            roots.append(resolved)
+
+        slice_root_value = str(getattr(ctx, "slice_root", "") or "").strip()
+        if slice_root_value:
+            _append_root(Path(slice_root_value))
+
+        slice_id = str(getattr(ctx, "slice_id", "") or "").strip()
+        if workspace_root is not None and slice_id:
+            _append_root(workspace_root / "libraries" / slice_id)
+
+        metadata = getattr(ctx, "metadata", {})
+        if isinstance(metadata, dict) and workspace_root is not None:
+            for key in ("focus_libraries", "libraries", "library_ids"):
+                libs = metadata.get(key)
+                if not isinstance(libs, list):
+                    continue
+                for lib in libs:
+                    lib_name = str(lib).strip()
+                    if lib_name:
+                        _append_root(workspace_root / "libraries" / lib_name)
+
+        if not roots and workspace_root is not None:
+            _append_root(workspace_root)
+
+        return workspace_root, roots
 
     def _build_plan_via_strategies(
         self,
@@ -467,6 +534,8 @@ class L2Planner:
             "introduces_infra": _coerce_bool(metadata.get("introduces_infra", False)),
             "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
             "security_privacy_compliance": security_privacy_compliance,
+            "bundle_ref": getattr(ctx, "bundle_ref", None),
+            "metadata": metadata,
         }
 
         session = PlanningSession(
@@ -489,6 +558,7 @@ class L2Planner:
                 run_agent=run_agent,
                 work_item_store=self._work_item_store,
                 wait_graph=self._wait_graph,
+                evidence_tool=self._evidence_tool,
             ),
             CandidateEvaluatorStrategy(),
             AuthorityDeciderStrategy(workspace_root),

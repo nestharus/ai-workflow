@@ -155,6 +155,11 @@ class DecisionPointDetector:
             "layer",
             "module",
             "component",
+            "wiring",
+            "wire",
+            "pin",
+            "event",
+            "boundary",
         }
         points: list[DecisionPoint] = []
 
