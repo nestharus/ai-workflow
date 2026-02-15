@@ -31,6 +31,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from spec_manager.core.json_extraction import _extract_json_payload
@@ -72,6 +73,7 @@ from spec_manager.orchestration.intent_agent.skeleton import (
 )
 from spec_manager.orchestration.intent_agent.state import (
     AnswerProvenance,
+    ConceptMapEntry,
     FrameAssumption,
     IntentEventLog,
     IntentSessionState,
@@ -619,6 +621,283 @@ class IntentAgentOrchestrator:
         if isinstance(value, list):
             return [item.strip() for item in (str(item).strip() for item in value) if item.strip()]
         return []
+
+    def _coerce_float(self, value: Any, default: float = 0.0) -> float:
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                return default
+        return default
+
+    def _serialize_frame_assumptions(self) -> list[dict[str, str]]:
+        if self._state is None:
+            return []
+        return [
+            {
+                "text": assumption.text,
+                "status": assumption.status,
+                "source": assumption.source,
+                "created_at": assumption.created_at,
+            }
+            for assumption in self._state.problem_frame.frame_assumptions
+            if assumption.text.strip()
+        ]
+
+    def _normalize_frame_assumptions(self, raw_assumptions: Any) -> list[FrameAssumption]:
+        if not isinstance(raw_assumptions, list):
+            return []
+
+        valid_statuses = {"HYPOTHESIS", "CONFIRMED", "REJECTED"}
+        valid_sources = {"user", "intent_agent"}
+        now_iso = datetime.now(UTC).isoformat()
+        existing_by_text: dict[str, FrameAssumption] = {}
+        if self._state is not None:
+            existing_by_text = {
+                item.text.strip().lower(): item
+                for item in self._state.problem_frame.frame_assumptions
+                if item.text.strip()
+            }
+
+        normalized: list[FrameAssumption] = []
+        seen: set[str] = set()
+        for raw_assumption in raw_assumptions:
+            if isinstance(raw_assumption, dict):
+                text = self._coerce_str(raw_assumption.get("text"))
+                raw_status = self._coerce_str(raw_assumption.get("status"), "HYPOTHESIS").upper()
+                raw_source = self._coerce_str(raw_assumption.get("source"), "intent_agent").lower()
+                created_at = self._coerce_str(raw_assumption.get("created_at"))
+            else:
+                text = self._coerce_str(raw_assumption)
+                raw_status = "HYPOTHESIS"
+                raw_source = "intent_agent"
+                created_at = ""
+
+            if not text:
+                continue
+            canonical_text = text.lower()
+            if canonical_text in seen:
+                continue
+            seen.add(canonical_text)
+
+            status = raw_status if raw_status in valid_statuses else "HYPOTHESIS"
+            source = raw_source if raw_source in valid_sources else "intent_agent"
+            if not created_at:
+                existing = existing_by_text.get(canonical_text)
+                created_at = existing.created_at if existing is not None else now_iso
+
+            normalized.append(
+                FrameAssumption(
+                    text=text,
+                    status=status,
+                    source=source,
+                    created_at=created_at,
+                )
+            )
+
+        return normalized
+
+    def _normalize_concept_user_terms(self, raw_terms: Any) -> dict[str, ConceptMapEntry]:
+        if not isinstance(raw_terms, dict):
+            return {}
+
+        normalized: dict[str, ConceptMapEntry] = {}
+        for raw_term, raw_entry in raw_terms.items():
+            term = self._coerce_str(raw_term)
+            if not term or not isinstance(raw_entry, dict):
+                continue
+            maps_to = self._dedupe_ordered(self._coerce_str_list(raw_entry.get("maps_to", [])))
+            confidence = self._coerce_float(raw_entry.get("confidence", 0.0), 0.0)
+            confidence = min(1.0, max(0.0, confidence))
+            normalized[term] = ConceptMapEntry(
+                maps_to=maps_to,
+                confidence=confidence,
+            )
+        return normalized
+
+    def _normalize_concept_normalized_terms(self, raw_terms: Any) -> dict[str, list[str]]:
+        if not isinstance(raw_terms, dict):
+            return {}
+        normalized_terms: dict[str, list[str]] = {}
+        for raw_key, raw_values in raw_terms.items():
+            key = self._coerce_str(raw_key)
+            if not key:
+                continue
+            normalized_terms[key] = self._dedupe_ordered(self._coerce_str_list(raw_values))
+        return normalized_terms
+
+    def _default_vague_intent_choices(self) -> list[dict[str, str]]:
+        return [
+            {"id": "a", "label": "Order routing + execution"},
+            {"id": "b", "label": "Portfolio + risk + reporting"},
+            {"id": "c", "label": "Treasury + settlement + reconciliation"},
+            {"id": "d", "label": "Another variant (describe in 1-2 sentences)"},
+        ]
+
+    def _extract_choice_specs_from_prompt(self, prompt_text: str) -> list[dict[str, str]]:
+        line_pattern = re.compile(r"^\s*(?:[-*]\s*)?\(?([A-Za-z])\)?[.)]\s+(.+?)\s*$")
+        choices: list[dict[str, str]] = []
+        seen_ids: set[str] = set()
+        for line in self._coerce_str(prompt_text).splitlines():
+            match = line_pattern.match(line)
+            if match is None:
+                continue
+            choice_id = match.group(1).lower()
+            label = self._coerce_str(match.group(2))
+            if not label or choice_id in seen_ids:
+                continue
+            seen_ids.add(choice_id)
+            choices.append({"id": choice_id, "label": label})
+        return choices
+
+    def _ensure_choice_prompt_text(
+        self,
+        prompt_text: str,
+        choices: list[dict[str, str]],
+    ) -> str:
+        base_prompt = self._coerce_str(prompt_text, "Which is closest to what you mean right now?")
+        if self._extract_choice_specs_from_prompt(base_prompt):
+            return base_prompt
+        option_lines = "\n".join(
+            f"({chr(ord('A') + index)}) {choice['label']}" for index, choice in enumerate(choices)
+        )
+        return f"{base_prompt}\n{option_lines}"
+
+    def _candidate_unknown_specs_from_message(self, text: str) -> list[dict[str, str]]:
+        if self._state is None:
+            return []
+        unknown_specs: list[dict[str, str]] = []
+        hypothesis_assumptions = [
+            assumption
+            for assumption in self._state.problem_frame.frame_assumptions
+            if assumption.status == "HYPOTHESIS" and assumption.text.strip()
+        ]
+        for assumption in hypothesis_assumptions[:3]:
+            tokens = _CANONICAL_KEY_TOKEN_RE.findall(assumption.text.lower())
+            slug = "_".join(tokens[:6]) if tokens else f"assumption_{len(unknown_specs) + 1}"
+            unknown_specs.append(
+                {
+                    "question_text": (
+                        "Should we treat this current assumption as true for your request: "
+                        f"{assumption.text}"
+                    ),
+                    "taxonomy_hint": "VALIDATION",
+                    "canonical_key_hint": f"intent.user_message.assumption.{slug}",
+                    "assumption_text": assumption.text,
+                }
+            )
+        if unknown_specs:
+            return unknown_specs
+
+        if is_vague_user_input(text):
+            return []
+        return [
+            {
+                "question_text": (
+                    "Which workflow should we treat as the primary path for this request?"
+                ),
+                "taxonomy_hint": "INTENT",
+                "canonical_key_hint": "intent.user_message.primary_workflow",
+                "assumption_text": "",
+            }
+        ]
+
+    def _build_user_message_unknown_signal(
+        self,
+        *,
+        user_text: str,
+        question_text: str,
+        taxonomy_hint: str,
+        canonical_key_hint: str,
+        assumption_text: str = "",
+    ) -> Any:
+        assert self._state is not None
+        now_iso = datetime.now(UTC).isoformat()
+        payload: dict[str, Any] = {
+            "source": "user_message",
+            "user_text": user_text,
+            "text": question_text,
+            "domain_description": self._state.problem_frame.current_restatement,
+        }
+        if assumption_text:
+            payload["failure_mode"] = (
+                f"The current frame may be wrong if assumption '{assumption_text}' is incorrect."
+            )
+            payload["frame_assumption"] = assumption_text
+
+        return SimpleNamespace(
+            uq_id=f"uq_{uuid.uuid4().hex[:12]}",
+            created_at=now_iso,
+            source=SimpleNamespace(
+                kind="INTENT_AGENT",
+                trace_id="user_message_unknown_extraction",
+                slice_id="",
+                layer="INTENT",
+                signal_id="",
+            ),
+            question=SimpleNamespace(
+                text=question_text,
+                taxonomy_hint=taxonomy_hint,
+                canonical_key_hint=canonical_key_hint,
+                answer_spec_hint={},
+            ),
+            context=SimpleNamespace(
+                blocking=SimpleNamespace(severity="INFO", blocked_slices=[]),
+            ),
+            payload=payload,
+        )
+
+    def _ingest_user_message_candidate_unknowns(self, text: str) -> None:
+        if self._state is None or self._queue is None:
+            return
+        if self._run_agent is None:
+            return
+        unknown_specs = self._candidate_unknown_specs_from_message(text)
+        for unknown_spec in unknown_specs:
+            signal = self._build_user_message_unknown_signal(
+                user_text=text,
+                question_text=self._coerce_str(unknown_spec.get("question_text")),
+                taxonomy_hint=self._coerce_str(unknown_spec.get("taxonomy_hint"), "INTENT"),
+                canonical_key_hint=self._coerce_str(
+                    unknown_spec.get("canonical_key_hint"),
+                    "intent.user_message.unknown",
+                ),
+                assumption_text=self._coerce_str(unknown_spec.get("assumption_text")),
+            )
+            try:
+                self.ingest_signal(
+                    signal,
+                    update_signal_watermark=False,
+                    update_skeleton=False,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed ingesting user-message candidate unknown signal.",
+                    exc_info=True,
+                )
+
+    def _is_ready_for_skeleton(self) -> bool:
+        if self._state is None or self._queue is None:
+            return False
+        self._refresh_question_queue_state()
+        pf = self._state.problem_frame
+        frame_dict = {
+            "current_restatement": pf.current_restatement,
+            "goals": list(pf.goals),
+            "non_goals": list(pf.non_goals),
+            "scope": {
+                "in": list(pf.scope.get("in", [])),
+                "out": list(pf.scope.get("out", [])),
+            },
+            "success_metrics": list(pf.success_metrics),
+            "risk_flags": list(pf.risk_flags),
+            "frame_assumptions": self._serialize_frame_assumptions(),
+        }
+        return should_produce_skeleton(frame_dict, self._state.question_queue_state.to_dict())
 
     @staticmethod
     def _coerce_bool(value: Any) -> bool:
@@ -1912,6 +2191,7 @@ class IntentAgentOrchestrator:
             },
             "success_metrics": list(pf.success_metrics),
             "risk_flags": list(pf.risk_flags),
+            "frame_assumptions": self._serialize_frame_assumptions(),
         }
 
     def _serialize_concept_map(self) -> dict[str, Any]:
@@ -1952,6 +2232,13 @@ class IntentAgentOrchestrator:
             self._state.problem_frame.success_metrics = list(updated_frame["success_metrics"])
         if "risk_flags" in updated_frame:
             self._state.problem_frame.risk_flags = list(updated_frame["risk_flags"])
+        if "frame_assumptions" in updated_frame and isinstance(
+            updated_frame.get("frame_assumptions"),
+            list,
+        ):
+            self._state.problem_frame.frame_assumptions = self._normalize_frame_assumptions(
+                updated_frame["frame_assumptions"],
+            )
 
     def _apply_concept_map_update(self, text: str) -> None:
         if self._state is None or self._concept_map is None:
@@ -1963,16 +2250,35 @@ class IntentAgentOrchestrator:
         )
         if not isinstance(updated_map, dict):
             return
-        new_introduced = updated_map.get("user_introduced_terms", [])
-        for term in new_introduced:
-            if term not in self._state.concept_map.user_introduced_terms:
-                self._state.concept_map.user_introduced_terms.append(term)
+        if "user_terms" in updated_map and isinstance(updated_map.get("user_terms"), dict):
+            self._state.concept_map.user_terms = self._normalize_concept_user_terms(
+                updated_map.get("user_terms"),
+            )
+        if "normalized_terms" in updated_map and isinstance(
+            updated_map.get("normalized_terms"),
+            dict,
+        ):
+            self._state.concept_map.normalized_terms = self._normalize_concept_normalized_terms(
+                updated_map.get("normalized_terms"),
+            )
+        if "user_introduced_terms" in updated_map and isinstance(
+            updated_map.get("user_introduced_terms"),
+            list,
+        ):
+            introduced_terms = self._dedupe_ordered(
+                self._coerce_str_list(updated_map.get("user_introduced_terms", [])),
+            )
+            if self._state.concept_map.user_terms:
+                for term in self._state.concept_map.user_terms:
+                    if term not in introduced_terms:
+                        introduced_terms.append(term)
+            self._state.concept_map.user_introduced_terms = introduced_terms
 
     def _handle_vague_user_input(self, text: str) -> dict[str, Any] | None:
         if not is_vague_user_input(text):
             return None
         vague_item = self.handle_vague_input(text)
-        self._maybe_update_skeleton()
+        self._refresh_question_queue_state()
         self.save_state()
         if isinstance(vague_item, QuestionItem) and vague_item.status == "OPEN":
             action = {
@@ -1985,7 +2291,6 @@ class IntentAgentOrchestrator:
         return None
 
     def _finalize_user_message(self) -> None:
-        self._maybe_update_skeleton()
         self._refresh_question_queue_state()
         self.save_state()
 
@@ -1999,6 +2304,16 @@ class IntentAgentOrchestrator:
         self._log_user_message_event(text)
         self._apply_problem_frame_update(text)
         self._apply_concept_map_update(text)
+        self._ingest_user_message_candidate_unknowns(text)
+
+        if self._is_ready_for_skeleton():
+            created_paths = self._maybe_update_skeleton()
+            self._refresh_question_queue_state()
+            self.save_state()
+            action: dict[str, Any] = {"action": "skeleton"}
+            if created_paths:
+                action["artifact_paths"] = [str(path) for path in created_paths]
+            return action
 
         vague_action = self._handle_vague_user_input(text)
         if vague_action is not None:
@@ -2015,7 +2330,13 @@ class IntentAgentOrchestrator:
     #   5. If PASS → dedup check → enqueue
     #   6. If FAIL after retries → mark UNASKABLE, escalate to Planner
     #   7. Update watermark
-    def ingest_signal(self, signal: UserQuestionSignal) -> QuestionItem | None:
+    def ingest_signal(
+        self,
+        signal: UserQuestionSignal,
+        *,
+        update_signal_watermark: bool = True,
+        update_skeleton: bool = True,
+    ) -> QuestionItem | None:
         """Ingest a UserQuestionSignal and produce a queued question (or None)."""
         if self._state is None:
             self._ensure_initialized()
@@ -2315,9 +2636,11 @@ class IntentAgentOrchestrator:
             )
 
         # 7. Update signal watermark.
-        self._state.watermarks.user_question_signal_watermark = signal.uq_id
+        if update_signal_watermark:
+            self._state.watermarks.user_question_signal_watermark = signal.uq_id
 
-        self._maybe_update_skeleton()
+        if update_skeleton:
+            self._maybe_update_skeleton()
         return item
 
     # TODO [R2-4.1]: Implement handle_answer(question_id, raw_text, choice_id)
@@ -3133,7 +3456,6 @@ class IntentAgentOrchestrator:
     #   - If queue empty → return None (or produce skeleton if ready)
     #   - Immediate ask: if queue has BLOCKING and current is INFO
     #   - Default: return next_question() from queue
-    #   - Batch: return next_batch() if applicable
     def next_action(self) -> dict[str, Any] | None:
         """Determine the next action (ask question, produce skeleton, wait).
 
@@ -3147,15 +3469,8 @@ class IntentAgentOrchestrator:
         # Check for skeleton readiness if no open questions.
         open_items = self._queue.get_open_items()
         if not open_items:
-            if self._state is not None:
-                pf = self._state.problem_frame
-                frame_dict = {
-                    "current_restatement": pf.current_restatement,
-                    "goals": list(pf.goals),
-                }
-                queue_state = self._state.question_queue_state.to_dict()
-                if should_produce_skeleton(frame_dict, queue_state):
-                    return {"action": "skeleton"}
+            if self._is_ready_for_skeleton():
+                return {"action": "skeleton"}
             return {"action": "wait"}
 
         # Immediate-ask rule applies only to newly-arrived BLOCKING questions.
@@ -3192,22 +3507,9 @@ class IntentAgentOrchestrator:
                 return self._finalize_prompt_action(action)
 
         # Get the next question (default priority ordering).
-        batch = self._queue.next_batch(run_agent=self._run_agent)
-        if not batch:
+        next_q = self._queue.next_question(run_agent=self._run_agent)
+        if next_q is None:
             return {"action": "wait"}
-
-        if len(batch) > 1:
-            if self._state is not None:
-                self._state.question_queue_state.last_presented_question_id = batch[0].question_id
-                self._state.question_queue_state.active_batch_id = batch[0].question_id
-            action = {
-                "action": "ask_batch",
-                "questions": [item.to_dict() for item in batch],
-                "question_ids": [item.question_id for item in batch],
-            }
-            return self._finalize_prompt_action(action)
-
-        next_q = batch[0]
 
         # Track last presented question in state.
         if self._state is not None:
@@ -3243,15 +3545,23 @@ class IntentAgentOrchestrator:
                 run_agent=self._run_agent,
             )
         else:
+            default_choices = self._default_vague_intent_choices()
             candidate = QualityCheckCandidate(
-                text=(
-                    "Your input could be interpreted in different ways. "
-                    "Which of the following best describes what you want to build?"
+                text=self._ensure_choice_prompt_text(
+                    "Your input could be interpreted in different ways. Which is closest to what "
+                    "you mean right now?",
+                    default_choices,
                 ),
                 scenario=f'You said: "{text}"',
                 answer_spec_kind="choice",
                 taxonomy_type="INTENT",
             )
+        candidate.answer_spec_kind = "choice"
+        parsed_candidate_choices = self._extract_choice_specs_from_prompt(candidate.text)
+        if not parsed_candidate_choices:
+            default_choices = self._default_vague_intent_choices()
+            candidate.text = self._ensure_choice_prompt_text(candidate.text, default_choices)
+            parsed_candidate_choices = default_choices
 
         # Quality gate.
         concept_terms = list(self._state.concept_map.user_introduced_terms)
@@ -3266,6 +3576,14 @@ class IntentAgentOrchestrator:
         self._log_quality_checks(records)
 
         used_candidate = final_candidate if passed and final_candidate else candidate
+        used_candidate.answer_spec_kind = "choice"
+        parsed_choices = self._extract_choice_specs_from_prompt(used_candidate.text)
+        if not parsed_choices:
+            parsed_choices = parsed_candidate_choices or self._default_vague_intent_choices()
+            used_candidate.text = self._ensure_choice_prompt_text(
+                used_candidate.text,
+                parsed_choices,
+            )
         used_candidate_taxonomy = normalize_user_facing_taxonomy("INTENT")
         canonical_key = self._normalize_canonical_key(
             "intent.disambiguation",
@@ -3283,7 +3601,10 @@ class IntentAgentOrchestrator:
             user_prompt=UserPrompt(
                 text=used_candidate.text,
                 scenario=used_candidate.scenario,
-                answer_spec=AnswerSpec(kind=used_candidate.answer_spec_kind),
+                answer_spec=AnswerSpec(
+                    kind="choice",
+                    choices=parsed_choices,
+                ),
             ),
             origins=[
                 QuestionOrigin(
