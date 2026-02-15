@@ -11,7 +11,9 @@ When no tool is supplied the corresponding step is simply skipped.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -263,10 +265,21 @@ class L1Planner:
         spec_refs = signal.get("spec_refs", [])
         search_hints = signal.get("search_hints", {})
 
+        spec_ref_texts = _extract_spec_ref_texts(spec_refs)
+        hint_keywords = search_hints.get("keywords", [])
+        if not isinstance(hint_keywords, list):
+            hint_keywords = []
+        keywords = _dedupe_preserve_order(
+            [str(k) for k in hint_keywords if isinstance(k, str) and k.strip()]
+            + _extract_artifact_channel_tokens(str(need.get("artifact_key", "")))
+        )
+
         query = SearchQuery(
-            spec_text=spec_refs[0]["spec_text"] if spec_refs else "",
+            spec_text="\n".join(spec_ref_texts),
             artifact_key=need.get("artifact_key", ""),
-            keywords=search_hints.get("keywords", []),
+            need_summary=need.get("summary", ""),
+            spec_refs=spec_refs if isinstance(spec_refs, list) else [],
+            keywords=keywords,
         )
 
         workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else None
@@ -274,27 +287,58 @@ class L1Planner:
             return {"action": "NOOP", "monitors": []}
 
         coordination_dir = workspace_root / ".pdd_runs" / ctx.run_id / "coordination"
-        store = WorkItemStore(coordination_dir)
-        results = store.search(query)
+        store = WorkItemStore(coordination_dir, semantic_rerank_tool=self._research_tool)
+        search_outcome = store.search_with_coverage(query)
+        primary_match = search_outcome.get("primary_match")
+        secondary_matches = search_outcome.get("secondary_matches", [])
+        if not isinstance(secondary_matches, list):
+            secondary_matches = []
+        coverage = str(search_outcome.get("coverage", "NONE")).upper()
+        confidence = float(search_outcome.get("confidence", 0.0) or 0.0)
+        why = str(search_outcome.get("why", ""))
 
-        if results:
-            best = results[0]
-            if best.work_item.status in ("ASSIGNED", "IN_PROGRESS"):
-                monitor = _build_work_item_monitor(
-                    signal=signal,
-                    work_item_dict=best.work_item.to_dict(),
-                    ctx=ctx,
+        if coverage == "FULL" and primary_match is not None:
+            if primary_match.status in ("MERGED", "DONE"):
+                return {
+                    "action": "WAKE_IMMEDIATELY",
+                    "monitors": [],
+                    "coverage": coverage,
+                    "confidence": confidence,
+                    "why": why,
+                    "primary_match": primary_match.to_dict(),
+                    "secondary_matches": [m.to_dict() for m in secondary_matches],
+                }
+
+            monitor = _build_work_item_monitor(
+                signal=signal,
+                work_item_dict=primary_match.to_dict(),
+                ctx=ctx,
+            )
+            return {
+                "action": "WAIT_ON_WORK_ITEM",
+                "monitors": [monitor],
+                "coverage": coverage,
+                "confidence": confidence,
+                "why": why,
+                "primary_match": primary_match.to_dict(),
+                "secondary_matches": [m.to_dict() for m in secondary_matches],
+            }
+
+        if coverage == "PARTIAL":
+            candidate_matches = [m for m in [primary_match, *secondary_matches] if m is not None]
+            active_matches = [m for m in candidate_matches if m.status not in ("MERGED", "DONE")]
+            if active_matches:
+                monitor = _build_partial_match_monitor(
+                    signal=signal, matches=active_matches, ctx=ctx
                 )
                 return {
                     "action": "WAIT_ON_WORK_ITEM",
                     "monitors": [monitor],
-                    "matched_work_item": best.work_item.to_dict(),
-                }
-            elif best.work_item.status in ("MERGED", "DONE"):
-                return {
-                    "action": "WAKE_IMMEDIATELY",
-                    "monitors": [],
-                    "matched_work_item": best.work_item.to_dict(),
+                    "coverage": coverage,
+                    "confidence": confidence,
+                    "why": why,
+                    "primary_match": primary_match.to_dict() if primary_match is not None else None,
+                    "secondary_matches": [m.to_dict() for m in secondary_matches],
                 }
 
         spec_match = _search_spec_catalog(workspace_root, need, spec_refs)
@@ -309,6 +353,7 @@ class L1Planner:
                 "action": "ROUTE_AND_WAIT",
                 "monitors": [monitor],
                 "routing": [new_work_item],
+                "coverage": "NONE",
             }
 
         expansion = _build_expansion(signal, need, ctx)
@@ -510,6 +555,40 @@ def _build_work_item_monitor(
     }
 
 
+def _build_partial_match_monitor(
+    signal: dict[str, Any],
+    matches: list[Any],
+    ctx: Any,
+) -> dict[str, Any]:
+    """Build OR-monitor when multiple work items partially cover a need."""
+    sub_conditions: list[dict[str, Any]] = []
+    for m in matches:
+        sub_conditions.append(
+            {
+                "type": "work_item_done",
+                "work_item_id": m.work_item_id,
+                "required_status": "MERGED",
+            }
+        )
+        sub_conditions.append(
+            {
+                "type": "work_item_done",
+                "work_item_id": m.work_item_id,
+                "required_status": "DONE",
+            }
+        )
+
+    return {
+        "type": "compound",
+        "operator": "OR",
+        "conditions": sub_conditions,
+        "kind": "work_item_status_any",
+        "signal_id": signal.get("signal_id", ""),
+        "run_id": getattr(ctx, "run_id", ""),
+        "timeout_seconds": 3600,
+    }
+
+
 def _build_git_symbol_monitor(
     signal: dict[str, Any],
     need: dict[str, Any],
@@ -543,6 +622,69 @@ def _build_expansion_monitor(
     }
 
 
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        key = value.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _extract_spec_ref_texts(spec_refs: list[dict[str, Any]]) -> list[str]:
+    texts: list[str] = []
+    for ref in spec_refs:
+        if not isinstance(ref, dict):
+            continue
+        text = ref.get("spec_text")
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+    return texts
+
+
+def _extract_artifact_channel_tokens(artifact_key: str) -> list[str]:
+    if not artifact_key:
+        return []
+    expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", artifact_key)
+    parts = re.split(r"[^a-zA-Z0-9]+", expanded)
+    tokens = [part.lower() for part in parts if part]
+    return _dedupe_preserve_order(tokens)
+
+
+def _strip_comment_prefix(line: str) -> str:
+    stripped = line.strip()
+    for prefix in ("#", "//", "/*", "*", "--", ";"):
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    return stripped
+
+
+def _extract_nearest_spec_text(lines: list[str], match_index: int) -> tuple[str, int]:
+    """Return verbatim spec-like text nearest to a matched line."""
+    current_line = lines[match_index].strip()
+    current_text = _strip_comment_prefix(current_line)
+    if current_line.startswith(("#", "//", "/*", "*", "--", ";")) or "spec" in current_text.lower():
+        return current_text, match_index + 1
+
+    for offset in range(1, 8):
+        probe = match_index - offset
+        if probe < 0:
+            break
+        candidate = lines[probe].strip()
+        if not candidate:
+            continue
+        candidate_text = _strip_comment_prefix(candidate)
+        if candidate.startswith(("#", "//", "/*", "*", "--", ";")):
+            return candidate_text, probe + 1
+        if "spec" in candidate_text.lower():
+            return candidate_text, probe + 1
+
+    return current_text, match_index + 1
+
+
 def _search_spec_catalog(
     workspace_root: Path,
     need: dict[str, Any],
@@ -554,11 +696,30 @@ def _search_spec_catalog(
     that mention the needed artifact.  Returns a match dict on success,
     None if nothing found.
     """
-    artifact_key = need.get("artifact_key", "")
+    # Prefer verbatim signal spec references when provided.
+    for ref in spec_refs:
+        if not isinstance(ref, dict):
+            continue
+        spec_text = str(ref.get("spec_text", "")).strip()
+        if not spec_text:
+            continue
+        return {
+            "spec_text": spec_text,
+            "file": str(ref.get("source_file", "")).strip(),
+            "symbol": str(ref.get("source_symbol", "")).strip(),
+            "line_hint": int(ref.get("source_line_hint", 0) or 0),
+            "matched_in": "signal_spec_ref",
+        }
+
+    artifact_key = str(need.get("artifact_key", "")).strip()
     if not artifact_key:
         return None
 
-    search_term = artifact_key.lower()
+    search_terms = [artifact_key.lower(), *_extract_artifact_channel_tokens(artifact_key)]
+    search_terms = [term for term in _dedupe_preserve_order(search_terms) if term]
+    if not search_terms:
+        return None
+
     for path in sorted(workspace_root.rglob("*")):
         if not path.is_file():
             continue
@@ -568,13 +729,25 @@ def _search_spec_catalog(
             content = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if search_term in content.lower():
-            rel = str(path.relative_to(workspace_root))
-            return {
-                "file": rel,
-                "artifact_key": artifact_key,
-                "matched_in": "spec_catalog_scan",
-            }
+        content_lower = content.lower()
+        if not any(term in content_lower for term in search_terms):
+            continue
+
+        rel = str(path.relative_to(workspace_root))
+        lines = content.splitlines()
+        for idx, line in enumerate(lines):
+            line_lower = line.lower()
+            if not any(term in line_lower for term in search_terms):
+                continue
+            spec_text, line_hint = _extract_nearest_spec_text(lines, idx)
+            if spec_text:
+                return {
+                    "spec_text": spec_text,
+                    "file": rel,
+                    "symbol": "",
+                    "line_hint": line_hint,
+                    "matched_in": "spec_catalog_scan",
+                }
 
     return None
 
@@ -584,11 +757,32 @@ def _create_work_item_from_spec(
     ctx: Any,
 ) -> dict[str, Any]:
     """Create a work-item dict from a spec catalog match."""
+    from spec_manager.orchestration.coordination.work_items import _fingerprint
+
+    spec_text = str(spec_match.get("spec_text", "")).strip()
+    file_path = str(spec_match.get("file", "")).strip()
+    symbol = str(spec_match.get("symbol", "")).strip()
+    line_hint = int(spec_match.get("line_hint", 0) or 0)
+    spec_fingerprint = _fingerprint(spec_text) if spec_text else ""
+    identity_seed = f"{spec_fingerprint}|{file_path}|{symbol}|{line_hint}"
+    work_item_id = hashlib.sha256(identity_seed.encode("utf-8")).hexdigest()[:16]
+
     return {
-        "spec_text": f"Implement {spec_match.get('artifact_key', '')}",
-        "file": spec_match.get("file", ""),
+        "work_item_id": work_item_id,
+        "spec_text": spec_text,
+        "file": file_path,
         "owner_slice_id": getattr(ctx, "slice_id", ""),
         "status": "NEW",
+        "location": {
+            "file": file_path,
+            "symbol": symbol,
+            "line_hint": line_hint,
+        },
+        "kind": "SPEC_WORK",
+        "metadata": {
+            "spec_fingerprint": spec_fingerprint,
+            "matched_in": spec_match.get("matched_in", ""),
+        },
     }
 
 
