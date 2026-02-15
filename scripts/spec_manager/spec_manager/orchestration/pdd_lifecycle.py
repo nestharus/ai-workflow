@@ -148,7 +148,7 @@ class PddLifecycle:
         max_approval_iterations: int = 3,
         max_demotions_per_layer: int = 50,
         max_pipeline_passes: int = 2,
-        max_parallel: int = 1,
+        max_parallel: int = 4,
         integrate_full_test_every_n_iterations: int = 5,
         refinement_max_issues: int = 0,
         qa_enforcement: Literal["hard", "soft"] = "hard",
@@ -1127,13 +1127,14 @@ class PddLifecycle:
         results["run_summary_path"] = self._run_report_relpath("run_summary.json")
 
         results["merge_tag"] = self._perform_release_merge_and_tag()
-        release_path_ready = bool(results["merge_tag"].get("merged", False)) or bool(
-            results["merge_tag"].get("release_branch_created", False)
+        merge_tag = results["merge_tag"]
+        merged_to_main = bool(merge_tag.get("merged", False))
+        released_via_branch = bool(merge_tag.get("release_branch_created", False)) and bool(
+            merge_tag.get("tagged", False)
         )
-        if not (release_path_ready and bool(results["merge_tag"].get("tagged", False))):
+        if not (merged_to_main or released_via_branch):
             results["release_blocked"] = True
-            mt = results["merge_tag"]
-            err = mt.get("merge_error") or mt.get("tag_error")
+            err = merge_tag.get("merge_error") or merge_tag.get("tag_error")
             results["release_blocked_reason"] = "Merge/tag action failed: " + str(err)
             state_mgr.update_state(phase="blocked_merge_tag")
             return results
@@ -1906,9 +1907,9 @@ class PddLifecycle:
             except (TypeError, ValueError):
                 demotions = 0
             round_tickets = self._load_new_demotion_tickets(known_ticket_paths)
-            focus_targets = self._collect_transition_rework_focus_targets(
-                from_layer,
-                round_tickets,
+            focus_targets_by_layer = self._collect_transition_rework_focus_targets_by_layer(
+                from_layer=from_layer,
+                round_tickets=round_tickets,
             )
 
             round_result: dict[str, Any] = {
@@ -1916,93 +1917,162 @@ class PddLifecycle:
                 "refinement": refinement_result,
                 "demotions": demotions,
                 "rework_ticket_count": len(round_tickets),
-                "focus_targets": focus_targets,
+                "focus_targets": focus_targets_by_layer.get(from_layer, {}),
+                "focus_targets_by_layer": focus_targets_by_layer,
+                "rework_runs": [],
             }
 
             if demotions <= 0:
                 rework_rounds.append(round_result)
                 break
 
+            rework_layers = sorted(focus_targets_by_layer, key=lambda layer: _LAYER_RANK[layer])
+            if not rework_layers:
+                rework_layers = [from_layer]
+            if from_layer not in rework_layers and any(
+                _LAYER_RANK[layer] < _LAYER_RANK[from_layer] for layer in rework_layers
+            ):
+                rework_layers.append(from_layer)
+            round_result["rework_layers"] = rework_layers
+
             logger.info(
-                "Transition %s→%s round %d/%d: %d demotions, re-running %s slices",
+                "Transition %s→%s round %d/%d: %d demotions, re-running slices at layer(s): %s",
                 from_layer,
                 to_layer,
                 round_num,
                 max_rounds,
                 demotions,
-                from_layer,
+                ", ".join(layer.upper() for layer in rework_layers),
             )
-            rework_mode = _LAYER_LIFECYCLE_MODE.get(from_layer, "build")
-            target_slice_ids = sorted(focus_targets)
-            if not target_slice_ids:
-                logger.warning(
-                    "Transition %s→%s round %d/%d: demotions emitted but no owning "
-                    "slice targets were identified; falling back to full-layer rework",
-                    from_layer,
-                    to_layer,
-                    round_num,
-                    max_rounds,
-                )
-                round_result["rework_scope"] = "full_layer_fallback_no_targets"
-                round_result["rework"] = self._run_slices_at_layer(
-                    from_layer,
-                    lifecycle_mode=rework_mode,
-                )
-            else:
-                round_result["rework_scope"] = "focused_slices"
-                round_result["rework"] = self._run_slices_at_layer(
-                    from_layer,
-                    lifecycle_mode=rework_mode,
-                    target_slice_ids=target_slice_ids,
-                    slice_focus_targets=focus_targets,
-                )
-            rework_result = round_result["rework"]
-            if not isinstance(rework_result, dict):
-                transition_stuck = True
-                round_result["error"] = "Transition rework did not produce a structured result"
-                rework_rounds.append(round_result)
-                break
 
-            round_result["rework_ci_passed"] = self._ci_ticks_passed(rework_result)
-            if not bool(round_result["rework_ci_passed"]):
-                transition_stuck = True
-                round_result["error"] = (
-                    f"Transition {from_layer}→{to_layer} rework round {round_num} failed CI ticks"
-                )
-                rework_rounds.append(round_result)
-                logger.warning("%s", round_result["error"])
-                break
+            round_failed = False
+            for rework_layer in rework_layers:
+                layer_focus_targets = focus_targets_by_layer.get(rework_layer, {})
+                rework_mode = _LAYER_LIFECYCLE_MODE.get(rework_layer, "build")
+                target_slice_ids = sorted(layer_focus_targets)
+                layer_round: dict[str, Any] = {
+                    "layer": rework_layer,
+                    "focus_targets": layer_focus_targets,
+                }
 
-            rework_layer_clean = True
-            if self.worktree_manager is not None:
-                rework_layer_clean = bool(self.worktree_manager.is_layer_clean(from_layer))
-            round_result["rework_layer_clean"] = rework_layer_clean
-            if not rework_layer_clean:
-                transition_stuck = True
-                round_result["error"] = (
-                    f"Transition {from_layer}→{to_layer} rework round {round_num} "
-                    f"did not restore {from_layer.upper()} to a fully clean state"
-                )
-                rework_rounds.append(round_result)
-                logger.warning("%s", round_result["error"])
-                break
+                if not target_slice_ids:
+                    logger.warning(
+                        "Transition %s→%s round %d/%d: demotions for %s emitted but no owning "
+                        "slice targets were identified; falling back to full-layer rework",
+                        from_layer,
+                        to_layer,
+                        round_num,
+                        max_rounds,
+                        rework_layer.upper(),
+                    )
+                    layer_round["rework_scope"] = "full_layer_fallback_no_targets"
+                    layer_round["rework"] = self._run_slices_at_layer(
+                        rework_layer,
+                        lifecycle_mode=rework_mode,
+                    )
+                else:
+                    layer_round["rework_scope"] = "focused_slices"
+                    layer_round["rework"] = self._run_slices_at_layer(
+                        rework_layer,
+                        lifecycle_mode=rework_mode,
+                        target_slice_ids=target_slice_ids,
+                        slice_focus_targets=layer_focus_targets,
+                    )
 
-            if self.worktree_manager is not None:
-                repropagation = self._propagate_clean_to_next_layer_result(from_layer)
-                round_result["repropagation"] = repropagation
-                if not bool(repropagation.get("success", False)):
+                rework_result = layer_round["rework"]
+                if not isinstance(rework_result, dict):
                     transition_stuck = True
+                    round_failed = True
+                    round_result["error"] = "Transition rework did not produce a structured result"
+                    round_result["failed_layer"] = rework_layer
+                    round_result["rework_runs"].append(layer_round)
+                    break
+
+                layer_round["rework_ci_passed"] = self._ci_ticks_passed(rework_result)
+                if not bool(layer_round["rework_ci_passed"]):
+                    transition_stuck = True
+                    round_failed = True
                     round_result["error"] = (
                         f"Transition {from_layer}→{to_layer} rework round {round_num} "
-                        f"failed to re-propagate {from_layer.upper()} clean"
+                        f"failed CI ticks at {rework_layer.upper()}"
                     )
-                    rework_rounds.append(round_result)
-                    logger.warning(
-                        "%s: %s",
-                        round_result["error"],
-                        repropagation.get("error", ""),
-                    )
+                    round_result["failed_layer"] = rework_layer
+                    round_result["rework_runs"].append(layer_round)
+                    logger.warning("%s", round_result["error"])
                     break
+
+                rework_layer_clean = True
+                if self.worktree_manager is not None:
+                    rework_layer_clean = bool(self.worktree_manager.is_layer_clean(rework_layer))
+                layer_round["rework_layer_clean"] = rework_layer_clean
+                if not rework_layer_clean:
+                    transition_stuck = True
+                    round_failed = True
+                    round_result["error"] = (
+                        f"Transition {from_layer}→{to_layer} rework round {round_num} "
+                        f"did not restore {rework_layer.upper()} to a fully clean state"
+                    )
+                    round_result["failed_layer"] = rework_layer
+                    round_result["rework_runs"].append(layer_round)
+                    logger.warning("%s", round_result["error"])
+                    break
+
+                if self.worktree_manager is not None:
+                    repropagation = self._propagate_clean_to_next_layer_result(rework_layer)
+                    layer_round["repropagation"] = repropagation
+                    if not bool(repropagation.get("success", False)):
+                        transition_stuck = True
+                        round_failed = True
+                        round_result["error"] = (
+                            f"Transition {from_layer}→{to_layer} rework round {round_num} "
+                            f"failed to re-propagate {rework_layer.upper()} clean"
+                        )
+                        round_result["failed_layer"] = rework_layer
+                        round_result["rework_runs"].append(layer_round)
+                        logger.warning(
+                            "%s: %s",
+                            round_result["error"],
+                            repropagation.get("error", ""),
+                        )
+                        break
+
+                round_result["rework_runs"].append(layer_round)
+
+            from_layer_run = next(
+                (
+                    run
+                    for run in round_result.get("rework_runs", [])
+                    if isinstance(run, dict) and run.get("layer") == from_layer
+                ),
+                None,
+            )
+            if isinstance(from_layer_run, dict):
+                round_result["rework_scope"] = from_layer_run.get("rework_scope", "")
+                round_result["rework"] = from_layer_run.get("rework", {})
+                round_result["rework_layer_clean"] = bool(
+                    from_layer_run.get("rework_layer_clean", True)
+                )
+                if "repropagation" in from_layer_run:
+                    round_result["repropagation"] = from_layer_run["repropagation"]
+            elif round_result.get("rework_runs"):
+                last_run = round_result["rework_runs"][-1]
+                if isinstance(last_run, dict):
+                    round_result["rework_scope"] = last_run.get("rework_scope", "")
+                    round_result["rework"] = last_run.get("rework", {})
+                    round_result["rework_layer_clean"] = bool(
+                        last_run.get("rework_layer_clean", True)
+                    )
+                    if "repropagation" in last_run:
+                        round_result["repropagation"] = last_run["repropagation"]
+
+            round_result["rework_ci_passed"] = all(
+                bool(run.get("rework_ci_passed", False))
+                for run in round_result.get("rework_runs", [])
+                if isinstance(run, dict)
+            )
+            if round_failed:
+                rework_rounds.append(round_result)
+                break
             rework_rounds.append(round_result)
 
             if round_num == max_rounds and demotions > 0:
@@ -2309,6 +2379,18 @@ class PddLifecycle:
             items.append(text)
         return items
 
+    @staticmethod
+    def _ticket_target_layer(
+        ticket: dict[str, Any],
+        *,
+        default_layer: Layer | None = None,
+    ) -> Layer | None:
+        """Return normalized ticket target layer when present."""
+        target_layer = str(ticket.get("target_layer", "")).strip().lower()
+        if target_layer in _LAYER_RANK:
+            return cast("Layer", target_layer)
+        return default_layer
+
     def _ticket_focus_targets(self, ticket: dict[str, Any]) -> dict[str, list[str]]:
         """Extract focus target hints from a demotion ticket payload."""
         location_symbols: list[str] = []
@@ -2344,25 +2426,17 @@ class PddLifecycle:
                 if arch_slice_id in available_slice_ids:
                     resolved.add(arch_slice_id)
             if layer == "l3":
-                cq_slice_id = (
-                    raw_slice_id
-                    if raw_slice_id.startswith("cq-")
-                    else f"cq-{Path(raw_slice_id).stem}"
-                )
-                if cq_slice_id in available_slice_ids:
-                    resolved.add(cq_slice_id)
+                if raw_slice_id.startswith("cq-") and raw_slice_id in available_slice_ids:
+                    resolved.add(raw_slice_id)
+                else:
+                    for l3_slice_id in self._infer_conflict_slice_ids(layer, [raw_slice_id]):
+                        if l3_slice_id in available_slice_ids:
+                            resolved.add(l3_slice_id)
 
         failing_files = self._ticket_string_list(ticket.get("failing_files", []))
         for slice_id in self._infer_conflict_slice_ids(layer, failing_files):
             if slice_id in available_slice_ids:
                 resolved.add(slice_id)
-
-        # L3 slices are file-stem keyed; infer directly from failing files when needed.
-        if layer == "l3":
-            for failing_file in failing_files:
-                stem_slice_id = f"cq-{Path(failing_file).stem}"
-                if stem_slice_id in available_slice_ids:
-                    resolved.add(stem_slice_id)
 
         component_id = str(ticket.get("component_id", "")).strip()
         if layer == "l2" and component_id:
@@ -2378,6 +2452,31 @@ class PddLifecycle:
 
         return sorted(resolved)
 
+    def _collect_transition_rework_focus_targets_by_layer(
+        self,
+        *,
+        from_layer: Layer,
+        round_tickets: list[dict[str, Any]],
+    ) -> dict[Layer, dict[str, dict[str, list[str]]]]:
+        """Group transition rework focus targets by ticket target layer."""
+        tickets_by_layer: dict[Layer, list[dict[str, Any]]] = {}
+        from_rank = _LAYER_RANK[from_layer]
+        for ticket in round_tickets:
+            target_layer = self._ticket_target_layer(ticket, default_layer=from_layer)
+            if target_layer is None:
+                continue
+            if _LAYER_RANK[target_layer] > from_rank:
+                continue
+            tickets_by_layer.setdefault(target_layer, []).append(ticket)
+
+        focus_targets: dict[Layer, dict[str, dict[str, list[str]]]] = {}
+        for target_layer, layer_tickets in tickets_by_layer.items():
+            focus_targets[target_layer] = self._collect_transition_rework_focus_targets(
+                layer=target_layer,
+                round_tickets=layer_tickets,
+            )
+        return focus_targets
+
     def _collect_transition_rework_focus_targets(
         self,
         layer: Layer,
@@ -2392,13 +2491,8 @@ class PddLifecycle:
         if not available_slice_ids:
             return {}
 
-        target_layer = layer.upper()
         focused: dict[str, dict[str, set[str]]] = {}
         for ticket in round_tickets:
-            ticket_target = str(ticket.get("target_layer", "")).strip().upper()
-            if ticket_target and ticket_target != target_layer:
-                continue
-
             owner_slice_ids = self._resolve_ticket_slice_ids(
                 layer=layer,
                 ticket=ticket,
@@ -2438,6 +2532,24 @@ class PddLifecycle:
         while normalized.startswith("./"):
             normalized = normalized[2:]
         return normalized.strip()
+
+    @classmethod
+    def _l3_relative_source_path(cls, *, spec_snapshot_dir: Path, file_path: Path) -> str:
+        """Return normalized source path relative to the spec snapshot root."""
+        try:
+            relative_path = file_path.relative_to(spec_snapshot_dir).as_posix()
+        except ValueError:
+            relative_path = file_path.as_posix()
+        return cls._normalize_conflict_path(relative_path)
+
+    @classmethod
+    def _l3_slice_id_for_relative_path(cls, relative_path: str) -> str:
+        """Build a stable, unique L3 slice ID from a normalized relative file path."""
+        normalized = cls._normalize_conflict_path(relative_path)
+        slug_source = normalized.replace("/", "__")
+        slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", slug_source).strip("_") or "file"
+        fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:10]
+        return f"cq-{slug}-{fingerprint}"
 
     @classmethod
     def _extract_conflict_files_from_errors(cls, *errors: str) -> list[str]:
@@ -2490,7 +2602,6 @@ class PddLifecycle:
 
             worktree_path = self._normalize_conflict_path(str(getattr(ref, "worktree_path", "")))
             library_id = str(getattr(ref, "library_id", "")).strip()
-            l3_slice_stem = slice_id.removeprefix("cq-") if slice_id.startswith("cq-") else ""
 
             for conflict_path in normalized_conflicts:
                 if any(
@@ -2502,9 +2613,6 @@ class PddLifecycle:
                     matched.add(slice_id)
                     break
                 if library_id and f"/{library_id}/" in f"/{conflict_path}/":
-                    matched.add(slice_id)
-                    break
-                if l3_slice_stem and Path(conflict_path).stem == l3_slice_stem:
                     matched.add(slice_id)
                     break
                 if worktree_path and (
@@ -3164,8 +3272,7 @@ class PddLifecycle:
         """Discover work slices for a given layer.
 
         - L1: slices = libraries (concern boundaries)
-        - L2: slices = architectural components from component manifest,
-              falling back to per-library wrappers if no manifest exists
+        - L2: slices = architectural components from component manifest
         - L3: slices = code files (per file, with finding clusters internally)
 
         Args:
@@ -3208,7 +3315,6 @@ class PddLifecycle:
                         )
 
         elif layer == "l2":
-            # Try component manifest first (produced by architectural refinement)
             manifest_path = (
                 self.manager.structure.root
                 / "reports"
@@ -3216,75 +3322,65 @@ class PddLifecycle:
                 / self.manager.run_id
                 / "component_manifest.json"
             )
-            if manifest_path.exists():
-                try:
-                    data = json.loads(manifest_path.read_text(encoding="utf-8"))
-                    for comp in data.get("components", []):
-                        comp_id = comp.get("component_id", comp.get("id", ""))
-                        if comp_id:
-                            files_raw = comp.get("files", [])
-                            files = [str(path) for path in files_raw if isinstance(path, str)]
-                            # Determine worktree path from component's files
-                            wt_path = str(self.manager.structure.spec_snapshot_dir)
-                            if files:
-                                first_file = Path(files[0])
-                                if first_file.parent != Path("."):
-                                    wt_path = str(
-                                        self.manager.structure.spec_snapshot_dir / first_file.parent
-                                    )
-                            owned_entrypoints_raw = comp.get("owned_entrypoints", [])
-                            pins_consumed_raw = comp.get("pins_consumed", [])
-                            upstream_raw = comp.get("upstream", [])
-                            downstream_raw = comp.get("downstream", [])
-                            slice_refs.append(
-                                SliceRef(
-                                    slice_id=f"arch-{comp_id}",
-                                    layer=layer,
-                                    library_id=str(comp_id),
-                                    worktree_path=wt_path,
-                                    metadata={
-                                        "component_id": str(comp_id),
-                                        "owned_entrypoints": [
-                                            str(item)
-                                            for item in owned_entrypoints_raw
-                                            if isinstance(item, str)
-                                        ],
-                                        "pins_consumed": [
-                                            str(item)
-                                            for item in pins_consumed_raw
-                                            if isinstance(item, str)
-                                        ],
-                                        "upstream": [
-                                            str(item)
-                                            for item in upstream_raw
-                                            if isinstance(item, str)
-                                        ],
-                                        "downstream": [
-                                            str(item)
-                                            for item in downstream_raw
-                                            if isinstance(item, str)
-                                        ],
-                                        "files": files,
-                                    },
-                                )
-                            )
-                except (json.JSONDecodeError, OSError) as exc:
-                    logger.warning("Failed to read component manifest: %s", exc)
+            if not manifest_path.exists():
+                raise RuntimeError(
+                    "L2 slice discovery requires reports/pdd/"
+                    f"{self.manager.run_id}/component_manifest.json"
+                )
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                raise RuntimeError(f"L2 component manifest is unreadable: {manifest_path}") from exc
 
-            # Fallback: wrap libraries as architectural slices
+            raw_components = data.get("components", [])
+            if not isinstance(raw_components, list) or not raw_components:
+                raise RuntimeError(f"L2 component manifest has no components: {manifest_path}")
+
+            for comp in raw_components:
+                if not isinstance(comp, dict):
+                    continue
+                comp_id = str(comp.get("component_id", comp.get("id", ""))).strip()
+                if not comp_id:
+                    continue
+                files_raw = comp.get("files", [])
+                files = [str(path) for path in files_raw if isinstance(path, str)]
+                wt_path = str(self.manager.structure.spec_snapshot_dir)
+                if files:
+                    first_file = Path(files[0])
+                    if first_file.parent != Path("."):
+                        wt_path = str(self.manager.structure.spec_snapshot_dir / first_file.parent)
+                owned_entrypoints_raw = comp.get("owned_entrypoints", [])
+                pins_consumed_raw = comp.get("pins_consumed", [])
+                upstream_raw = comp.get("upstream", [])
+                downstream_raw = comp.get("downstream", [])
+                slice_refs.append(
+                    SliceRef(
+                        slice_id=f"arch-{comp_id}",
+                        layer=layer,
+                        library_id=comp_id,
+                        worktree_path=wt_path,
+                        metadata={
+                            "component_id": comp_id,
+                            "owned_entrypoints": [
+                                str(item) for item in owned_entrypoints_raw if isinstance(item, str)
+                            ],
+                            "pins_consumed": [
+                                str(item) for item in pins_consumed_raw if isinstance(item, str)
+                            ],
+                            "upstream": [
+                                str(item) for item in upstream_raw if isinstance(item, str)
+                            ],
+                            "downstream": [
+                                str(item) for item in downstream_raw if isinstance(item, str)
+                            ],
+                            "files": files,
+                        },
+                    )
+                )
             if not slice_refs:
-                libraries_dir = self.manager.structure.libraries_dir
-                if libraries_dir.exists():
-                    for lib_dir in sorted(libraries_dir.iterdir()):
-                        if lib_dir.is_dir():
-                            slice_refs.append(
-                                SliceRef(
-                                    slice_id=f"arch-{lib_dir.name}",
-                                    layer=layer,
-                                    library_id=lib_dir.name,
-                                    worktree_path=str(lib_dir),
-                                )
-                            )
+                raise RuntimeError(
+                    f"L2 component manifest has no valid component IDs: {manifest_path}"
+                )
 
         elif layer == "l3":
             # L3: one slice per code file (finding clusters handled internally)
@@ -3292,11 +3388,16 @@ class PddLifecycle:
             if spec_snapshot_dir.exists():
                 for py_file in source_rglob(spec_snapshot_dir):
                     if py_file.is_file():
+                        relative_path = self._l3_relative_source_path(
+                            spec_snapshot_dir=spec_snapshot_dir,
+                            file_path=py_file,
+                        )
                         slice_refs.append(
                             SliceRef(
-                                slice_id=f"cq-{py_file.stem}",
+                                slice_id=self._l3_slice_id_for_relative_path(relative_path),
                                 layer=layer,
                                 worktree_path=str(py_file.parent),
+                                metadata={"files": [relative_path], "relative_path": relative_path},
                             )
                         )
 
