@@ -407,12 +407,12 @@ class WorktreeManager:
         self._candidate_refs.pop(layer, None)
 
     @staticmethod
-    def _resolve_ci_check(
+    def _resolve_gate_check(
         config: bool | dict[str, Any],
         *,
         check_id: str,
     ) -> tuple[bool, list[str], str]:
-        """Resolve one CI check config into pass/fail + ticket metadata."""
+        """Resolve gate check config into pass/fail + ticket metadata."""
         if isinstance(config, dict):
             enabled = bool(config.get("enabled", True))
             if not enabled:
@@ -433,6 +433,89 @@ class WorktreeManager:
             return True, [], ""
         return True, [], ""
 
+    def _default_tier_commands(self, workspace_root: Path) -> dict[str, Any]:
+        """Infer tier command defaults from known test layouts."""
+        commands: dict[str, Any] = {}
+        spec_tests_root = workspace_root / "scripts" / "spec_manager" / "tests"
+        repo_tests_root = workspace_root / "tests"
+
+        if spec_tests_root.exists():
+            unit_dir = spec_tests_root / "unit"
+            component_dir = spec_tests_root / "component"
+            l1_component_dir = component_dir / "orchestration"
+
+            if unit_dir.exists():
+                commands["tier1_command"] = "uv run pytest -q scripts/spec_manager/tests/unit"
+            if component_dir.exists():
+                commands["tier2_command"] = "uv run pytest -q scripts/spec_manager/tests/component"
+            if l1_component_dir.exists():
+                commands["tier2_l1_command"] = (
+                    "uv run pytest -q scripts/spec_manager/tests/component/orchestration"
+                )
+            commands["tier3_command"] = "uv run pytest -q scripts/spec_manager/tests"
+            return commands
+
+        if repo_tests_root.exists():
+            unit_dir = repo_tests_root / "unit"
+            integration_dir = repo_tests_root / "integration"
+            component_dir = repo_tests_root / "component"
+
+            if unit_dir.exists():
+                commands["tier1_command"] = "uv run pytest -q tests/unit"
+            else:
+                commands["tier1_command"] = "uv run pytest -q tests"
+
+            if integration_dir.exists():
+                commands["tier2_command"] = "uv run pytest -q tests/integration"
+                commands["tier2_l1_command"] = "uv run pytest -q tests/integration"
+            elif component_dir.exists():
+                commands["tier2_command"] = "uv run pytest -q tests/component"
+                commands["tier2_l1_command"] = "uv run pytest -q tests/component"
+
+            commands["tier3_command"] = "uv run pytest -q tests"
+
+        return commands
+
+    def _run_tier_tests(
+        self,
+        layer: Layer,
+        tests: bool | dict[str, Any],
+    ) -> tuple[bool, list[str], str]:
+        """Execute tiered tests for a layer promotion."""
+        from spec_manager.orchestration.test_tiers import TierConfig, TierRunner
+
+        if isinstance(tests, dict):
+            enabled = bool(tests.get("enabled", True))
+            overrides = dict(tests)
+        else:
+            enabled = bool(tests)
+            overrides = {}
+        if not enabled:
+            return True, [], ""
+
+        dirty_path = self._layer_worktrees.get(layer, {}).get("dirty")
+        if not dirty_path or not dirty_path.exists():
+            return False, [f"tests_failed:{layer}"], f"No dirty worktree for {layer}"
+
+        config_payload = self._default_tier_commands(dirty_path)
+        config_payload.update(overrides)
+        config_payload.pop("enabled", None)
+
+        tier_runner = TierRunner(config=TierConfig.from_dict(config_payload), cwd=dirty_path)
+        tier_results = tier_runner.run_for_layer(layer)
+        first_failure = next((result for result in tier_results if not result.passed), None)
+        if first_failure is None:
+            return True, [], ""
+
+        failure_detail = str(
+            first_failure.error or first_failure.output or "test tier failed"
+        ).strip()
+        return (
+            False,
+            [f"tests_failed:{layer}:tier{first_failure.tier}"],
+            f"Tier {first_failure.tier} failed for {layer}: {failure_detail[:500]}",
+        )
+
     def promote_dirty_to_clean(
         self,
         layer: Layer,
@@ -445,9 +528,6 @@ class WorktreeManager:
         This is the "dirty → clean" promotion at a single layer.
         Gate/test checks are configured by ``gates`` and ``tests``.
         """
-        gates_passed, gate_tickets, gate_error = self._resolve_ci_check(gates, check_id="gates")
-        tests_passed, test_tickets, test_error = self._resolve_ci_check(tests, check_id="tests")
-        ci_tickets = [*gate_tickets, *test_tickets]
         clean_path = self._layer_worktrees.get(layer, {}).get("clean")
         base_clean_sha = self.vcs.get_head_sha(clean_path) if clean_path else None
 
@@ -458,10 +538,13 @@ class WorktreeManager:
                 layer=layer,
                 base_clean_sha=base_clean_sha,
                 error="No candidate snapshot",
-                gates_passed=gates_passed,
-                tests_passed=tests_passed,
-                demotion_tickets=ci_tickets,
+                gates_passed=True,
+                tests_passed=True,
             )
+
+        gates_passed, gate_tickets, gate_error = self._resolve_gate_check(gates, check_id="gates")
+        tests_passed, test_tickets, test_error = self._run_tier_tests(layer, tests)
+        ci_tickets = [*gate_tickets, *test_tickets]
 
         if not gates_passed or not tests_passed:
             reasons = [reason for reason in (gate_error, test_error) if reason]

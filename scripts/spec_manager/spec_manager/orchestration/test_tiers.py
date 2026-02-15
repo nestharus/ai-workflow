@@ -9,7 +9,7 @@ Implements the 4-tier test strategy from the E2E pipeline research response:
 
 Layer-specific dispatch:
 
-- L1 dirty->clean: Tier 0 + Tier 1
+- L1 dirty->clean: Tier 0 + Tier 1 + minimal Tier 2
 - L2 dirty->clean: Tier 0 + Tier 1 + Tier 2 (wiring/topology)
 - L3 dirty->clean: Tier 0 + Tier 1 + Tier 2 + Tier 3 + diff-impact
 """
@@ -61,6 +61,7 @@ class TierResult:
 
 
 _TIER0_UNSET: str = "__unset__"
+_TIER2_L1_UNSET: str = "__inherit_tier2__"
 
 
 @dataclass
@@ -68,14 +69,17 @@ class TierConfig:
     """Configuration for test tier dispatch.
 
     Each tier has a shell command and a timeout in seconds.
-    Empty commands are treated as "not configured" and will
-    produce a passing result with a skip note.
+    Commands must be explicitly configured for every tier that runs for
+    a layer promotion. Missing commands fail the tier so the promotion
+    gate cannot silently pass without executing tests.
 
     Attributes:
         tier0_command: Smoke test command (default from language module).
             Pass ``""`` explicitly to disable.
         tier1_command: Unit test command.
         tier2_command: Integration test command.
+        tier2_l1_command: L1-specific minimal integration sanity command.
+            Defaults to ``tier2_command`` when not set.
         tier3_command: Full regression test command.
         tier0_timeout: Timeout in seconds for tier 0.
         tier1_timeout: Timeout in seconds for tier 1.
@@ -86,6 +90,7 @@ class TierConfig:
     tier0_command: str = _TIER0_UNSET
     tier1_command: str = ""
     tier2_command: str = ""
+    tier2_l1_command: str = _TIER2_L1_UNSET
     tier3_command: str = ""
     tier0_timeout: int = 60
     tier1_timeout: int = 300
@@ -97,6 +102,23 @@ class TierConfig:
             from spec_manager.core.language import DEFAULT_SMOKE_COMMAND
 
             self.tier0_command = DEFAULT_SMOKE_COMMAND
+        if self.tier2_l1_command == _TIER2_L1_UNSET:
+            self.tier2_l1_command = self.tier2_command
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> TierConfig:
+        """Build a TierConfig from a plain dict payload."""
+        return cls(
+            tier0_command=str(payload.get("tier0_command", _TIER0_UNSET)),
+            tier1_command=str(payload.get("tier1_command", "")),
+            tier2_command=str(payload.get("tier2_command", "")),
+            tier2_l1_command=str(payload.get("tier2_l1_command", _TIER2_L1_UNSET)),
+            tier3_command=str(payload.get("tier3_command", "")),
+            tier0_timeout=int(payload.get("tier0_timeout", 60)),
+            tier1_timeout=int(payload.get("tier1_timeout", 300)),
+            tier2_timeout=int(payload.get("tier2_timeout", 600)),
+            tier3_timeout=int(payload.get("tier3_timeout", 1200)),
+        )
 
 
 # ------------------------------------------------------------------
@@ -105,7 +127,7 @@ class TierConfig:
 
 # Map layer -> which tiers to run at dirty->clean promotion
 _LAYER_TIERS: dict[str, list[int]] = {
-    "l1": [0, 1],  # L1: smoke + unit
+    "l1": [0, 1, 2],  # L1: smoke + unit + minimal integration sanity
     "l2": [0, 1, 2],  # L2: smoke + unit + integration (wiring/topology)
     "l3": [0, 1, 2, 3],  # L3: all tiers
 }
@@ -145,23 +167,27 @@ class TierRunner:
         results for tiers that were actually executed.
         """
         tiers = _LAYER_TIERS.get(layer, [0])
+        return self.run_for_tiers(layer, tiers)
+
+    def run_for_tiers(self, layer: str, tiers: list[int]) -> list[TierResult]:
+        """Run an explicit tier list for a layer context."""
         results: list[TierResult] = []
         for tier in tiers:
-            result = self._run_tier(tier)
+            result = self._run_tier(tier, layer=layer)
             results.append(result)
             if not result.passed:
                 logger.warning("Tier %d failed for layer %s, stopping", tier, layer)
                 break
         return results
 
-    def _run_tier(self, tier: int) -> TierResult:
+    def _run_tier(self, tier: int, *, layer: str) -> TierResult:
         """Run a single test tier."""
-        command = self._get_command(tier)
+        command = self._get_command(tier, layer=layer)
         if not command:
             return TierResult(
                 tier=tier,
-                passed=True,
-                output="No command configured — skipped",
+                passed=False,
+                error=f"Tier {tier} command is not configured for layer {layer}",
             )
 
         timeout = self._get_timeout(tier)
@@ -199,12 +225,13 @@ class TierRunner:
                 error=str(exc),
             )
 
-    def _get_command(self, tier: int) -> str:
+    def _get_command(self, tier: int, *, layer: str) -> str:
         """Get the shell command for a tier."""
+        tier2_command = self.config.tier2_l1_command if layer == "l1" else self.config.tier2_command
         commands = {
             0: self.config.tier0_command,
             1: self.config.tier1_command,
-            2: self.config.tier2_command,
+            2: tier2_command,
             3: self.config.tier3_command,
         }
         return commands.get(tier, "")

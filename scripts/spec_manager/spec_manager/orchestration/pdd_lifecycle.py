@@ -3395,11 +3395,10 @@ class PddLifecycle:
     # ------------------------------------------------------------------
 
     def _run_readiness_ci(self, layer: Layer) -> dict[str, Any]:
-        """Run tier-aware smoke check on a layer's dirty worktree.
+        """Run downstream readiness smoke on a layer's dirty worktree.
 
-        Uses :class:`TierRunner` to dispatch the appropriate test tiers
-        for the given layer.  Validates that the downstream dirty worktree
-        is runnable before creative work begins.
+        This is intentionally a Tier 0-only check for transition readiness.
+        Full layer tier enforcement happens at dirty→clean promotion time.
 
         Args:
             layer: The layer whose dirty worktree to test.
@@ -3417,7 +3416,7 @@ class PddLifecycle:
             return {"passed": True, "note": f"No dirty worktree for {layer}"}
 
         runner = TierRunner(config=TierConfig(), cwd=dirty_path)
-        tier_results = runner.run_for_layer(layer)
+        tier_results = runner.run_for_tiers(layer, [0])
         all_passed = all(r.passed for r in tier_results)
 
         result: dict[str, Any] = {

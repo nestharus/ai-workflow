@@ -11,6 +11,7 @@ via RunConfig.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # File discovery
@@ -79,8 +80,14 @@ TEST_CONFIG_FILES: list[str] = ["pytest.ini", "pyproject.toml", "setup.cfg", "co
 #: Default test command.
 DEFAULT_TEST_COMMAND: list[str] = ["pytest", "-x", "--tb=short"]
 
-#: Default smoke-test command (syntax check).
-DEFAULT_SMOKE_COMMAND: str = "python -m compileall -q ."
+#: Default smoke-test command (syntax + import-graph smoke).
+DEFAULT_SMOKE_COMMAND: str = (
+    "uv run python -m compileall -q . && "
+    "uv run python -c 'import importlib,pathlib;pkgs=sorted({p.parent.name for p in "
+    'pathlib.Path(".").glob("*/__init__.py") if p.parent.name not in {"tests","test"}});'
+    "[importlib.import_module(name) for name in pkgs];"
+    'print("import-smoke:", ", ".join(pkgs) if pkgs else "none")\''
+)
 
 # ---------------------------------------------------------------------------
 # Linting / infrastructure comment markers
@@ -137,8 +144,6 @@ def is_dunder(name: str) -> bool:
 
 def source_rglob(directory: Path) -> list[Path]:
     """Recursively find all source files in a directory, excluding markers and cache dirs."""
-    from pathlib import Path
-
     results: list[Path] = []
     for ext in sorted(SOURCE_EXTENSIONS):
         for p in directory.rglob(f"*{ext}"):
