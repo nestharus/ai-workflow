@@ -4192,18 +4192,6 @@ class PromoteStep:
             return "EVENT"
         return "REFERENCE"
 
-    @staticmethod
-    def _projection_type_from_signal(signal_type: Any) -> str:
-        """Convert an edge signal to a pin projection type value."""
-        if not isinstance(signal_type, str):
-            return "pass_through"
-        signal = signal_type.upper()
-        if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
-            return "event_bridge"
-        if signal == "STORE_TOUCH":
-            return "aggregation"
-        return "pass_through"
-
     def _normalize_pin_proposals(
         self, proposals: list[dict[str, Any]] | None
     ) -> list[dict[str, Any]]:
@@ -4279,12 +4267,14 @@ class PromoteStep:
 
             projection_type = proposal.get("projection_type")
             if not isinstance(projection_type, str) or not projection_type.strip():
-                projection_type = self._projection_type_from_signal(proposal.get("signal_type"))
+                raise ValueError("edge_proposals entries must include projection_type")
             confidence_raw = proposal.get("confidence", proposal.get("weight", 0.8))
             try:
                 confidence = float(confidence_raw)
             except (TypeError, ValueError):
-                confidence = 0.8
+                raise ValueError(
+                    f"edge_proposals has invalid confidence value {confidence_raw!r}"
+                ) from None
 
             normalized.append(
                 {
@@ -4316,8 +4306,11 @@ class PromoteStep:
         iteration_dir = bundle.iter_dir(evidence_root)
         iteration_dir.mkdir(parents=True, exist_ok=True)
 
-        normalized_pins = self._normalize_pin_proposals(bundle.implementation.pin_proposals)
-        normalized_edges = self._normalize_edge_proposals(bundle.implementation.edge_proposals)
+        try:
+            normalized_pins = self._normalize_pin_proposals(bundle.implementation.pin_proposals)
+            normalized_edges = self._normalize_edge_proposals(bundle.implementation.edge_proposals)
+        except ValueError as exc:
+            return StepResult(status="RETRY", error=f"P5 proposal normalization failed: {exc}")
 
         pin_proposals_path: Path | None = None
         if normalized_pins:
@@ -4332,10 +4325,17 @@ class PromoteStep:
         orchestrator = PinFunctionOrchestrator(slice_root)
         try:
             registry = orchestrator.scan(
-                mode="both",
+                mode="proposals",
+                pin_proposals=normalized_pins,
+                edge_proposals=normalized_edges,
                 pin_proposals_path=pin_proposals_path,
                 edge_proposals_path=edge_proposals_path,
                 source_index_entries=bundle.source_index.entries,
+                changed_files=[
+                    str(path)
+                    for path in (bundle.diff.changed_files or [])
+                    if isinstance(path, str) and str(path).strip()
+                ],
             )
             registry_path = orchestrator.save_registry(registry)
         except Exception as exc:
@@ -6552,10 +6552,29 @@ class VerifyStep:
             from spec_manager.projection.lineage.builder import (
                 AtomDefinition,
                 LineageBuilder,
+                import_records_from_pin_registry,
                 scan_imports_from_directory,
             )
+            from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
-            import_records = scan_imports_from_directory(verification_root)
+            registry_path = verification_root / ".spec" / "pin_registry.json"
+            import_records = []
+            record_source = "pin_registry"
+            if registry_path.exists():
+                try:
+                    pin_registry = PinFunctionRegistry.model_validate_json(
+                        registry_path.read_text(encoding="utf-8")
+                    )
+                    import_records = import_records_from_pin_registry(pin_registry)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to load pin registry for P7 verification payload: %s",
+                        exc,
+                        exc_info=True,
+                    )
+            if not import_records:
+                record_source = "scan_fallback"
+                import_records = scan_imports_from_directory(verification_root)
 
             atom_defs: list[AtomDefinition] = []
             branch_manager = ctx.branch_manager
@@ -6588,6 +6607,7 @@ class VerifyStep:
                     "known_atoms": len(known_atom_ids),
                     "orphan_atoms": len(orphan_atoms),
                     "orphan_atom_ids": sorted(orphan_atoms)[:50],
+                    "edge_source": record_source,
                 }
             else:
                 p7_payload = {
@@ -6597,6 +6617,7 @@ class VerifyStep:
                     "known_atoms": 0,
                     "orphan_atoms": 0,
                     "note": "No branch-manager atoms available for lineage tracing",
+                    "edge_source": record_source,
                 }
         except Exception as exc:
             logger.warning("P7 lineage verification payload failed: %s", exc, exc_info=True)

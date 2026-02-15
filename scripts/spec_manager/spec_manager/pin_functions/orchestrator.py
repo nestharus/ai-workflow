@@ -63,22 +63,24 @@ class PinFunctionOrchestrator:
 
     def scan(
         self,
-        mode: str = "both",
+        mode: str = "proposals",
         pin_proposals: list[dict[str, Any]] | None = None,
         edge_proposals: list[dict[str, Any]] | None = None,
         pin_proposals_path: str | Path | None = None,
         edge_proposals_path: str | Path | None = None,
         source_index_entries: list[dict[str, Any]] | None = None,
+        changed_files: list[str] | None = None,
     ) -> PinFunctionRegistry:
-        """Scan for pin-functions and merge LLM-sourced proposals.
+        """Build the pin registry from LLM proposals with optional scan fallback.
 
-        Scans the project root for atom functions via ``analyze_source()``
-        (LLM-based).  Edges are exclusively LLM-sourced via proposals —
-        filesystem scan no longer produces edges.
+        The authoritative source of truth is IMPLEMENT-step pin/edge
+        proposals. Filesystem scanning is only an optional fallback backend
+        for generating candidate pins when ``mode`` includes ``"scan"``.
 
         Args:
-            mode: One of ``"scan"`` (filesystem only), ``"proposals"``
-                (proposals only), or ``"both"`` (merge both).
+            mode: One of ``"proposals"`` (authoritative proposals only),
+                ``"scan"`` (fallback scanner only), or ``"both"`` (scanner
+                suggestions + authoritative proposals).
             pin_proposals: Pin proposals from the IMPLEMENT step (P9).
                 Each dict should have at minimum ``function_name``,
                 ``module_path``, ``file_path``.
@@ -93,14 +95,22 @@ class PinFunctionOrchestrator:
                 entries (from PromotionLoop ``SourceIndexRef``). When
                 provided, scan reuses these entries instead of re-running
                 deep ``analyze_source`` directory walks.
+            changed_files: Optional changed-file list used for proposal
+                diff-coverage verification.
 
         Returns:
             PinFunctionRegistry with all discovered pin-functions and edges.
         """
+        allowed_modes = {"scan", "proposals", "both"}
+        if mode not in allowed_modes:
+            raise ValueError(
+                f"Unsupported scan mode {mode!r}; expected one of {sorted(allowed_modes)}"
+            )
+
         pin_functions: list[PinFunction] = []
         import_edges: list[ImportEdge] = []
 
-        # Phase 1: Filesystem scan — pins only, NO edges
+        # Phase 1: Optional filesystem scan backend — pins only, NO edges.
         if mode in ("scan", "both"):
             all_candidates: list[_AtomCandidate]
             if source_index_entries:
@@ -123,7 +133,7 @@ class PinFunctionOrchestrator:
 
             pin_functions = self._candidates_to_pin_functions(all_candidates)
 
-        # Phase 2: Merge proposals (mode="proposals" or "both")
+        # Phase 2: Proposal materialization and verification.
         if mode in ("proposals", "both"):
             loaded_pin_proposals = self._load_proposals(pin_proposals_path)
             loaded_edge_proposals = self._load_proposals(edge_proposals_path)
@@ -131,6 +141,7 @@ class PinFunctionOrchestrator:
                 pin_functions,
                 loaded_pin_proposals + (pin_proposals or []),
                 loaded_edge_proposals + (edge_proposals or []),
+                changed_files=changed_files,
             )
             pin_functions = proposed_pins
             import_edges.extend(proposed_edges)
@@ -148,24 +159,26 @@ class PinFunctionOrchestrator:
     def _load_proposals(path: str | Path | None) -> list[dict[str, Any]]:
         """Load proposal payloads from a JSON file path.
 
-        Returns an empty list when the path is missing, unreadable, or
-        does not contain a JSON array of objects.
+        Raises when the path is present but unreadable or invalid.
         """
         if path is None:
             return []
 
         try:
             payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
+        except OSError as exc:
+            raise ValueError(f"Failed to read proposal file {path}: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Proposal file {path} is not valid JSON: {exc}") from exc
 
         if not isinstance(payload, list):
-            return []
+            raise TypeError(f"Proposal file {path} must contain a JSON list")
 
         result: list[dict[str, Any]] = []
-        for item in payload:
-            if isinstance(item, dict):
-                result.append(item)
+        for idx, item in enumerate(payload):
+            if not isinstance(item, dict):
+                raise TypeError(f"Proposal file {path} has non-object entry at index {idx}")
+            result.append(item)
         return result
 
     def diff(self, old_registry_path: Path) -> PropagationReport:
@@ -182,7 +195,7 @@ class PinFunctionOrchestrator:
         old_registry = PinFunctionRegistry.model_validate(old_data)
 
         # Scan current state
-        new_registry = self.scan()
+        new_registry = self.scan(mode="scan")
 
         # Build index from new registry for propagation
         index = PinRegistryIndex.from_registry(new_registry)
@@ -203,7 +216,7 @@ class PinFunctionOrchestrator:
         Returns:
             List of ImportEdge objects for all importing locations.
         """
-        registry = self.scan()
+        registry = self.scan(mode="scan")
         index = PinRegistryIndex.from_registry(registry)
 
         pf = index.get_by_name(function_name)
@@ -221,7 +234,7 @@ class PinFunctionOrchestrator:
         Returns:
             List of PinFunction objects used by the file.
         """
-        registry = self.scan()
+        registry = self.scan(mode="scan")
         index = PinRegistryIndex.from_registry(registry)
 
         # Find all edges that reference this architectural file
@@ -261,7 +274,7 @@ class PinFunctionOrchestrator:
         Returns:
             Markdown string with the analysis report.
         """
-        registry = self.scan()
+        registry = self.scan(mode="scan")
         index = PinRegistryIndex.from_registry(registry)
 
         lines: list[str] = []
@@ -320,58 +333,375 @@ class PinFunctionOrchestrator:
         existing_pins: list[PinFunction],
         pin_proposals: list[dict[str, Any]],
         edge_proposals: list[dict[str, Any]],
+        *,
+        changed_files: list[str] | None = None,
     ) -> tuple[list[PinFunction], list[ImportEdge]]:
-        """Merge P9 proposals into the scanned pin functions.
-
-        Pin proposals that match existing functions by name+file are
-        skipped (scan wins). New proposals get IDs allocated.
+        """Materialize verified proposals into registry schemas.
 
         Returns:
             (merged_pin_functions, new_edges)
         """
-        existing_keys = {(pf.function_name, pf.file_path) for pf in existing_pins}
-        merged = list(existing_pins)
-        next_id = len(merged) + 1
+        existing_by_key = {(pf.function_name, pf.file_path): pf for pf in existing_pins}
+        used_pin_ids: set[str] = {pf.pin_func_id for pf in existing_pins}
+        merged_by_key: dict[tuple[str, str], PinFunction] = dict(existing_by_key)
 
-        for proposal in pin_proposals:
-            key = (proposal.get("function_name", ""), proposal.get("file_path", ""))
-            if key in existing_keys:
+        next_pin_seq = self._next_pin_sequence(used_pin_ids)
+        normalized_pin_proposals = self._verify_pin_proposals(pin_proposals)
+
+        for proposal in normalized_pin_proposals:
+            key = (proposal["function_name"], proposal["file_path"])
+            proposed_pin_id = proposal["pin_func_id"]
+
+            if not proposed_pin_id:
+                existing = existing_by_key.get(key)
+                if existing is not None:
+                    proposed_pin_id = existing.pin_func_id
+                else:
+                    proposed_pin_id = f"PFUNC-P-{next_pin_seq:04d}"
+                    next_pin_seq += 1
+
+            conflicting_key = next(
+                (
+                    existing_key
+                    for existing_key, pin in merged_by_key.items()
+                    if pin.pin_func_id == proposed_pin_id and existing_key != key
+                ),
+                None,
+            )
+            if conflicting_key is not None:
+                raise ValueError(
+                    "pin_proposals contain duplicate pin_func_id for different functions: "
+                    f"{proposed_pin_id}"
+                )
+
+            used_pin_ids.add(proposed_pin_id)
+            merged_by_key[key] = PinFunction(
+                pin_func_id=proposed_pin_id,
+                function_name=proposal["function_name"],
+                module_path=proposal["module_path"],
+                file_path=proposal["file_path"],
+                line_start=proposal["line_start"],
+                line_end=proposal["line_end"],
+                signature=proposal["signature"],
+                docstring=proposal["docstring"],
+                content_hash=proposal["content_hash"],
+                is_shape=proposal["is_shape"],
+                store_touches=proposal["store_touches"],
+                evidence_atom_ids=proposal["evidence_atom_ids"],
+            )
+
+        merged_pins = list(merged_by_key.values())
+        pin_ids = {pin.pin_func_id for pin in merged_pins}
+        pin_ids_by_name: dict[str, str] = {}
+        for pin in merged_pins:
+            pin_ids_by_name[pin.function_name] = pin.pin_func_id
+            if pin.module_path:
+                pin_ids_by_name[f"{pin.module_path}.{pin.function_name}"] = pin.pin_func_id
+        new_edges = self._verify_edge_proposals(
+            edge_proposals=edge_proposals,
+            pin_ids=pin_ids,
+            pin_ids_by_name=pin_ids_by_name,
+        )
+        self._verify_diff_coverage(merged_pins, new_edges, changed_files)
+        return merged_pins, new_edges
+
+    def _next_pin_sequence(self, used_pin_ids: set[str]) -> int:
+        highest = 0
+        for pin_id in used_pin_ids:
+            if pin_id.startswith("PFUNC-P-"):
+                suffix = pin_id.removeprefix("PFUNC-P-")
+            elif pin_id.startswith("PFUNC-"):
+                suffix = pin_id.removeprefix("PFUNC-")
+            else:
                 continue
-            existing_keys.add(key)
+            if suffix.isdigit():
+                highest = max(highest, int(suffix))
+        return highest + 1
 
-            pf = PinFunction(
-                pin_func_id=proposal.get("pin_func_id", f"PFUNC-P-{next_id:04d}"),
-                function_name=proposal.get("function_name", ""),
-                module_path=proposal.get("module_path", ""),
-                file_path=proposal.get("file_path", ""),
-                line_start=proposal.get("line_start", 0),
-                line_end=proposal.get("line_end", 0),
-                signature=proposal.get("signature", ""),
-                docstring=proposal.get("docstring", ""),
-                content_hash=proposal.get("content_hash", ""),
-                is_shape=proposal.get("is_shape", False),
-                store_touches=proposal.get("store_touches", []),
-                evidence_atom_ids=proposal.get("evidence_atom_ids", []),
+    def _verify_pin_proposals(self, pin_proposals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen_keys: set[tuple[str, str]] = set()
+        verified: list[dict[str, Any]] = []
+
+        for idx, proposal in enumerate(pin_proposals):
+            function_name = str(proposal.get("function_name", "")).strip()
+            if not function_name:
+                raise ValueError(f"pin_proposals[{idx}] missing function_name")
+
+            file_path = self._normalize_project_relative_path(proposal.get("file_path", ""))
+            if not file_path:
+                raise ValueError(f"pin_proposals[{idx}] missing file_path")
+
+            module_path = str(proposal.get("module_path", "")).strip()
+            if not module_path:
+                module_path = self._file_to_module(self._project_root / file_path)
+            if not module_path:
+                raise ValueError(f"pin_proposals[{idx}] missing module_path for {function_name}")
+
+            line_start = self._coerce_positive_int(
+                proposal.get("line_start"), field="line_start", idx=idx
             )
-            merged.append(pf)
-            next_id += 1
-
-        new_edges: list[ImportEdge] = []
-        for proposal in edge_proposals:
-            self._edge_counter += 1
-            edge = ImportEdge(
-                edge_id=proposal.get("edge_id", f"IMEDGE-P-{self._edge_counter:04d}"),
-                pin_func_id=proposal.get("pin_func_id", ""),
-                arch_location=proposal.get("arch_location", ""),
-                arch_file_path=proposal.get("arch_file_path", ""),
-                arch_line=proposal.get("arch_line", 0),
-                projection_type=proposal.get("projection_type", ProjectionType.PASS_THROUGH),
-                confidence=proposal.get("confidence", 0.8),
-                is_direct_import=proposal.get("is_direct_import", True),
+            line_end = self._coerce_positive_int(
+                proposal.get("line_end"), field="line_end", idx=idx
             )
-            new_edges.append(edge)
+            if line_end < line_start:
+                raise ValueError(
+                    f"pin_proposals[{idx}] has invalid span: "
+                    f"line_end ({line_end}) < line_start ({line_start})"
+                )
 
-        return merged, new_edges
+            source_file = self._project_root / file_path
+            if not source_file.exists() or not source_file.is_file():
+                raise ValueError(f"pin_proposals[{idx}] points to missing source file: {file_path}")
+            try:
+                source_lines = source_file.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError) as exc:
+                raise ValueError(
+                    f"pin_proposals[{idx}] cannot read source file {file_path}: {exc}"
+                ) from exc
+            if line_end > len(source_lines):
+                raise ValueError(
+                    f"pin_proposals[{idx}] span {line_start}-{line_end} exceeds file length "
+                    f"({len(source_lines)}) for {file_path}"
+                )
+
+            anchor_window_start = max(line_start - 2, 1)
+            anchor_window_end = min(line_start + 2, len(source_lines))
+            anchor_window = "\n".join(
+                source_lines[anchor_window_start - 1 : anchor_window_end]
+            ).lower()
+            if function_name.lower() not in anchor_window:
+                raise ValueError(
+                    f"pin_proposals[{idx}] anchor mismatch for {function_name} "
+                    f"at {file_path}:{line_start}"
+                )
+
+            span_source = "\n".join(source_lines[line_start - 1 : line_end])
+            canonical_hash = hashlib.sha256(
+                textwrap.dedent(span_source).strip().encode("utf-8")
+            ).hexdigest()
+            proposal_hash = str(proposal.get("content_hash", "")).strip()
+            if proposal_hash and proposal_hash != canonical_hash:
+                raise ValueError(
+                    f"pin_proposals[{idx}] has stale content_hash for {function_name} "
+                    f"in {file_path}"
+                )
+
+            key = (function_name, file_path)
+            if key in seen_keys:
+                raise ValueError(
+                    f"pin_proposals contains duplicate function/file entry: "
+                    f"{function_name} @ {file_path}"
+                )
+            seen_keys.add(key)
+
+            verified.append(
+                {
+                    "pin_func_id": str(proposal.get("pin_func_id", "")).strip(),
+                    "function_name": function_name,
+                    "module_path": module_path,
+                    "file_path": file_path,
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "signature": str(proposal.get("signature", "")).strip(),
+                    "docstring": str(proposal.get("docstring", "")).strip(),
+                    "content_hash": proposal_hash or canonical_hash,
+                    "is_shape": bool(proposal.get("is_shape", False)),
+                    "store_touches": self._coerce_string_list(
+                        proposal.get("store_touches", []),
+                        field="store_touches",
+                        idx=idx,
+                    ),
+                    "evidence_atom_ids": self._coerce_string_list(
+                        proposal.get("evidence_atom_ids", []),
+                        field="evidence_atom_ids",
+                        idx=idx,
+                    ),
+                }
+            )
+        return verified
+
+    def _verify_edge_proposals(
+        self,
+        *,
+        edge_proposals: list[dict[str, Any]],
+        pin_ids: set[str],
+        pin_ids_by_name: dict[str, str],
+    ) -> list[ImportEdge]:
+        seen_edge_ids: set[str] = set()
+        materialized: list[ImportEdge] = []
+
+        next_edge_seq = self._edge_counter + 1
+        for idx, proposal in enumerate(edge_proposals):
+            raw_pin_id = str(proposal.get("pin_func_id", "")).strip()
+            resolved_pin_id = raw_pin_id
+            if resolved_pin_id not in pin_ids:
+                lookup_name = raw_pin_id
+                if not lookup_name:
+                    lookup_name = str(
+                        proposal.get("function_name")
+                        or proposal.get("imported_name")
+                        or proposal.get("source_name")
+                        or ""
+                    ).strip()
+                resolved_pin_id = pin_ids_by_name.get(lookup_name, "")
+                if not resolved_pin_id and "." in lookup_name:
+                    resolved_pin_id = pin_ids_by_name.get(lookup_name.rsplit(".", 1)[-1], "")
+            if resolved_pin_id not in pin_ids:
+                raise ValueError(
+                    f"edge_proposals[{idx}] references unknown pin_func_id/source {raw_pin_id!r}"
+                )
+
+            arch_file_path = self._normalize_project_relative_path(
+                proposal.get("arch_file_path") or proposal.get("arch_location") or ""
+            )
+            if not arch_file_path:
+                raise ValueError(f"edge_proposals[{idx}] missing arch_file_path")
+
+            arch_location = str(proposal.get("arch_location", "")).strip() or arch_file_path
+            arch_line_raw = proposal.get("arch_line")
+            if arch_line_raw in (None, "") and ":" in arch_location:
+                line_candidate = arch_location.rsplit(":", 1)[-1]
+                if line_candidate.isdigit():
+                    arch_line_raw = int(line_candidate)
+            if arch_line_raw in (None, ""):
+                arch_line_raw = 0
+            arch_line = self._coerce_non_negative_int(arch_line_raw, field="arch_line", idx=idx)
+
+            projection_raw = proposal.get("projection_type")
+            if not isinstance(projection_raw, str) or not projection_raw.strip():
+                raise ValueError(f"edge_proposals[{idx}] missing projection_type")
+            try:
+                projection_type = ProjectionType(projection_raw.strip().lower())
+            except ValueError as exc:
+                raise ValueError(
+                    f"edge_proposals[{idx}] has unsupported projection_type {projection_raw!r}"
+                ) from exc
+
+            confidence = self._coerce_confidence(proposal.get("confidence", 1.0), idx=idx)
+            edge_id = str(proposal.get("edge_id", "")).strip()
+            if not edge_id:
+                edge_id = f"IMEDGE-P-{next_edge_seq:04d}"
+                next_edge_seq += 1
+
+            if edge_id in seen_edge_ids:
+                raise ValueError(f"edge_proposals contains duplicate edge_id: {edge_id}")
+            seen_edge_ids.add(edge_id)
+
+            materialized.append(
+                ImportEdge(
+                    edge_id=edge_id,
+                    pin_func_id=resolved_pin_id,
+                    arch_location=arch_location,
+                    arch_file_path=arch_file_path,
+                    arch_line=arch_line,
+                    projection_type=projection_type,
+                    confidence=confidence,
+                    is_direct_import=bool(proposal.get("is_direct_import", True)),
+                )
+            )
+
+        self._edge_counter = next_edge_seq - 1
+        return materialized
+
+    def _verify_diff_coverage(
+        self,
+        pin_functions: list[PinFunction],
+        edges: list[ImportEdge],
+        changed_files: list[str] | None,
+    ) -> None:
+        if not changed_files:
+            return
+
+        from spec_manager.core.language import SOURCE_EXTENSIONS
+
+        changed_source_files = {
+            self._normalize_project_relative_path(path)
+            for path in changed_files
+            if isinstance(path, str) and Path(path).suffix in SOURCE_EXTENSIONS
+        }
+        changed_source_files.discard("")
+        if not changed_source_files:
+            return
+
+        covered_files: set[str] = {
+            self._normalize_project_relative_path(pin.file_path) for pin in pin_functions
+        }
+        covered_files.update(
+            self._normalize_project_relative_path(edge.arch_file_path) for edge in edges
+        )
+        covered_files.discard("")
+
+        uncovered = sorted(changed_source_files - covered_files)
+        if uncovered:
+            raise ValueError(
+                "Pin/edge proposals do not cover changed source files: " + ", ".join(uncovered)
+            )
+
+    def _normalize_project_relative_path(self, file_path: Any) -> str:
+        raw = str(file_path or "").strip()
+        if not raw:
+            return ""
+        candidate = Path(raw)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.relative_to(self._project_root)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Path {raw!r} is outside project root {self._project_root}"
+                ) from exc
+        normalized = candidate.as_posix().lstrip("./")
+        if ":" in normalized:
+            possible_path, _, suffix = normalized.partition(":")
+            if Path(possible_path).suffix and suffix:
+                normalized = possible_path
+        return normalized
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, *, field: str, idx: int) -> int:
+        try:
+            coerced = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"pin_proposals[{idx}] has invalid {field}: {value!r}") from exc
+        if coerced <= 0:
+            raise ValueError(f"pin_proposals[{idx}] has non-positive {field}: {coerced}")
+        return coerced
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any, *, field: str, idx: int) -> int:
+        try:
+            coerced = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"edge_proposals[{idx}] has invalid {field}: {value!r}") from exc
+        if coerced < 0:
+            raise ValueError(f"edge_proposals[{idx}] has negative {field}: {coerced}")
+        return coerced
+
+    @staticmethod
+    def _coerce_confidence(value: Any, *, idx: int) -> float:
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"edge_proposals[{idx}] has invalid confidence: {value!r}") from exc
+        if confidence < 0.0 or confidence > 1.0:
+            raise ValueError(
+                f"edge_proposals[{idx}] confidence must be within [0.0, 1.0], got {confidence}"
+            )
+        return confidence
+
+    @staticmethod
+    def _coerce_string_list(value: Any, *, field: str, idx: int) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError(f"pin_proposals[{idx}] field {field} must be a list")
+        result: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise TypeError(f"pin_proposals[{idx}] field {field} must contain only strings")
+            text = item.strip()
+            if text:
+                result.append(text)
+        return result
 
     # --- Private: function extraction (replaces ast_extractor) ---
 

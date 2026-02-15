@@ -1494,8 +1494,10 @@ class PddLifecycle:
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
             LineageBuilder,
+            import_records_from_pin_registry,
             scan_imports_from_directory,
         )
+        from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
         effective_root = source_root or self.manager.workspace_path
         if source_root is None and self.worktree_manager is not None:
@@ -1504,7 +1506,22 @@ class PddLifecycle:
                 effective_root = clean_root
 
         try:
-            import_records = scan_imports_from_directory(effective_root)
+            import_records = []
+            registry_path = effective_root / ".spec" / "pin_registry.json"
+            if registry_path.exists():
+                try:
+                    pin_registry = PinFunctionRegistry.model_validate_json(
+                        registry_path.read_text(encoding="utf-8")
+                    )
+                    import_records = import_records_from_pin_registry(pin_registry)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to load pin registry for global lineage check: %s",
+                        exc,
+                        exc_info=True,
+                    )
+            if not import_records:
+                import_records = scan_imports_from_directory(effective_root)
             atom_defs: list[AtomDefinition] = []
             branch_manager = getattr(self.manager, "branches", None)
             if branch_manager is not None:

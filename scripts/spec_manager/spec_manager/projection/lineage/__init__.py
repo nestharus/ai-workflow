@@ -33,6 +33,7 @@ __all__ = [
     "TestPinMap",
     "compute_signature_hash",
     "discover_test_pin_associations",
+    "import_records_from_pin_registry",
     "load_lineage_table",
     "save_lineage_table",
     "scan_imports_from_directory",
@@ -60,6 +61,7 @@ def __getattr__(name: str) -> Any:
         "LineageBuilder",
         "RawImportRecord",
         "compute_signature_hash",
+        "import_records_from_pin_registry",
         "scan_imports_from_directory",
         "scan_imports_from_files",
     ):
@@ -68,6 +70,7 @@ def __getattr__(name: str) -> Any:
             LineageBuilder,
             RawImportRecord,
             compute_signature_hash,
+            import_records_from_pin_registry,
             scan_imports_from_directory,
             scan_imports_from_files,
         )
@@ -77,6 +80,7 @@ def __getattr__(name: str) -> Any:
             "LineageBuilder": LineageBuilder,
             "RawImportRecord": RawImportRecord,
             "compute_signature_hash": compute_signature_hash,
+            "import_records_from_pin_registry": import_records_from_pin_registry,
             "scan_imports_from_directory": scan_imports_from_directory,
             "scan_imports_from_files": scan_imports_from_files,
         }[name]

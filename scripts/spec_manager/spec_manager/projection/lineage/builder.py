@@ -1,7 +1,8 @@
-"""Lineage builder: consumes inferred import/adjacency signals.
+"""Lineage builder: consumes declared pin/edge evidence.
 
-Lineage assembly should use pre-inferred graph evidence rather than
-performing language-specific parsing/classification at build time.
+Lineage assembly uses pre-produced edge records (for example from
+PinFunctionRegistry). Source scanning helpers remain optional fallback
+discovery backends and are not authoritative.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 
 from spec_manager.core.code_analysis import analyze_source, infer_code_signals
 from spec_manager.projection.lineage.table import ProjectionLineageTable
-from spec_manager.schemas.pin_functions import ProjectionType
+from spec_manager.schemas.pin_functions import PinFunctionRegistry, ProjectionType
 
 # Language-agnostic import patterns (no AST dependency)
 _FROM_IMPORT_RE = re.compile(r"^\s*from\s+(\S+)\s+import\s+(.+)", re.MULTILINE)
@@ -46,6 +47,7 @@ class RawImportRecord:
     transformation_hint: str | None = None
     confidence: float = 1.0
     details: dict[str, Any] = field(default_factory=dict)
+    projection_type: ProjectionType | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -59,6 +61,7 @@ class RawImportRecord:
             "transformation_hint": self.transformation_hint,
             "confidence": self.confidence,
             "details": dict(self.details),
+            "projection_type": self.projection_type.value if self.projection_type else None,
         }
 
     @classmethod
@@ -76,6 +79,7 @@ class RawImportRecord:
             ),
             confidence=_coerce_confidence(data.get("confidence", 1.0), default=1.0),
             details=data.get("details", {}) if isinstance(data.get("details"), dict) else {},
+            projection_type=_coerce_projection_type(data.get("projection_type")),
         )
 
 
@@ -230,6 +234,7 @@ def _import_record_from_edge(edge: dict[str, Any], default_file: str) -> RawImpo
     )
 
     details = edge.get("details")
+    projection_type = _coerce_projection_type(edge.get("projection_type"))
     return RawImportRecord(
         importer_file=importer_file,
         importer_location=importer_location,
@@ -241,6 +246,7 @@ def _import_record_from_edge(edge: dict[str, Any], default_file: str) -> RawImpo
         or (str(edge["projection_type"]) if edge.get("projection_type") else None),
         confidence=_coerce_confidence(edge.get("confidence"), default=1.0),
         details=details if isinstance(details, dict) else {},
+        projection_type=projection_type,
     )
 
 
@@ -331,6 +337,18 @@ def _coerce_confidence(value: Any, *, default: float) -> float:
     return max(0.0, min(1.0, confidence))
 
 
+def _coerce_projection_type(value: Any) -> ProjectionType | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip().lower()
+    if not raw:
+        return None
+    try:
+        return ProjectionType(raw)
+    except ValueError:
+        return None
+
+
 @dataclass
 class AtomDefinition:
     """A registered atom (pin-function) for lineage tracking.
@@ -372,7 +390,7 @@ class AtomDefinition:
 
 
 class LineageBuilder:
-    """Builds ProjectionLineageTable from import-edge evidence and atoms."""
+    """Builds ProjectionLineageTable from declared edge evidence and atoms."""
 
     def __init__(
         self,
@@ -384,87 +402,55 @@ class LineageBuilder:
         self._atoms_by_function: dict[str, AtomDefinition] = {a.function_name: a for a in atoms}
 
     def build_lineage(self) -> ProjectionLineageTable:
-        """Build lineage table by matching imports against known atoms.
-
-        For each import record, checks if the imported name matches a
-        known atom function. If so, classifies the transformation type
-        and creates a lineage edge.
+        """Build lineage table by matching pre-produced edge records to atoms.
 
         Returns:
             Populated ProjectionLineageTable.
         """
         table = ProjectionLineageTable()
-
-        # Track which atoms appear per importer file to detect smear
-        atoms_per_file: dict[str, list[tuple[RawImportRecord, AtomDefinition]]] = {}
-
         for record in self.import_records:
             atom = self._atoms_by_function.get(record.imported_name)
             if atom is None:
                 continue
-            atoms_per_file.setdefault(record.importer_file, []).append((record, atom))
+            if record.projection_type is None:
+                # Lineage builder consumes declared projection types rather
+                # than inferring semantic classes from import topology.
+                continue
 
-        for _file_path, atom_imports in atoms_per_file.items():
-            if len(atom_imports) > 1:
-                # Multiple atoms imported in the same file: SMEAR
-                for record, atom in atom_imports:
-                    table.add_edge(
-                        from_unit=atom.atom_id,
-                        to_unit=record.importer_location,
-                        transformation=ProjectionType.SMEAR,
-                        confidence=0.8,
-                        details={
-                            "import_line": record.line_no,
-                            "co_imported_atoms": [a.atom_id for _, a in atom_imports if a != atom],
-                        },
-                    )
-            else:
-                record, atom = atom_imports[0]
-                transformation, confidence = _projection_from_record(record)
-                table.add_edge(
-                    from_unit=atom.atom_id,
-                    to_unit=record.importer_location,
-                    transformation=transformation,
-                    confidence=confidence,
-                    details={"import_line": record.line_no, **record.details},
-                )
+            table.add_edge(
+                from_unit=atom.atom_id,
+                to_unit=record.importer_location,
+                transformation=record.projection_type,
+                confidence=_coerce_confidence(record.confidence, default=1.0),
+                details={"import_line": record.line_no, **record.details},
+            )
 
         return table
 
 
-def _projection_from_record(record: RawImportRecord) -> tuple[ProjectionType, float]:
-    """Map inferred signal metadata to projection type + confidence."""
-    hint = (record.transformation_hint or "").strip().lower()
-    signal = (record.signal_type or "").strip().lower()
-    confidence = _coerce_confidence(record.confidence, default=1.0)
-
-    hint_mapping = {
-        "event_bridge": ProjectionType.EVENT_BRIDGE,
-        "event_handler": ProjectionType.EVENT_BRIDGE,
-        "middleware_wrap": ProjectionType.MIDDLEWARE_WRAP,
-        "middleware": ProjectionType.MIDDLEWARE_WRAP,
-        "retry_decorate": ProjectionType.RETRY_DECORATE,
-        "retry": ProjectionType.RETRY_DECORATE,
-        "smear": ProjectionType.SMEAR,
-        "pass_through": ProjectionType.PASS_THROUGH,
-    }
-    if hint in hint_mapping:
-        return hint_mapping[hint], confidence
-
-    signal_mapping = {
-        "event_edge": ProjectionType.EVENT_BRIDGE,
-        "event": ProjectionType.EVENT_BRIDGE,
-        "middleware_edge": ProjectionType.MIDDLEWARE_WRAP,
-        "middleware": ProjectionType.MIDDLEWARE_WRAP,
-        "retry_edge": ProjectionType.RETRY_DECORATE,
-        "retry": ProjectionType.RETRY_DECORATE,
-        "smear_edge": ProjectionType.SMEAR,
-        "smear": ProjectionType.SMEAR,
-    }
-    if signal in signal_mapping:
-        return signal_mapping[signal], confidence
-
-    return ProjectionType.PASS_THROUGH, confidence
+def import_records_from_pin_registry(pin_registry: PinFunctionRegistry) -> list[RawImportRecord]:
+    """Project PinFunctionRegistry edges into lineage-builder records."""
+    pin_by_id = {pin.pin_func_id: pin for pin in pin_registry.pin_functions}
+    records: list[RawImportRecord] = []
+    for edge in pin_registry.import_edges:
+        pin = pin_by_id.get(edge.pin_func_id)
+        if pin is None:
+            continue
+        records.append(
+            RawImportRecord(
+                importer_file=edge.arch_file_path,
+                importer_location=edge.arch_location,
+                imported_name=pin.function_name,
+                imported_from_module=pin.module_path,
+                line_no=edge.arch_line,
+                signal_type="pin_registry_edge",
+                transformation_hint=str(edge.projection_type),
+                confidence=edge.confidence,
+                details={"edge_id": edge.edge_id, "source": "pin_registry"},
+                projection_type=edge.projection_type,
+            )
+        )
+    return records
 
 
 def compute_signature_hash(file_path: str, function_name: str) -> str | None:
@@ -534,6 +520,7 @@ __all__ = [
     "LineageBuilder",
     "RawImportRecord",
     "compute_signature_hash",
+    "import_records_from_pin_registry",
     "scan_imports_from_directory",
     "scan_imports_from_files",
 ]

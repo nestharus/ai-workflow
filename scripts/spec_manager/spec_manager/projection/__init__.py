@@ -41,6 +41,7 @@ __all__ = [
     "convert_drift_to_gaps",
     "convert_propagation_to_drift",
     "generate_plan_from_libraries",
+    "import_records_from_pin_registry",
     "scan_imports_from_directory",
     "scan_imports_from_files",
 ]
@@ -114,6 +115,7 @@ def __getattr__(name: str) -> Any:
         "AtomDefinition",
         "LineageBuilder",
         "RawImportRecord",
+        "import_records_from_pin_registry",
         "scan_imports_from_directory",
         "scan_imports_from_files",
     }
@@ -141,6 +143,7 @@ def __getattr__(name: str) -> Any:
             AtomDefinition,
             LineageBuilder,
             RawImportRecord,
+            import_records_from_pin_registry,
             scan_imports_from_directory,
             scan_imports_from_files,
         )
@@ -149,6 +152,7 @@ def __getattr__(name: str) -> Any:
             "AtomDefinition": AtomDefinition,
             "LineageBuilder": LineageBuilder,
             "RawImportRecord": RawImportRecord,
+            "import_records_from_pin_registry": import_records_from_pin_registry,
             "scan_imports_from_directory": scan_imports_from_directory,
             "scan_imports_from_files": scan_imports_from_files,
         }[name]

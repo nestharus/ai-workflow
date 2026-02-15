@@ -641,7 +641,7 @@ class PddOrchestrator:
         project_root = self.manager.structure.root
         pin_orchestrator = PinFunctionOrchestrator(project_root)
 
-        registry = pin_orchestrator.scan()
+        registry = pin_orchestrator.scan(mode="scan")
 
         # Persist the registry to disk
         registry_path = pin_orchestrator.registry_path
@@ -716,7 +716,7 @@ class PddOrchestrator:
     def _run_projection_sync(self) -> dict[str, Any]:
         """Phase 7: Lineage building, analysis generation, projection sync.
 
-        1. Scans import records from workspace Python files.
+        1. Loads projection edges from pin registry (scan fallback only).
         2. Builds ``LineageBuilder`` to trace atom→architecture projection.
         3. Runs ``generate_analysis_file()`` for the full analysis artifact.
         4. Runs ``ProjectionGenerator.generate_plan()`` for plan.md.
@@ -729,17 +729,35 @@ class PddOrchestrator:
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
             LineageBuilder,
+            import_records_from_pin_registry,
             scan_imports_from_directory,
         )
         from spec_manager.projection.lineage.persistence import save_lineage_table
         from spec_manager.schemas.derived_elements import DerivedElement
+        from spec_manager.schemas.pin_functions import PinFunctionRegistry
         from spec_manager.schemas.spec_index_v2 import Library
 
         root = self.manager.structure.root
         outputs: dict[str, Any] = {}
 
-        # 1. Scan imports from workspace Python files
-        import_records = scan_imports_from_directory(root)
+        # 1. Prefer registry-declared edges; fall back to scan-only discovery.
+        import_records = []
+        registry_path = root / ".spec" / "pin_registry.json"
+        if registry_path.exists():
+            try:
+                pin_registry = PinFunctionRegistry.model_validate_json(
+                    registry_path.read_text(encoding="utf-8")
+                )
+                import_records = import_records_from_pin_registry(pin_registry)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load pin registry for projection sync lineage build: %s",
+                    exc,
+                    exc_info=True,
+                )
+                import_records = []
+        if not import_records:
+            import_records = scan_imports_from_directory(root)
         outputs["import_edges"] = len(import_records)
 
         # 2. Build atom definitions from branch manager for lineage tracking

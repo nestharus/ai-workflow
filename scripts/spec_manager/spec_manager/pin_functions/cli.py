@@ -101,7 +101,7 @@ def _cmd_pin_scan(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     orchestrator = PinFunctionOrchestrator(project_root)
 
-    registry = orchestrator.scan()
+    registry = orchestrator.scan(mode="scan")
 
     # Save registry
     save_path = orchestrator.save_registry(registry)
@@ -257,7 +257,7 @@ def _cmd_pin_test_check(args: argparse.Namespace) -> int:
         registry = PinFunctionRegistry(**registry_data)
     else:
         # Scan to build registry
-        registry = orchestrator.scan()
+        registry = orchestrator.scan(mode="scan")
         orchestrator.save_registry(registry)
 
     # Resolve baseline path
