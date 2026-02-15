@@ -6,6 +6,7 @@ constraint types under planner.constraints.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -147,6 +148,46 @@ class ConstraintsStore:
         merged.extend(self._constraints_without_id(system))
         merged.extend(self._constraints_without_id(specific))
         return merged
+
+    def snapshot_hash(self, slice_id: str) -> str:
+        """Return a deterministic hash of merged ACTIVE constraints for *slice_id*."""
+        merged = self.load_merged(slice_id)
+        active_payloads: list[dict[str, Any]] = []
+        for constraint in merged:
+            status = str(constraint.status or "ACTIVE").strip().upper()
+            if status != "ACTIVE":
+                continue
+            payload = constraint.to_dict()
+            payload["constraint_id"] = str(payload.get("constraint_id", "")).strip()
+            payload["question"] = str(payload.get("question", "")).strip()
+            payload["answer"] = str(payload.get("answer", "")).strip()
+            payload["applies_to_layers"] = sorted(
+                str(item).strip().upper()
+                for item in payload.get("applies_to_layers", [])
+                if str(item).strip()
+            )
+            payload["supersedes"] = sorted(
+                str(item).strip() for item in payload.get("supersedes", []) if str(item).strip()
+            )
+            payload["trace"] = [
+                str(item).strip() for item in payload.get("trace", []) if str(item).strip()
+            ]
+            active_payloads.append(payload)
+
+        active_payloads.sort(
+            key=lambda item: (
+                str(item.get("constraint_id", "")),
+                str(item.get("question", "")),
+                str(item.get("answer", "")),
+            )
+        )
+        canonical = json.dumps(
+            active_payloads,
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def save(self, slice_id: str, constraints: list[Constraint]) -> Path:
         """Save constraints for a slice (append-only, supersession-aware)."""

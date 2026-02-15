@@ -204,6 +204,9 @@ class PlanRef:
     path: str = ""
     intentions: list[dict[str, Any]] = field(default_factory=list)
     plan_artifacts: dict[str, Any] = field(default_factory=dict)
+    under_spec_events: list[dict[str, Any]] = field(default_factory=list)
+    under_spec_events_path: str = ""
+    constraints_snapshot_hash: str = ""
     edit_targets: list[dict[str, Any]] = field(default_factory=list)
     test_plan: list[dict[str, Any]] = field(default_factory=list)
     risks: list[dict[str, Any]] = field(default_factory=list)

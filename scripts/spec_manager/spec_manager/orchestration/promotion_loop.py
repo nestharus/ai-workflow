@@ -2642,6 +2642,71 @@ class PlanStep:
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [row for _, _, row in scored]
 
+    @staticmethod
+    def _constraints_context_for_planner(
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+    ) -> dict[str, Any]:
+        """Build constraints context so PLAN can reason over existing decisions."""
+        constraints_refs: list[str] = []
+        for ref in bundle.facts.constraints_refs or []:
+            cleaned = str(ref).strip()
+            if cleaned and cleaned not in constraints_refs:
+                constraints_refs.append(cleaned)
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
+        if workspace is None:
+            return {"constraints_refs": constraints_refs}
+
+        try:
+            from spec_manager.planner.constraints.store import ConstraintsStore
+
+            store = ConstraintsStore(workspace)
+            merged_constraints = store.load_merged(ctx.slice_id)
+            active_constraints = [
+                constraint
+                for constraint in merged_constraints
+                if str(constraint.status or "ACTIVE").strip().upper() == "ACTIVE"
+            ]
+            constraints_summary = [
+                {
+                    "constraint_id": str(constraint.constraint_id).strip(),
+                    "question": str(constraint.question).strip(),
+                    "answer": str(constraint.answer).strip(),
+                    "dimension": str(constraint.dimension).strip(),
+                    "authority_required": str(constraint.authority_required).strip(),
+                    "decision_type": str(constraint.decision_type).strip(),
+                    "scope": str(constraint.scope).strip(),
+                    "applies_to_layers": [
+                        str(layer).strip() for layer in constraint.applies_to_layers
+                    ],
+                }
+                for constraint in active_constraints
+            ]
+            for derived_path in (
+                workspace / "analysis" / "constraints" / "__system__.json",
+                workspace / "analysis" / "constraints" / f"{ctx.slice_id}.json",
+            ):
+                path_str = str(derived_path)
+                if path_str not in constraints_refs:
+                    constraints_refs.append(path_str)
+            return {
+                "constraints_refs": constraints_refs,
+                "constraints_summary": constraints_summary,
+                "constraints_snapshot_hash": store.snapshot_hash(ctx.slice_id),
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to load constraints context for PLAN slice %s: %s",
+                ctx.slice_id,
+                exc,
+                exc_info=True,
+            )
+            return {
+                "constraints_refs": constraints_refs,
+                "load_error": str(exc),
+            }
+
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Generate layer-appropriate implementation plan from gaps."""
         from spec_manager.orchestration.evidence import PlanRef
@@ -2676,39 +2741,61 @@ class PlanStep:
             path="plan.json",
             intentions=intentions,
             plan_artifacts=plan_artifacts,
+            under_spec_events=[],
+            under_spec_events_path="",
+            constraints_snapshot_hash="",
         )
 
         # Run planning gate: check decision requirements against constraints
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else None
-        if workspace:
-            try:
-                from spec_manager.orchestration.under_spec.planning_gate import (
-                    run_planning_gate,
-                )
-                from spec_manager.planner.constraints.store import (
-                    ConstraintsStore,
-                )
+        if workspace is None:
+            return StepResult(
+                status="BLOCKED",
+                error=(
+                    "Planning gate unavailable: workspace_root is required to "
+                    "validate decision requirements against constraints."
+                ),
+            )
 
-                store = ConstraintsStore(workspace)
-                gate_result = run_planning_gate(
-                    constraints_store=store,
-                    slice_id=ctx.slice_id,
-                    intentions=intentions,
-                    plan_outputs=plan_outputs,
-                )
+        try:
+            from spec_manager.orchestration.under_spec.planning_gate import (
+                run_planning_gate,
+            )
+            from spec_manager.planner.constraints.store import (
+                ConstraintsStore,
+            )
 
-                if not gate_result.all_covered:
-                    existing = bundle.implementation.under_spec_events or []
-                    bundle.implementation.under_spec_events = (
-                        existing + gate_result.under_spec_events
-                    )
-                    coordinate_step = CoordinateStep(
-                        planner=self._planner,
-                        resolver=self._resolver,
-                    )
-                    return coordinate_step._resolve_under_spec(ctx, bundle)
-            except Exception as exc:
-                logger.debug("Planning gate skipped: %s", exc)
+            store = ConstraintsStore(workspace)
+            gate_result = run_planning_gate(
+                constraints_store=store,
+                slice_id=ctx.slice_id,
+                intentions=intentions,
+                plan_outputs=plan_outputs,
+            )
+            bundle.plan.constraints_snapshot_hash = str(
+                gate_result.constraints_snapshot_hash
+            ).strip()
+            bundle.plan.under_spec_events = list(gate_result.under_spec_events)
+
+            if not gate_result.all_covered:
+                coordinate_step = CoordinateStep(
+                    planner=self._planner,
+                    resolver=self._resolver,
+                )
+                return coordinate_step._resolve_under_spec(
+                    ctx,
+                    bundle,
+                    raw_events=bundle.plan.under_spec_events,
+                    source="plan",
+                )
+        except Exception as exc:
+            logger.warning(
+                "Planning gate failed for slice %s: %s", ctx.slice_id, exc, exc_info=True
+            )
+            return StepResult(
+                status="BLOCKED",
+                error=f"Planning gate failed: {exc}",
+            )
 
         return StepResult(status="OK")
 
@@ -2719,6 +2806,8 @@ class PlanStep:
         """
         from spec_manager.planner.api import PlanningContext, PlanningRequest
 
+        constraints_context = self._constraints_context_for_planner(ctx, bundle)
+
         planning_ctx = PlanningContext(
             run_id=ctx.run_id,
             slice_id=ctx.slice_id,
@@ -2728,7 +2817,10 @@ class PlanStep:
             workspace_root=ctx.workspace_root,
             slice_root=ctx.slice_root,
             bundle_ref=bundle,
-            metadata={"focus_targets": self._focus_targets(ctx)},
+            metadata={
+                "focus_targets": self._focus_targets(ctx),
+                "constraints_context": constraints_context,
+            },
         )
         gap_analysis: dict[str, Any] = {}
         if isinstance(bundle.gaps.analysis, dict):
@@ -2748,6 +2840,7 @@ class PlanStep:
             },
             "previous_plan_artifacts": dict(bundle.plan.plan_artifacts or {}),
             "under_spec_decisions": list(bundle.under_spec.decisions or []),
+            "constraints_context": constraints_context,
         }
 
         result = self._planner.plan(
@@ -2758,6 +2851,7 @@ class PlanStep:
                     "gaps": bundle.gaps.open_gaps,
                     "gap_analysis": gap_analysis,
                     "prior_artifacts": prior_artifacts,
+                    "constraints_context": constraints_context,
                 },
             )
         )
@@ -3706,11 +3800,18 @@ class CoordinateStep:
         except (TypeError, ValueError):
             source_line = 0
 
-        artifact_key = str(
-            event.get("needed_for")
-            or (event.get("context") if isinstance(event.get("context"), str) else "")
-            or ""
-        ).strip()
+        context_payload = event.get("context", {})
+        context_needed_for = ""
+        if isinstance(context_payload, dict):
+            context_needed_for = str(
+                context_payload.get("needed_for")
+                or context_payload.get("artifact_key")
+                or context_payload.get("context")
+                or ""
+            ).strip()
+        elif isinstance(context_payload, str):
+            context_needed_for = context_payload.strip()
+        artifact_key = str(event.get("needed_for") or context_needed_for or "").strip()
         if not artifact_key:
             artifact_key = str(event.get("source_file", "")).strip()
         signal_id = f"{ctx.slice_id}:{bundle.iteration}:{event_id}:{event_index}"
@@ -4039,14 +4140,36 @@ class CoordinateStep:
             registered.append(spec.monitor_id)
         return registered
 
-    def _resolve_under_spec(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
+    def _resolve_under_spec(
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        *,
+        raw_events: list[dict[str, Any]] | None = None,
+        source: Literal["implementation", "plan"] = "implementation",
+    ) -> StepResult:
         """L2/L3: resolve under-spec events via UnderSpecManager.
 
         Delegates to UnderSpecManager for constraint resolution.
         """
-        raw_events = bundle.implementation.under_spec_events
+        if source == "plan":
+            selected_events = (
+                raw_events if raw_events is not None else bundle.plan.under_spec_events
+            )
+            normalized_events = [
+                event for event in (selected_events or []) if isinstance(event, dict)
+            ]
+            bundle.plan.under_spec_events = normalized_events
+        else:
+            selected_events = (
+                raw_events if raw_events is not None else bundle.implementation.under_spec_events
+            )
+            normalized_events = [
+                event for event in (selected_events or []) if isinstance(event, dict)
+            ]
+            bundle.implementation.under_spec_events = normalized_events
 
-        if not raw_events:
+        if not normalized_events:
             return StepResult(status="OK")
 
         from spec_manager.orchestration.under_spec.manager import (
@@ -4054,7 +4177,7 @@ class CoordinateStep:
             UnderSpecManager,
         )
 
-        events = [UnderSpecEvent.from_dict(e) for e in raw_events]
+        events = [UnderSpecEvent.from_dict(e) for e in normalized_events]
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         manager = UnderSpecManager(
@@ -4068,11 +4191,18 @@ class CoordinateStep:
 
         resolved_ids = {event.event_id for event in outcome.resolved if event.event_id}
         if resolved_ids:
-            bundle.implementation.under_spec_events = [
-                event
-                for event in (bundle.implementation.under_spec_events or [])
-                if str(event.get("event_id", "")).strip() not in resolved_ids
-            ]
+            if source == "plan":
+                bundle.plan.under_spec_events = [
+                    event
+                    for event in (bundle.plan.under_spec_events or [])
+                    if str(event.get("event_id", "")).strip() not in resolved_ids
+                ]
+            else:
+                bundle.implementation.under_spec_events = [
+                    event
+                    for event in (bundle.implementation.under_spec_events or [])
+                    if str(event.get("event_id", "")).strip() not in resolved_ids
+                ]
 
         # Record decisions/blockers and under-spec artifacts in the bundle.
         bundle.under_spec.decisions = list(outcome.decisions)
@@ -4939,7 +5069,10 @@ class PromoteStep:
                     if not isinstance(result_payload, dict):
                         failures.append("Prior iteration slice test receipt missing result payload")
 
-        under_spec_events = list(bundle.implementation.under_spec_events or [])
+        under_spec_events = [
+            *list(bundle.implementation.under_spec_events or []),
+            *list(bundle.plan.under_spec_events or []),
+        ]
         has_decision_activity = bool(under_spec_events or bundle.under_spec.decisions)
         if has_decision_activity:
             decision_ref = str(bundle.under_spec.path or "").strip()
@@ -8431,10 +8564,22 @@ class PromotionLoop:
                 },
             )
 
+        if bundle.plan.under_spec_events:
+            bundle.plan.under_spec_events_path = _write_iteration_json(
+                bundle,
+                evidence_root,
+                "plan.under_spec.events.json",
+                bundle.plan.under_spec_events,
+            )
+        else:
+            bundle.plan.under_spec_events_path = ""
         if (
             bundle.plan.path
             or bundle.plan.intentions
             or bundle.plan.plan_artifacts
+            or bundle.plan.under_spec_events
+            or bundle.plan.under_spec_events_path
+            or bundle.plan.constraints_snapshot_hash
             or bundle.plan.edit_targets
             or bundle.plan.test_plan
             or bundle.plan.risks
@@ -8446,6 +8591,8 @@ class PromotionLoop:
                 {
                     "intentions": bundle.plan.intentions,
                     "plan_artifacts": bundle.plan.plan_artifacts,
+                    "under_spec_events_path": bundle.plan.under_spec_events_path,
+                    "constraints_snapshot_hash": bundle.plan.constraints_snapshot_hash,
                     "edit_targets": bundle.plan.edit_targets,
                     "test_plan": bundle.plan.test_plan,
                     "risks": bundle.plan.risks,
@@ -8892,7 +9039,13 @@ class PromotionLoop:
                     self._persist_iteration_artifacts(ctx, bundle)
                     bundle.save(evidence_root)
                     questions = []
-                    for event in bundle.implementation.under_spec_events:
+                    combined_under_spec_events = [
+                        *list(bundle.implementation.under_spec_events or []),
+                        *list(bundle.plan.under_spec_events or []),
+                    ]
+                    for event in combined_under_spec_events:
+                        if not isinstance(event, dict):
+                            continue
                         if q := event.get("question"):
                             questions.append(q)
                     for ticket in all_tickets:
@@ -8934,9 +9087,14 @@ class PromotionLoop:
                 self._gap_queue.mark_progress()
                 self._gap_queue.last_content_hash = ""
                 # Collect pending signal info from bundle
+                combined_under_spec_events = [
+                    *list(bundle.implementation.under_spec_events or []),
+                    *list(bundle.plan.under_spec_events or []),
+                ]
                 pending = [
                     {"question": e.get("question", ""), "kind": e.get("kind", "")}
-                    for e in (bundle.implementation.under_spec_events or [])
+                    for e in combined_under_spec_events
+                    if isinstance(e, dict)
                 ]
                 if waiting_iterations >= run_context.max_wait_cycles:
                     bundle.status = "BLOCKED"

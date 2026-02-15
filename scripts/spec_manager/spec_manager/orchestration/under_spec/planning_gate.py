@@ -7,6 +7,7 @@ Uncovered decisions become under-spec events that block the slice.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,7 @@ class PlanningGateResult:
     covered_decisions: list[dict[str, Any]] = field(default_factory=list)
     uncovered_decisions: list[dict[str, Any]] = field(default_factory=list)
     under_spec_events: list[dict[str, Any]] = field(default_factory=list)
+    constraints_snapshot_hash: str = ""
 
     @property
     def all_covered(self) -> bool:
@@ -70,6 +72,9 @@ def check_decision_coverage(
     covering: list[str] = []
 
     for constraint in constraints:
+        status = str(constraint.status or "ACTIVE").strip().upper()
+        if status != "ACTIVE":
+            continue
         if constraint.constraint_id and constraint.constraint_id == decision_id:
             covering.append(constraint.constraint_id)
 
@@ -108,6 +113,7 @@ def run_planning_gate(
         PlanningGateResult with covered/uncovered partitions.
     """
     result = PlanningGateResult()
+    result.constraints_snapshot_hash = constraints_store.snapshot_hash(slice_id)
 
     def _needed_for_target(intention: dict[str, Any]) -> Any:
         target_files = intention.get("target_files", [])
@@ -117,6 +123,20 @@ def run_planning_gate(
                 return normalized
         return intention.get("target_file", "")
 
+    def _event_id(
+        *,
+        decision_id: str,
+        intention_id: str,
+        question: str,
+        suffix: str = "",
+    ) -> str:
+        normalized_decision_id = str(decision_id).strip()
+        if normalized_decision_id:
+            return normalized_decision_id
+        seed = f"{intention_id}|{question}|{suffix}".strip("|")
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12] if seed else "unknown"
+        return f"plan-underspec-{digest}"
+
     plan_intentions = (
         plan_outputs.get("intentions", [])
         if isinstance(plan_outputs, dict)
@@ -125,14 +145,136 @@ def run_planning_gate(
     if not isinstance(plan_intentions, list):
         plan_intentions = []
 
-    for intention in plan_intentions:
+    for intention_index, intention in enumerate(plan_intentions):
         if not isinstance(intention, dict):
             continue
-        decision_reqs = intention.get("decision_requirements", [])
+        intention_id = (
+            str(intention.get("intention_id", "")).strip() or f"intention-{intention_index}"
+        )
+        if "decision_requirements" not in intention:
+            question = (
+                f"Planning output for intention '{intention_id}' is missing decision_requirements. "
+                "Provide an explicit list (empty when no decisions are needed)."
+            )
+            result.uncovered_decisions.append(
+                {
+                    "decision_id": "",
+                    "question": question,
+                    "intention_id": intention_id,
+                    "rationale": "decision_requirements field is required per intention",
+                }
+            )
+            result.under_spec_events.append(
+                {
+                    "event_id": _event_id(
+                        decision_id="",
+                        intention_id=intention_id,
+                        question=question,
+                        suffix="missing-decision-requirements",
+                    ),
+                    "kind": "AMBIGUOUS_REQUIREMENT",
+                    "question": question,
+                    "context": {
+                        "intention_id": intention_id,
+                        "target_file": intention.get("target_file", ""),
+                        "target_files": intention.get("target_files", []),
+                        "target_symbols": intention.get("target_symbols", []),
+                    },
+                    "evidence_paths": [],
+                }
+            )
+            continue
+
+        decision_reqs = intention.get("decision_requirements")
+        if not isinstance(decision_reqs, list):
+            question = (
+                f"Planning output for intention '{intention_id}' has "
+                "non-list decision_requirements. "
+                "Provide an explicit list (empty when no decisions are needed)."
+            )
+            result.uncovered_decisions.append(
+                {
+                    "decision_id": "",
+                    "question": question,
+                    "intention_id": intention_id,
+                    "rationale": "decision_requirements must be a list",
+                }
+            )
+            result.under_spec_events.append(
+                {
+                    "event_id": _event_id(
+                        decision_id="",
+                        intention_id=intention_id,
+                        question=question,
+                        suffix="invalid-decision-requirements",
+                    ),
+                    "kind": "AMBIGUOUS_REQUIREMENT",
+                    "question": question,
+                    "context": {
+                        "intention_id": intention_id,
+                        "decision_requirements": decision_reqs,
+                        "target_file": intention.get("target_file", ""),
+                        "target_files": intention.get("target_files", []),
+                        "target_symbols": intention.get("target_symbols", []),
+                    },
+                    "evidence_paths": [],
+                }
+            )
+            continue
         if not decision_reqs:
             continue
 
-        for decision in decision_reqs:
+        for decision_index, decision in enumerate(decision_reqs):
+            if not isinstance(decision, dict):
+                question = (
+                    f"Planning output for intention '{intention_id}' includes a non-object "
+                    "decision requirement entry."
+                )
+                result.uncovered_decisions.append(
+                    {
+                        "decision_id": "",
+                        "question": question,
+                        "intention_id": intention_id,
+                        "rationale": "decision requirement entries must be objects",
+                    }
+                )
+                result.under_spec_events.append(
+                    {
+                        "event_id": _event_id(
+                            decision_id="",
+                            intention_id=intention_id,
+                            question=question,
+                            suffix=f"invalid-entry-{decision_index}",
+                        ),
+                        "kind": "AMBIGUOUS_REQUIREMENT",
+                        "question": question,
+                        "context": {
+                            "intention_id": intention_id,
+                            "decision_entry": decision,
+                            "target_file": intention.get("target_file", ""),
+                            "target_files": intention.get("target_files", []),
+                            "target_symbols": intention.get("target_symbols", []),
+                        },
+                        "evidence_paths": [],
+                    }
+                )
+                continue
+
+            decision_id = str(decision.get("decision_id", "")).strip()
+            question = str(decision.get("question", "")).strip()
+            if not question:
+                question = (
+                    f"What decision is required for intention '{intention_id}' "
+                    "(decision_requirements entry missing question)?"
+                )
+            options_raw = decision.get("options", [])
+            options = (
+                [str(item).strip() for item in options_raw if str(item).strip()]
+                if isinstance(options_raw, list)
+                else []
+            )
+            needed_for = decision.get("needed_for", _needed_for_target(intention))
+
             coverage = check_decision_coverage(
                 constraints_store=constraints_store,
                 slice_id=slice_id,
@@ -142,25 +284,40 @@ def run_planning_gate(
             if coverage.covered:
                 result.covered_decisions.append(
                     {
-                        "decision_id": decision.get("decision_id", ""),
-                        "question": decision.get("question", ""),
+                        "decision_id": decision_id,
+                        "question": question,
                         "covering_constraints": coverage.covering_constraints,
                     }
                 )
             else:
                 result.uncovered_decisions.append(
                     {
-                        "decision_id": decision.get("decision_id", ""),
-                        "question": decision.get("question", ""),
-                        "intention_id": intention.get("intention_id", ""),
+                        "decision_id": decision_id,
+                        "question": question,
+                        "intention_id": intention_id,
+                        "rationale": coverage.rationale,
                     }
                 )
                 result.under_spec_events.append(
                     {
+                        "event_id": _event_id(
+                            decision_id=decision_id,
+                            intention_id=intention_id,
+                            question=question,
+                            suffix=f"uncovered-{decision_index}",
+                        ),
                         "kind": "MISSING_CONSTRAINT",
-                        "question": decision.get("question", ""),
-                        "options": decision.get("options", []),
-                        "needed_for": decision.get("needed_for", _needed_for_target(intention)),
+                        "question": question,
+                        "context": {
+                            "decision_id": decision_id,
+                            "intention_id": intention_id,
+                            "options": options,
+                            "needed_for": needed_for,
+                            "coverage_rationale": coverage.rationale,
+                            "target_file": intention.get("target_file", ""),
+                            "target_files": intention.get("target_files", []),
+                            "target_symbols": intention.get("target_symbols", []),
+                        },
                         "evidence_paths": [],
                     }
                 )
