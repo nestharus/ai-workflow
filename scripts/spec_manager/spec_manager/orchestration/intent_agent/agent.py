@@ -88,7 +88,7 @@ from spec_manager.orchestration.intent_agent.taxonomy import (
 logger = logging.getLogger(__name__)
 
 _VALID_REDEFINITION_QUESTION_TYPES = frozenset({"VALIDATION", "SCOPE", "TRADEOFF"})
-_REDEFINITION_UPDATE_SOURCES = frozenset({"PLANNER", "PDD_LIFECYCLE"})
+_REDEFINITION_UPDATE_SOURCES = frozenset({"PLANNER"})
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +319,7 @@ class IntentAgentOrchestrator:
         mode: str = "interactive",
         run_agent: Any = None,
         on_translation_saved: Any = None,
+        on_planner_signal: Any = None,
         intent_frame_strategy: IntentFrameStrategy | None = None,
         concept_map_strategy: ConceptMapStrategy | None = None,
         question_draft_strategy: QuestionDraftStrategy | None = None,
@@ -326,10 +327,12 @@ class IntentAgentOrchestrator:
         question_repairer: QuestionRepairStrategy | None = None,
         answer_translate_strategy: AnswerTranslateStrategy | None = None,
         queue_reassess_strategy: QueueReassessStrategy | None = None,
+        skeleton_synthesis_strategy: SkeletonSynthesisStrategy | None = None,
     ) -> None:
         self._run_dir = run_dir
         self._mode = mode
         self._on_translation_saved = on_translation_saved
+        self._on_planner_signal = on_planner_signal
         self._run_agent = run_agent
         self._intent_frame = intent_frame_strategy
         self._concept_map = concept_map_strategy
@@ -345,7 +348,9 @@ class IntentAgentOrchestrator:
         self._signal_store: UserQuestionSignalStore | None = None
         self._planner_store: PlannerUpdateStore | None = None
         self._event_log: IntentEventLog | None = None
-        self._skeleton_strategy: SkeletonSynthesisStrategy | None = None
+        self._skeleton_strategy: SkeletonSynthesisStrategy = (
+            skeleton_synthesis_strategy or SkeletonSynthesisStrategy()
+        )
 
     def _ensure_initialized(self) -> None:
         """Ensure state, queue, and stores are initialized."""
@@ -379,37 +384,16 @@ class IntentAgentOrchestrator:
                 payload["details"] = details
             self._event_log.append("question_unaskable", payload)
 
-    def _append_planner_update(self, event: dict[str, Any]) -> None:
-        """Append a synthetic planner update event to the update journal."""
-        if self._planner_store is None:
-            return
-        if not isinstance(event, dict):
-            return
-        event_type = self._coerce_str(event.get("type"), "")
-        if not event_type:
-            return
-        if self._state is None:
-            return
-        payload = dict(event)
-        payload.setdefault("run_id", self._state.run_id)
-        payload.setdefault("session_id", self._state.session_id)
-        payload.setdefault("event_id", f"ai_{uuid.uuid4().hex[:12]}")
-        payload.setdefault("created_at", datetime.now(UTC).isoformat())
-        payload.setdefault("source", "INTENT_AGENT")
-        payload.setdefault("canonical_key", payload.get("canonical_key", ""))
-        if not payload["source"]:
-            payload["source"] = "INTENT_AGENT"
-        try:
-            self._planner_store.write(payload)
-        except Exception:
-            logger.debug("Failed to append synthetic planner update %s", event_type)
-
     def _emit_followup_quality_reformulation(
         self,
         parent_question_id: str,
         draft: FollowupQuestionDraft,
         records: list[QualityCheckRecord],
     ) -> None:
+        """Emit a planner-directed signal for failed follow-up reformulation."""
+        if self._state is None:
+            return
+
         canonical_key = self._coerce_str(draft.canonical_key_hint)
         if not canonical_key:
             canonical_key = f"intent.followup.{parent_question_id}"
@@ -426,20 +410,16 @@ class IntentAgentOrchestrator:
             question_type = "SCOPE"
 
         payload: dict[str, Any] = {
-            "type": "problem_redefinition",
+            "signal_type": "FOLLOWUP_QUALITY_GATE_FAILED",
+            "source": "INTENT_AGENT",
+            "target": "PLANNER",
+            "run_id": self._state.run_id,
+            "session_id": self._state.session_id,
+            "created_at": datetime.now(UTC).isoformat(),
             "canonical_key": canonical_key,
-            "question_id": "",
             "question_type": question_type,
             "question_text": self._coerce_str(draft.text, "Reformulate follow-up question."),
-            "what_changed": [
-                "Failed follow-up quality gate during answer translation",
-                f"Parent question: {parent_question_id}",
-                f"Attempts: {len(records)}",
-                f"Failure: {reason}",
-            ],
-            "stage": "followup_quality_gate",
-            "action": "REWORD",
-            "origin": "intent_agent",
+            "reason": reason,
             "details": {
                 "parent_question_id": parent_question_id,
                 "taxonomy_type": draft.taxonomy_type,
@@ -448,7 +428,23 @@ class IntentAgentOrchestrator:
                 "failure_reason": reason,
             },
         }
-        self._append_planner_update(payload)
+
+        if self._on_planner_signal is None:
+            logger.debug(
+                "No planner signal callback configured; dropped follow-up quality signal "
+                "for parent_question_id=%s",
+                parent_question_id,
+            )
+            return
+
+        try:
+            self._on_planner_signal(payload)
+        except Exception:
+            logger.warning(
+                "on_planner_signal callback failed for follow-up quality signal (parent=%s)",
+                parent_question_id,
+                exc_info=True,
+            )
 
     def _coerce_str(self, value: Any, default: str = "") -> str:
         if not isinstance(value, str):
@@ -1719,7 +1715,7 @@ class IntentAgentOrchestrator:
                     ),
                     "redefinition_type": update_type,
                     "event_id": self._coerce_str(update.get("event_id")),
-                    "source": self._coerce_str(update.get("source", "PDD_LIFECYCLE")),
+                    "source": self._coerce_str(update.get("source", "PLANNER")),
                 }
             )
         return actions
@@ -2021,9 +2017,22 @@ class IntentAgentOrchestrator:
                 }
 
         # Get the next question (default priority ordering).
-        next_q = self._queue.next_question()
-        if next_q is None:
+        batch = self._queue.next_batch(run_agent=self._run_agent)
+        if not batch:
             return {"action": "wait"}
+
+        if len(batch) > 1:
+            if self._state is not None:
+                self._state.question_queue_state["last_presented_question_id"] = batch[
+                    0
+                ].question_id
+            return {
+                "action": "ask_batch",
+                "questions": [item.to_dict() for item in batch],
+                "question_ids": [item.question_id for item in batch],
+            }
+
+        next_q = batch[0]
 
         # Track last presented question in state.
         if self._state is not None:
@@ -2141,6 +2150,9 @@ class IntentAgentOrchestrator:
         trigger_type = self._coerce_redefinition_action_type(
             self._coerce_str(trigger.get("type"), "problem_redefinition"),
         )
+        if not self._is_authorized_redefinition_update(trigger, update_type=trigger_type):
+            source = self._coerce_str(trigger.get("source"), "PLANNER").upper()
+            raise ValueError(f"Unauthorized redefinition source: {source}")
         stage = self._coerce_str(trigger.get("stage"), "")
 
         canonical_key = self._coerce_str(trigger.get("canonical_key"), "")
@@ -2224,8 +2236,6 @@ class IntentAgentOrchestrator:
             question_id = f"q_{uuid.uuid4().hex[:12]}"
 
         source_text = self._coerce_str(trigger.get("source"), "PLANNER").upper()
-        if source_text not in _REDEFINITION_UPDATE_SOURCES | {"INTENT_AGENT", "SLICE_AGENT"}:
-            source_text = "PLANNER"
 
         source_trace = self._coerce_str(
             trigger.get("event_id"),
@@ -2510,9 +2520,6 @@ class IntentAgentOrchestrator:
         }
 
         # 2. Use SkeletonSynthesisStrategy to produce SkeletonSpec.
-        if self._skeleton_strategy is None:
-            self._skeleton_strategy = SkeletonSynthesisStrategy()
-
         spec = self._skeleton_strategy.synthesize(
             problem_frame=frame_dict,
             concept_map=concept_dict,
