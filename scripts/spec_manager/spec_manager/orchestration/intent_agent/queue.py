@@ -74,7 +74,7 @@ _VALID_REASSESS_ACTIONS = frozenset(
         "DISMISSED",
     }
 )
-_VALID_LLM_REASSESS_ACTIONS = frozenset({"KEEP", "STALE", "SUPERSEDED", "REWORD", "DISMISSED"})
+_VALID_LLM_REASSESS_ACTIONS = frozenset({"KEEP", "STALE", "REWORD", "DISMISSED"})
 _VALID_ANSWER_VALUE_TYPES = frozenset(
     {"integer", "number", "currency", "duration", "date", "string"},
 )
@@ -1079,6 +1079,186 @@ class QuestionQueue:
             return ""
         return canonical_key.split(delimiter, 1)[0]
 
+    @staticmethod
+    def _clone_answer_spec(answer_spec: AnswerSpec) -> AnswerSpec:
+        return AnswerSpec(
+            kind=answer_spec.kind,
+            choices=[dict(choice) for choice in answer_spec.choices],
+            value_type=answer_spec.value_type,
+            units_hint=answer_spec.units_hint,
+            text_bounds=dict(answer_spec.text_bounds),
+        )
+
+    @classmethod
+    def _clone_user_prompt(cls, prompt: UserPrompt) -> UserPrompt:
+        return UserPrompt(
+            text=prompt.text,
+            scenario=prompt.scenario,
+            why_it_matters=prompt.why_it_matters,
+            answer_spec=cls._clone_answer_spec(prompt.answer_spec),
+        )
+
+    @staticmethod
+    def _prompt_quality_score(prompt: UserPrompt) -> int:
+        text = prompt.text.strip()
+        score = len(text)
+        if prompt.scenario.strip():
+            score += 30
+        if prompt.why_it_matters.strip():
+            score += 20
+        if prompt.answer_spec.kind.strip():
+            score += 12
+        if prompt.answer_spec.choices:
+            score += min(len(prompt.answer_spec.choices) * 8, 24)
+        if prompt.answer_spec.value_type.strip():
+            score += 8
+        if prompt.answer_spec.text_bounds:
+            score += 8
+        return score
+
+    @staticmethod
+    def _parse_llm_json_object(raw: Any) -> dict[str, Any] | None:
+        text = raw if isinstance(raw, str) else str(raw)
+        payload = _extract_json_payload(text)
+        parsed = json.loads(payload)
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _llm_prefers_new_prompt(
+        self,
+        existing: QuestionItem,
+        new_item: QuestionItem,
+        *,
+        run_agent: Any = None,
+    ) -> bool:
+        if run_agent is None:
+            return False
+        existing_prompt_payload = {
+            "text": existing.user_prompt.text,
+            "scenario": existing.user_prompt.scenario,
+            "why_it_matters": existing.user_prompt.why_it_matters,
+        }
+        new_prompt_payload = {
+            "text": new_item.user_prompt.text,
+            "scenario": new_item.user_prompt.scenario,
+            "why_it_matters": new_item.user_prompt.why_it_matters,
+        }
+        prompt = (
+            "Choose the clearer, more specific user-facing question prompt.\n"
+            "Return JSON only: "
+            '{"winner":"existing|new","reason":"brief justification"}.\n'
+            f"EXISTING={json.dumps(existing_prompt_payload)}\n"
+            f"NEW={json.dumps(new_prompt_payload)}"
+        )
+        try:
+            parsed = self._parse_llm_json_object(run_agent(prompt))
+        except Exception:
+            logger.warning(
+                "LLM prompt comparison failed; using deterministic prompt scoring",
+                exc_info=True,
+            )
+            return False
+        if parsed is None:
+            return False
+        winner = str(parsed.get("winner", "")).strip().lower()
+        return winner == "new"
+
+    def _is_semantic_duplicate(
+        self,
+        existing: QuestionItem,
+        new_item: QuestionItem,
+        *,
+        run_agent: Any = None,
+    ) -> bool:
+        existing_text = existing.user_prompt.text.strip()
+        new_text = new_item.user_prompt.text.strip()
+        if existing_text and existing_text.casefold() == new_text.casefold():
+            return True
+        if run_agent is None:
+            return False
+        existing_payload = {
+            "canonical_key": existing.canonical_key,
+            "text": existing_text,
+            "scenario": existing.user_prompt.scenario,
+        }
+        new_payload = {
+            "canonical_key": new_item.canonical_key,
+            "text": new_text,
+            "scenario": new_item.user_prompt.scenario,
+        }
+
+        prompt = (
+            "Determine if the two questions ask about the same underlying unknown.\n"
+            "Ignore wording differences and focus on semantic equivalence.\n"
+            'Return JSON only: {"equivalent":true|false,"reason":"brief"}.\n'
+            f"QUESTION_A={json.dumps(existing_payload)}\n"
+            f"QUESTION_B={json.dumps(new_payload)}"
+        )
+        try:
+            parsed = self._parse_llm_json_object(run_agent(prompt))
+        except Exception:
+            logger.warning(
+                "LLM semantic dedup check failed; treating candidate as unique",
+                exc_info=True,
+            )
+            return False
+        if parsed is None:
+            return False
+        equivalent = parsed.get("equivalent")
+        if isinstance(equivalent, bool):
+            return equivalent
+        if isinstance(equivalent, str):
+            return equivalent.strip().lower() in {"true", "yes", "1"}
+        return False
+
+    def _batch_reduces_ambiguity(
+        self,
+        batch: list[QuestionItem],
+        *,
+        run_agent: Any = None,
+    ) -> bool:
+        if len(batch) < 2:
+            return False
+        if run_agent is None:
+            return False
+
+        payload = {
+            "questions": [
+                {
+                    "question_id": item.question_id,
+                    "canonical_key": item.canonical_key,
+                    "taxonomy_type": item.taxonomy_type,
+                    "scope_kind": item.scope_kind,
+                    "text": item.user_prompt.text,
+                }
+                for item in batch
+            ],
+        }
+        prompt = (
+            "Should these questions be asked together because answering together "
+            "reduces ambiguity?\n"
+            "Return JSON only: "
+            '{"batch":true|false,"reason":"brief justification"}.\n'
+            f"{json.dumps(payload)}"
+        )
+        try:
+            parsed = self._parse_llm_json_object(run_agent(prompt))
+        except Exception:
+            logger.warning(
+                "Batch ambiguity check failed; falling back to single-question mode",
+                exc_info=True,
+            )
+            return False
+        if parsed is None:
+            return False
+        decision = parsed.get("batch")
+        if isinstance(decision, bool):
+            return decision
+        if isinstance(decision, str):
+            return decision.strip().lower() in {"true", "yes", "1"}
+        return False
+
     def _project_question_key_map(
         self,
         question_key_map: dict[str, ReassessQuestionKeySignal],
@@ -1369,9 +1549,9 @@ class QuestionQueue:
         prompt = (
             "Reassess unresolved OPEN questions after planner updates.\n"
             "For each question, choose exactly one action: "
-            "KEEP, STALE, SUPERSEDED, REWORD, DISMISSED.\n"
+            "KEEP, STALE, REWORD, DISMISSED.\n"
             "Return only a JSON array where each entry is:\n"
-            '{"question_id":"...", "action":"KEEP|STALE|SUPERSEDED|REWORD|DISMISSED", '
+            '{"question_id":"...", "action":"KEEP|STALE|REWORD|DISMISSED", '
             '"reason":"...", "replacement":{"new_question_id":"...", '
             '"new_canonical_key":"...", "new_user_prompt_text":"..."}}\n'
             "Only include replacement when action is REWORD.\n\n"
@@ -1403,6 +1583,8 @@ class QuestionQueue:
                     continue
 
                 action = str(entry.get("action", "KEEP")).strip().upper()
+                if action == "SUPERSEDED":
+                    action = "STALE"
                 if action not in _VALID_LLM_REASSESS_ACTIONS:
                     action = "KEEP"
 
@@ -1477,17 +1659,6 @@ class QuestionQueue:
                         {
                             "question_id": item.question_id,
                             "action": "STALE",
-                            "reason": reason,
-                        }
-                    )
-                continue
-
-            if action == "SUPERSEDED":
-                if self.set_status(item.question_id, "SUPERSEDED", reason):
-                    llm_actions.append(
-                        {
-                            "question_id": item.question_id,
-                            "action": "SUPERSEDED",
                             "reason": reason,
                         }
                     )
@@ -1602,6 +1773,9 @@ class QuestionQueue:
         if len(batch) < 2:
             return [top]
 
+        if not self._batch_reduces_ambiguity(batch, run_agent=run_agent):
+            return [top]
+
         return batch
 
     def reassess(
@@ -1660,11 +1834,11 @@ class QuestionQueue:
                     f"canonical_key {item.canonical_key!r} resolved by planner constraints "
                     f"{resolved_constraint_ids}"
                 )
-                if self.mark_answered(item.question_id, reason):
+                if self.set_status(item.question_id, "STALE", reason):
                     actions.append(
                         {
                             "question_id": item.question_id,
-                            "action": "ANSWERED",
+                            "action": "STALE",
                             "reason": _format_reassess_reason(
                                 reason,
                                 item.canonical_key,
@@ -1690,12 +1864,12 @@ class QuestionQueue:
                 continue
 
             if item.canonical_key in stale_canonical_keys:
-                reason = "canonical_key marked obsolete/relevant-change by planner update"
-                if self.set_status(item.question_id, "SUPERSEDED", reason):
+                reason = "canonical_key marked stale by planner update (superseded/redefinition)"
+                if self.set_status(item.question_id, "STALE", reason):
                     actions.append(
                         {
                             "question_id": item.question_id,
-                            "action": "SUPERSEDED",
+                            "action": "STALE",
                             "reason": _format_reassess_reason(
                                 reason,
                                 item.canonical_key,
@@ -1706,12 +1880,12 @@ class QuestionQueue:
                 continue
 
             if item.question_id in stale_question_reasons or item.question_id in stale_question_ids:
-                reason = "question marked obsolete/replacement-needed by planner update"
-                if self.set_status(item.question_id, "SUPERSEDED", reason):
+                reason = "question marked stale by planner update (superseded/redefinition)"
+                if self.set_status(item.question_id, "STALE", reason):
                     actions.append(
                         {
                             "question_id": item.question_id,
-                            "action": "SUPERSEDED",
+                            "action": "STALE",
                             "reason": _format_reassess_reason(
                                 reason,
                                 item.canonical_key,
@@ -1798,12 +1972,12 @@ class QuestionQueue:
     #   - Tier 2: same decision_requirement_id → merge
     #   - Tier 3: semantic LLM match among same taxonomy_type + scope_kind
     #   - Returns existing item if duplicate, None if unique
-    def dedup(self, new_item: QuestionItem) -> QuestionItem | None:
+    def dedup(self, new_item: QuestionItem, *, run_agent: Any = None) -> QuestionItem | None:
         """Check if new_item duplicates an existing question."""
         if new_item.canonical_key:
             for existing in self._items.values():
                 if existing.canonical_key == new_item.canonical_key:
-                    self._merge_into(existing, new_item)
+                    self._merge_into(existing, new_item, run_agent=run_agent)
                     return existing
 
         new_dr_ids = set(
@@ -1823,23 +1997,69 @@ class QuestionQueue:
                     )
                 )
                 if existing_dr_ids and new_dr_ids & existing_dr_ids:
-                    self._merge_into(existing, new_item)
+                    self._merge_into(existing, new_item, run_agent=run_agent)
+                    return existing
+
+        if new_item.taxonomy_type and new_item.scope_kind:
+            for existing in self._items.values():
+                if (
+                    existing.taxonomy_type == new_item.taxonomy_type
+                    and existing.scope_kind == new_item.scope_kind
+                    and self._is_semantic_duplicate(existing, new_item, run_agent=run_agent)
+                ):
+                    self._merge_into(existing, new_item, run_agent=run_agent)
                     return existing
 
         return None
 
-    @staticmethod
-    def _merge_into(existing: QuestionItem, new_item: QuestionItem) -> None:
-        """Merge origins and blockers from new_item into existing."""
+    def _merge_into(
+        self,
+        existing: QuestionItem,
+        new_item: QuestionItem,
+        *,
+        run_agent: Any = None,
+    ) -> None:
+        """Merge duplicate question fields into existing without losing provenance."""
         existing_trace_ids = {o.trace_id for o in existing.origins if o.trace_id}
         for origin in new_item.origins:
             if origin.trace_id and origin.trace_id in existing_trace_ids:
                 continue
             existing.origins.append(origin)
+            if origin.trace_id:
+                existing_trace_ids.add(origin.trace_id)
+
+        if self._severity_tiebreak.get(new_item.blockers.severity, 0) > self._severity_tiebreak.get(
+            existing.blockers.severity, 0
+        ):
+            existing.blockers.severity = new_item.blockers.severity
         for attr in ("blocked_slices", "blocked_layers", "blocked_steps"):
             existing_set = set(getattr(existing.blockers, attr))
             new_set = set(getattr(new_item.blockers, attr))
             setattr(existing.blockers, attr, sorted(existing_set | new_set))
+
+        def _binding_values(raw: Any) -> set[str]:
+            if raw is None:
+                return set()
+            values = raw if isinstance(raw, (list, tuple, set)) else [raw]
+            return {str(value).strip() for value in values if str(value).strip()}
+
+        for binding_field in ("constraint_key_hints", "decision_requirement_ids", "work_items"):
+            merged = _binding_values(existing.system_binding.get(binding_field, []))
+            merged.update(_binding_values(new_item.system_binding.get(binding_field, [])))
+            if merged:
+                existing.system_binding[binding_field] = sorted(merged)
+
+        current_prompt_score = self._prompt_quality_score(existing.user_prompt)
+        new_prompt_score = self._prompt_quality_score(new_item.user_prompt)
+        use_new_prompt = new_prompt_score > current_prompt_score
+        if (
+            not use_new_prompt
+            and new_prompt_score == current_prompt_score
+            and self._llm_prefers_new_prompt(existing, new_item, run_agent=run_agent)
+        ):
+            use_new_prompt = True
+        if use_new_prompt:
+            existing.user_prompt = self._clone_user_prompt(new_item.user_prompt)
         existing.timestamps["updated_at"] = datetime.now(UTC).isoformat()
 
     # TODO [R2-2.6]: Implement mark_stale() — staleness sweep

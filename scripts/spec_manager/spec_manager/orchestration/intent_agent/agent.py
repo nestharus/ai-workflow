@@ -713,7 +713,7 @@ class IntentAgentOrchestrator:
             },
         )
 
-        existing = self._queue.dedup(replacement_item)
+        existing = self._queue.dedup(replacement_item, run_agent=self._run_agent)
         item = existing or replacement_item
         if item.status != "OPEN":
             item.status = "OPEN"
@@ -1654,7 +1654,7 @@ class IntentAgentOrchestrator:
             )
 
             # Dedup check.
-            existing = self._queue.dedup(item)
+            existing = self._queue.dedup(item, run_agent=self._run_agent)
             if existing is None:
                 self._queue.enqueue(item)
             else:
@@ -1979,7 +1979,7 @@ class IntentAgentOrchestrator:
                         last_checked_at=datetime.now(UTC).isoformat(),
                     ),
                 )
-                existing = self._queue.dedup(fq_item)
+                existing = self._queue.dedup(fq_item, run_agent=self._run_agent)
                 if existing is None:
                     self._queue.enqueue(fq_item)
                     item = fq_item
@@ -2632,7 +2632,7 @@ class IntentAgentOrchestrator:
 
         # Enqueue (dedup first).
         if passed:
-            existing = self._queue.dedup(item)
+            existing = self._queue.dedup(item, run_agent=self._run_agent)
             if existing is None:
                 self._queue.enqueue(item)
             else:
@@ -2923,7 +2923,7 @@ class IntentAgentOrchestrator:
             ),
         )
 
-        existing = self._queue.dedup(item)
+        existing = self._queue.dedup(item, run_agent=self._run_agent)
         if existing is None:
             self._queue.enqueue(item)
             existing = item
