@@ -358,7 +358,8 @@ class ConstraintIndexEntry:
 
     Attributes:
         element_id: Constraint identifier (e.g. ``CON-LIB-001``).
-        subtype: Classification (e.g. ``performance``, ``security``, ``api_contract``).
+        subtype: Classification from SEC-108 shallow tags
+            (e.g. ``performance``, ``security``, ``policy``).
         scope_hint: Scope indicator (``intra``, ``inter``, ``system``).
         entities: Named entities referenced by the constraint.
         text_preview: Short preview of the constraint text.
