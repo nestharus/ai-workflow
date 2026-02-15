@@ -53,6 +53,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -314,6 +315,29 @@ class PddLifecycle:
         config["pipeline_ci"] = pipeline_ci
         return config
 
+    @staticmethod
+    def _transition_block_status(
+        transition: dict[str, Any],
+        *,
+        default_reason: str,
+    ) -> tuple[bool, str]:
+        """Return whether a transition should block downstream execution."""
+        if bool(transition.get("governance_blocked", False)):
+            return True, str(transition.get("error") or default_reason)
+
+        propagation = transition.get("propagation")
+        if isinstance(propagation, dict) and not bool(propagation.get("success", True)):
+            return True, str(propagation.get("error") or transition.get("error") or default_reason)
+
+        if bool(transition.get("readiness_blocked", False)):
+            readiness = transition.get("readiness_ci")
+            readiness_error = ""
+            if isinstance(readiness, dict):
+                readiness_error = str(readiness.get("error") or "")
+            return True, str(transition.get("error") or readiness_error or default_reason)
+
+        return False, ""
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -458,11 +482,13 @@ class PddLifecycle:
 
             # L1→L2 transition: architectural refinement (may demote to L1)
             pass_outcome["l1_l2_transition"] = self._run_transition("l1", "l2")
-            if pass_outcome["l1_l2_transition"].get("governance_blocked"):
+            l2_transition_blocked, l2_transition_reason = self._transition_block_status(
+                pass_outcome["l1_l2_transition"],
+                default_reason="L1→L2 transition blocked",
+            )
+            if l2_transition_blocked:
                 pass_outcome["l2_blocked"] = True
-                pass_outcome["l2_blocked_reason"] = str(
-                    pass_outcome["l1_l2_transition"].get("error") or "L1→L2 transition blocked"
-                )
+                pass_outcome["l2_blocked_reason"] = l2_transition_reason
                 results.update(pass_outcome)
                 results["pipeline_pass_history"].append(
                     {
@@ -524,11 +550,13 @@ class PddLifecycle:
 
             # L2→L3 transition: code quality refinement (may demote to L2)
             pass_outcome["l2_l3_transition"] = self._run_transition("l2", "l3")
-            if pass_outcome["l2_l3_transition"].get("governance_blocked"):
+            l3_transition_blocked, l3_transition_reason = self._transition_block_status(
+                pass_outcome["l2_l3_transition"],
+                default_reason="L2→L3 transition blocked",
+            )
+            if l3_transition_blocked:
                 pass_outcome["l3_blocked"] = True
-                pass_outcome["l3_blocked_reason"] = str(
-                    pass_outcome["l2_l3_transition"].get("error") or "L2→L3 transition blocked"
-                )
+                pass_outcome["l3_blocked_reason"] = l3_transition_reason
                 results.update(pass_outcome)
                 results["pipeline_pass_history"].append(
                     {
@@ -1547,6 +1575,11 @@ class PddLifecycle:
         if self.worktree_manager:
             merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
             prop = merge_prop
+            merge_conflicts = [
+                self._normalize_conflict_path(path)
+                for path in (merge_prop.conflict_files or [])
+                if self._normalize_conflict_path(path)
+            ]
             propagation: dict[str, Any] = {
                 "success": merge_prop.success,
                 "from_layer": merge_prop.from_layer,
@@ -1554,19 +1587,32 @@ class PddLifecycle:
                 "merge_sha": merge_prop.merge_sha,
                 "error": merge_prop.error,
                 "strategy": "merge",
+                "conflict_files": merge_conflicts,
             }
 
             if not merge_prop.success:
                 rebase_prop = self.worktree_manager.rebase_next_layer_dirty_onto_clean(from_layer)
+                rebase_conflicts = [
+                    self._normalize_conflict_path(path)
+                    for path in (rebase_prop.conflict_files or [])
+                    if self._normalize_conflict_path(path)
+                ]
                 propagation["rebase_fallback"] = {
                     "success": rebase_prop.success,
                     "from_layer": rebase_prop.from_layer,
                     "to_layer": rebase_prop.to_layer,
                     "merge_sha": rebase_prop.merge_sha,
                     "error": rebase_prop.error,
+                    "conflict_files": rebase_conflicts,
                 }
                 if rebase_prop.success:
                     prop = rebase_prop
+                    combined_conflicts: list[str] = []
+                    seen_conflicts: set[str] = set()
+                    for path in merge_conflicts + rebase_conflicts:
+                        if path and path not in seen_conflicts:
+                            seen_conflicts.add(path)
+                            combined_conflicts.append(path)
                     propagation.update(
                         {
                             "success": True,
@@ -1574,12 +1620,66 @@ class PddLifecycle:
                             "error": "",
                             "strategy": "rebase_fallback",
                             "merge_error": merge_prop.error,
+                            "conflict_files": combined_conflicts,
                         }
                     )
                 else:
                     merge_error = merge_prop.error or "merge propagation failed"
                     rebase_error = rebase_prop.error or "rebase fallback failed"
+                    combined_conflicts: list[str] = []
+                    seen_conflicts: set[str] = set()
+                    for path in (
+                        merge_conflicts
+                        + rebase_conflicts
+                        + self._extract_conflict_files_from_errors(merge_error, rebase_error)
+                    ):
+                        normalized = self._normalize_conflict_path(path)
+                        if normalized and normalized not in seen_conflicts:
+                            seen_conflicts.add(normalized)
+                            combined_conflicts.append(normalized)
+                    conflict_slice_ids = self._infer_conflict_slice_ids(
+                        to_layer, combined_conflicts
+                    )
                     propagation["error"] = f"{merge_error}; {rebase_error}"
+                    propagation["conflict_files"] = combined_conflicts
+
+                    conflict_report_name = (
+                        f"transition_{from_layer}_{to_layer}_propagation_conflict.json"
+                    )
+                    conflict_report_payload = {
+                        "from_layer": from_layer,
+                        "to_layer": to_layer,
+                        "strategy": "merge_then_rebase_fallback",
+                        "merge_error": merge_error,
+                        "rebase_error": rebase_error,
+                        "conflict_files": combined_conflicts,
+                        "affected_slices": conflict_slice_ids,
+                    }
+                    self._write_run_report(conflict_report_name, conflict_report_payload)
+                    conflict_report_ref = self._run_report_relpath(conflict_report_name)
+
+                    demotion_summary = self._emit_transition_conflict_demotions(
+                        from_layer=from_layer,
+                        to_layer=to_layer,
+                        conflict_files=combined_conflicts,
+                        merge_error=merge_error,
+                        rebase_error=rebase_error,
+                        evidence_ref=conflict_report_ref,
+                    )
+                    propagation["demotion_tickets"] = demotion_summary.get("demotion_tickets", 0)
+                    propagation["affected_slices"] = demotion_summary.get("affected_slices", [])
+
+                    results["propagation_conflict"] = {
+                        **conflict_report_payload,
+                        **demotion_summary,
+                        "conflict_report_path": conflict_report_ref,
+                    }
+                    results["governance_blocked"] = True
+                    results["escalation_required"] = True
+                    results["error"] = (
+                        f"Transition {from_layer}→{to_layer} blocked by unresolved propagation "
+                        f"conflicts: {propagation['error']}"
+                    )
 
             results["propagation"] = propagation
 
@@ -1589,6 +1689,15 @@ class PddLifecycle:
                 results["readiness_ci"] = readiness
                 if not readiness.get("passed", True):
                     results["readiness_blocked"] = True
+                    results["governance_blocked"] = True
+                    results["escalation_required"] = True
+                    readiness_error = str(
+                        readiness.get("error") or "Downstream readiness CI failed"
+                    )
+                    results["error"] = (
+                        f"Transition {from_layer}→{to_layer} blocked by downstream readiness CI: "
+                        f"{readiness_error}"
+                    )
                     logger.warning(
                         "Downstream readiness CI failed for %s dirty — transition %s→%s blocked",
                         to_layer,
@@ -1597,6 +1706,172 @@ class PddLifecycle:
                     )
 
         return results
+
+    @staticmethod
+    def _normalize_conflict_path(path: str) -> str:
+        """Normalize conflict paths for stable matching."""
+        normalized = str(path or "").strip().replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized.strip()
+
+    @classmethod
+    def _extract_conflict_files_from_errors(cls, *errors: str) -> list[str]:
+        """Best-effort conflict file extraction from git merge/rebase errors."""
+        patterns = (
+            re.compile(r"CONFLICT\s+\([^)]+\):[^\n]* in ([^\n\r]+)"),
+            re.compile(r"Merge conflict in ([^\n\r]+)"),
+            re.compile(r"both modified:\s*([^\n\r]+)", re.IGNORECASE),
+        )
+        conflict_files: list[str] = []
+        seen: set[str] = set()
+        for raw_error in errors:
+            error_text = str(raw_error or "")
+            if not error_text:
+                continue
+            for pattern in patterns:
+                for match in pattern.findall(error_text):
+                    normalized = cls._normalize_conflict_path(str(match))
+                    if normalized and normalized not in seen:
+                        seen.add(normalized)
+                        conflict_files.append(normalized)
+        return conflict_files
+
+    def _infer_conflict_slice_ids(self, to_layer: Layer, conflict_files: list[str]) -> list[str]:
+        """Map conflict files to downstream slice IDs where possible."""
+        normalized_conflicts = [
+            self._normalize_conflict_path(path)
+            for path in conflict_files
+            if self._normalize_conflict_path(path)
+        ]
+        if not normalized_conflicts:
+            return []
+
+        matched: set[str] = set()
+        for ref in self._discover_slices(to_layer):
+            slice_id = str(getattr(ref, "slice_id", "")).strip()
+            if not slice_id:
+                continue
+
+            metadata = getattr(ref, "metadata", {})
+            metadata_files: list[str] = []
+            if isinstance(metadata, dict):
+                raw_files = metadata.get("files", [])
+                if isinstance(raw_files, list):
+                    metadata_files = [
+                        self._normalize_conflict_path(str(path))
+                        for path in raw_files
+                        if self._normalize_conflict_path(str(path))
+                    ]
+
+            worktree_path = self._normalize_conflict_path(str(getattr(ref, "worktree_path", "")))
+            library_id = str(getattr(ref, "library_id", "")).strip()
+
+            for conflict_path in normalized_conflicts:
+                if any(
+                    conflict_path == meta_file
+                    or conflict_path.endswith(f"/{meta_file}")
+                    or meta_file.endswith(f"/{conflict_path}")
+                    for meta_file in metadata_files
+                ):
+                    matched.add(slice_id)
+                    break
+                if library_id and f"/{library_id}/" in f"/{conflict_path}/":
+                    matched.add(slice_id)
+                    break
+                if worktree_path and (
+                    conflict_path.startswith(f"{worktree_path}/")
+                    or conflict_path.endswith(f"/{worktree_path}")
+                ):
+                    matched.add(slice_id)
+                    break
+
+        return sorted(matched)
+
+    def _emit_transition_conflict_demotions(
+        self,
+        *,
+        from_layer: Layer,
+        to_layer: Layer,
+        conflict_files: list[str],
+        merge_error: str,
+        rebase_error: str,
+        evidence_ref: str,
+    ) -> dict[str, Any]:
+        """Emit demotion tickets for unresolved cross-layer propagation conflicts."""
+        from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
+
+        target_layer = cast("Literal['L1', 'L2', 'L3']", to_layer.upper())
+        origin_layer = cast("Literal['L1', 'L2', 'L3']", from_layer.upper())
+        affected_slices = self._infer_conflict_slice_ids(to_layer, conflict_files)
+
+        ticket_specs: list[tuple[str, list[str]]] = []
+        if affected_slices:
+            for slice_id in affected_slices:
+                ticket_specs.append((slice_id, list(conflict_files)))
+        elif conflict_files:
+            for conflict_file in conflict_files:
+                ticket_specs.append(("", [conflict_file]))
+        else:
+            ticket_specs.append(("", []))
+
+        diagnosis_parts = [
+            (
+                f"Cross-layer propagation {from_layer.upper()}→{to_layer.upper()} failed after "
+                "merge and rebase conflict-recovery attempts."
+            ),
+            "Downstream work must be regenerated from the updated upstream baseline.",
+        ]
+        if merge_error:
+            diagnosis_parts.append(f"merge_error={merge_error}")
+        if rebase_error:
+            diagnosis_parts.append(f"rebase_error={rebase_error}")
+        if conflict_files:
+            diagnosis_parts.append("conflict_files=" + ", ".join(conflict_files))
+        diagnosis = " ".join(diagnosis_parts)
+
+        demotion_manager = DemotionManager(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
+        ticket_rows: list[dict[str, Any]] = []
+        gate_name = f"TRANSITION::{from_layer.upper()}->{to_layer.upper()}::PROPAGATION_CONFLICT"
+        for slice_id, failing_files in ticket_specs:
+            file_hint = failing_files[0] if failing_files else ""
+            ticket = DemotionTicket(
+                run_id=self.manager.run_id,
+                slice_id=slice_id,
+                source="GATE_FAILURE",
+                gate=gate_name,
+                target_layer=target_layer,
+                origin_layer=origin_layer,
+                hop_trace=[origin_layer, target_layer],
+                severity="BLOCKER",
+                diagnosis=diagnosis,
+                failing_files=failing_files,
+                evidence_refs=[evidence_ref] if evidence_ref else [],
+            )
+            try:
+                apply_result = demotion_manager.apply(
+                    ticket,
+                    slice_root=self._resolve_demotion_slice_root(file_hint),
+                )
+            except Exception as exc:
+                apply_result = {"applied": False, "error": str(exc)}
+            ticket_rows.append({"ticket": ticket.to_dict(), "apply_result": apply_result})
+
+        report_name = f"transition_{from_layer}_{to_layer}_propagation_demotion_tickets.json"
+        self._write_run_report(report_name, ticket_rows)
+        return {
+            "demotion_tickets": len(ticket_rows),
+            "demotion_tickets_applied": sum(
+                1
+                for row in ticket_rows
+                if bool((row.get("apply_result") or {}).get("applied", False))
+            ),
+            "demotion_tickets_path": self._run_report_relpath(report_name),
+            "affected_slices": affected_slices,
+        }
 
     def _run_slices_at_layer(
         self,
