@@ -1,13 +1,14 @@
-"""Layer and capability routing for the planner module.
+"""Layer, capability, and work-type model routing for the planner module.
 
 LayerRouter selects the correct per-layer planner (L1/L2/L3) based on
-the request's layer field.  CapabilityRouter dispatches within a layer
-planner to the appropriate method based on the request's capability.
+the request's layer field. CapabilityRouter dispatches within a layer
+planner by capability and resolves an orthogonal model route by work type.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,53 @@ logger = logging.getLogger(__name__)
 # Re-use the type aliases from the api module at runtime; we define the
 # same literals here to avoid a circular import (api imports router).
 Layer = Literal["l1", "l2", "l3", "any"]
+PlannerWorkType = Literal[
+    "integration_analysis",
+    "plan_synthesis",
+    "under_spec_resolution",
+    "web_research_execution",
+    "research_query_generation",
+    "plan_lint",
+    "normalization",
+]
+
+_DEFAULT_CAPABILITY_WORK_TYPES: dict[str, PlannerWorkType] = {
+    "RESOLVE_SIGNAL": "under_spec_resolution",
+    "GAP": "integration_analysis",
+    "PLAN": "plan_synthesis",
+    "UNDER_SPEC": "under_spec_resolution",
+    "INTEGRATION_ANALYSIS": "integration_analysis",
+    "TRIAGE_SIGNAL": "research_query_generation",
+    "INGEST_USER_ANSWER": "normalization",
+}
+
+_DEFAULT_WORK_TYPE_MODELS: dict[PlannerWorkType, tuple[str, str]] = {
+    "integration_analysis": ("opus", "gpt-5.2-xhigh"),
+    "plan_synthesis": ("gpt-5.2-xhigh", "opus"),
+    "under_spec_resolution": ("opus", "gpt-5.2-xhigh"),
+    "web_research_execution": ("glm-4.7", "gpt-5.2-xhigh"),
+    "research_query_generation": ("opus", ""),
+    "plan_lint": ("opus", ""),
+    "normalization": ("gpt-5.2-xhigh", ""),
+}
+
+
+@dataclass(frozen=True)
+class ModelRouteDecision:
+    """Resolved model route for a request's work type."""
+
+    work_type: PlannerWorkType
+    primary_model: str
+    secondary_model: str = ""
+    requires_critique_gate: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "work_type": self.work_type,
+            "primary_model": self.primary_model,
+            "secondary_model": self.secondary_model,
+            "requires_critique_gate": self.requires_critique_gate,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -172,15 +220,54 @@ class LayerRouter:
 
 
 class CapabilityRouter:
-    """Routes within a layer planner based on capability."""
+    """Routes within a layer planner based on capability and work type."""
 
-    def route(self, planner: LayerPlanner, req: Any) -> Any:
+    def __init__(self, *, default_model_id: str = "") -> None:
+        self._default_model_id = str(default_model_id).strip()
+
+    def resolve_model_route(
+        self,
+        req: Any,
+        *,
+        prefer_models: list[str] | None = None,
+        requires_external_facts: bool = False,
+        high_risk: bool = False,
+    ) -> ModelRouteDecision:
+        """Resolve primary/secondary model selection for *req*."""
+        work_type = self._resolve_work_type(req, requires_external_facts=requires_external_facts)
+        default_primary, default_secondary = _DEFAULT_WORK_TYPE_MODELS[work_type]
+        preferred = self._normalize_models(prefer_models)
+
+        primary = preferred[0] if preferred else default_primary
+        secondary = preferred[1] if len(preferred) > 1 else default_secondary
+        if not primary:
+            primary = self._default_model_id
+        if not high_risk:
+            secondary = ""
+
+        return ModelRouteDecision(
+            work_type=work_type,
+            primary_model=primary,
+            secondary_model=secondary,
+            requires_critique_gate=bool(secondary),
+        )
+
+    def route(
+        self,
+        planner: LayerPlanner,
+        req: Any,
+        *,
+        model_route: ModelRouteDecision | None = None,
+    ) -> Any:
         """Dispatch *req* to the correct method on *planner*.
 
         Returns a ``PlanningResult`` (imported lazily to avoid circular deps).
         """
         # Lazy import to avoid circular reference (api -> router -> api).
         from spec_manager.planner.api import PlanningResult
+
+        resolved_model_route = model_route or self.resolve_model_route(req)
+        self._bind_model_route_context(req, resolved_model_route)
 
         capability = req.capability
         ctx = req.context
@@ -250,3 +337,56 @@ class CapabilityRouter:
             status="ERROR",
             error=f"Unknown capability: {capability!r}",
         )
+
+    @staticmethod
+    def _normalize_models(models: list[str] | None) -> list[str]:
+        if not models:
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for model in models:
+            token = str(model).strip()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            normalized.append(token)
+        return normalized
+
+    def _resolve_work_type(
+        self,
+        req: Any,
+        *,
+        requires_external_facts: bool,
+    ) -> PlannerWorkType:
+        capability = str(getattr(req, "capability", "")).strip().upper()
+        inputs = getattr(req, "inputs", {})
+        if not isinstance(inputs, dict):
+            inputs = {}
+        if capability == "PLAN" and (
+            bool(inputs.get("plan_lint")) or bool(inputs.get("lint_only"))
+        ):
+            return "plan_lint"
+        if requires_external_facts and capability in {
+            "UNDER_SPEC",
+            "RESOLVE_SIGNAL",
+            "TRIAGE_SIGNAL",
+        }:
+            return "web_research_execution"
+        return _DEFAULT_CAPABILITY_WORK_TYPES.get(capability, "integration_analysis")
+
+    @staticmethod
+    def _bind_model_route_context(req: Any, model_route: ModelRouteDecision) -> None:
+        context = getattr(req, "context", None)
+        if context is None:
+            return
+        metadata = getattr(context, "metadata", None)
+        if not isinstance(metadata, dict):
+            metadata = {}
+            context.metadata = metadata
+        metadata["model_route"] = model_route.to_dict()
+        metadata["planner_work_type"] = model_route.work_type
+        metadata["primary_model"] = model_route.primary_model
+        if model_route.secondary_model:
+            metadata["secondary_model"] = model_route.secondary_model
+        elif "secondary_model" in metadata:
+            metadata.pop("secondary_model", None)

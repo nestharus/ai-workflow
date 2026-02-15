@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from spec_manager.planner.router import CapabilityRouter, LayerRouter
+from spec_manager.planner.router import CapabilityRouter, LayerRouter, ModelRouteDecision
 
 logger = logging.getLogger(__name__)
 PLANNER_VERSION = "1"
@@ -98,9 +98,9 @@ class GeneralPlanner:
     """Single auto-mode decision authority across the spec manager lifecycle.
 
     Routes each ``PlanningRequest`` to the appropriate layer planner
-    (L1/L2/L3) via a ``LayerRouter``, then dispatches by capability
-    through a ``CapabilityRouter``.  Every invocation is tagged with a
-    trace id for observability.
+    (L1/L2/L3) via a ``LayerRouter`` and resolves model selection using
+    work-type routing through ``CapabilityRouter``. Every invocation is
+    tagged with a trace id for observability.
 
     If *register_defaults* is True (the default), real L1/L2/L3 planners
     are registered automatically.  Pass False and call
@@ -125,10 +125,11 @@ class GeneralPlanner:
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._mode = mode
-        self._model_id = model_id
+        self._default_model_id = str(model_id).strip()
+        self._model_id = self._default_model_id
         self._constraints_tool = constraints_tool
         self._layer_router = LayerRouter()
-        self._capability_router = CapabilityRouter()
+        self._capability_router = CapabilityRouter(default_model_id=self._default_model_id)
         self._override_provider = override_provider
         self._work_item_store = work_item_store
         self._wait_graph = wait_graph
@@ -218,6 +219,18 @@ class GeneralPlanner:
         trace_id = _new_trace_id()
         layer = req.context.layer
         ctx = req.context
+        proposal_models = self._extract_proposal_models(req)
+        requires_external_facts = self._requires_external_facts(req)
+        high_risk = self._is_high_risk_request(req)
+        resolved_route = self._capability_router.resolve_model_route(
+            req,
+            prefer_models=proposal_models,
+            requires_external_facts=requires_external_facts,
+            high_risk=high_risk,
+        )
+        selected_model = resolved_route.primary_model or self._default_model_id
+        if selected_model:
+            self._model_id = selected_model
 
         decision_key = compute_decision_key(
             layer=str(layer),
@@ -234,12 +247,13 @@ class GeneralPlanner:
                 req,
                 input_hash=input_hash,
                 decision_key=decision_key,
-                model_id=self._model_id,
+                model_id=selected_model,
                 planner_version=PLANNER_VERSION,
+                model_route=resolved_route.to_dict(),
             ),
             decision_key=decision_key,
             run_id=ctx.run_id,
-            model_id=self._model_id,
+            model_id=selected_model,
             planner_version=PLANNER_VERSION,
             layer=str(layer),
             capability=req.capability,
@@ -287,24 +301,42 @@ class GeneralPlanner:
                     return override_result
 
             route_start = time.perf_counter()
+            dispatch_gates: dict[str, Any] = {}
+            effective_route = resolved_route
             if req.capability == "INGEST_USER_ANSWER":
                 result = self._handle_ingest_user_answer(req)
             else:
                 planner = self._layer_router.select(layer)
                 planner.bind_trace(trace)
-                result = self._capability_router.route(planner, req)
+                result, effective_route, dispatch_gates = self._route_request_with_gates(
+                    planner=planner,
+                    req=req,
+                    initial_route=resolved_route,
+                )
             duration_ms = (time.perf_counter() - route_start) * 1000.0
             result.trace_id = trace_id
             trace.status = result.status
+            selected_model = effective_route.primary_model or selected_model
+            if selected_model:
+                self._model_id = selected_model
+                trace.model_id = selected_model
+            self._annotate_result_dispatch_metadata(
+                result,
+                model_route=effective_route,
+                dispatch_gates=dispatch_gates,
+            )
             outputs_payload = result.outputs if isinstance(result.outputs, dict) else {}
             decision_text = str(outputs_payload.get("decision_text", "")).strip() or result.status
             trace.set_decision(DecisionRecord(decision_text=decision_text))
             trace.add_artifact("outputs", result.outputs)
+            trace.add_artifact("model_route", effective_route.to_dict())
+            if dispatch_gates:
+                trace.add_artifact("dispatch_gates", dispatch_gates)
             usage_tokens = _extract_tokens(result.outputs)
             trace.record_model_call(
                 ModelCallRecord(
                     agent_name=f"{str(layer).lower()}:{req.capability}",
-                    model=self._model_id,
+                    model=selected_model,
                     duration_ms=duration_ms,
                     tokens_in=usage_tokens[0],
                     tokens_out=usage_tokens[1],
@@ -313,6 +345,11 @@ class GeneralPlanner:
                         "capability": req.capability,
                         "layer": str(layer),
                         "planner_version": PLANNER_VERSION,
+                        "work_type": effective_route.work_type,
+                        "secondary_model": effective_route.secondary_model,
+                        "requires_external_facts": requires_external_facts,
+                        "high_risk": high_risk,
+                        "dispatch_gates": dispatch_gates,
                     },
                     prompt_text=canonical_json(req.inputs),
                     response_text=canonical_json(result.outputs),
@@ -326,7 +363,11 @@ class GeneralPlanner:
                     duration_ms=duration_ms,
                     tokens_in=usage_tokens[0],
                     tokens_out=usage_tokens[1],
-                    tool_params={"layer": str(layer)},
+                    tool_params={
+                        "layer": str(layer),
+                        "work_type": effective_route.work_type,
+                        "model": selected_model,
+                    },
                 )
             )
             self._persist_trace(trace)
@@ -367,6 +408,359 @@ class GeneralPlanner:
                 except Exception:
                     logger.debug("Failed to clear layer trace binding", exc_info=True)
             ConstraintStoreAdapter.pop_planner_update_context(context_token)
+
+    def _route_request_with_gates(
+        self,
+        *,
+        planner: Any,
+        req: PlanningRequest,
+        initial_route: ModelRouteDecision,
+    ) -> tuple[PlanningResult, ModelRouteDecision, dict[str, Any]]:
+        """Apply dispatch gates before routing to capability execution."""
+        gates: dict[str, Any] = {
+            "deterministic_local_checked": True,
+            "integration_analysis_checked": False,
+            "external_research_required": self._requires_external_facts(req),
+            "critique_checked": False,
+            "path": "capability_dispatch",
+        }
+        deterministic_result = self._try_deterministic_local_resolution(req)
+        if deterministic_result is not None:
+            gates["path"] = "deterministic_local"
+            return deterministic_result, initial_route, gates
+
+        routed_req = req
+        if self._should_run_integration_gate(req):
+            gates["integration_analysis_checked"] = True
+            integration_req = PlanningRequest(
+                capability="INTEGRATION_ANALYSIS",
+                context=req.context,
+                inputs=dict(req.inputs) if isinstance(req.inputs, dict) else {},
+                constraints_hint=req.constraints_hint,
+            )
+            integration_route = self._capability_router.resolve_model_route(
+                integration_req,
+                requires_external_facts=False,
+                high_risk=False,
+            )
+            integration_result = self._capability_router.route(
+                planner,
+                integration_req,
+                model_route=integration_route,
+            )
+            gates["integration_analysis_status"] = integration_result.status
+            if isinstance(integration_result.outputs, dict):
+                merged_inputs = dict(req.inputs) if isinstance(req.inputs, dict) else {}
+                merged_inputs.setdefault("integration_analysis", integration_result.outputs)
+                routed_req = PlanningRequest(
+                    capability=req.capability,
+                    context=req.context,
+                    inputs=merged_inputs,
+                    constraints_hint=req.constraints_hint,
+                )
+
+        effective_route = self._capability_router.resolve_model_route(
+            routed_req,
+            prefer_models=self._extract_proposal_models(routed_req),
+            requires_external_facts=self._requires_external_facts(routed_req),
+            high_risk=self._is_high_risk_request(routed_req),
+        )
+        result = self._capability_router.route(
+            planner,
+            routed_req,
+            model_route=effective_route,
+        )
+
+        if self._should_run_critique_gate(routed_req, effective_route):
+            gates["critique_checked"] = True
+            critique_req = PlanningRequest(
+                capability="INTEGRATION_ANALYSIS",
+                context=routed_req.context,
+                inputs=dict(routed_req.inputs) if isinstance(routed_req.inputs, dict) else {},
+                constraints_hint=routed_req.constraints_hint,
+            )
+            critique_route = self._capability_router.resolve_model_route(
+                critique_req,
+                prefer_models=[effective_route.secondary_model],
+                requires_external_facts=False,
+                high_risk=False,
+            )
+            critique_result = self._capability_router.route(
+                planner,
+                critique_req,
+                model_route=critique_route,
+            )
+            gates["critique_status"] = critique_result.status
+            gates["critique_model"] = critique_route.primary_model
+            if isinstance(result.outputs, dict):
+                result.outputs["critique"] = self._build_critique_summary(
+                    critique_result=critique_result,
+                    critique_route=critique_route,
+                )
+            if isinstance(routed_req.context.metadata, dict):
+                routed_req.context.metadata["model_route"] = effective_route.to_dict()
+                routed_req.context.metadata["planner_work_type"] = effective_route.work_type
+                routed_req.context.metadata["primary_model"] = effective_route.primary_model
+                if effective_route.secondary_model:
+                    routed_req.context.metadata["secondary_model"] = effective_route.secondary_model
+                else:
+                    routed_req.context.metadata.pop("secondary_model", None)
+
+        return result, effective_route, gates
+
+    @staticmethod
+    def _build_critique_summary(
+        *,
+        critique_result: PlanningResult,
+        critique_route: ModelRouteDecision,
+    ) -> dict[str, Any]:
+        return {
+            "status": critique_result.status,
+            "model": critique_route.primary_model,
+            "work_type": critique_route.work_type,
+            "summary": str(
+                (
+                    critique_result.outputs.get("decision_text")
+                    if isinstance(critique_result.outputs, dict)
+                    else ""
+                )
+                or critique_result.status
+            ).strip(),
+        }
+
+    @staticmethod
+    def _annotate_result_dispatch_metadata(
+        result: PlanningResult,
+        *,
+        model_route: ModelRouteDecision,
+        dispatch_gates: dict[str, Any],
+    ) -> None:
+        if not isinstance(result.outputs, dict):
+            return
+        result.outputs.setdefault("model_route", model_route.to_dict())
+        if dispatch_gates:
+            result.outputs.setdefault("dispatch_gates", dict(dispatch_gates))
+
+    def _extract_proposal_models(self, req: PlanningRequest) -> list[str]:
+        models: list[str] = []
+        if isinstance(req.inputs, dict):
+            models.extend(self._collect_models_from_value(req.inputs.get("proposal_models")))
+            events_raw = req.inputs.get("events", [])
+            if isinstance(events_raw, list):
+                for event in events_raw:
+                    if not isinstance(event, dict):
+                        continue
+                    models.extend(self._collect_models_from_value(event.get("proposal_models")))
+                    metadata = event.get("metadata")
+                    if isinstance(metadata, dict):
+                        models.extend(
+                            self._collect_models_from_value(metadata.get("proposal_models")),
+                        )
+        if isinstance(req.context.metadata, dict):
+            models.extend(
+                self._collect_models_from_value(req.context.metadata.get("proposal_models"))
+            )
+        return self._dedupe_preserve(models)
+
+    @staticmethod
+    def _collect_models_from_value(value: Any) -> list[str]:
+        if isinstance(value, str):
+            token = value.strip()
+            return [token] if token else []
+        if not isinstance(value, list):
+            return []
+        tokens: list[str] = []
+        for row in value:
+            token = str(row).strip()
+            if token:
+                tokens.append(token)
+        return tokens
+
+    def _requires_external_facts(self, req: PlanningRequest) -> bool:
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
+        for key in (
+            "requires_external_facts",
+            "web_research_required",
+            "needs_web_research",
+            "requires_web_research",
+            "external_facts_required",
+        ):
+            if self._coerce_bool(inputs.get(key)) or self._coerce_bool(metadata.get(key)):
+                return True
+
+        signal_payload = inputs.get("signal")
+        if isinstance(signal_payload, dict):
+            token_blob = " ".join(
+                [
+                    str(signal_payload.get("classification", "")).strip().lower(),
+                    str(signal_payload.get("status", "")).strip().lower(),
+                    str((signal_payload.get("need") or {}).get("summary", "")).strip().lower()
+                    if isinstance(signal_payload.get("need"), dict)
+                    else "",
+                ]
+            )
+            if any(
+                marker in token_blob
+                for marker in (
+                    "external",
+                    "internet",
+                    "latest",
+                    "web",
+                    "rfc",
+                    "cve",
+                    "stackoverflow",
+                )
+            ):
+                return True
+
+        return False
+
+    def _is_high_risk_request(self, req: PlanningRequest) -> bool:
+        capability = str(req.capability).strip().upper()
+        layer = str(req.context.layer or "").strip().lower()
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
+
+        if capability in {"PLAN", "UNDER_SPEC"} and layer in {"l2", "l3"}:
+            return True
+        if capability == "INTEGRATION_ANALYSIS" and layer == "l3":
+            return True
+
+        high_risk_flags = (
+            "high_risk",
+            "cross_library_contract",
+            "introduces_external_dep",
+            "introduces_infra",
+            "security_privacy_compliance",
+            "has_security_privacy_compliance_implication",
+        )
+        if any(self._coerce_bool(inputs.get(flag)) for flag in high_risk_flags):
+            return True
+        if any(self._coerce_bool(metadata.get(flag)) for flag in high_risk_flags):
+            return True
+
+        touched_raw = inputs.get("touched_files_count", metadata.get("touched_files_count", 0))
+        try:
+            touched_files_count = int(touched_raw or 0)
+        except (TypeError, ValueError):
+            touched_files_count = 0
+        if touched_files_count >= 3:
+            return True
+
+        events = inputs.get("events", [])
+        gaps = inputs.get("gaps", [])
+        if isinstance(events, list) and len(events) >= 3:
+            return True
+        return bool(isinstance(gaps, list) and len(gaps) >= 3)
+
+    def _should_run_integration_gate(self, req: PlanningRequest) -> bool:
+        capability = str(req.capability).strip().upper()
+        if capability in {"INGEST_USER_ANSWER", "INTEGRATION_ANALYSIS", "GAP"}:
+            return False
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
+        if self._coerce_bool(inputs.get("skip_integration_gate")):
+            return False
+        if self._coerce_bool(metadata.get("skip_integration_gate")):
+            return False
+        return capability in {"PLAN", "UNDER_SPEC", "TRIAGE_SIGNAL", "RESOLVE_SIGNAL"}
+
+    def _should_run_critique_gate(
+        self,
+        req: PlanningRequest,
+        model_route: ModelRouteDecision,
+    ) -> bool:
+        if not model_route.secondary_model:
+            return False
+        capability = str(req.capability).strip().upper()
+        if capability not in {"PLAN", "UNDER_SPEC", "INTEGRATION_ANALYSIS"}:
+            return False
+        return self._is_high_risk_request(req)
+
+    def _try_deterministic_local_resolution(self, req: PlanningRequest) -> PlanningResult | None:
+        """Resolve requests directly from authoritative local constraints when possible."""
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        target_slice = str(req.context.slice_id or "__system__").strip() or "__system__"
+
+        if req.capability == "UNDER_SPEC":
+            events = inputs.get("events", [])
+            if not isinstance(events, list) or not events:
+                return None
+            answers = self._constraint_answer_lookup(target_slice=target_slice)
+            resolved: list[dict[str, Any]] = []
+            unresolved_questions: list[str] = []
+            constraints: dict[str, str] = {}
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                question = self._event_question(event)
+                if not question:
+                    continue
+                normalized = self._normalize_for_compare(question)
+                answer = answers.get(normalized, "")
+                if not answer:
+                    unresolved_questions.append(question)
+                    continue
+                constraints[question] = answer
+                resolved.append(
+                    {
+                        "event": event,
+                        "resolution": "constraints_store",
+                        "answer": answer,
+                    }
+                )
+            if unresolved_questions or not resolved:
+                return None
+            return PlanningResult(
+                status="OK",
+                outputs={
+                    "blocked": False,
+                    "questions": [],
+                    "resolved": resolved,
+                    "constraints": constraints,
+                    "decision_text": "Resolved under-spec via local constraints coverage",
+                },
+            )
+
+        if req.capability == "RESOLVE_SIGNAL":
+            signal = inputs.get("signal")
+            if not isinstance(signal, dict):
+                return None
+            question = self._event_question(signal)
+            if not question and isinstance(signal.get("need"), dict):
+                question = str((signal.get("need") or {}).get("summary", "")).strip()
+            if not question:
+                return None
+            answers = self._constraint_answer_lookup(target_slice=target_slice)
+            answer = answers.get(self._normalize_for_compare(question), "")
+            if not answer:
+                return None
+            return PlanningResult(
+                status="OK",
+                outputs={
+                    "response": {
+                        "resolved": True,
+                        "source": "constraints_store",
+                        "detail": answer,
+                    }
+                },
+            )
+
+        return None
+
+    def _constraint_answer_lookup(self, *, target_slice: str) -> dict[str, str]:
+        answers: dict[str, str] = {}
+        for fact in self._constraints_adapter.load_merged(target_slice):
+            question = self._normalize_for_compare(getattr(fact, "question", ""))
+            answer = str(getattr(fact, "answer", "")).strip()
+            if question and answer and question not in answers:
+                answers[question] = answer
+        return answers
+
+    @staticmethod
+    def _event_question(event: dict[str, Any]) -> str:
+        return str(event.get("question", event.get("description", ""))).strip()
 
     @staticmethod
     def _coerce_bool(value: Any) -> bool:
@@ -1777,6 +2171,19 @@ class GeneralPlanner:
                 event=event,
                 event_index=index,
             )
+            event_proposal_models = self._dedupe_preserve(
+                [
+                    *self._collect_models_from_value(event.get("proposal_models")),
+                    *self._collect_models_from_value(
+                        event.get("metadata", {}).get("proposal_models")
+                        if isinstance(event.get("metadata"), dict)
+                        else []
+                    ),
+                ]
+            )
+            triage_metadata: dict[str, Any] = {"source": "UNDER_SPEC_EXPANSION"}
+            if event_proposal_models:
+                triage_metadata["proposal_models"] = event_proposal_models
             triage_ctx = PlanningContext(
                 run_id=context.run_id,
                 slice_id=context.slice_id,
@@ -1787,7 +2194,7 @@ class GeneralPlanner:
                 slice_root=context.slice_root,
                 bundle_ref=context.bundle_ref,
                 signal_ref=signal,
-                metadata={"source": "UNDER_SPEC_EXPANSION"},
+                metadata=triage_metadata,
             )
 
             triage_result = self.triage_signal(triage_ctx, signal)
@@ -1808,6 +2215,22 @@ class GeneralPlanner:
                 [str(model) for model in proposal_models_raw if str(model).strip()]
                 if isinstance(proposal_models_raw, list)
                 else []
+            )
+            if not proposal_models:
+                proposal_models = list(event_proposal_models)
+            triage_req = PlanningRequest(
+                capability="TRIAGE_SIGNAL",
+                context=triage_ctx,
+                inputs={
+                    "signal": signal,
+                    "proposal_models": proposal_models,
+                },
+            )
+            proposal_route = self._capability_router.resolve_model_route(
+                triage_req,
+                prefer_models=proposal_models,
+                requires_external_facts=self._requires_external_facts(triage_req),
+                high_risk=False,
             )
 
             triage_routing_dicts = (
@@ -1845,8 +2268,10 @@ class GeneralPlanner:
                 )
                 metadata["confidence"] = confidence
                 metadata["proposal_models"] = proposal_models
+                metadata["model_route"] = proposal_route.to_dict()
                 metadata["consistency_passed"] = consistency_passed
                 payload["metadata"] = metadata
+                payload["model_route"] = proposal_route.to_dict()
                 routing.append(payload)
 
             for payload in triage_monitor_dicts:
@@ -1861,6 +2286,7 @@ class GeneralPlanner:
                     "action": str(triage_outputs.get("action", "NOOP")).strip().upper() or "NOOP",
                     "confidence": max(0.0, min(1.0, confidence)),
                     "proposal_models": proposal_models,
+                    "model_route": proposal_route.to_dict(),
                     "consistency_passed": consistency_passed,
                     "contradictions": contradictions,
                     "spec_refs": list(signal["spec_refs"]),
@@ -2036,6 +2462,7 @@ def _request_snapshot(
     decision_key: str = "",
     model_id: str = "",
     planner_version: str = "",
+    model_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-safe snapshot of the request for trace storage."""
     ctx = req.context
@@ -2055,6 +2482,7 @@ def _request_snapshot(
         "decision_key": decision_key,
         "model_id": model_id,
         "planner_version": planner_version,
+        "model_route": _safe_deepcopy(model_route or {}),
         "constraints_hint": _safe_deepcopy(req.constraints_hint),
         "has_constraints_hint": req.constraints_hint is not None,
     }
