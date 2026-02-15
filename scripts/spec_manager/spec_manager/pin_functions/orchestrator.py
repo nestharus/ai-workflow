@@ -63,9 +63,11 @@ class PinFunctionOrchestrator:
 
     def scan(
         self,
-        mode: str = "scan",
+        mode: str = "both",
         pin_proposals: list[dict[str, Any]] | None = None,
         edge_proposals: list[dict[str, Any]] | None = None,
+        pin_proposals_path: str | Path | None = None,
+        edge_proposals_path: str | Path | None = None,
     ) -> PinFunctionRegistry:
         """Scan for pin-functions and merge LLM-sourced proposals.
 
@@ -82,6 +84,10 @@ class PinFunctionOrchestrator:
             edge_proposals: Edge proposals from the IMPLEMENT step.
                 Each dict should have ``pin_func_id``, ``arch_file_path``,
                 ``arch_location``, ``projection_type``.
+            pin_proposals_path: Optional JSON file path containing pin
+                proposals. Loaded and merged with ``pin_proposals``.
+            edge_proposals_path: Optional JSON file path containing edge
+                proposals. Loaded and merged with ``edge_proposals``.
 
         Returns:
             PinFunctionRegistry with all discovered pin-functions and edges.
@@ -110,8 +116,12 @@ class PinFunctionOrchestrator:
 
         # Phase 2: Merge proposals (mode="proposals" or "both")
         if mode in ("proposals", "both"):
+            loaded_pin_proposals = self._load_proposals(pin_proposals_path)
+            loaded_edge_proposals = self._load_proposals(edge_proposals_path)
             proposed_pins, proposed_edges = self._merge_proposals(
-                pin_functions, pin_proposals or [], edge_proposals or []
+                pin_functions,
+                loaded_pin_proposals + (pin_proposals or []),
+                loaded_edge_proposals + (edge_proposals or []),
             )
             pin_functions = proposed_pins
             import_edges.extend(proposed_edges)
@@ -124,6 +134,30 @@ class PinFunctionOrchestrator:
         )
 
         return registry
+
+    @staticmethod
+    def _load_proposals(path: str | Path | None) -> list[dict[str, Any]]:
+        """Load proposal payloads from a JSON file path.
+
+        Returns an empty list when the path is missing, unreadable, or
+        does not contain a JSON array of objects.
+        """
+        if path is None:
+            return []
+
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+        if not isinstance(payload, list):
+            return []
+
+        result: list[dict[str, Any]] = []
+        for item in payload:
+            if isinstance(item, dict):
+                result.append(item)
+        return result
 
     def diff(self, old_registry_path: Path) -> PropagationReport:
         """Compare current state to previous registry and report changes.

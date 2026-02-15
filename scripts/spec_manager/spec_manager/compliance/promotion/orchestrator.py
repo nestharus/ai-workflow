@@ -65,6 +65,8 @@ class LayerPromotionGate:
         self,
         config: PromotionGateConfig,
         pin_registry: PinFunctionRegistry | None = None,
+        graph_snapshot: dict[str, Any] | None = None,
+        pins_snapshot: dict[str, Any] | None = None,
         provenance_registry_path: Path | None = None,
         evidence_index: EvidenceIndex | None = None,
         entities_artifact: EntitiesArtifact | None = None,
@@ -75,6 +77,8 @@ class LayerPromotionGate:
     ) -> None:
         self._config = config
         self._pin_registry = pin_registry
+        self._graph_snapshot = graph_snapshot or {}
+        self._pins_snapshot = pins_snapshot or {}
         self._provenance_registry_path = provenance_registry_path
         self._evidence_index = evidence_index
         self._entities_artifact = entities_artifact
@@ -87,8 +91,8 @@ class LayerPromotionGate:
     def run_all_checks(self) -> PromotionReport:
         """Run all enabled gate checks and produce a promotion report."""
         start = time.monotonic()
-        algorithmic_files = self._resolve_files(self._config.algorithmic_roots)
-        architectural_files = self._resolve_files(self._config.architectural_roots)
+        algorithmic_files = self._resolve_algorithmic_files()
+        architectural_files = self._resolve_architectural_files()
 
         component_manifest_path, component_manifest = self._load_component_manifest()
         pin_coverage_report: PinCoverageReport | None = None
@@ -115,8 +119,8 @@ class LayerPromotionGate:
     def run_single_check(self, gate_id: GateId) -> GateCheckResult:
         """Run a single gate check by ID."""
         gate_spec = self._config.get_gate(gate_id)
-        algorithmic_files = self._resolve_files(self._config.algorithmic_roots)
-        architectural_files = self._resolve_files(self._config.architectural_roots)
+        algorithmic_files = self._resolve_algorithmic_files()
+        architectural_files = self._resolve_architectural_files()
         component_manifest_path, component_manifest = self._load_component_manifest()
 
         result, _ = self._execute_gate(
@@ -416,6 +420,74 @@ class LayerPromotionGate:
             gate_spec,
             self._entities_artifact,
         )
+
+    def _resolve_algorithmic_files(self) -> list[Path]:
+        """Resolve algorithmic files from snapshots first, then roots."""
+        snapshot_files = self._collect_files_from_pins_snapshot()
+        if snapshot_files:
+            return snapshot_files
+        return self._resolve_files(self._config.algorithmic_roots)
+
+    def _resolve_architectural_files(self) -> list[Path]:
+        """Resolve architectural files from snapshots first, then roots."""
+        snapshot_files = self._collect_files_from_graph_snapshot()
+        if snapshot_files:
+            return snapshot_files
+        return self._resolve_files(self._config.architectural_roots)
+
+    def _collect_files_from_pins_snapshot(self) -> list[Path]:
+        """Collect algorithmic file paths from a pins snapshot payload."""
+        payload = self._pins_snapshot if isinstance(self._pins_snapshot, dict) else {}
+        pins = payload.get("pins")
+        if not isinstance(pins, list):
+            return []
+
+        files: list[Path] = []
+        seen: set[str] = set()
+        for pin in pins:
+            if not isinstance(pin, dict):
+                continue
+            candidate = pin.get("file_path") or pin.get("file")
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            resolved = (self._project_root / candidate).resolve()
+            if not resolved.is_file():
+                continue
+            key = resolved.as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(resolved)
+        return files
+
+    def _collect_files_from_graph_snapshot(self) -> list[Path]:
+        """Collect architectural file paths from a graph snapshot payload."""
+        payload = self._graph_snapshot if isinstance(self._graph_snapshot, dict) else {}
+        edges = payload.get("edges")
+        if not isinstance(edges, list):
+            return []
+
+        files: list[Path] = []
+        seen: set[str] = set()
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            candidate = edge.get("arch_file_path")
+            if not isinstance(candidate, str) or not candidate.strip():
+                raw_dst = edge.get("dst")
+                if isinstance(raw_dst, str) and ":" in raw_dst:
+                    candidate = raw_dst.split(":", 1)[0]
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            resolved = (self._project_root / candidate).resolve()
+            if not resolved.is_file():
+                continue
+            key = resolved.as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(resolved)
+        return files
 
     def _atom_registry_for_coverage(self) -> AtomRegistry:
         from spec_manager.branches.atoms import AtomRegistry as _AtomRegistry

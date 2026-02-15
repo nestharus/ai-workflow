@@ -20,7 +20,7 @@ State machine (per slice)::
       ↓
     ANALYZE            (P1 + P2 + analyze_source cache)
       ↓
-    PROMOTE            (evidence integrity/completeness gates)
+    PROMOTE            (P4/P5 promotion + compliance gates + refinement)
       ├─ if gates fail → DEMOTE → RESTART_ITER
       ↓
     INTEGRATE (CI)     (merge to parent + tick pipeline)
@@ -1573,42 +1573,6 @@ class ImplementStep:
         )
         bundle.graph_deltas = graph_deltas
 
-        pins_payload = {
-            "schema_version": "1",
-            "slice_id": ctx.slice_id,
-            "layer": ctx.layer,
-            "file_hash": manifest_hash,
-            "pins": pin_deltas,
-        }
-        pins_payload_json = json.dumps(pins_payload, indent=2)
-        pins_path = iteration_dir / "pins.snapshot.json"
-        pins_path.write_text(pins_payload_json, encoding="utf-8")
-        bundle.pins_snapshot.path = pins_path.name
-        bundle.pins_snapshot.schema_version = pins_payload["schema_version"]
-        bundle.pins_snapshot.snapshot_hash = _hash_text(pins_payload_json)
-
-        graph_payload = {
-            "schema_version": "1",
-            "slice_id": ctx.slice_id,
-            "layer": ctx.layer,
-            "file_hash": manifest_hash,
-            "edges": [
-                {
-                    "src": edge.get("src", ""),
-                    "dst": edge.get("dst", ""),
-                    "signal_type": self._canonical_edge_signal(edge.get("signal_type")),
-                    "weight": edge.get("weight", 0.7),
-                }
-                for edge in edge_deltas
-            ],
-        }
-        graph_payload_json = json.dumps(graph_payload, indent=2)
-        graph_path = iteration_dir / "graph.snapshot.json"
-        graph_path.write_text(graph_payload_json, encoding="utf-8")
-        bundle.graph_snapshot.path = graph_path.name
-        bundle.graph_snapshot.schema_version = graph_payload["schema_version"]
-        bundle.graph_snapshot.snapshot_hash = _hash_text(graph_payload_json)
-
         explicit_gaps = [
             self._normalize_gap(g)
             for g in (bundle.implementation.gap_inventory or [])
@@ -1644,8 +1608,6 @@ class ImplementStep:
             "slice_id": ctx.slice_id,
             "layer": ctx.layer,
             "file_hash": manifest_hash,
-            "pins_snapshot": bundle.pins_snapshot.path,
-            "graph_snapshot": bundle.graph_snapshot.path,
             "gap_inventory": bundle.gaps.path,
             "graph_delta_count": len(bundle.graph_deltas),
         }
@@ -2069,9 +2031,8 @@ class CoordinateStep:
 class AnalyzeStep:
     """Analyze slice after implementation — layer-aware.
 
-    - L1: P1 + P2 (structure + decomposition) via SourceAnalysisCache
-    - L2: Build/update architecture graph cache (components, entrypoints,
-      pins, edges, events, middleware ordering, dependencies)
+    - L1: P1 + P2 (parse_file adapters + analyze_source cache)
+    - L2: Same deterministic analyzer pipeline as L1, scoped by diff
     - L3: Compute diff summary + structural metrics (size, duplication
       hotspots, refactor impact candidates)
     """
@@ -2097,11 +2058,10 @@ class AnalyzeStep:
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
     ) -> StepResult:
         """L1: source analysis via cache (P1 + P2)."""
-        from spec_manager.core.language import source_rglob
-
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         try:
+            from spec_manager.comment_planning.models import parse_file
             from spec_manager.orchestration.source_analysis_cache import (
                 SourceAnalysisCache,
             )
@@ -2113,52 +2073,98 @@ class AnalyzeStep:
 
             entries: list[dict[str, Any]] = []
             normalized_functions: dict[str, Any] = {}
-            for py_file in source_rglob(slice_root):
+            reverse_payload: list[dict[str, Any]] = []
+
+            targets = self._analysis_targets(bundle, slice_root)
+            for py_file in targets:
                 if not py_file.is_file():
                     continue
                 if any(part.startswith(".") for part in py_file.parts):
                     continue
+
                 try:
                     content = py_file.read_text(encoding="utf-8")
-                    analysis = cache.analyze_with_cache(
-                        content, str(py_file.relative_to(slice_root))
-                    )
-                    analysis_functions = [asdict(fn) for fn in analysis.functions]
-                    analysis_comments = [asdict(comment) for comment in analysis.comments]
-                    relative_path = str(py_file.relative_to(slice_root))
-                    content_hash = _hash_text(content)
-                    entries.append(
-                        {
-                            "path": relative_path,
-                            "content_hash": content_hash,
-                            "analysis": {
-                                "functions": analysis_functions,
-                                "comments": analysis_comments,
-                            },
-                        }
-                    )
-                    for fn in analysis_functions:
-                        qualified_name = fn.get("qualified_name") or fn.get("name") or ""
-                        if not qualified_name:
-                            continue
-                        normalized_functions[qualified_name] = {
-                            "signature": {
-                                "name": fn.get("name", ""),
-                                "args": fn.get("args", []),
-                                "return_annotation": fn.get("return_annotation"),
-                                "is_async": fn.get("is_async", False),
-                            },
-                            "doc": fn.get("docstring", ""),
-                            "file": relative_path,
-                            "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
-                        }
                 except (OSError, UnicodeDecodeError) as exc:
                     logger.debug("Skipping %s: %s", py_file, exc)
+                    continue
+
+                relative_path = str(py_file.relative_to(slice_root))
+                analysis = cache.analyze_with_cache(content, relative_path)
+                analysis_functions = [asdict(fn) for fn in analysis.functions]
+                analysis_comments = [asdict(comment) for comment in analysis.comments]
+
+                parsed_functions: list[dict[str, Any]] = []
+                try:
+                    parsed_file = parse_file(str(py_file))
+                    for func in parsed_file.functions:
+                        comment_texts = [c.text for c in func.comments if c.text]
+                        parsed_functions.append(
+                            {
+                                "name": func.name,
+                                "class_name": func.class_name,
+                                "start_line": func.start_line,
+                                "end_line": func.end_line,
+                                "comment_count": len(comment_texts),
+                            }
+                        )
+                        if comment_texts:
+                            reverse_payload.append(
+                                {
+                                    "file": relative_path,
+                                    "function": func.name,
+                                    "class_name": func.class_name,
+                                    "start_line": func.start_line,
+                                    "end_line": func.end_line,
+                                    "comments": comment_texts,
+                                }
+                            )
+                except Exception as exc:
+                    logger.debug("parse_file failed for %s: %s", py_file, exc)
+
+                entries.append(
+                    {
+                        "path": relative_path,
+                        "content_hash": _hash_text(content),
+                        "analysis": {
+                            "functions": analysis_functions,
+                            "comments": analysis_comments,
+                            "parse_file": {"functions": parsed_functions},
+                        },
+                    }
+                )
+
+                for fn in analysis_functions:
+                    qualified_name = fn.get("qualified_name") or fn.get("name") or ""
+                    if not qualified_name:
+                        continue
+                    normalized_functions[qualified_name] = {
+                        "signature": {
+                            "name": fn.get("name", ""),
+                            "args": fn.get("args", []),
+                            "return_annotation": fn.get("return_annotation"),
+                            "is_async": fn.get("is_async", False),
+                        },
+                        "doc": fn.get("docstring", ""),
+                        "file": relative_path,
+                        "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
+                    }
 
             bundle.source_index.entries = entries
             bundle.source_index.path = "source_analysis.index.json"
             if normalized_functions:
                 bundle.facts.functions.update(normalized_functions)
+
+            if reverse_payload:
+                evidence_root = _evidence_base_path(
+                    slice_root=ctx.slice_root,
+                    workspace_root=ctx.workspace_root,
+                )
+                _write_iteration_json(
+                    bundle,
+                    evidence_root,
+                    "reverse_pseudocode.json",
+                    {"items": reverse_payload},
+                )
 
             logger.info(
                 "Analyzed %d files (cache stats: %s)",
@@ -2175,78 +2181,34 @@ class AnalyzeStep:
     def _analyze_l2(
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
     ) -> StepResult:
-        """L2: build architecture graph summary (components, pins, edges)."""
-        import json
+        """L2: reuse deterministic source analysis pipeline (P1/P2 adapters)."""
+        return self._analyze_l1(ctx, bundle, slice_root)
 
-        from spec_manager.core.language import source_rglob
+    @staticmethod
+    def _analysis_targets(bundle: EvidenceBundle, slice_root: Path) -> list[Path]:
+        """Select files to analyze, preferring the current diff working set."""
+        from spec_manager.core.language import SOURCE_EXTENSIONS, source_rglob
 
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        targets: list[Path] = []
+        seen: set[str] = set()
+        for changed in bundle.diff.changed_files or []:
+            if not isinstance(changed, str) or not changed.strip():
+                continue
+            candidate = slice_root / changed
+            if not candidate.is_file():
+                continue
+            if candidate.suffix not in SOURCE_EXTENSIONS:
+                continue
+            key = candidate.resolve().as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(candidate)
 
-        # Gather file summaries for LLM analysis
-        code_summaries: list[str] = []
-        for py_file in source_rglob(slice_root):
-            if py_file.is_file() and not any(p.startswith(".") for p in py_file.parts):
-                try:
-                    content = py_file.read_text(encoding="utf-8")
-                    code_summaries.append(
-                        f"### {py_file.relative_to(slice_root)}\n```\n" + content[:1500] + "\n```"
-                    )
-                except (OSError, UnicodeDecodeError):
-                    continue
+        if targets:
+            return sorted(targets)
 
-        if not code_summaries:
-            return StepResult(status="OK")
-
-        prompt = (
-            "## TASK\n"
-            "Analyze the architecture of this code and produce a component graph summary.\n"
-            "Identify: components, entrypoints, pins/atoms used, edges (calls/events/deps),\n"
-            "middleware ordering, and dependency direction.\n\n"
-            'Return JSON: {"components": [...], "edges": [...], '
-            '"stats": {"total_components": N, "total_edges": N}}\n\n'
-            "## CODE\n\n" + "\n\n".join(code_summaries[:15])
-        )
-
-        try:
-            from spec_manager.core.agent_utils import run_agent
-            from spec_manager.core.json_extraction import _extract_json_payload
-            from spec_manager.refinement.formats import _strip_code_fences
-
-            output = run_agent(
-                agent_name="opus-architecture-proposer",
-                prompt=prompt,
-                workspace=workspace,
-            )
-            cleaned = _strip_code_fences(output)
-            data = json.loads(_extract_json_payload(cleaned))
-
-            # Store in source_index for downstream consumption
-            entries: list[dict[str, Any]] = []
-            for comp in data.get("components", []):
-                entries.append(
-                    {
-                        "path": comp.get("file", ""),
-                        "content_hash": _hash_text(json.dumps(comp, sort_keys=True)),
-                        "component_id": comp.get("id", ""),
-                        "type": comp.get("type", ""),
-                        "analysis": comp,
-                    }
-                )
-            bundle.source_index.entries = entries
-            bundle.source_index.path = "source_analysis.index.json"
-
-            stats = data.get("stats", {})
-            logger.info(
-                "L2 analysis: %d components, %d edges",
-                stats.get("total_components", 0),
-                stats.get("total_edges", 0),
-            )
-
-        except Exception as exc:
-            logger.warning("L2 analysis failed: %s", exc, exc_info=True)
-            return StepResult(status="RETRY", error=f"L2 analysis failed: {exc}")
-
-        return StepResult(status="OK")
+        return source_rglob(slice_root)
 
     def _analyze_l3(
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
@@ -2306,17 +2268,12 @@ class AnalyzeStep:
 
 
 class PromoteStep:
-    """Run evidence-first compliance gates.
-
-    Promotion gates validate consistency and completeness of emitted evidence:
-    file hashes, gap spans, pin/graph snapshots, and graph delta signal types.
-    They do not re-evaluate source code directly on the normal path.
-    """
+    """Run promotion mechanics, gates, then refinement."""
 
     name = "PROMOTE"
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Dispatch to layer-specific promotion gates."""
+        """Run P4/P5 mechanics, dispatch gates, then persist refinement output."""
         has_evidence = bool(
             bundle.manifest.files
             or bundle.implementation.applied_edits
@@ -2327,14 +2284,411 @@ class PromoteStep:
         if not has_evidence:
             return StepResult(status="OK")
 
-        if ctx.layer == "l1":
-            return self._promote_l1(ctx, bundle)
-        if ctx.layer == "l2":
-            return self._promote_l2(ctx, bundle)
-        if ctx.layer == "l3":
-            return self._promote_l3(ctx, bundle)
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+        if not slice_root or not slice_root.exists():
+            return StepResult(status="RETRY", error="PROMOTE requires a valid slice root")
 
+        mechanics = self._run_promotion_mechanics(ctx, bundle, slice_root)
+        if mechanics.status != "OK":
+            return mechanics
+
+        if ctx.layer == "l1":
+            result = self._promote_l1(ctx, bundle)
+        elif ctx.layer == "l2":
+            result = self._promote_l2(ctx, bundle)
+        elif ctx.layer == "l3":
+            result = self._promote_l3(ctx, bundle)
+        else:
+            result = StepResult(status="OK")
+
+        if result.status == "OK":
+            self._emit_refinement_artifact(ctx, bundle)
+        return result
+
+    @staticmethod
+    def _canonical_edge_signal(signal_type: Any) -> str:
+        """Map edge/projection labels to canonical graph signal types."""
+        if not isinstance(signal_type, str):
+            return "REFERENCE"
+        signal = signal_type.upper()
+        if signal in {"CALL"}:
+            return "CALL"
+        if signal in {"STORE_TOUCH", "AGGREGATION"}:
+            return "STORE_TOUCH"
+        if signal in {"EVENT_EMIT", "EVENT_HANDLE", "EVENT", "EVENT_BRIDGE"}:
+            return "EVENT"
+        return "REFERENCE"
+
+    @staticmethod
+    def _projection_type_from_signal(signal_type: Any) -> str:
+        """Convert an edge signal to a pin projection type value."""
+        if not isinstance(signal_type, str):
+            return "pass_through"
+        signal = signal_type.upper()
+        if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
+            return "event_bridge"
+        if signal == "STORE_TOUCH":
+            return "aggregation"
+        return "pass_through"
+
+    def _normalize_pin_proposals(
+        self, proposals: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]]:
+        """Normalize IMPLEMENT pin proposals into pin-orchestrator shape."""
+        normalized: list[dict[str, Any]] = []
+        for proposal in proposals or []:
+            if not isinstance(proposal, dict):
+                continue
+            fqn = str(
+                proposal.get("fqn")
+                or proposal.get("qualified_name")
+                or proposal.get("function_name")
+                or ""
+            )
+            function_name = str(proposal.get("function_name") or "").strip()
+            module_path = str(proposal.get("module_path") or "").strip()
+            if not function_name and fqn:
+                function_name = fqn.rsplit(".", 1)[-1]
+            if not module_path and "." in fqn:
+                module_path = fqn.rsplit(".", 1)[0]
+
+            file_path = str(proposal.get("file_path") or proposal.get("file") or "").strip()
+            span = proposal.get("span") if isinstance(proposal.get("span"), dict) else {}
+            line_start = proposal.get("line_start") or span.get("start_line") or 0
+            line_end = proposal.get("line_end") or span.get("end_line") or line_start
+
+            normalized.append(
+                {
+                    "pin_func_id": proposal.get("pin_func_id")
+                    or proposal.get("pin_id")
+                    or proposal.get("id")
+                    or "",
+                    "function_name": function_name,
+                    "module_path": module_path,
+                    "file_path": file_path,
+                    "line_start": int(line_start) if isinstance(line_start, int | float) else 0,
+                    "line_end": int(line_end) if isinstance(line_end, int | float) else 0,
+                    "signature": proposal.get("signature", ""),
+                    "docstring": proposal.get("docstring", ""),
+                    "content_hash": proposal.get("content_hash", ""),
+                    "is_shape": bool(
+                        proposal.get("is_shape") or str(proposal.get("role", "")).upper() == "SHAPE"
+                    ),
+                    "store_touches": proposal.get("store_touches", []),
+                    "evidence_atom_ids": proposal.get("evidence_atom_ids", []),
+                }
+            )
+        return normalized
+
+    def _normalize_edge_proposals(
+        self, proposals: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]]:
+        """Normalize IMPLEMENT edge proposals into pin-orchestrator shape."""
+        normalized: list[dict[str, Any]] = []
+        for proposal in proposals or []:
+            if not isinstance(proposal, dict):
+                continue
+
+            arch_location = str(proposal.get("arch_location") or proposal.get("dst") or "").strip()
+            arch_file_path = str(proposal.get("arch_file_path") or "").strip()
+            if not arch_file_path and ":" in arch_location:
+                arch_file_path = arch_location.split(":", 1)[0]
+            if not arch_location and arch_file_path:
+                arch_location = arch_file_path
+
+            arch_line = proposal.get("arch_line")
+            if not isinstance(arch_line, int):
+                if ":" in arch_location:
+                    line_candidate = arch_location.rsplit(":", 1)[-1]
+                    arch_line = int(line_candidate) if line_candidate.isdigit() else 0
+                else:
+                    arch_line = 0
+
+            projection_type = proposal.get("projection_type")
+            if not isinstance(projection_type, str) or not projection_type.strip():
+                projection_type = self._projection_type_from_signal(proposal.get("signal_type"))
+            confidence_raw = proposal.get("confidence", proposal.get("weight", 0.8))
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.8
+
+            normalized.append(
+                {
+                    "edge_id": proposal.get("edge_id", ""),
+                    "pin_func_id": proposal.get("pin_func_id") or proposal.get("src") or "",
+                    "arch_location": arch_location,
+                    "arch_file_path": arch_file_path,
+                    "arch_line": arch_line,
+                    "projection_type": str(projection_type).strip().lower(),
+                    "confidence": confidence,
+                    "is_direct_import": bool(proposal.get("is_direct_import", True)),
+                }
+            )
+        return normalized
+
+    def _run_promotion_mechanics(
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        slice_root: Path,
+    ) -> StepResult:
+        """Execute collapse + pin/edge promotion and materialize snapshots."""
+        from spec_manager.pin_functions.orchestrator import PinFunctionOrchestrator
+
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+
+        normalized_pins = self._normalize_pin_proposals(bundle.implementation.pin_proposals)
+        normalized_edges = self._normalize_edge_proposals(bundle.implementation.edge_proposals)
+
+        pin_proposals_path: Path | None = None
+        if normalized_pins:
+            pin_proposals_path = iteration_dir / "pin_proposals.normalized.json"
+            pin_proposals_path.write_text(json.dumps(normalized_pins, indent=2), encoding="utf-8")
+
+        edge_proposals_path: Path | None = None
+        if normalized_edges:
+            edge_proposals_path = iteration_dir / "edge_proposals.normalized.json"
+            edge_proposals_path.write_text(json.dumps(normalized_edges, indent=2), encoding="utf-8")
+
+        orchestrator = PinFunctionOrchestrator(slice_root)
+        try:
+            registry = orchestrator.scan(
+                mode="both",
+                pin_proposals_path=pin_proposals_path,
+                edge_proposals_path=edge_proposals_path,
+            )
+            registry_path = orchestrator.save_registry(registry)
+        except Exception as exc:
+            logger.warning("Pin/edge promotion orchestration failed: %s", exc, exc_info=True)
+            return StepResult(status="RETRY", error=f"P5 pin/edge promotion failed: {exc}")
+
+        self._materialize_snapshots(
+            ctx=ctx,
+            bundle=bundle,
+            evidence_root=evidence_root,
+            registry=registry,
+        )
+
+        collapse_payload: dict[str, Any] = {"executed": False}
+        promote_payload: dict[str, Any] = {"executed": False}
+        warnings: list[str] = []
+
+        branch_manager = ctx.branch_manager
+        if branch_manager is not None:
+            collapse_fn = getattr(branch_manager, "collapse_codebase", None)
+            if callable(collapse_fn):
+                try:
+                    collapse_result = collapse_fn(slice_root)
+                    collapse_payload = {
+                        "executed": True,
+                        "result": collapse_result.to_dict()
+                        if hasattr(collapse_result, "to_dict")
+                        else {},
+                    }
+                except Exception as exc:
+                    warnings.append(f"collapse_codebase failed: {exc}")
+            else:
+                warnings.append("collapse_codebase unavailable on branch_manager")
+
+            promote_fn = getattr(branch_manager, "promote", None)
+            if callable(promote_fn):
+                try:
+                    promote_result = promote_fn(skip_compliance=True)
+                    promote_payload = {
+                        "executed": True,
+                        "result": promote_result.to_dict()
+                        if hasattr(promote_result, "to_dict")
+                        else {},
+                        "success": bool(getattr(promote_result, "success", True)),
+                    }
+                    if not promote_payload["success"]:
+                        warnings.append("branch promotion reported unsuccessful result")
+                except Exception as exc:
+                    warnings.append(f"branch promote failed: {exc}")
+            else:
+                warnings.append("promote unavailable on branch_manager")
+        else:
+            warnings.append("branch_manager not available for P4/P5 branch promotion")
+
+        bundle.promotion.path = _write_iteration_json(
+            bundle,
+            evidence_root,
+            "promotion.report.json",
+            {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "pins_snapshot": bundle.pins_snapshot.path,
+                "graph_snapshot": bundle.graph_snapshot.path,
+                "pin_registry_path": str(registry_path),
+                "collapse": collapse_payload,
+                "promotion": promote_payload,
+                "warnings": warnings,
+            },
+        )
         return StepResult(status="OK")
+
+    def _materialize_snapshots(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        evidence_root: Path,
+        registry: Any,
+    ) -> None:
+        """Persist pins/graph snapshots from the promoted registry."""
+        manifest_hash = self._expected_manifest_hash(bundle) or bundle.diff.content_hash
+
+        pins_payload = {
+            "schema_version": "1",
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "file_hash": manifest_hash,
+            "pins": [pin.model_dump() for pin in registry.pin_functions],
+        }
+        pins_payload_json = json.dumps(pins_payload, indent=2)
+        bundle.pins_snapshot.path = _write_iteration_json(
+            bundle,
+            evidence_root,
+            "pins.snapshot.json",
+            pins_payload,
+        )
+        bundle.pins_snapshot.schema_version = pins_payload["schema_version"]
+        bundle.pins_snapshot.snapshot_hash = _hash_text(pins_payload_json)
+
+        graph_edges = []
+        for edge in registry.import_edges:
+            projection_type = str(edge.projection_type)
+            graph_edges.append(
+                {
+                    "src": edge.pin_func_id,
+                    "dst": edge.arch_location,
+                    "arch_file_path": edge.arch_file_path,
+                    "arch_line": edge.arch_line,
+                    "projection_type": projection_type,
+                    "signal_type": self._canonical_edge_signal(projection_type),
+                    "weight": edge.confidence,
+                }
+            )
+        graph_payload = {
+            "schema_version": "1",
+            "slice_id": ctx.slice_id,
+            "layer": ctx.layer,
+            "file_hash": manifest_hash,
+            "edges": graph_edges,
+        }
+        graph_payload_json = json.dumps(graph_payload, indent=2)
+        bundle.graph_snapshot.path = _write_iteration_json(
+            bundle,
+            evidence_root,
+            "graph.snapshot.json",
+            graph_payload,
+        )
+        bundle.graph_snapshot.schema_version = graph_payload["schema_version"]
+        bundle.graph_snapshot.snapshot_hash = _hash_text(graph_payload_json)
+
+    def _emit_refinement_artifact(self, ctx: SliceContext, bundle: EvidenceBundle) -> None:
+        """Run cohesion detector over promoted graph evidence and persist output."""
+        from spec_manager.analysis.adjacency.graph import (
+            AdjacencyGraph,
+            EdgeSignal,
+            NodeInfo,
+            SignalType,
+        )
+        from spec_manager.cohesion.detector import GroupingUnit, detect_all
+
+        if not bundle.graph_snapshot.path:
+            return
+
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+        graph_path = iteration_dir / bundle.graph_snapshot.path
+        if not graph_path.exists():
+            return
+
+        try:
+            payload = json.loads(graph_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+
+        edges = payload.get("edges", [])
+        if not isinstance(edges, list):
+            edges = []
+
+        graph = AdjacencyGraph()
+        units_by_file: dict[str, set[str]] = {}
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            src = str(edge.get("src", "")).strip()
+            dst = str(edge.get("dst", "")).strip()
+            if not src or not dst:
+                continue
+
+            signal_raw = self._canonical_edge_signal(edge.get("signal_type"))
+            signal_map = {
+                "CALL": SignalType.CALL,
+                "STORE_TOUCH": SignalType.STORE_TOUCH,
+                "EVENT": SignalType.EVENT,
+                "REFERENCE": SignalType.REFERENCE,
+            }
+            signal_type = signal_map.get(signal_raw, SignalType.REFERENCE)
+            weight_raw = edge.get("weight", 1.0)
+            weight = float(weight_raw) if isinstance(weight_raw, int | float) else 1.0
+
+            graph.add_node(src, NodeInfo(node_id=src, node_type="pin"))
+            graph.add_node(
+                dst,
+                NodeInfo(
+                    node_id=dst,
+                    node_type="architecture",
+                    file_path=edge.get("arch_file_path"),
+                ),
+            )
+            graph.add_edge(
+                src,
+                dst,
+                EdgeSignal(
+                    signal_type=signal_type,
+                    weight=weight,
+                    details={"projection_type": edge.get("projection_type", "")},
+                ),
+            )
+
+            grouping_key = str(edge.get("arch_file_path") or "slice")
+            units = units_by_file.setdefault(grouping_key, set())
+            units.add(src)
+            units.add(dst)
+
+        grouping_units = [
+            GroupingUnit(unit_id=unit_id, name=unit_id, entity_ids=entity_ids)
+            for unit_id, entity_ids in sorted(units_by_file.items())
+        ]
+        if not grouping_units:
+            grouping_units = [
+                GroupingUnit(unit_id="slice", name="slice", entity_ids=set(graph.nodes()))
+            ]
+
+        issues = detect_all(graph, grouping_units)
+        bundle.refinement.path = _write_iteration_json(
+            bundle,
+            evidence_root,
+            "refinement.json",
+            {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "issue_count": len(issues),
+                "issues": [asdict(issue) for issue in issues],
+            },
+        )
 
     @staticmethod
     def _expected_manifest_hash(bundle: EvidenceBundle) -> str:
@@ -2475,66 +2829,114 @@ class PromoteStep:
         return StepResult(status="OK")
 
     def _promote_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L2: architecture gates over pin/graph evidence."""
-        failures = self._validate_hash_consistency(bundle)
-        failures.extend(self._validate_graph_evidence(bundle))
+        """L2: run canonical promotion gates with snapshot adapters."""
+        from spec_manager.compliance.promotion.config import PromotionGateConfig
+        from spec_manager.compliance.promotion.orchestrator import LayerPromotionGate
+        from spec_manager.schemas.pin_functions import PinFunctionRegistry
+
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else None
+        if not slice_root:
+            return StepResult(status="RETRY", error="L2 PROMOTE missing slice root")
+
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+
+        pins_snapshot: dict[str, Any] = {}
+        graph_snapshot: dict[str, Any] = {}
+        try:
+            if bundle.pins_snapshot.path:
+                pins_snapshot = json.loads(
+                    (iteration_dir / bundle.pins_snapshot.path).read_text(encoding="utf-8")
+                )
+            if bundle.graph_snapshot.path:
+                graph_snapshot = json.loads(
+                    (iteration_dir / bundle.graph_snapshot.path).read_text(encoding="utf-8")
+                )
+        except (OSError, json.JSONDecodeError):
+            pins_snapshot = {}
+            graph_snapshot = {}
+
+        registry_path = slice_root / ".spec" / "pin_registry.json"
+        pin_registry: PinFunctionRegistry | None = None
+        if registry_path.exists():
+            try:
+                pin_registry = PinFunctionRegistry.model_validate_json(
+                    registry_path.read_text(encoding="utf-8")
+                )
+            except Exception as exc:
+                logger.debug("Failed to load pin registry for L2 gates: %s", exc)
+
+        config = PromotionGateConfig.default()
+        config.project_root = str(slice_root)
+
+        gate = LayerPromotionGate(
+            config=config,
+            pin_registry=pin_registry,
+            graph_snapshot=graph_snapshot,
+            pins_snapshot=pins_snapshot,
+        )
+        report = gate.run_all_checks()
 
         bundle.gates.gates = [
             self._to_gate(
-                "PIN_CONSUMPTION_EVIDENCE",
-                bool(bundle.pins_snapshot.path),
-                "Pin snapshot present" if bundle.pins_snapshot.path else "Pin snapshot missing",
-                "wiring_only",
-            ),
-            self._to_gate(
-                "EDGE_REALIZATION_EVIDENCE",
-                bool(bundle.graph_snapshot.path),
-                "Graph snapshot present"
-                if bundle.graph_snapshot.path
-                else "Graph snapshot missing",
-                "wiring_only",
-            ),
-            self._to_gate(
-                "ARCH_EVENT_COVERAGE_EVIDENCE",
-                bool(bundle.graph_snapshot.path),
-                "Graph snapshot available for event coverage checks"
-                if bundle.graph_snapshot.path
-                else "Missing graph snapshot for event coverage checks",
-                "wiring_only",
-            ),
-            self._to_gate(
-                "EVIDENCE_HASH_ALIGNMENT",
-                not any("hash" in f.lower() or "manifest" in f.lower() for f in failures),
-                "; ".join(f for f in failures if "hash" in f.lower() or "manifest" in f.lower())
-                or "Manifest and evidence hashes align",
-                "behavior_change",
-            ),
+                gate_id=result.gate_id,
+                passed=bool(result.passed),
+                summary=result.summary,
+                required_change_type=(
+                    "behavior_change"
+                    if result.gate_id
+                    in {
+                        "no_remaining_comments",
+                        "no_stub_functions",
+                        "call_graph_connected",
+                        "store_monogamy",
+                        "all_tests_pass",
+                    }
+                    else "wiring_only"
+                ),
+            )
+            for result in report.gate_results
         ]
         bundle.gates.path = "gates.report.json"
 
-        failed_gates = [g for g in bundle.gates.gates if not g["passed"]]
-        if failed_gates:
-            tickets = []
-            for gate in failed_gates:
-                target = "L1" if gate["required_change_type"] == "behavior_change" else "L2"
-                tickets.append(
-                    DemotionTicket(
-                        run_id=ctx.run_id,
-                        slice_id=ctx.slice_id,
-                        source="GATE_FAILURE",
-                        gate=gate["gate_id"],
-                        origin_layer="L2",
-                        target_layer=target,
-                        severity="BLOCKER",
-                        diagnosis=gate["summary"],
-                    )
-                )
-            return StepResult(
-                status="RETRY",
-                emitted_tickets=tickets,
-                error=f"L2 evidence gates failed: {[g['gate_id'] for g in failed_gates]}",
+        if report.passed:
+            return StepResult(status="OK")
+
+        tickets: list[DemotionTicket] = []
+        for blocker in report.blockers:
+            required_change_type = (
+                "behavior_change"
+                if blocker.gate_id
+                in {
+                    "no_remaining_comments",
+                    "no_stub_functions",
+                    "call_graph_connected",
+                    "store_monogamy",
+                    "all_tests_pass",
+                }
+                else "wiring_only"
             )
-        return StepResult(status="OK")
+            tickets.append(
+                DemotionTicket(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    source="GATE_FAILURE",
+                    gate=blocker.gate_id,
+                    origin_layer="L2",
+                    target_layer="L1" if required_change_type == "behavior_change" else "L2",
+                    severity="BLOCKER",
+                    diagnosis=blocker.summary,
+                )
+            )
+
+        return StepResult(
+            status="RETRY",
+            emitted_tickets=tickets,
+            error="L2 promotion gates failed",
+        )
 
     def _promote_l3(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L3: quality closure checks over emitted evidence."""
@@ -3744,19 +4146,29 @@ class PromotionLoop:
             )
 
         if bundle.promotion.path or bundle.gates.gates:
-            bundle.promotion.path = _write_iteration_json(
-                bundle,
-                evidence_root,
-                "promotion.report.json",
-                {
-                    "slice_id": bundle.slice_id,
-                    "iteration": bundle.iteration,
-                    "status": bundle.status,
-                    "gates_ref": bundle.gates.path,
-                    "graph_snapshot": bundle.graph_snapshot.path,
-                    "pins_snapshot": bundle.pins_snapshot.path,
-                },
-            )
+            promotion_name = bundle.promotion.path or "promotion.report.json"
+            promotion_path = bundle.iter_dir(evidence_root) / promotion_name
+            if promotion_path.exists():
+                bundle.promotion.path = promotion_name
+            else:
+                bundle.promotion.path = _write_iteration_json(
+                    bundle,
+                    evidence_root,
+                    "promotion.report.json",
+                    {
+                        "slice_id": bundle.slice_id,
+                        "iteration": bundle.iteration,
+                        "status": bundle.status,
+                        "gates_ref": bundle.gates.path,
+                        "graph_snapshot": bundle.graph_snapshot.path,
+                        "pins_snapshot": bundle.pins_snapshot.path,
+                    },
+                )
+
+        if bundle.refinement.path:
+            refinement_path = bundle.iter_dir(evidence_root) / bundle.refinement.path
+            if refinement_path.exists():
+                bundle.refinement.path = refinement_path.name
 
         if (
             bundle.demotions.path
