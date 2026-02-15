@@ -71,7 +71,7 @@ class PlanningContext:
     mode: Literal["auto", "interactive"] = "auto"
     workspace_root: str = ""
     slice_root: str | None = None
-    bundle_ref: Any | None = None  # EvidenceBundle or lightweight view
+    bundle_ref: Any = field(default_factory=dict)  # EvidenceBundle authority for PLAN inputs
     signal_ref: Any | None = None  # InputSignal or Ambiguity
     metadata: dict[str, Any] | None = None
 
@@ -2726,9 +2726,22 @@ class GeneralPlanner:
     def plan_from_gaps(
         self,
         context: PlanningContext,
-        gaps: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Generate plan items from gaps through the planner lifecycle."""
+        """Generate plan items from EvidenceBundle-backed gaps through planner lifecycle."""
+        bundle = context.bundle_ref
+        gaps: list[dict[str, Any]] = []
+        if isinstance(bundle, dict):
+            gaps_payload = bundle.get("gaps")
+            if isinstance(gaps_payload, dict):
+                raw = gaps_payload.get("open_gaps", [])
+                if isinstance(raw, list):
+                    gaps = [item for item in raw if isinstance(item, dict)]
+        else:
+            bundle_gaps = getattr(bundle, "gaps", None)
+            raw = getattr(bundle_gaps, "open_gaps", [])
+            if isinstance(raw, list):
+                gaps = [item for item in raw if isinstance(item, dict)]
+
         req = PlanningRequest(
             capability="PLAN",
             context=context,
