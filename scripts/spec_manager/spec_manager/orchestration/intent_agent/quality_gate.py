@@ -18,10 +18,12 @@ Enforcement pipeline (Section 5.5.2):
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from spec_manager.refinement.formats import extract_json_from_llm_output
@@ -297,6 +299,29 @@ class QualityCheckRecord:
             reason=d.get("reason", ""),
             validator_version=d.get("validator_version", "qv_1.0"),
         )
+
+
+def persist_quality_check_record(
+    record: QualityCheckRecord,
+    *,
+    event_log: Any = None,
+    records_path: Path | str | None = None,
+) -> None:
+    """Persist a single quality check record via explicit destinations."""
+    payload = record.to_dict()
+    if event_log is not None:
+        append_fn = getattr(event_log, "append", None)
+        if not callable(append_fn):
+            raise TypeError(
+                "quality gate event_log destination must expose append(event_type, payload)"
+            )
+        append_fn("quality_check", payload)
+
+    if records_path is not None:
+        output_path = Path(records_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +734,8 @@ def enforce_quality_gate(
     validator: QualityValidatorStrategy | None = None,
     repairer: QuestionRepairStrategy | None = None,
     run_agent: Any = None,
+    event_log: Any = None,
+    records_path: Path | str | None = None,
 ) -> tuple[QualityCheckCandidate | None, list[QualityCheckRecord], bool]:
     """Run the full quality enforcement pipeline.
 
@@ -734,6 +761,11 @@ def enforce_quality_gate(
     record.question_id = question_id
     record.attempt = 1
     records.append(record)
+    persist_quality_check_record(
+        record,
+        event_log=event_log,
+        records_path=records_path,
+    )
 
     if record.result == "PASS":
         return (current_candidate, records, True)
@@ -766,6 +798,11 @@ def enforce_quality_gate(
         record.question_id = question_id
         record.attempt = retry + 2  # attempt 2, 3, ...
         records.append(record)
+        persist_quality_check_record(
+            record,
+            event_log=event_log,
+            records_path=records_path,
+        )
 
         if record.result == "PASS":
             return (current_candidate, records, True)

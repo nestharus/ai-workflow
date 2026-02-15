@@ -50,6 +50,7 @@ VALID_TAXONOMY_HINTS = frozenset(
         "UNKNOWN",
     }
 )
+VALID_PLANNER_UPDATE_KINDS = frozenset({"constraint_saved", "decision_recorded"})
 
 
 def _validate_source_kind(
@@ -91,6 +92,25 @@ def _validate_taxonomy_hint(
             f"{normalized!r}; uq_id={uq_id!r}; question={question_payload!r}; "
             f"expected one of {sorted(VALID_TAXONOMY_HINTS)}"
         )
+
+
+def _require_non_empty_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TypeError(f"Planner update record missing required field: {field_name}")
+    return value.strip()
+
+
+def _has_identifier(payload: dict[str, Any], singular_key: str, plural_key: str) -> bool:
+    singular = payload.get(singular_key)
+    if isinstance(singular, str) and singular.strip():
+        return True
+
+    plural = payload.get(plural_key)
+    if isinstance(plural, (list, tuple)):
+        for raw_item in plural:
+            if isinstance(raw_item, str) and raw_item.strip():
+                return True
+    return False
 
 
 @dataclass
@@ -451,8 +471,73 @@ class UserQuestionSignalReadResult:
 class PlannerUpdateReadResult:
     """Derived view of planner updates with full input accounting."""
 
-    events: list[dict[str, Any]] = field(default_factory=list)
+    events: list[PlannerUpdateSignal] = field(default_factory=list)
     rejections: list[RejectedSignalLine] = field(default_factory=list)
+
+
+@dataclass
+class PlannerUpdateSignal:
+    """Typed planner update signal persisted in ``planner_updates.jsonl``."""
+
+    event_kind: str = ""
+    event_id: str = ""
+    created_at: str = ""
+    run_id: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        normalized_kind = _require_non_empty_string(self.event_kind, "event_kind").lower()
+        if normalized_kind not in VALID_PLANNER_UPDATE_KINDS:
+            raise ValueError(
+                "Planner update has invalid event_kind: "
+                f"{normalized_kind!r}; expected one of {sorted(VALID_PLANNER_UPDATE_KINDS)}"
+            )
+        self.event_kind = normalized_kind
+        self.event_id = _require_non_empty_string(self.event_id, "event_id")
+        self.created_at = _require_non_empty_string(self.created_at, "created_at")
+        self.run_id = _require_non_empty_string(self.run_id, "run_id")
+        if not isinstance(self.payload, dict):
+            raise TypeError("Planner update record has invalid payload")
+
+        if self.event_kind == "constraint_saved" and not _has_identifier(
+            self.payload, "constraint_id", "constraint_ids"
+        ):
+            raise ValueError(
+                "constraint_saved planner update must include constraint_id or constraint_ids"
+            )
+        elif self.event_kind == "decision_recorded" and not _has_identifier(
+            self.payload, "decision_id", "decision_ids"
+        ):
+            raise ValueError(
+                "decision_recorded planner update must include decision_id or decision_ids"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        event = {
+            "event_kind": self.event_kind,
+            "event_id": self.event_id,
+            "created_at": self.created_at,
+            "run_id": self.run_id,
+        }
+        event.update(self.payload)
+        return event
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> PlannerUpdateSignal:
+        if not isinstance(d, dict):
+            raise TypeError("Planner update record must be a JSON object")
+        payload = {
+            key: value
+            for key, value in d.items()
+            if key not in {"event_kind", "event_id", "created_at", "run_id"}
+        }
+        return cls(
+            event_kind=d.get("event_kind", ""),
+            event_id=d.get("event_id", ""),
+            created_at=d.get("created_at", ""),
+            run_id=d.get("run_id", ""),
+            payload=payload,
+        )
 
 
 class UserQuestionSignalStore:
@@ -560,13 +645,18 @@ class PlannerUpdateStore:
         self._path = run_dir / "coordination" / "planner_updates.jsonl"
         self._rejections_path = run_dir / "coordination" / "planner_updates.rejections.jsonl"
 
-    def write(self, event: dict[str, Any]) -> None:
+    def write(self, event: PlannerUpdateSignal) -> None:
         """Append a planner update event."""
+        if not isinstance(event, PlannerUpdateSignal):
+            raise TypeError(
+                "PlannerUpdateStore.write expects PlannerUpdateSignal; "
+                f"received {type(event).__name__}"
+            )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+            fh.write(json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
 
-    def read_since(self, watermark: str) -> list[dict[str, Any]]:
+    def read_since(self, watermark: str) -> list[PlannerUpdateSignal]:
         """Read events since the given watermark.
 
         *watermark* is the ``created_at`` timestamp of the last processed
@@ -577,7 +667,7 @@ class PlannerUpdateStore:
         events = self.read_all().events
         if not watermark:
             return events
-        return [e for e in events if e.get("created_at", "") > watermark]
+        return [event for event in events if event.created_at > watermark]
 
     def read_all(self) -> PlannerUpdateReadResult:
         """Read all planner updates and malformed-line rejections from the store."""
@@ -593,9 +683,7 @@ class PlannerUpdateStore:
                 continue
             try:
                 parsed_event = json.loads(line)
-                if not isinstance(parsed_event, dict):
-                    raise TypeError("Planner update record must be a JSON object")
-                read_result.events.append(parsed_event)
+                read_result.events.append(PlannerUpdateSignal.from_dict(parsed_event))
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 rejection_record = RejectedSignalLine(
                     line_number=line_number,

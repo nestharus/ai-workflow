@@ -385,12 +385,6 @@ class IntentAgentOrchestrator:
         if self._state is None or self._queue is None:
             self.resume()
 
-    def _log_quality_checks(self, records: list[QualityCheckRecord]) -> None:
-        if self._event_log is None:
-            return
-        for record in records:
-            self._event_log.append("quality_check", record.to_dict())
-
     def _mark_unaskable(
         self, question_id: str, source: str, reason: str, details: dict[str, Any] | None = None
     ) -> None:
@@ -2814,10 +2808,8 @@ class IntentAgentOrchestrator:
             validator=self._quality_validator,
             repairer=self._question_repairer,
             run_agent=self._run_agent,
+            event_log=self._event_log,
         )
-
-        # Log quality check events.
-        self._log_quality_checks(records)
         if self._event_log is not None:
             self._event_log.append(
                 "signal_ingested",
@@ -3273,9 +3265,8 @@ class IntentAgentOrchestrator:
                 validator=self._quality_validator,
                 repairer=self._question_repairer,
                 run_agent=self._run_agent,
+                event_log=self._event_log,
             )
-
-            self._log_quality_checks(fq_records)
 
             if fq_passed and fq_final is not None:
                 fq_final.taxonomy_type = normalize_user_facing_taxonomy(fq_final.taxonomy_type)
@@ -3752,7 +3743,7 @@ class IntentAgentOrchestrator:
                 planner_watermark=watermark,
             ).to_dict()
             return reassessment
-        new_updates = [dict(update) for update in raw_updates if isinstance(update, dict)]
+        new_updates = [update.to_dict() for update in raw_updates]
         if not new_updates:
             reassessment = self._empty_reassessment_result(run_id, session_id)
             reassessment["resume_progress_summary"] = ResumeProgressSummaryProjection(
@@ -3966,8 +3957,8 @@ class IntentAgentOrchestrator:
             validator=self._quality_validator,
             repairer=self._question_repairer,
             run_agent=self._run_agent,
+            event_log=self._event_log,
         )
-        self._log_quality_checks(records)
 
         used_candidate = final_candidate if passed and final_candidate else candidate
         used_candidate.answer_spec_kind = "choice"
@@ -4236,8 +4227,8 @@ class IntentAgentOrchestrator:
                 validator=self._quality_validator,
                 repairer=self._question_repairer,
                 run_agent=self._run_agent,
+                event_log=self._event_log,
             )
-            self._log_quality_checks(records)
 
             if not passed or final_candidate is None:
                 failure_reason = records[-1].reason if records else "quality gate failed"
@@ -4323,8 +4314,8 @@ class IntentAgentOrchestrator:
             validator=self._quality_validator,
             repairer=self._question_repairer,
             run_agent=self._run_agent,
+            event_log=self._event_log,
         )
-        self._log_quality_checks(records)
 
         if not passed or final_candidate is None:
             failed_candidate = final_candidate or QualityCheckCandidate(
