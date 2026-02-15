@@ -20,7 +20,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from spec_manager.planner.router import CapabilityRouter, LayerRouter, ModelRouteDecision
+from spec_manager.planner.jit.actions import ActionType
+from spec_manager.planner.jit.state_machine import PlannerStateMachine, PlanPhase, PlanStatus
+from spec_manager.planner.router import (
+    CapabilityRouter,
+    LayerRouter,
+    ModelRouteDecision,
+    ModelRouter,
+    ReviewPack,
+)
 
 logger = logging.getLogger(__name__)
 PLANNER_VERSION = "1"
@@ -89,6 +97,45 @@ class PlanningResult:
     error: str = ""
 
 
+@dataclass
+class PromotionLoopAdapters:
+    """Adapter hooks used by PromotionLoop to coordinate planner execution gates."""
+
+    before_step: Callable[[str, PlanningRequest, dict[str, Any]], None] | None = None
+    after_step: Callable[[str, PlanningRequest, PlanningResult, dict[str, Any]], None] | None = None
+    on_bundle_update: Callable[[PlanningRequest, dict[str, Any]], dict[str, Any] | None] | None = (
+        None
+    )
+
+
+@dataclass
+class ReplayBundle:
+    """Replay payload for deterministic QA/eval re-execution."""
+
+    trace_id: str
+    decision_key: str
+    request: dict[str, Any]
+    next_actions: list[dict[str, Any]]
+    model_route: dict[str, Any]
+    planner_state: dict[str, Any]
+    final_result: dict[str, Any]
+    model_calls: list[dict[str, Any]]
+    tool_calls: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trace_id": self.trace_id,
+            "decision_key": self.decision_key,
+            "request": _safe_deepcopy(self.request),
+            "next_actions": [_safe_deepcopy(row) for row in self.next_actions],
+            "model_route": _safe_deepcopy(self.model_route),
+            "planner_state": _safe_deepcopy(self.planner_state),
+            "final_result": _safe_deepcopy(self.final_result),
+            "model_calls": [_safe_deepcopy(row) for row in self.model_calls],
+            "tool_calls": [_safe_deepcopy(row) for row in self.tool_calls],
+        }
+
+
 # ---------------------------------------------------------------------------
 # General Planner
 # ---------------------------------------------------------------------------
@@ -99,7 +146,8 @@ class GeneralPlanner:
 
     Routes each ``PlanningRequest`` to the appropriate layer planner
     (L1/L2/L3) via a ``LayerRouter`` and resolves model selection using
-    work-type routing through ``CapabilityRouter``. Every invocation is
+    ``ModelRouter``. Capability dispatch is expressed as ``NextAction``
+    sequences and executed against planner adapters. Every invocation is
     tagged with a trace id for observability.
 
     If *register_defaults* is True (the default), real L1/L2/L3 planners
@@ -122,6 +170,7 @@ class GeneralPlanner:
         wait_graph: Any = None,
         on_constraint_saved: Callable | None = None,
         on_decision_recorded: Callable[[dict[str, Any]], None] | None = None,
+        promotion_adapters: PromotionLoopAdapters | None = None,
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._mode = mode
@@ -129,11 +178,15 @@ class GeneralPlanner:
         self._model_id = self._default_model_id
         self._constraints_tool = constraints_tool
         self._layer_router = LayerRouter()
-        self._capability_router = CapabilityRouter(default_model_id=self._default_model_id)
+        self._model_router = ModelRouter(default_model_id=self._default_model_id)
+        self._capability_router = CapabilityRouter()
         self._override_provider = override_provider
         self._work_item_store = work_item_store
         self._wait_graph = wait_graph
         self._on_decision_recorded = on_decision_recorded
+        self._promotion_adapters = (
+            promotion_adapters if promotion_adapters is not None else PromotionLoopAdapters()
+        )
 
         # Build a shared ConstraintStoreAdapter for L1/L2 planners
         from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
@@ -222,7 +275,7 @@ class GeneralPlanner:
         proposal_models = self._extract_proposal_models(req)
         requires_external_facts = self._requires_external_facts(req)
         high_risk = self._is_high_risk_request(req)
-        resolved_route = self._capability_router.resolve_model_route(
+        resolved_route = self._model_router.resolve(
             req,
             prefer_models=proposal_models,
             requires_external_facts=requires_external_facts,
@@ -259,6 +312,8 @@ class GeneralPlanner:
             capability=req.capability,
             slice_id=ctx.slice_id,
         )
+        state_machine = self._load_state_machine(req)
+        executed_actions: list[dict[str, Any]] = []
 
         logger.debug(
             "planner.plan  trace=%s  key=%s  capability=%s  layer=%s  slice=%s",
@@ -305,13 +360,17 @@ class GeneralPlanner:
             effective_route = resolved_route
             if req.capability == "INGEST_USER_ANSWER":
                 result = self._handle_ingest_user_answer(req)
+                state_machine.complete()
             else:
                 planner = self._layer_router.select(layer)
                 planner.bind_trace(trace)
-                result, effective_route, dispatch_gates = self._route_request_with_gates(
-                    planner=planner,
-                    req=req,
-                    initial_route=resolved_route,
+                result, effective_route, dispatch_gates, executed_actions = (
+                    self._route_request_with_gates(
+                        planner=planner,
+                        req=req,
+                        initial_route=resolved_route,
+                        state_machine=state_machine,
+                    )
                 )
             duration_ms = (time.perf_counter() - route_start) * 1000.0
             result.trace_id = trace_id
@@ -324,12 +383,18 @@ class GeneralPlanner:
                 result,
                 model_route=effective_route,
                 dispatch_gates=dispatch_gates,
+                planner_state=state_machine.to_dict(),
+                next_actions=executed_actions,
             )
+            self._persist_state_machine(req, state_machine)
             outputs_payload = result.outputs if isinstance(result.outputs, dict) else {}
             decision_text = str(outputs_payload.get("decision_text", "")).strip() or result.status
             trace.set_decision(DecisionRecord(decision_text=decision_text))
             trace.add_artifact("outputs", result.outputs)
             trace.add_artifact("model_route", effective_route.to_dict())
+            trace.add_artifact("planner_state", state_machine.to_dict())
+            if executed_actions:
+                trace.add_artifact("next_actions", executed_actions)
             if dispatch_gates:
                 trace.add_artifact("dispatch_gates", dispatch_gates)
             usage_tokens = _extract_tokens(result.outputs)
@@ -370,6 +435,29 @@ class GeneralPlanner:
                     },
                 )
             )
+            replay_bundle = ReplayBundle(
+                trace_id=trace_id,
+                decision_key=decision_key,
+                request=_request_snapshot(
+                    req,
+                    input_hash=input_hash,
+                    decision_key=decision_key,
+                    model_id=selected_model,
+                    planner_version=PLANNER_VERSION,
+                    model_route=effective_route.to_dict(),
+                ),
+                next_actions=executed_actions,
+                model_route=effective_route.to_dict(),
+                planner_state=state_machine.to_dict(),
+                final_result={
+                    "status": result.status,
+                    "outputs": _safe_deepcopy(result.outputs),
+                    "error": result.error,
+                },
+                model_calls=[_safe_deepcopy(call.__dict__) for call in trace.model_calls],
+                tool_calls=[_safe_deepcopy(call.__dict__) for call in trace.tool_calls],
+            )
+            trace.add_artifact("replay_bundle", replay_bundle.to_dict())
             self._persist_trace(trace)
             self._emit_decision_recorded_event(
                 trace=trace,
@@ -415,7 +503,8 @@ class GeneralPlanner:
         planner: Any,
         req: PlanningRequest,
         initial_route: ModelRouteDecision,
-    ) -> tuple[PlanningResult, ModelRouteDecision, dict[str, Any]]:
+        state_machine: PlannerStateMachine,
+    ) -> tuple[PlanningResult, ModelRouteDecision, dict[str, Any], list[dict[str, Any]]]:
         """Apply dispatch gates before routing to capability execution."""
         gates: dict[str, Any] = {
             "deterministic_local_checked": True,
@@ -424,89 +513,405 @@ class GeneralPlanner:
             "critique_checked": False,
             "path": "capability_dispatch",
         }
+        executed_actions: list[dict[str, Any]] = []
         deterministic_result = self._try_deterministic_local_resolution(req)
         if deterministic_result is not None:
             gates["path"] = "deterministic_local"
-            return deterministic_result, initial_route, gates
+            state_machine.complete()
+            executed_actions.append(
+                {
+                    "action": ActionType.COMPLETE.value,
+                    "agent": "",
+                    "tool": "deterministic_local",
+                    "inputs": {},
+                    "prompt": "",
+                }
+            )
+            return deterministic_result, initial_route, gates, executed_actions
 
         routed_req = req
         if self._should_run_integration_gate(req):
             gates["integration_analysis_checked"] = True
+            self._notify_gate_hook("before_step", "integration_gate", req, gates)
             integration_req = PlanningRequest(
                 capability="INTEGRATION_ANALYSIS",
                 context=req.context,
                 inputs=dict(req.inputs) if isinstance(req.inputs, dict) else {},
                 constraints_hint=req.constraints_hint,
             )
-            integration_route = self._capability_router.resolve_model_route(
+            integration_route = self._model_router.resolve(
                 integration_req,
                 requires_external_facts=False,
                 high_risk=False,
             )
-            integration_result = self._capability_router.route(
+            integration_result, integration_actions = self._execute_next_actions(
                 planner,
                 integration_req,
                 model_route=integration_route,
+                state_machine=state_machine,
+                terminal=False,
             )
+            executed_actions.extend(integration_actions)
             gates["integration_analysis_status"] = integration_result.status
             if isinstance(integration_result.outputs, dict):
                 merged_inputs = dict(req.inputs) if isinstance(req.inputs, dict) else {}
                 merged_inputs.setdefault("integration_analysis", integration_result.outputs)
+                if self._promotion_adapters.on_bundle_update is not None:
+                    try:
+                        bundle_updates = self._promotion_adapters.on_bundle_update(
+                            req,
+                            integration_result.outputs,
+                        )
+                    except Exception:
+                        logger.warning("promotion on_bundle_update hook failed", exc_info=True)
+                        bundle_updates = None
+                    if isinstance(bundle_updates, dict):
+                        merged_inputs.update(bundle_updates)
                 routed_req = PlanningRequest(
                     capability=req.capability,
                     context=req.context,
                     inputs=merged_inputs,
                     constraints_hint=req.constraints_hint,
                 )
+            self._notify_gate_hook(
+                "after_step", "integration_gate", integration_req, gates, integration_result
+            )
 
-        effective_route = self._capability_router.resolve_model_route(
+        effective_route = self._model_router.resolve(
             routed_req,
             prefer_models=self._extract_proposal_models(routed_req),
             requires_external_facts=self._requires_external_facts(routed_req),
             high_risk=self._is_high_risk_request(routed_req),
         )
-        result = self._capability_router.route(
+        result, primary_actions = self._execute_next_actions(
             planner,
             routed_req,
             model_route=effective_route,
+            state_machine=state_machine,
         )
+        executed_actions.extend(primary_actions)
 
-        if self._should_run_critique_gate(routed_req, effective_route):
+        review_pack = self._build_review_pack(routed_req, effective_route)
+        if review_pack is not None:
             gates["critique_checked"] = True
-            critique_req = PlanningRequest(
-                capability="INTEGRATION_ANALYSIS",
-                context=routed_req.context,
-                inputs=dict(routed_req.inputs) if isinstance(routed_req.inputs, dict) else {},
-                constraints_hint=routed_req.constraints_hint,
+            self._notify_gate_hook("before_step", "review_pack", routed_req, gates)
+            review_summary, review_actions = self._execute_review_pack(
+                planner=planner,
+                req=routed_req,
+                review_pack=review_pack,
+                state_machine=state_machine,
             )
-            critique_route = self._capability_router.resolve_model_route(
+            executed_actions.extend(review_actions)
+            gates["critique_status"] = str(review_summary.get("status", "")).strip()
+            gates["critique_model"] = str(review_summary.get("primary_model", "")).strip()
+            if isinstance(result.outputs, dict):
+                result.outputs["review_pack"] = review_summary
+                primary_review = review_summary.get("primary_review")
+                if isinstance(primary_review, dict):
+                    result.outputs["critique"] = primary_review
+            self._notify_gate_hook("after_step", "review_pack", routed_req, gates, result)
+
+        return result, effective_route, gates, executed_actions
+
+    def _execute_next_actions(
+        self,
+        planner: Any,
+        req: PlanningRequest,
+        *,
+        model_route: ModelRouteDecision,
+        state_machine: PlannerStateMachine,
+        terminal: bool = True,
+    ) -> tuple[PlanningResult, list[dict[str, Any]]]:
+        self._model_router.bind_context(req, model_route)
+        actions = self._capability_router.plan_actions(
+            req,
+            requires_external_facts=self._requires_external_facts(req),
+        )
+        interim: dict[str, Any] = {}
+        executed_actions: list[dict[str, Any]] = []
+        for action in actions:
+            action_dict = action.to_dict()
+            executed_actions.append(action_dict)
+            self._advance_state_from_action(state_machine, action)
+
+            if action.action == ActionType.RUN_TOOL:
+                self._capability_router.run_tool(
+                    planner=planner,
+                    req=req,
+                    tool_name=action.tool,
+                    interim=interim,
+                )
+                continue
+
+            if action.action == ActionType.CALL_AGENT:
+                self._capability_router.run_agent(
+                    planner=planner,
+                    req=req,
+                    agent_name=action.agent,
+                    interim=interim,
+                )
+                continue
+
+            if action.action == ActionType.USER_INPUT:
+                if self._should_pause_for_user_input(req=req, interim=interim):
+                    prompt = self._resolve_wait_prompt(interim, fallback=action.prompt)
+                    state_machine.wait_for_input(prompt)
+                    outputs = self._build_needs_input_outputs(
+                        req=req,
+                        interim=interim,
+                        prompt=prompt,
+                        planner_state=state_machine.to_dict(),
+                    )
+                    return PlanningResult(status="NEEDS_INPUT", outputs=outputs), executed_actions
+                continue
+
+            if action.action == ActionType.COMPLETE:
+                if terminal and state_machine.status != PlanStatus.COMPLETED:
+                    state_machine.complete()
+                return self._capability_router.finalize(req, interim), executed_actions
+
+            if action.action == ActionType.ERROR:
+                state_machine.error(action.prompt)
+                return PlanningResult(status="ERROR", error=action.prompt), executed_actions
+
+        finalized = self._capability_router.finalize(req, interim)
+        if finalized.status == "NEEDS_INPUT":
+            state_machine.wait_for_input()
+        elif (
+            terminal
+            and finalized.status != "ERROR"
+            and state_machine.status != PlanStatus.COMPLETED
+        ):
+            state_machine.complete()
+        return finalized, executed_actions
+
+    def _execute_review_pack(
+        self,
+        *,
+        planner: Any,
+        req: PlanningRequest,
+        review_pack: ReviewPack,
+        state_machine: PlannerStateMachine,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        reviews: list[dict[str, Any]] = []
+        executed_actions: list[dict[str, Any]] = []
+        for index, reviewer in enumerate(review_pack.agents, start=1):
+            capability = str(reviewer.get("capability", "INTEGRATION_ANALYSIS")).strip().upper()
+            critique_req = PlanningRequest(
+                capability=capability,  # type: ignore[arg-type]
+                context=req.context,
+                inputs=dict(req.inputs) if isinstance(req.inputs, dict) else {},
+                constraints_hint=req.constraints_hint,
+            )
+            preferred_model = str(reviewer.get("model", "")).strip()
+            critique_route = self._model_router.resolve(
                 critique_req,
-                prefer_models=[effective_route.secondary_model],
+                prefer_models=[preferred_model] if preferred_model else None,
                 requires_external_facts=False,
                 high_risk=False,
             )
-            critique_result = self._capability_router.route(
+            critique_result, critique_actions = self._execute_next_actions(
                 planner,
                 critique_req,
                 model_route=critique_route,
+                state_machine=state_machine,
+                terminal=False,
             )
-            gates["critique_status"] = critique_result.status
-            gates["critique_model"] = critique_route.primary_model
-            if isinstance(result.outputs, dict):
-                result.outputs["critique"] = self._build_critique_summary(
-                    critique_result=critique_result,
-                    critique_route=critique_route,
-                )
-            if isinstance(routed_req.context.metadata, dict):
-                routed_req.context.metadata["model_route"] = effective_route.to_dict()
-                routed_req.context.metadata["planner_work_type"] = effective_route.work_type
-                routed_req.context.metadata["primary_model"] = effective_route.primary_model
-                if effective_route.secondary_model:
-                    routed_req.context.metadata["secondary_model"] = effective_route.secondary_model
-                else:
-                    routed_req.context.metadata.pop("secondary_model", None)
+            executed_actions.extend(critique_actions)
+            reviews.append(
+                {
+                    "reviewer": str(reviewer.get("name", f"reviewer_{index}")).strip()
+                    or f"reviewer_{index}",
+                    "status": critique_result.status,
+                    "model": critique_route.primary_model,
+                    "work_type": critique_route.work_type,
+                    "summary": self._build_critique_summary(
+                        critique_result=critique_result,
+                        critique_route=critique_route,
+                    ),
+                    "outputs": critique_result.outputs
+                    if isinstance(critique_result.outputs, dict)
+                    else {},
+                }
+            )
 
-        return result, effective_route, gates
+        accepted = self._review_pack_passes(
+            acceptance_checks=review_pack.acceptance_checks,
+            reviews=reviews,
+        )
+        if any(str(review.get("status", "")).upper() == "ERROR" for review in reviews):
+            merged_status = "ERROR"
+        elif accepted:
+            merged_status = "OK"
+        else:
+            merged_status = "BLOCKED"
+        primary_review = reviews[0]["summary"] if reviews else {}
+        primary_model = str(reviews[0].get("model", "")).strip() if reviews else ""
+        return (
+            {
+                "name": review_pack.name,
+                "merge_strategy": review_pack.merge_strategy,
+                "acceptance_checks": list(review_pack.acceptance_checks),
+                "status": merged_status,
+                "accepted": accepted,
+                "reviews": reviews,
+                "primary_review": primary_review,
+                "primary_model": primary_model,
+            },
+            executed_actions,
+        )
+
+    def _build_review_pack(
+        self,
+        req: PlanningRequest,
+        model_route: ModelRouteDecision,
+    ) -> ReviewPack | None:
+        if not self._should_run_critique_gate(req, model_route):
+            return None
+        layer = str(req.context.layer or "any").strip().lower()
+        risk = "high" if self._is_high_risk_request(req) else "standard"
+        agents: list[dict[str, Any]] = []
+        if model_route.secondary_model:
+            agents.append(
+                {
+                    "name": "secondary_critic",
+                    "capability": "INTEGRATION_ANALYSIS",
+                    "model": model_route.secondary_model,
+                }
+            )
+        agents.append(
+            {
+                "name": "primary_reviewer",
+                "capability": "INTEGRATION_ANALYSIS",
+                "model": model_route.primary_model,
+            }
+        )
+        if layer == "l3" or risk == "high":
+            agents.append(
+                {
+                    "name": "adversarial_reviewer",
+                    "capability": "INTEGRATION_ANALYSIS",
+                    "model": model_route.secondary_model or model_route.primary_model,
+                }
+            )
+        merge_strategy = "all_must_pass" if len(agents) > 1 else "single"
+        return ReviewPack(
+            name=f"{layer}_{str(req.capability).lower()}_{risk}_review",
+            agents=agents,
+            merge_strategy=merge_strategy,
+            acceptance_checks=["status_not_error", "risk_profile_present"],
+        )
+
+    @staticmethod
+    def _review_pack_passes(
+        *,
+        acceptance_checks: list[str],
+        reviews: list[dict[str, Any]],
+    ) -> bool:
+        if not reviews:
+            return False
+        checks = {str(check).strip().lower() for check in acceptance_checks if str(check).strip()}
+        for review in reviews:
+            status = str(review.get("status", "")).strip().upper()
+            outputs = review.get("outputs", {})
+            if "status_not_error" in checks and status == "ERROR":
+                return False
+            if "risk_profile_present" in checks and (
+                not isinstance(outputs, dict) or not isinstance(outputs.get("risk_profile"), dict)
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _advance_state_from_action(
+        state_machine: PlannerStateMachine,
+        action: Any,
+    ) -> None:
+        inputs = action.inputs if isinstance(action.inputs, dict) else {}
+        phase_raw = str(inputs.get("phase", "")).strip().lower()
+        if phase_raw:
+            for phase in PlanPhase:
+                if phase.value == phase_raw and phase != state_machine.phase:
+                    state_machine.advance(phase)
+                    break
+        if state_machine.status in {PlanStatus.PAUSED, PlanStatus.WAITING_INPUT}:
+            state_machine.resume()
+
+    @staticmethod
+    def _should_pause_for_user_input(
+        *,
+        req: PlanningRequest,
+        interim: dict[str, Any],
+    ) -> bool:
+        if str(req.context.mode).strip().lower() != "interactive":
+            return False
+        if str(req.capability).strip().upper() != "UNDER_SPEC":
+            return False
+        result = interim.get("under_spec_result")
+        if not isinstance(result, dict):
+            return False
+        questions = result.get("questions", [])
+        return bool(result.get("blocked", False) and isinstance(questions, list) and questions)
+
+    @staticmethod
+    def _resolve_wait_prompt(interim: dict[str, Any], *, fallback: str) -> str:
+        result = interim.get("under_spec_result")
+        if isinstance(result, dict):
+            questions = result.get("questions", [])
+            if isinstance(questions, list) and questions:
+                first = str(questions[0]).strip()
+                if first:
+                    return first
+        return str(fallback or "Planner requires additional input.").strip()
+
+    @staticmethod
+    def _build_needs_input_outputs(
+        *,
+        req: PlanningRequest,
+        interim: dict[str, Any],
+        prompt: str,
+        planner_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = interim.get("under_spec_result")
+        outputs = dict(result) if isinstance(result, dict) else {}
+        outputs["blocked"] = bool(outputs.get("blocked", True))
+        questions = outputs.get("questions", [])
+        if not isinstance(questions, list):
+            questions = [str(questions)] if questions else []
+        if prompt and prompt not in questions:
+            questions = [prompt, *questions]
+        outputs["questions"] = [str(item).strip() for item in questions if str(item).strip()]
+        outputs["prompt"] = prompt
+        outputs["planner_state"] = planner_state
+        outputs["capability"] = req.capability
+        return outputs
+
+    def _notify_gate_hook(
+        self,
+        hook_name: Literal["before_step", "after_step"],
+        gate_name: str,
+        req: PlanningRequest,
+        gates: dict[str, Any],
+        result: PlanningResult | None = None,
+    ) -> None:
+        if hook_name == "before_step":
+            hook = self._promotion_adapters.before_step
+            if hook is None:
+                return
+            try:
+                hook(gate_name, req, dict(gates))
+            except Exception:
+                logger.warning(
+                    "promotion before_step hook failed for gate=%s", gate_name, exc_info=True
+                )
+            return
+        hook = self._promotion_adapters.after_step
+        if hook is None or result is None:
+            return
+        try:
+            hook(gate_name, req, result, dict(gates))
+        except Exception:
+            logger.warning("promotion after_step hook failed for gate=%s", gate_name, exc_info=True)
 
     @staticmethod
     def _build_critique_summary(
@@ -534,12 +939,38 @@ class GeneralPlanner:
         *,
         model_route: ModelRouteDecision,
         dispatch_gates: dict[str, Any],
+        planner_state: dict[str, Any] | None = None,
+        next_actions: list[dict[str, Any]] | None = None,
     ) -> None:
         if not isinstance(result.outputs, dict):
             return
         result.outputs.setdefault("model_route", model_route.to_dict())
         if dispatch_gates:
             result.outputs.setdefault("dispatch_gates", dict(dispatch_gates))
+        if isinstance(planner_state, dict):
+            result.outputs.setdefault("planner_state", planner_state)
+        if isinstance(next_actions, list) and next_actions:
+            result.outputs.setdefault(
+                "next_actions", [dict(row) for row in next_actions if isinstance(row, dict)]
+            )
+
+    @staticmethod
+    def _load_state_machine(req: PlanningRequest) -> PlannerStateMachine:
+        metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
+        payload = metadata.get("planner_state")
+        if isinstance(payload, dict):
+            return PlannerStateMachine.from_dict(payload)
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        payload = inputs.get("planner_state")
+        if isinstance(payload, dict):
+            return PlannerStateMachine.from_dict(payload)
+        return PlannerStateMachine()
+
+    @staticmethod
+    def _persist_state_machine(req: PlanningRequest, state_machine: PlannerStateMachine) -> None:
+        metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
+        metadata["planner_state"] = state_machine.to_dict()
+        req.context.metadata = metadata
 
     def _extract_proposal_models(self, req: PlanningRequest) -> list[str]:
         models: list[str] = []
@@ -2306,7 +2737,7 @@ class GeneralPlanner:
                     "proposal_models": proposal_models,
                 },
             )
-            proposal_route = self._capability_router.resolve_model_route(
+            proposal_route = self._model_router.resolve(
                 triage_req,
                 prefer_models=proposal_models,
                 requires_external_facts=self._requires_external_facts(triage_req),

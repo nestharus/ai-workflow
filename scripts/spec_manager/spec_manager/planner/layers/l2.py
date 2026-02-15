@@ -633,6 +633,17 @@ class L2Planner:
         )
         return discovery
 
+    def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "architecture_topology_graph": {
+                "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
+                "edges": [row for row in discovery.get("edges", []) if isinstance(row, dict)],
+                "arch_files": [
+                    str(path) for path in discovery.get("arch_files", []) if str(path).strip()
+                ],
+            }
+        }
+
     def _discover_impl(self, ctx: Any) -> dict[str, Any]:
         """Route slice-scoped architecture artifacts into a topology graph."""
         workspace_root, scope_roots = self._resolve_discovery_roots(ctx)

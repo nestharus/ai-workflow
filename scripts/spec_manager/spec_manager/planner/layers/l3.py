@@ -536,6 +536,17 @@ class L3Planner:
         )
         return discovery
 
+    def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        quality_graph = discovery.get("quality_graph", {})
+        if not isinstance(quality_graph, dict):
+            quality_graph = {}
+        return {
+            "quality_graph": {
+                "nodes": [row for row in quality_graph.get("nodes", []) if isinstance(row, dict)],
+                "edges": [row for row in quality_graph.get("edges", []) if isinstance(row, dict)],
+            }
+        }
+
     def build_plan(
         self,
         ctx: Any,

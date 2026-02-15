@@ -448,6 +448,14 @@ class L1Planner:
         )
         return discovery
 
+    def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "code_skeleton_graph": {
+                "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
+                "edges": [row for row in discovery.get("edges", []) if isinstance(row, dict)],
+            }
+        }
+
     def build_plan(
         self,
         ctx: Any,

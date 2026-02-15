@@ -63,6 +63,25 @@ class PlannerStateMachine:
         self.phase = PlanPhase.COMPLETE
         self.status = PlanStatus.COMPLETED
 
+    def wait_for_input(self, prompt: str = "") -> None:
+        """Pause execution and wait for user input."""
+        self._record(
+            from_phase=self.phase,
+            to_phase=self.phase,
+            status=PlanStatus.WAITING_INPUT,
+            prompt=str(prompt or ""),
+        )
+        self.status = PlanStatus.WAITING_INPUT
+
+    def resume(self) -> None:
+        """Resume execution from a paused state."""
+        self._record(
+            from_phase=self.phase,
+            to_phase=self.phase,
+            status=PlanStatus.RUNNING,
+        )
+        self.status = PlanStatus.RUNNING
+
     def error(self, msg: str) -> None:
         """Mark as errored with *msg*."""
         self._record(
@@ -80,6 +99,30 @@ class PlannerStateMachine:
             "status": self.status.value,
             "history": list(self.history),
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> PlannerStateMachine:
+        phase_raw = str(payload.get("phase", PlanPhase.INIT.value) or PlanPhase.INIT.value)
+        status_raw = str(
+            payload.get("status", PlanStatus.RUNNING.value) or PlanStatus.RUNNING.value
+        )
+        phase = PlanPhase.INIT
+        status = PlanStatus.RUNNING
+        for candidate in PlanPhase:
+            if candidate.value == phase_raw:
+                phase = candidate
+                break
+        for candidate in PlanStatus:
+            if candidate.value == status_raw:
+                status = candidate
+                break
+        history_raw = payload.get("history", [])
+        history = (
+            [row for row in history_raw if isinstance(row, dict)]
+            if isinstance(history_raw, list)
+            else []
+        )
+        return cls(phase=phase, status=status, history=history)
 
     # ---- internals ----
 
