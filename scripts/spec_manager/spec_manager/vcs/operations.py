@@ -128,6 +128,20 @@ class VcsOperations(Protocol):
         """
         ...
 
+    def rev_list(
+        self,
+        from_ref: str,
+        to_ref: str,
+        *,
+        merges_only: bool = False,
+    ) -> list[str] | None:
+        """List commit SHAs in the range ``from_ref..to_ref``.
+
+        When ``merges_only`` is True, only merge commits are returned.
+        Returns ``None`` on error.
+        """
+        ...
+
     def create_tag(self, tag_name: str, target: str, message: str = "") -> tuple[bool, str]:
         """Create an annotated tag at *target*.
 
@@ -290,6 +304,23 @@ class GitVcs:
             return int(result.stdout.strip())
         except ValueError:
             return None
+
+    def rev_list(
+        self,
+        from_ref: str,
+        to_ref: str,
+        *,
+        merges_only: bool = False,
+    ) -> list[str] | None:
+        args = ["rev-list"]
+        if merges_only:
+            args.append("--merges")
+        args.append(f"{from_ref}..{to_ref}")
+        result = self._run(args)
+        if result.returncode != 0:
+            return None
+        commits = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return commits
 
     def create_tag(self, tag_name: str, target: str, message: str = "") -> tuple[bool, str]:
         if message:

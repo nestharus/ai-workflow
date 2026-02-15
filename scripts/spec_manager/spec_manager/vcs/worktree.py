@@ -71,6 +71,7 @@ class WorktreeManager:
         self._layer_worktrees: dict[Layer, dict[Lane, Path]] = {}
         self._layer_branches: dict[Layer, dict[Lane, str]] = {}
         self._candidate_refs: dict[Layer, str] = {}
+        self._batch_seq: dict[Layer, int] = {}
         self._upstream_accepted: dict[Layer, str] = {}
         self._slice_worktrees: dict[str, Path] = {}  # slice_id → Path
         self._base_ref: str = "HEAD"
@@ -336,6 +337,12 @@ class WorktreeManager:
     # Batch / CI primitives
     # ------------------------------------------------------------------
 
+    def _next_batch_tag_name(self, layer: Layer) -> tuple[str, int]:
+        """Allocate the next unique batch tag name for *layer*."""
+        seq = self._batch_seq.get(layer, 0) + 1
+        self._batch_seq[layer] = seq
+        return f"pdd/{self.run_id}/batch/{layer}/{seq}", seq
+
     def snapshot_candidate(self, layer: Layer) -> str | None:
         """Set candidate ref to dirty HEAD; returns SHA.
 
@@ -349,11 +356,45 @@ class WorktreeManager:
         if not dirty_sha:
             return None
 
+        clean_path = self._layer_worktrees.get(layer, {}).get("clean")
+        base_clean_sha = self.vcs.get_head_sha(clean_path) if clean_path else None
+
         candidate_branch = self.candidate_ref(layer)
         ok, err = self.vcs.update_ref(candidate_branch, dirty_sha)
         if not ok:
             logger.warning("Failed to snapshot candidate for %s: %s", layer, err)
             return None
+
+        merge_commits: list[str] = []
+        if base_clean_sha:
+            commits = self.vcs.rev_list(base_clean_sha, dirty_sha, merges_only=True)
+            if isinstance(commits, list):
+                merge_commits = [str(commit) for commit in commits if str(commit).strip()]
+
+        tag_ok = False
+        tag_err = ""
+        tag_name = ""
+        for _ in range(8):
+            tag_name, seq = self._next_batch_tag_name(layer)
+            metadata_lines = [
+                f"PDD batch snapshot: run={self.run_id} layer={layer} seq={seq}",
+                f"base_clean_sha: {base_clean_sha or 'unknown'}",
+                f"candidate_sha: {dirty_sha}",
+                "included_merge_commits:",
+            ]
+            if merge_commits:
+                metadata_lines.extend(f"- {merge_sha}" for merge_sha in merge_commits)
+            else:
+                metadata_lines.append("- none")
+            tag_ok, tag_err = self.vcs.create_tag(
+                tag_name,
+                dirty_sha,
+                message="\n".join(metadata_lines),
+            )
+            if tag_ok or "exists" not in tag_err.lower():
+                break
+        if not tag_ok:
+            logger.warning("Failed to create batch tag %s for %s: %s", tag_name, layer, tag_err)
 
         self._candidate_refs[layer] = dirty_sha
         logger.info("Snapshot candidate for %s: %s", layer, dirty_sha[:12])
@@ -407,12 +448,15 @@ class WorktreeManager:
         gates_passed, gate_tickets, gate_error = self._resolve_ci_check(gates, check_id="gates")
         tests_passed, test_tickets, test_error = self._resolve_ci_check(tests, check_id="tests")
         ci_tickets = [*gate_tickets, *test_tickets]
+        clean_path = self._layer_worktrees.get(layer, {}).get("clean")
+        base_clean_sha = self.vcs.get_head_sha(clean_path) if clean_path else None
 
         candidate_sha = self.vcs.rev_parse(self.candidate_ref(layer))
         if not candidate_sha:
             return BatchResult(
                 success=False,
                 layer=layer,
+                base_clean_sha=base_clean_sha,
                 error="No candidate snapshot",
                 gates_passed=gates_passed,
                 tests_passed=tests_passed,
@@ -425,6 +469,7 @@ class WorktreeManager:
                 success=False,
                 layer=layer,
                 candidate_sha=candidate_sha,
+                base_clean_sha=base_clean_sha,
                 gates_passed=gates_passed,
                 tests_passed=tests_passed,
                 error="; ".join(reasons) if reasons else "CI checks failed",
@@ -437,6 +482,8 @@ class WorktreeManager:
             return BatchResult(
                 success=False,
                 layer=layer,
+                candidate_sha=candidate_sha,
+                base_clean_sha=base_clean_sha,
                 error=f"Failed to advance clean: {err}",
                 gates_passed=gates_passed,
                 tests_passed=tests_passed,
@@ -453,6 +500,7 @@ class WorktreeManager:
             success=True,
             layer=layer,
             candidate_sha=candidate_sha,
+            base_clean_sha=base_clean_sha,
             clean_sha=candidate_sha,
             gates_passed=gates_passed,
             tests_passed=tests_passed,
@@ -504,6 +552,50 @@ class WorktreeManager:
             from_layer=from_layer,
             to_layer=to_layer,
             merge_sha=merge_sha,
+        )
+
+    def rebase_next_layer_dirty_onto_clean(self, from_layer: Layer) -> PropagateResult:
+        """Rebase next layer dirty onto *from_layer* clean as conflict recovery."""
+        to_layer = next_layer(from_layer)
+        if to_layer is None:
+            return PropagateResult(
+                success=False,
+                from_layer=from_layer,
+                to_layer=from_layer,
+                error="No next layer (already at L3)",
+            )
+
+        to_dirty_path = self._layer_worktrees.get(to_layer, {}).get("dirty")
+        if not to_dirty_path:
+            return PropagateResult(
+                success=False,
+                from_layer=from_layer,
+                to_layer=to_layer,
+                error=f"No dirty worktree for {to_layer}",
+            )
+
+        from_clean_branch = self.layer_branch(from_layer, "clean")
+        ok, err = self.vcs.rebase(to_dirty_path, from_clean_branch)
+        if not ok:
+            return PropagateResult(
+                success=False,
+                from_layer=from_layer,
+                to_layer=to_layer,
+                error=err,
+            )
+
+        rebased_sha = self.vcs.get_head_sha(to_dirty_path)
+        logger.info(
+            "Rebased %s/dirty onto %s/clean (%s)",
+            to_layer,
+            from_layer,
+            rebased_sha[:12] if rebased_sha else "?",
+        )
+        return PropagateResult(
+            success=True,
+            from_layer=from_layer,
+            to_layer=to_layer,
+            merge_sha=rebased_sha,
         )
 
     # ------------------------------------------------------------------

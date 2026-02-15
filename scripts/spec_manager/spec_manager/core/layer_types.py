@@ -50,6 +50,7 @@ class BatchResult:
     success: bool
     layer: Layer
     candidate_sha: str | None = None
+    base_clean_sha: str | None = None
     clean_sha: str | None = None
     gates_passed: bool = True
     tests_passed: bool = True

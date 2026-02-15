@@ -1545,13 +1545,43 @@ class PddLifecycle:
 
         # Propagate clean → next layer's dirty
         if self.worktree_manager:
-            prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
-            results["propagation"] = {
-                "success": prop.success,
-                "from_layer": prop.from_layer,
-                "to_layer": prop.to_layer,
-                "error": prop.error,
+            merge_prop = self.worktree_manager.propagate_clean_to_next_layer(from_layer)
+            prop = merge_prop
+            propagation: dict[str, Any] = {
+                "success": merge_prop.success,
+                "from_layer": merge_prop.from_layer,
+                "to_layer": merge_prop.to_layer,
+                "merge_sha": merge_prop.merge_sha,
+                "error": merge_prop.error,
+                "strategy": "merge",
             }
+
+            if not merge_prop.success:
+                rebase_prop = self.worktree_manager.rebase_next_layer_dirty_onto_clean(from_layer)
+                propagation["rebase_fallback"] = {
+                    "success": rebase_prop.success,
+                    "from_layer": rebase_prop.from_layer,
+                    "to_layer": rebase_prop.to_layer,
+                    "merge_sha": rebase_prop.merge_sha,
+                    "error": rebase_prop.error,
+                }
+                if rebase_prop.success:
+                    prop = rebase_prop
+                    propagation.update(
+                        {
+                            "success": True,
+                            "merge_sha": rebase_prop.merge_sha,
+                            "error": "",
+                            "strategy": "rebase_fallback",
+                            "merge_error": merge_prop.error,
+                        }
+                    )
+                else:
+                    merge_error = merge_prop.error or "merge propagation failed"
+                    rebase_error = rebase_prop.error or "rebase fallback failed"
+                    propagation["error"] = f"{merge_error}; {rebase_error}"
+
+            results["propagation"] = propagation
 
             # Downstream readiness CI: smoke test on the new dirty worktree
             if prop.success:
@@ -1682,6 +1712,14 @@ class PddLifecycle:
                 )
                 ci_tick_slices.add(slice_id)
 
+                layer_batch: Any | None = None
+                layer_results = getattr(tick, "layer_results", None)
+                if isinstance(layer_results, dict):
+                    layer_batch = layer_results.get(layer)
+
+                candidate_sha = getattr(layer_batch, "candidate_sha", None)
+                base_clean_sha = getattr(layer_batch, "base_clean_sha", None)
+
                 # Write CI batch receipt
                 if hasattr(self, "_state_mgr"):
                     batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
@@ -1694,6 +1732,8 @@ class PddLifecycle:
                         "layer": layer,
                         "main_updated": tick.main_updated,
                         "demotions": len(tick.demotion_tickets),
+                        "candidate_sha": candidate_sha,
+                        "base_clean_sha": base_clean_sha,
                     }
                     receipt_path = batch_dir / f"{batch_id}.json"
                     receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
