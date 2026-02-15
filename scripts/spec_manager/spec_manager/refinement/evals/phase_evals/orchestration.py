@@ -263,7 +263,7 @@ def run_final_report(
     Computes scorecard internally and generates final_report.md + scorecard.json.
 
     Returns:
-        Dict with report_path and scorecard_json_path.
+        Dict with report_path, scorecard_json_path, and run_summary_path.
     """
     from spec_manager.evaluation.report import FinalReportGenerator
     from spec_manager.evaluation.scoring import RunReporter
@@ -284,6 +284,9 @@ def run_final_report(
     return {
         "report_path": str(report_path),
         "scorecard_json_path": str(scorecard_json_path),
+        "run_summary_path": str(
+            manager.workspace_path / "reports" / "pdd" / manager.run_id / "run_summary.json"
+        ),
     }
 
 

@@ -310,23 +310,35 @@ class DemotionManager:
                 "gap_evidence_added": result.get("gap_evidence_added", 0),
             },
         }
-        (tickets_dir / f"{ticket.ticket_id}.json").write_text(
+        ticket_path = tickets_dir / f"{ticket.ticket_id}.json"
+        ticket_path.write_text(
             json.dumps(ticket_record, indent=2),
             encoding="utf-8",
         )
 
         ledger_path = ledger_dir / "ledger.jsonl"
+        hop_trace = ticket.hop_trace or [ticket.origin_layer, ticket.target_layer]
         entry = {
             "ticket_id": ticket.ticket_id,
+            "run_id": run_id,
+            "slice_id": ticket.slice_id,
             "created_at": ticket.created_at,
             "source": ticket.source,
+            "gate": ticket.gate,
             "origin_layer": ticket.origin_layer,
             "target_layer": ticket.target_layer,
+            "hop_trace": hop_trace,
             "severity": ticket.severity,
             "diagnosis": ticket.diagnosis[:500],
+            "evidence_refs": ticket.evidence_refs,
             "failing_files": ticket.failing_files,
+            "failing_pins": ticket.failing_pins,
+            "failing_atoms": ticket.failing_atoms,
             "apply_status": ticket.apply_status,
+            "resolution_status": ticket.apply_status,
             "applied": result.get("applied", False),
+            "applied_patch_paths": result.get("patches", []),
+            "ticket_artifact_path": str(ticket_path),
         }
         with ledger_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")

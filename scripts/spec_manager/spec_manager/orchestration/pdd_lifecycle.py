@@ -723,6 +723,7 @@ class PddLifecycle:
         report_path, scorecard_json_path = report_gen.generate(results, scorecard)
         results["final_report_path"] = str(report_path)
         results["scorecard_json_path"] = str(scorecard_json_path)
+        results["run_summary_path"] = self._run_report_relpath("run_summary.json")
 
         # Final whole-run governance gate
         final_governance = self._run_governance_check(
@@ -754,12 +755,13 @@ class PddLifecycle:
         report_path, scorecard_json_path = report_gen.generate(results, scorecard)
         results["final_report_path"] = str(report_path)
         results["scorecard_json_path"] = str(scorecard_json_path)
+        results["run_summary_path"] = self._run_report_relpath("run_summary.json")
 
         results["merge_tag"] = self._perform_release_merge_and_tag()
-        if not (
-            bool(results["merge_tag"].get("merged", False))
-            and bool(results["merge_tag"].get("tagged", False))
-        ):
+        release_path_ready = bool(results["merge_tag"].get("merged", False)) or bool(
+            results["merge_tag"].get("release_branch_created", False)
+        )
+        if not (release_path_ready and bool(results["merge_tag"].get("tagged", False))):
             results["release_blocked"] = True
             mt = results["merge_tag"]
             err = mt.get("merge_error") or mt.get("tag_error")
@@ -1129,34 +1131,71 @@ class PddLifecycle:
             except Exception as exc:
                 return {"merged": False, "tagged": False, "error": str(exc)}
 
-        merge_ok = True
-        merge_error = ""
         source_branch = ""
-        if self.worktree_manager is not None:
+        target_branch = vcs.get_current_branch(self.manager.workspace_path) or "HEAD"
+        release_branch = f"pdd/{self.manager.run_id}/release"
+        release_target_sha = ""
+
+        merged = False
+        release_branch_created = False
+        merge_error = ""
+        if self.worktree_manager is not None and target_branch == "main":
             source_branch = self.worktree_manager.layer_branch("l3", "clean")
             merge_result = vcs.merge(self.manager.workspace_path, source_branch)
             if isinstance(merge_result, tuple) and len(merge_result) == 2:
-                merge_ok, merge_error = bool(merge_result[0]), str(merge_result[1])
+                merged, merge_error = bool(merge_result[0]), str(merge_result[1])
             elif isinstance(merge_result, bool):
-                merge_ok, merge_error = merge_result, ""
+                merged, merge_error = merge_result, ""
             else:
-                merge_ok, merge_error = True, ""
+                merged, merge_error = True, ""
+            if merged:
+                release_target_sha = vcs.rev_parse("HEAD") or ""
         else:
-            source_branch = vcs.get_current_branch(self.manager.workspace_path) or "HEAD"
+            if self.worktree_manager is not None:
+                source_branch = self.worktree_manager.layer_branch("l3", "clean")
+            else:
+                source_branch = vcs.get_current_branch(self.manager.workspace_path) or "HEAD"
+            release_target_sha = vcs.rev_parse(source_branch) or vcs.rev_parse("HEAD") or ""
+            if not release_target_sha:
+                merge_error = (
+                    f"Unable to resolve release SHA from source branch '{source_branch}'"
+                    if source_branch
+                    else "Unable to resolve release SHA from HEAD"
+                )
+            else:
+                branch_result = vcs.update_ref(f"refs/heads/{release_branch}", release_target_sha)
+                if isinstance(branch_result, tuple) and len(branch_result) == 2:
+                    release_branch_created, branch_err = (
+                        bool(branch_result[0]),
+                        str(branch_result[1]),
+                    )
+                elif isinstance(branch_result, bool):
+                    release_branch_created, branch_err = branch_result, ""
+                else:
+                    release_branch_created, branch_err = True, ""
+                if not release_branch_created:
+                    merge_error = (
+                        branch_err or f"Failed to create release branch '{release_branch}'"
+                    )
 
         tag_name = f"pdd/{self.manager.run_id}/release"
         tag_ok = False
         tag_error = ""
-        if merge_ok:
-            head_sha = vcs.rev_parse("HEAD") or ""
-            if head_sha:
+        if merged or release_branch_created:
+            tag_target = release_target_sha or (vcs.rev_parse("HEAD") or "")
+            if tag_target:
                 existing_tag = vcs.rev_parse(f"refs/tags/{tag_name}")
                 if existing_tag:
-                    tag_ok = True
+                    if existing_tag == tag_target:
+                        tag_ok = True
+                    else:
+                        tag_error = (
+                            f"Tag '{tag_name}' exists at {existing_tag}, expected {tag_target}"
+                        )
                 else:
                     tag_result = vcs.create_tag(
                         tag_name,
-                        head_sha,
+                        tag_target,
                         message=f"PDD release for run {self.manager.run_id}",
                     )
                     if isinstance(tag_result, tuple) and len(tag_result) == 2:
@@ -1166,12 +1205,15 @@ class PddLifecycle:
                     else:
                         tag_ok, tag_error = True, ""
             else:
-                tag_error = "Unable to resolve HEAD for release tag"
+                tag_error = "Unable to resolve release target SHA for tag creation"
 
         return {
-            "merged": merge_ok,
+            "merged": merged,
             "merge_error": merge_error,
             "source_branch": source_branch,
+            "target_branch": target_branch,
+            "release_branch": release_branch,
+            "release_branch_created": release_branch_created,
             "tagged": tag_ok,
             "tag_name": tag_name,
             "tag_error": tag_error,
@@ -2155,7 +2197,7 @@ class PddLifecycle:
         logger.info("=== Architectural Refinement ===")
 
         from spec_manager.core.agent_utils import run_agent
-        from spec_manager.orchestration.demotion import DemotionTicket
+        from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
         from spec_manager.refinement.formats import (
             _extract_json_payload,
             _strip_code_fences,
@@ -2274,19 +2316,42 @@ class PddLifecycle:
             manifest_payload = {"components": normalized_components}
             self._write_run_report("component_manifest.json", manifest_payload)
 
-            # Emit DemotionTickets for architectural issues
+            # Emit and route DemotionTickets via the authoritative demotion ledger.
+            demotion_manager = DemotionManager(
+                workspace_root=self.manager.workspace_path,
+                run_id=self.manager.run_id,
+            )
             tickets: list[dict[str, Any]] = []
-            for issue in issues:
-                severity = issue.get("severity", "MINOR")
-                ticket = DemotionTicket(
-                    source="ARCH_GATE",
-                    target_layer="L1" if severity == "BLOCKER" else "L2",
-                    origin_layer="L2",
-                    severity=severity if severity in ("BLOCKER", "MAJOR", "MINOR") else "MINOR",
-                    diagnosis=issue.get("description", "Architectural issue"),
-                    failing_files=[issue.get("file", "")] if issue.get("file") else [],
+            for issue in issues if isinstance(issues, list) else []:
+                if not isinstance(issue, dict):
+                    continue
+                severity = str(issue.get("severity", "MINOR")).upper()
+                normalized_severity = (
+                    severity if severity in ("BLOCKER", "MAJOR", "MINOR") else "MINOR"
                 )
-                tickets.append(ticket.to_dict())
+                target_layer = "L1" if normalized_severity == "BLOCKER" else "L2"
+                issue_file = str(issue.get("file", "")).strip()
+                evidence_refs = [self._run_report_relpath("component_manifest.json")]
+                issue_refs = issue.get("evidence_refs", [])
+                if isinstance(issue_refs, list):
+                    evidence_refs.extend(str(ref) for ref in issue_refs if str(ref).strip())
+                ticket = DemotionTicket(
+                    run_id=self.manager.run_id,
+                    slice_id=str(issue.get("slice_id", "")).strip(),
+                    source="ARCH_GATE",
+                    target_layer=target_layer,
+                    origin_layer="L2",
+                    hop_trace=["L2", target_layer],
+                    severity=normalized_severity,
+                    diagnosis=str(issue.get("description", "Architectural issue")),
+                    failing_files=[issue_file] if issue_file else [],
+                    evidence_refs=evidence_refs,
+                )
+                apply_result = demotion_manager.apply(
+                    ticket,
+                    slice_root=self._resolve_demotion_slice_root(issue_file),
+                )
+                tickets.append({"ticket": ticket.to_dict(), "apply_result": apply_result})
 
             if tickets:
                 self._write_run_report("architecture_demotion_tickets.json", tickets)
@@ -2295,6 +2360,11 @@ class PddLifecycle:
                 "component_count": len(normalized_components),
                 "component_manifest_path": self._run_report_relpath("component_manifest.json"),
                 "demotion_tickets": len(tickets),
+                "demotion_tickets_applied": sum(
+                    1
+                    for row in tickets
+                    if bool((row.get("apply_result") or {}).get("applied", False))
+                ),
             }
         except Exception as exc:
             logger.warning("Architectural refinement failed: %s", exc)
@@ -2313,7 +2383,7 @@ class PddLifecycle:
         logger.info("=== Code Quality Refinement ===")
 
         from spec_manager.core.agent_utils import run_agent
-        from spec_manager.orchestration.demotion import DemotionTicket
+        from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
         from spec_manager.orchestration.pattern_library import PatternLibrary
         from spec_manager.orchestration.promotion_loop import L3_REVIEW_PACK
         from spec_manager.refinement.formats import (
@@ -2406,7 +2476,11 @@ class PddLifecycle:
         # Write quality report
         self._write_run_report("code_quality_report.json", {"findings": all_findings})
 
-        # Emit DemotionTickets for findings that touch logic or architecture
+        # Emit and route DemotionTickets for findings that touch logic or architecture.
+        demotion_manager = DemotionManager(
+            workspace_root=self.manager.workspace_path,
+            run_id=self.manager.run_id,
+        )
         tickets: list[dict[str, Any]] = []
         for finding in all_findings:
             category = finding.get("category", "style")
@@ -2427,14 +2501,30 @@ class PddLifecycle:
                     else "L2"
                 )
                 ticket = DemotionTicket(
+                    run_id=self.manager.run_id,
+                    slice_id=str(finding.get("slice_id", finding.get("file", ""))).strip(),
                     source="REVIEW",
                     target_layer=target,
                     origin_layer="L3",
+                    hop_trace=["L3", target],
                     severity=severity if severity in ("BLOCKER", "MAJOR", "MINOR") else "MINOR",
-                    diagnosis=finding.get("description", finding.get("issue", "Quality issue")),
+                    diagnosis=str(
+                        finding.get("description", finding.get("issue", "Quality issue"))
+                    ),
                     failing_files=[finding.get("file", "")] if finding.get("file") else [],
+                    evidence_refs=[self._run_report_relpath("code_quality_report.json")],
                 )
-                tickets.append(ticket.to_dict())
+                finding_refs = finding.get("evidence_refs", [])
+                if isinstance(finding_refs, list):
+                    ticket.evidence_refs.extend(
+                        str(ref) for ref in finding_refs if str(ref).strip()
+                    )
+                file_hint = str(finding.get("file", "")).strip()
+                apply_result = demotion_manager.apply(
+                    ticket,
+                    slice_root=self._resolve_demotion_slice_root(file_hint),
+                )
+                tickets.append({"ticket": ticket.to_dict(), "apply_result": apply_result})
 
         if tickets:
             self._write_run_report("code_quality_demotion_tickets.json", tickets)
@@ -2444,6 +2534,9 @@ class PddLifecycle:
             "total_findings": len(all_findings),
             "report_path": self._run_report_relpath("code_quality_report.json"),
             "demotion_tickets": len(tickets),
+            "demotion_tickets_applied": sum(
+                1 for row in tickets if bool((row.get("apply_result") or {}).get("applied", False))
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -2507,6 +2600,14 @@ class PddLifecycle:
             findings.extend(
                 self._approval_artifact_findings(checkpoint=checkpoint, run_dir=run_dir)
             )
+            if checkpoint.lower().strip() == "final":
+                run_summary_path = reports_dir / "run_summary.json"
+                findings.extend(
+                    self._run_summary_artifact_findings(
+                        run_summary_path=run_summary_path,
+                        workspace=workspace,
+                    )
+                )
 
         if check_report:
             report_path = reports_dir / "final_report.md"
@@ -2515,6 +2616,10 @@ class PddLifecycle:
             scorecard_path = reports_dir / "scorecard.json"
             if not scorecard_path.exists():
                 findings.append("Scorecard JSON missing")
+            if checkpoint.lower().strip() == "final":
+                run_summary_path = reports_dir / "run_summary.json"
+                if not run_summary_path.exists():
+                    findings.append("Run summary JSON missing")
             if report_path.exists():
                 findings.extend(self._report_content_findings(report_path))
 
@@ -2560,6 +2665,77 @@ class PddLifecycle:
             elif not bool(l2_decision.get("approved")):
                 findings.append("L2 checkpoint decision is not approved")
 
+        return findings
+
+    def _run_summary_artifact_findings(
+        self, *, run_summary_path: Path, workspace: Path
+    ) -> list[str]:
+        """Validate required artifact completeness from run_summary.json manifest."""
+        if not run_summary_path.exists():
+            return ["Run summary JSON missing"]
+
+        try:
+            run_summary = json.loads(run_summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return [f"Run summary JSON unreadable: {exc}"]
+        if not isinstance(run_summary, dict):
+            return ["Run summary JSON payload is not an object"]
+
+        artifacts = run_summary.get("artifacts")
+        if not isinstance(artifacts, list):
+            return ["Run summary missing artifacts manifest list"]
+
+        findings: list[str] = []
+        required_seen = 0
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                findings.append("Run summary artifacts manifest contains non-object entry")
+                continue
+            if not bool(artifact.get("required", False)):
+                continue
+            required_seen += 1
+            artifact_id = str(artifact.get("artifact_id", "artifact")).strip() or "artifact"
+            path_str = str(artifact.get("path", "")).strip()
+            if not path_str:
+                findings.append(f"Run summary required artifact '{artifact_id}' missing path")
+                continue
+            artifact_path = Path(path_str)
+            if not artifact_path.is_absolute():
+                artifact_path = workspace / artifact_path
+
+            kind = str(artifact.get("kind", "file")).lower()
+            if kind == "dir":
+                if not artifact_path.exists() or not artifact_path.is_dir():
+                    findings.append(
+                        f"Run summary required directory missing: {artifact_id} ({path_str})"
+                    )
+                    continue
+                glob_pattern = str(artifact.get("glob", "")).strip()
+                min_entries_raw = artifact.get("min_entries", 1)
+                try:
+                    min_entries = max(0, int(min_entries_raw))
+                except (TypeError, ValueError):
+                    min_entries = 1
+                if glob_pattern:
+                    entry_count = len(list(artifact_path.glob(glob_pattern)))
+                else:
+                    entry_count = len(list(artifact_path.iterdir()))
+                if entry_count < min_entries:
+                    findings.append(
+                        f"Run summary required directory underfilled: {artifact_id} "
+                        f"({path_str}, expected >= {min_entries}, found {entry_count})"
+                    )
+                continue
+
+            if not artifact_path.exists() or not artifact_path.is_file():
+                findings.append(f"Run summary required file missing: {artifact_id} ({path_str})")
+                continue
+            non_empty_required = bool(artifact.get("non_empty_required", True))
+            if non_empty_required and artifact_path.stat().st_size <= 0:
+                findings.append(f"Run summary required file is empty: {artifact_id} ({path_str})")
+
+        if required_seen == 0:
+            findings.append("Run summary artifacts manifest has no required entries")
         return findings
 
     def _report_content_findings(self, report_path: Path) -> list[str]:
@@ -2746,6 +2922,30 @@ class PddLifecycle:
             )
 
         return ref_created
+
+    def _resolve_demotion_slice_root(self, file_hint: str) -> Path:
+        """Resolve best-effort slice root for demotion ticket materialization."""
+        workspace_raw = self.manager.workspace_path
+        workspace = workspace_raw if isinstance(workspace_raw, Path) else Path(str(workspace_raw))
+        spec_snapshot_raw = getattr(self.manager.structure, "spec_snapshot_dir", workspace)
+        spec_snapshot = spec_snapshot_raw if isinstance(spec_snapshot_raw, Path) else workspace
+        hint = str(file_hint).strip()
+        if hint:
+            hint_path = Path(hint)
+            candidates: list[Path] = []
+            if hint_path.is_absolute():
+                candidates.append(hint_path)
+            else:
+                candidates.append(spec_snapshot / hint_path)
+                candidates.append(workspace / hint_path)
+            for candidate in candidates:
+                if candidate.is_file():
+                    return candidate.parent
+                if candidate.is_dir():
+                    return candidate
+        if spec_snapshot.exists():
+            return spec_snapshot
+        return workspace
 
     def _write_run_report(self, filename: str, data: dict | list | str) -> None:
         """Write a report file to the run-scoped reports directory.

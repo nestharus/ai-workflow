@@ -1,6 +1,7 @@
 """Final report generator for PDD pipeline runs.
 
-Produces a consolidated ``final_report.md`` and ``scorecard.json``
+Produces a consolidated ``final_report.md``, ``scorecard.json``, and
+``run_summary.json``
 under ``reports/pdd/<run_id>/``.
 
 Sections:
@@ -25,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +47,7 @@ class FinalReportGenerator:
         run_results: dict[str, Any],
         scorecard: Any | None = None,
     ) -> tuple[Path, Path]:
-        """Generate final_report.md and scorecard.json.
+        """Generate final_report.md, scorecard.json, and run_summary.json.
 
         Args:
             run_results: Full results dict from PddLifecycle.run().
@@ -64,8 +66,282 @@ class FinalReportGenerator:
         scorecard_path = self._reports_dir / "scorecard.json"
         scorecard_path.write_text(json.dumps(scorecard_data, indent=2), encoding="utf-8")
 
+        run_summary_path = self._reports_dir / "run_summary.json"
+        run_summary = self._build_run_summary(
+            run_results=run_results,
+            scorecard_data=scorecard_data,
+            report_path=report_path,
+            scorecard_path=scorecard_path,
+            run_summary_path=run_summary_path,
+        )
+        run_summary_path.write_text(json.dumps(run_summary, indent=2), encoding="utf-8")
+
         logger.info("Final report written to %s", report_path)
         return report_path, scorecard_path
+
+    def _build_run_summary(
+        self,
+        *,
+        run_results: dict[str, Any],
+        scorecard_data: dict[str, Any],
+        report_path: Path,
+        scorecard_path: Path,
+        run_summary_path: Path,
+    ) -> dict[str, Any]:
+        """Build machine-readable run summary with required artifact manifest."""
+        run_config = self._read_json_dict(self._run_dir / "run_config.json")
+        run_state = self._read_json_dict(self._run_dir / "run_state.json")
+        mode = str(run_config.get("mode", run_results.get("mode", ""))).strip()
+        interactive_mode = mode == "interactive"
+
+        artifacts = self._artifact_manifest(
+            report_path=report_path,
+            scorecard_path=scorecard_path,
+            run_summary_path=run_summary_path,
+            interactive_mode=interactive_mode,
+        )
+
+        return {
+            "schema_version": "1",
+            "run_id": self.run_id,
+            "mode": mode,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "pipeline": self._pipeline_summary(run_results, run_state),
+            "scorecard": {
+                "overall_pass": scorecard_data.get("overall_pass"),
+                "summary": scorecard_data.get("summary"),
+            },
+            "release": run_results.get("merge_tag", {}),
+            "artifacts": artifacts,
+        }
+
+    def _pipeline_summary(
+        self,
+        run_results: dict[str, Any],
+        run_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Summarize run progression for machine-readable consumers."""
+        layers: dict[str, Any] = {}
+        for layer_key in ("l1", "l2", "l3"):
+            layer = run_results.get(layer_key, {})
+            slices = layer.get("slices", {}).get("slices", [])
+            if not isinstance(slices, list):
+                slices = []
+            total_slices = len(slices)
+            complete_slices = sum(
+                1
+                for item in slices
+                if str(item.get("status", "")).upper() in {"COMPLETE", "PROMOTED"}
+            )
+            terminal_slices = sum(
+                1
+                for item in slices
+                if str(item.get("status", "")).upper()
+                in {"COMPLETE", "PROMOTED", "SKIPPED", "FAILED", "BLOCKED", "STAGNATED"}
+            )
+            layers[layer_key] = {
+                "total_slices": total_slices,
+                "complete_slices": complete_slices,
+                "terminal_slices": terminal_slices,
+                "termination_passed": bool(layer.get("layer_termination", {}).get("passed", False)),
+            }
+
+        transitions: dict[str, Any] = {}
+        for transition_key in ("l1_l2_transition", "l2_l3_transition"):
+            transition = run_results.get(transition_key, {})
+            transitions[transition_key] = {
+                "transition_stuck": bool(transition.get("transition_stuck", False)),
+                "rounds": len(transition.get("rework_rounds", []))
+                if isinstance(transition.get("rework_rounds", []), list)
+                else 0,
+            }
+
+        created_at = run_state.get("created_at", run_state.get("updated_at"))
+        updated_at = run_state.get("updated_at")
+        duration_seconds = None
+        if isinstance(created_at, int | float) and isinstance(updated_at, int | float):
+            duration_seconds = max(0.0, float(updated_at) - float(created_at))
+
+        return {
+            "layers": layers,
+            "transitions": transitions,
+            "qa": run_results.get("qa", {}),
+            "qa_gate": run_results.get("global_termination", {}).get("qa_gate", {}),
+            "pipeline_pass": run_results.get("pipeline_pass"),
+            "max_pipeline_passes": run_results.get("max_pipeline_passes"),
+            "timing": {
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "duration_seconds": duration_seconds,
+            },
+        }
+
+    def _artifact_manifest(
+        self,
+        *,
+        report_path: Path,
+        scorecard_path: Path,
+        run_summary_path: Path,
+        interactive_mode: bool,
+    ) -> list[dict[str, Any]]:
+        """Build required MVP artifact manifest with presence observations."""
+        artifacts: list[dict[str, Any]] = [
+            {
+                "artifact_id": "final_report",
+                "label": "Final report",
+                "path": self._display_path(report_path),
+                "kind": "file",
+                "required": True,
+            },
+            {
+                "artifact_id": "run_summary",
+                "label": "Run summary",
+                "path": self._display_path(run_summary_path),
+                "kind": "file",
+                "required": True,
+            },
+            {
+                "artifact_id": "scorecard_json",
+                "label": "Scorecard",
+                "path": self._display_path(scorecard_path),
+                "kind": "file",
+                "required": True,
+            },
+            {
+                "artifact_id": "evidence_bundles",
+                "label": "Evidence bundles",
+                "path": self._display_path(self._run_dir / "slices"),
+                "kind": "dir",
+                "glob": "*/iter_*/bundle.json",
+                "min_entries": 1,
+                "required": True,
+            },
+            {
+                "artifact_id": "slice_step_outputs",
+                "label": "Slice iteration outputs",
+                "path": self._display_path(self._run_dir / "slices"),
+                "kind": "dir",
+                "glob": "*/iter_*/*.json",
+                "min_entries": 1,
+                "required": True,
+            },
+            {
+                "artifact_id": "demotion_ledger",
+                "label": "Demotion ledger",
+                "path": self._display_path(self._run_dir / "demotions" / "ledger.jsonl"),
+                "kind": "file",
+                "required": True,
+            },
+            {
+                "artifact_id": "component_manifest",
+                "label": "Component manifest",
+                "path": self._display_path(self._reports_dir / "component_manifest.json"),
+                "kind": "file",
+                "required": True,
+            },
+            {
+                "artifact_id": "topology_snapshots",
+                "label": "Topology snapshots",
+                "path": self._display_path(self._run_dir / "slices"),
+                "kind": "dir",
+                "glob": "*/iter_*/graph.snapshot.json",
+                "min_entries": 1,
+                "required": True,
+            },
+            {
+                "artifact_id": "quality_findings",
+                "label": "Aggregated quality findings",
+                "path": self._display_path(self._reports_dir / "code_quality_report.json"),
+                "kind": "file",
+                "required": True,
+            },
+            {
+                "artifact_id": "quality_closure_receipts",
+                "label": "Quality closure receipts",
+                "path": self._display_path(self._run_dir / "ci"),
+                "kind": "dir",
+                "glob": "*/batches/*.json",
+                "min_entries": 1,
+                "required": True,
+            },
+            {
+                "artifact_id": "overview",
+                "label": "L1 overview",
+                "path": self._display_path(self._reports_dir / "overview.md"),
+                "kind": "file",
+                "required": interactive_mode,
+            },
+            {
+                "artifact_id": "alignment_summary",
+                "label": "Alignment summary",
+                "path": self._display_path(self._reports_dir / "alignment_report.json"),
+                "kind": "file",
+                "required": interactive_mode,
+            },
+            {
+                "artifact_id": "approval_decisions",
+                "label": "Approval artifacts",
+                "path": self._display_path(self._run_dir / "approvals"),
+                "kind": "dir",
+                "min_entries": 1 if interactive_mode else 0,
+                "required": interactive_mode,
+            },
+        ]
+
+        observed: list[dict[str, Any]] = []
+        for artifact in artifacts:
+            observed.append({**artifact, **self._observe_artifact(artifact)})
+
+        # The summary itself is written immediately after this payload is built.
+        for artifact in observed:
+            if artifact.get("artifact_id") == "run_summary":
+                artifact["present"] = True
+                artifact["non_empty"] = True
+                artifact["entry_count"] = 1
+                break
+        return observed
+
+    def _observe_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
+        """Capture current artifact presence/non-empty metadata."""
+        path_value = str(artifact.get("path", "")).strip()
+        if not path_value:
+            return {"present": False, "non_empty": False, "entry_count": 0}
+
+        artifact_path = Path(path_value)
+        if not artifact_path.is_absolute():
+            artifact_path = self.workspace_root / artifact_path
+
+        kind = str(artifact.get("kind", "file")).lower()
+        if kind == "dir":
+            if not artifact_path.exists() or not artifact_path.is_dir():
+                return {"present": False, "non_empty": False, "entry_count": 0}
+            glob_pattern = str(artifact.get("glob", "")).strip()
+            min_entries_raw = artifact.get("min_entries", 1)
+            try:
+                min_entries = max(0, int(min_entries_raw))
+            except (TypeError, ValueError):
+                min_entries = 1
+            if glob_pattern:
+                entry_count = len(list(artifact_path.glob(glob_pattern)))
+            else:
+                entry_count = len(list(artifact_path.iterdir()))
+            return {
+                "present": True,
+                "non_empty": entry_count >= min_entries,
+                "entry_count": entry_count,
+            }
+
+        if not artifact_path.exists() or not artifact_path.is_file():
+            return {"present": False, "non_empty": False, "entry_count": 0}
+
+        size = artifact_path.stat().st_size
+        non_empty_required = bool(artifact.get("non_empty_required", True))
+        return {
+            "present": True,
+            "non_empty": (size > 0) if non_empty_required else True,
+            "entry_count": 1,
+            "size_bytes": size,
+        }
 
     def _render_report(self, run_results: dict[str, Any], scorecard: Any | None) -> str:
         """Render the full report as markdown."""
