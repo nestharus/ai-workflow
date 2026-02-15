@@ -96,7 +96,15 @@ from spec_manager.orchestration.intent_agent.taxonomy import (
 logger = logging.getLogger(__name__)
 
 _VALID_REDEFINITION_QUESTION_TYPES = frozenset({"VALIDATION", "SCOPE", "TRADEOFF"})
+_VALID_ALIGNMENT_REDEFINITION_QUESTION_TYPES = frozenset({"SCOPE", "TRADEOFF"})
 _REDEFINITION_UPDATE_SOURCES = frozenset({"PLANNER"})
+_REDEFINITION_CHECK_WORK_ITEM = "REDEFINITION_CHECK"
+_ALIGNMENT_INVARIANT_PREFIX = "Invariant checksum: "
+_DEFAULT_REDEFINITION_CHOICES = (
+    ("adopt_new", "Yes, adopt the new restatement"),
+    ("keep_original", "No, keep the original framing"),
+    ("partial", "Partially adopt and specify exactly what should change"),
+)
 _CANONICAL_ORIGIN_KINDS = frozenset(
     {"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP", "PDD_LIFECYCLE", "SLICE_AGENT"}
 )
@@ -1092,61 +1100,243 @@ class IntentAgentOrchestrator:
             "question_ids": question_ids,
         }
 
+    def _dedupe_nonempty_texts(self, values: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = self._coerce_str(value)
+            canonical = text.lower()
+            if not text or canonical in seen:
+                continue
+            seen.add(canonical)
+            deduped.append(text)
+        return deduped
+
+    def _redefinition_protocol_choices(self) -> list[dict[str, str]]:
+        return [
+            {"id": choice_id, "label": label} for choice_id, label in _DEFAULT_REDEFINITION_CHOICES
+        ]
+
+    def _normalize_redefinition_choice_id(self, choice_id: str) -> str:
+        normalized = self._coerce_str(choice_id).lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"a", "adopt", "adopt_new", "accept_new", "accept_restatement", "yes"}:
+            return "adopt_new"
+        if normalized in {"b", "keep", "keep_original", "keep_current", "reject_new", "no"}:
+            return "keep_original"
+        if normalized in {"c", "partial", "partial_accept", "partial_adopt", "mixed"}:
+            return "partial"
+        return ""
+
+    def _infer_redefinition_choice_id(self, raw_text: str) -> str:
+        normalized = self._coerce_str(raw_text).lower()
+        if not normalized:
+            return ""
+        direct = self._normalize_redefinition_choice_id(normalized)
+        if direct:
+            return direct
+        if normalized.startswith("(a)") or normalized.startswith("a."):
+            return "adopt_new"
+        if normalized.startswith("(b)") or normalized.startswith("b."):
+            return "keep_original"
+        if normalized.startswith("(c)") or normalized.startswith("c."):
+            return "partial"
+        return ""
+
+    def _is_redefinition_check_item(self, item: QuestionItem | None) -> bool:
+        if item is None:
+            return False
+        raw_binding = item.system_binding if isinstance(item.system_binding, dict) else {}
+        work_items = {
+            value.strip().upper()
+            for value in raw_binding.get("work_items", [])
+            if isinstance(value, str) and value.strip()
+        }
+        return _REDEFINITION_CHECK_WORK_ITEM in work_items
+
+    def _build_redefinition_binding(
+        self,
+        base_binding: dict[str, Any] | None,
+        *,
+        taxonomy_type: str,
+        text: str,
+        canonical_key: str,
+    ) -> dict[str, Any]:
+        binding = dict(base_binding or {})
+        work_items = self._coerce_str_list(binding.get("work_items", []))
+        if _REDEFINITION_CHECK_WORK_ITEM not in work_items:
+            work_items.append(_REDEFINITION_CHECK_WORK_ITEM)
+        binding["work_items"] = work_items
+        return self._normalize_question_binding(
+            binding,
+            taxonomy_type=taxonomy_type,
+            text=text,
+            canonical_key=canonical_key,
+        )
+
+    def _requires_partial_redefinition_details(
+        self,
+        *,
+        item: QuestionItem | None,
+        selected_choice_id: str,
+        raw_text: str,
+    ) -> bool:
+        if not self._is_redefinition_check_item(item):
+            return False
+
+        normalized_choice = self._normalize_redefinition_choice_id(selected_choice_id)
+        if not normalized_choice:
+            normalized_choice = self._infer_redefinition_choice_id(raw_text)
+        if normalized_choice != "partial":
+            return False
+
+        normalized_answer = self._coerce_str(raw_text).lower()
+        if not normalized_answer:
+            return True
+
+        bare_answers = {
+            "partial",
+            "partially",
+            "c",
+            "option c",
+            "(c)",
+            "adopt parts",
+            "adopt parts of the new understanding",
+            "partially adopt and specify exactly what should change",
+        }
+        if normalized_answer in bare_answers:
+            return True
+        return normalized_answer in {
+            "yes",
+            "no",
+            "keep original",
+            "adopt new",
+            "adopt_new",
+            "keep_original",
+        }
+
+    def _collect_alignment_commitments_from_updates(
+        self, updates: list[dict[str, Any]]
+    ) -> list[str]:
+        commitments: list[str] = []
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            for key in (
+                "must_remain_true",
+                "confirmed_commitments",
+                "confirmed_scope_constraints",
+                "confirmed_scope_in",
+                "confirmed_scope_out",
+                "confirmed_decisions",
+            ):
+                raw_value = update.get(key)
+                if isinstance(raw_value, list):
+                    commitments.extend(self._coerce_str_list(raw_value))
+                elif isinstance(raw_value, dict):
+                    commitments.extend(self._coerce_str_list(raw_value.get("items", [])))
+                elif isinstance(raw_value, str):
+                    text = self._coerce_str(raw_value)
+                    if text:
+                        commitments.append(text)
+        return self._dedupe_nonempty_texts(commitments)
+
+    def _derive_alignment_invariants(self, updates: list[dict[str, Any]]) -> list[str]:
+        if self._state is None:
+            return []
+
+        invariants: list[str] = []
+        original_intent = self._coerce_str(self._state.original_intent.user_statement)
+        if original_intent:
+            invariants.append(f"User intent remains anchored to: {original_intent}")
+
+        current_restatement = self._coerce_str(self._state.problem_frame.current_restatement)
+        if current_restatement:
+            invariants.append(f"Current restatement remains in force: {current_restatement}")
+
+        scope_in = self._dedupe_nonempty_texts(
+            self._coerce_str_list(self._state.problem_frame.scope.get("in", [])),
+        )
+        scope_out = self._dedupe_nonempty_texts(
+            self._coerce_str_list(self._state.problem_frame.scope.get("out", [])),
+        )
+        for item in scope_in:
+            invariants.append(f"In scope: {item}")
+        for item in scope_out:
+            invariants.append(f"Out of scope: {item}")
+
+        confirmed_assumptions = [
+            assumption.text
+            for assumption in self._state.problem_frame.frame_assumptions
+            if assumption.status == "CONFIRMED" and assumption.source in {"user", "intent_agent"}
+        ]
+        for item in self._dedupe_nonempty_texts(confirmed_assumptions):
+            if item.startswith(_ALIGNMENT_INVARIANT_PREFIX):
+                continue
+            invariants.append(f"Confirmed commitment: {item}")
+
+        invariants.extend(self._collect_alignment_commitments_from_updates(updates))
+        return self._dedupe_nonempty_texts(invariants)[:12]
+
     def _sync_alignment_invariants(self, trigger: dict[str, Any]) -> None:
         if self._state is None:
             return
 
-        raw_invariants = trigger.get("alignment_invariants")
-        raw_status = self._coerce_str(trigger.get("invariant_status", "HYPOTHESIS")).upper()
-        default_source = self._coerce_str(
-            trigger.get("invariant_source", trigger.get("source", "planner")).lower()
-        )
-        raw_trigger_invariants = raw_invariants if isinstance(raw_invariants, list) else []
-        if not isinstance(raw_trigger_invariants, list):
-            return
-
-        invariant_status = (
-            raw_status if raw_status in {"HYPOTHESIS", "CONFIRMED", "REJECTED"} else "HYPOTHESIS"
-        )
-        invariant_created_at = datetime.now(UTC).isoformat()
-        existing = {
-            assumption.text.strip().lower(): assumption
-            for assumption in self._state.problem_frame.frame_assumptions
-            if assumption.text.strip()
+        now_iso = datetime.now(UTC).isoformat()
+        derived_invariants = self._derive_alignment_invariants([trigger])
+        canonical_invariant_texts = {
+            f"{_ALIGNMENT_INVARIANT_PREFIX}{statement}".strip() for statement in derived_invariants
         }
 
-        for raw in raw_trigger_invariants:
-            if isinstance(raw, dict):
-                text = self._coerce_str(raw.get("text"), "")
-                status = self._coerce_str(raw.get("status"), invariant_status).upper()
-                source = self._coerce_str(raw.get("source"), default_source)
-            else:
-                text = self._coerce_str(raw, "")
-                status = invariant_status
-                source = default_source
+        queue_state = self._state.question_queue_state
+        queue_state._passthrough_fields["alignment_invariants"] = [
+            {
+                "text": statement,
+                "status": "CONFIRMED",
+                "source": "intent_agent",
+                "created_at": now_iso,
+            }
+            for statement in derived_invariants
+        ]
 
+        existing_assumptions = self._state.problem_frame.frame_assumptions
+        retained: list[FrameAssumption] = []
+        for assumption in existing_assumptions:
+            text = self._coerce_str(assumption.text)
             if not text:
                 continue
-            if status not in {"HYPOTHESIS", "CONFIRMED", "REJECTED"}:
-                status = invariant_status
-
-            existing_entry = existing.get(text.lower())
-            if existing_entry is not None:
-                existing_entry.status = status
-                existing_entry.source = source or existing_entry.source
-                if not existing_entry.created_at:
-                    existing_entry.created_at = invariant_created_at
-                continue
-
-            self._state.problem_frame.frame_assumptions.append(
-                FrameAssumption(
-                    text=text,
-                    status=status,
-                    source=source or "planner",
-                    created_at=invariant_created_at,
-                )
+            is_prior_invariant = (
+                assumption.source == "intent_agent"
+                and assumption.status == "CONFIRMED"
+                and text.startswith(_ALIGNMENT_INVARIANT_PREFIX)
             )
-            existing[text.lower()] = self._state.problem_frame.frame_assumptions[-1]
+            if is_prior_invariant and text not in canonical_invariant_texts:
+                continue
+            retained.append(assumption)
+
+        by_text = {
+            assumption.text.strip().lower(): assumption
+            for assumption in retained
+            if assumption.text.strip()
+        }
+        for invariant_text in sorted(canonical_invariant_texts):
+            canonical = invariant_text.lower()
+            existing = by_text.get(canonical)
+            if existing is None:
+                retained.append(
+                    FrameAssumption(
+                        text=invariant_text,
+                        status="CONFIRMED",
+                        source="intent_agent",
+                        created_at=now_iso,
+                    )
+                )
+                continue
+            existing.status = "CONFIRMED"
+            existing.source = "intent_agent"
+            if not existing.created_at:
+                existing.created_at = now_iso
+
+        self._state.problem_frame.frame_assumptions = retained
 
     def _find_open_queue_item(
         self,
@@ -1244,11 +1434,85 @@ class IntentAgentOrchestrator:
 
     def _coerce_redefinition_action_type(self, update_type: str) -> str:
         normalized = self._coerce_str(update_type).lower().replace("-", "_")
+        if not normalized:
+            return ""
         if normalized in {"problem_redefinition", "scope_redefinition", "lifecycle_redefinition"}:
             return "problem_redefinition"
         if normalized in {"alignment_violation", "invariant_violation"}:
             return "alignment_violation"
+        if normalized in {
+            "decomposition_scope_change",
+            "decomposition_scope_shift",
+            "material_scope_change",
+            "scope_change",
+            "requirement_conflict",
+            "requirements_conflict",
+            "incompatible_requirements",
+            "architecture_expectation_shift",
+            "architecture_model_shift",
+            "operational_expectation_shift",
+        }:
+            return "problem_redefinition"
         return normalized
+
+    def _redefinition_update_tokens(self, update: dict[str, Any]) -> set[str]:
+        tokens: set[str] = set()
+        for raw_value in (
+            update.get("type"),
+            update.get("event_kind"),
+            update.get("classification"),
+            update.get("reason"),
+            update.get("review_reason"),
+            update.get("decision_key"),
+        ):
+            text = self._coerce_str(raw_value).lower().replace("-", "_")
+            if text:
+                tokens.update(_CANONICAL_KEY_TOKEN_RE.findall(text))
+
+        for field_name in ("decision_record_tags", "tags", "labels"):
+            for tag in self._coerce_update_ids(update.get(field_name, [])):
+                tokens.update(_CANONICAL_KEY_TOKEN_RE.findall(tag.lower().replace("-", "_")))
+        return tokens
+
+    def _coerce_redefinition_update_type(self, update: dict[str, Any]) -> str:
+        for raw_type in (
+            update.get("type"),
+            update.get("event_kind"),
+            update.get("classification"),
+        ):
+            coerced = self._coerce_redefinition_action_type(self._coerce_str(raw_type))
+            if coerced in {"problem_redefinition", "alignment_violation"}:
+                return coerced
+
+        tokens = self._redefinition_update_tokens(update)
+        has_alignment_violation = ("alignment" in tokens and "violation" in tokens) or (
+            "invariant" in tokens and "violation" in tokens
+        )
+        if has_alignment_violation:
+            return "alignment_violation"
+
+        has_scope_shift = (
+            "decomposition" in tokens and "scope" in tokens and {"change", "shift"} & tokens
+        ) or ("scope" in tokens and "change" in tokens)
+        has_requirement_conflict = (
+            ("requirement" in tokens and "conflict" in tokens)
+            or ("requirements" in tokens and "conflict" in tokens)
+            or ("incompatible" in tokens and ("requirement" in tokens or "requirements" in tokens))
+        )
+        has_architecture_shift = (
+            "architecture" in tokens and {"expectation", "operational"} & tokens
+        ) and ({"change", "shift", "mismatch"} & tokens)
+        has_redefinition_tokens = "redefinition" in tokens or (
+            "scope" in tokens and "redefinition" in tokens
+        )
+        if (
+            has_scope_shift
+            or has_requirement_conflict
+            or has_architecture_shift
+            or has_redefinition_tokens
+        ):
+            return "problem_redefinition"
+        return ""
 
     def _coerce_redefinition_question_type(
         self,
@@ -1265,11 +1529,13 @@ class IntentAgentOrchestrator:
         explicit_type = normalize_user_facing_taxonomy(
             self._coerce_str(trigger.get("question_type"), ""),
         )
+        if trigger_type == "alignment_violation":
+            if explicit_type in _VALID_ALIGNMENT_REDEFINITION_QUESTION_TYPES:
+                return explicit_type
+            return "TRADEOFF"
+
         if explicit_type in _VALID_REDEFINITION_QUESTION_TYPES:
             return explicit_type
-
-        if trigger_type == "alignment_violation":
-            return "TRADEOFF"
 
         normalized_stage = str(stage).strip().lower()
         if "_to_" in normalized_stage:
@@ -1306,6 +1572,153 @@ class IntentAgentOrchestrator:
                 },
             )
         return False
+
+    def _candidate_problem_frame_payloads(self, update: dict[str, Any]) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = [update]
+        queue: list[dict[str, Any]] = [update]
+        while queue:
+            current = queue.pop(0)
+            for key in (
+                "payload",
+                "details",
+                "update",
+                "changes",
+                "problem_frame",
+                "problem_frame_update",
+                "updated_problem_frame",
+                "frame_update",
+            ):
+                nested = current.get(key)
+                if not isinstance(nested, dict):
+                    continue
+                if any(nested is existing for existing in payloads):
+                    continue
+                payloads.append(nested)
+                queue.append(nested)
+        return payloads
+
+    def _extract_problem_frame_patch(self, update: dict[str, Any]) -> dict[str, Any]:
+        if self._state is None:
+            return {}
+
+        payloads = self._candidate_problem_frame_payloads(update)
+        patch: dict[str, Any] = {}
+        has_scope_in = False
+        has_scope_out = False
+        scope_in_values: list[str] = []
+        scope_out_values: list[str] = []
+
+        for payload in payloads:
+            if "current_restatement" in payload:
+                restatement = self._coerce_str(payload.get("current_restatement"))
+                if restatement:
+                    patch["current_restatement"] = restatement
+
+            raw_scope = payload.get("scope")
+            if isinstance(raw_scope, dict):
+                if "in" in raw_scope:
+                    has_scope_in = True
+                    scope_in_values = self._dedupe_nonempty_texts(
+                        self._coerce_str_list(raw_scope.get("in", []))
+                    )
+                if "out" in raw_scope:
+                    has_scope_out = True
+                    scope_out_values = self._dedupe_nonempty_texts(
+                        self._coerce_str_list(raw_scope.get("out", []))
+                    )
+
+            for key in ("scope_in", "in_scope", "scope_include", "scope_includes"):
+                if key in payload:
+                    has_scope_in = True
+                    scope_in_values = self._dedupe_nonempty_texts(
+                        self._coerce_str_list(payload.get(key, []))
+                    )
+                    break
+            for key in ("scope_out", "out_scope", "scope_exclude", "scope_excludes"):
+                if key in payload:
+                    has_scope_out = True
+                    scope_out_values = self._dedupe_nonempty_texts(
+                        self._coerce_str_list(payload.get(key, []))
+                    )
+                    break
+
+        if has_scope_in or has_scope_out:
+            existing_scope = self._state.problem_frame.scope
+            patch["scope"] = {
+                "in": scope_in_values
+                if has_scope_in
+                else self._dedupe_nonempty_texts(
+                    self._coerce_str_list(existing_scope.get("in", []))
+                ),
+                "out": scope_out_values
+                if has_scope_out
+                else self._dedupe_nonempty_texts(
+                    self._coerce_str_list(existing_scope.get("out", []))
+                ),
+            }
+        return patch
+
+    def _apply_authoritative_problem_frame_updates(
+        self,
+        updates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if self._state is None:
+            return []
+
+        applied: list[dict[str, Any]] = []
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+
+            patch = self._extract_problem_frame_patch(update)
+            if not patch:
+                continue
+
+            update_type = self._coerce_redefinition_update_type(update)
+            authority_type = update_type or "problem_frame_update"
+            if not self._is_authorized_redefinition_update(update, update_type=authority_type):
+                continue
+
+            changed_fields: list[str] = []
+            if "current_restatement" in patch:
+                current_restatement = self._coerce_str(patch.get("current_restatement"))
+                if (
+                    current_restatement
+                    and current_restatement != self._state.problem_frame.current_restatement
+                ):
+                    self._state.problem_frame.current_restatement = current_restatement
+                    changed_fields.append("current_restatement")
+
+            if "scope" in patch and isinstance(patch.get("scope"), dict):
+                raw_scope = patch["scope"]
+                new_scope = {
+                    "in": self._dedupe_nonempty_texts(
+                        self._coerce_str_list(raw_scope.get("in", []))
+                    ),
+                    "out": self._dedupe_nonempty_texts(
+                        self._coerce_str_list(raw_scope.get("out", []))
+                    ),
+                }
+                if new_scope != self._state.problem_frame.scope:
+                    self._state.problem_frame.scope = new_scope
+                    changed_fields.append("scope")
+
+            if not changed_fields:
+                continue
+
+            applied.append(
+                {
+                    "event_id": self._coerce_str(
+                        update.get("event_id", update.get("trace_id", ""))
+                    ),
+                    "update_type": authority_type,
+                    "fields": changed_fields,
+                }
+            )
+
+        if applied:
+            self._sync_alignment_invariants({})
+        return applied
 
     def _infer_constraint_dimensions_for_item(self, item: QuestionItem) -> list[str]:
         if item.taxonomy_type != QuestionTaxonomy.CONSTRAINT.value:
@@ -2172,6 +2585,9 @@ class IntentAgentOrchestrator:
             return
         self._state.original_intent.user_statement = text
         self._state.original_intent.captured_at = datetime.now(UTC).isoformat()
+        # Preserve the user's exact statement as the initial frame anchor.
+        if not self._state.problem_frame.current_restatement.strip():
+            self._state.problem_frame.current_restatement = text.strip()
 
     def _log_user_message_event(self, text: str) -> None:
         if self._event_log is None:
@@ -2205,40 +2621,6 @@ class IntentAgentOrchestrator:
             "normalized_terms": dict(cm.normalized_terms),
             "user_introduced_terms": list(cm.user_introduced_terms),
         }
-
-    def _apply_problem_frame_update(self, text: str) -> None:
-        if self._state is None or self._intent_frame is None:
-            return
-        updated_frame = self._intent_frame.update_frame(
-            self._serialize_problem_frame(),
-            text,
-            self._serialize_concept_map(),
-            run_agent=self._run_agent,
-        )
-        if not isinstance(updated_frame, dict):
-            return
-        if "current_restatement" in updated_frame:
-            self._state.problem_frame.current_restatement = updated_frame["current_restatement"]
-        if "goals" in updated_frame:
-            self._state.problem_frame.goals = list(updated_frame["goals"])
-        if "non_goals" in updated_frame:
-            self._state.problem_frame.non_goals = list(updated_frame["non_goals"])
-        if "scope" in updated_frame and isinstance(updated_frame["scope"], dict):
-            self._state.problem_frame.scope = {
-                "in": list(updated_frame["scope"].get("in", [])),
-                "out": list(updated_frame["scope"].get("out", [])),
-            }
-        if "success_metrics" in updated_frame:
-            self._state.problem_frame.success_metrics = list(updated_frame["success_metrics"])
-        if "risk_flags" in updated_frame:
-            self._state.problem_frame.risk_flags = list(updated_frame["risk_flags"])
-        if "frame_assumptions" in updated_frame and isinstance(
-            updated_frame.get("frame_assumptions"),
-            list,
-        ):
-            self._state.problem_frame.frame_assumptions = self._normalize_frame_assumptions(
-                updated_frame["frame_assumptions"],
-            )
 
     def _apply_concept_map_update(self, text: str) -> None:
         if self._state is None or self._concept_map is None:
@@ -2302,7 +2684,6 @@ class IntentAgentOrchestrator:
 
         self._capture_original_intent(text)
         self._log_user_message_event(text)
-        self._apply_problem_frame_update(text)
         self._apply_concept_map_update(text)
         self._ingest_user_message_candidate_unknowns(text)
 
@@ -2663,6 +3044,18 @@ class IntentAgentOrchestrator:
 
         # 1. Find the question in the queue.
         question = self._queue.get_item(question_id)
+        normalized_choice_id = self._normalize_redefinition_choice_id(selected_choice_id)
+        if normalized_choice_id:
+            selected_choice_id = normalized_choice_id
+        if self._requires_partial_redefinition_details(
+            item=question,
+            selected_choice_id=selected_choice_id,
+            raw_text=raw_text,
+        ):
+            raise ValueError(
+                "Partial redefinition confirmation requires specific change details "
+                "in the answer text."
+            )
 
         # Record raw answer provenance.
         now = datetime.now(UTC).isoformat()
@@ -3075,15 +3468,12 @@ class IntentAgentOrchestrator:
             if not isinstance(update, dict):
                 continue
 
-            update_type = self._coerce_redefinition_action_type(
-                self._coerce_str(update.get("type"), ""),
-            )
+            update_type = self._coerce_redefinition_update_type(update)
             if update_type not in {"problem_redefinition", "alignment_violation"}:
                 continue
             if not self._is_authorized_redefinition_update(update, update_type=update_type):
                 continue
 
-            self._sync_alignment_invariants(update)
             replacement_action = self._coerce_str(update.get("action"), "").upper()
             replacement_requested = replacement_action in {
                 "REPLACE",
@@ -3400,6 +3790,7 @@ class IntentAgentOrchestrator:
 
         all_actions: list[dict[str, Any]] = []
         all_actions.extend(self._apply_redefinition_updates(new_updates))
+        authoritative_frame_updates = self._apply_authoritative_problem_frame_updates(new_updates)
 
         reassessment, mechanical_actions = self._run_mechanical_reassess_pass(
             new_updates,
@@ -3433,6 +3824,9 @@ class IntentAgentOrchestrator:
         reassessment["run_id"] = run_id
         reassessment["session_id"] = session_id
         resume_progress = self._build_resume_progress_summary(new_updates, reassessment)
+        resume_progress._passthrough_fields["authoritative_problem_frame_updates"] = (
+            authoritative_frame_updates
+        )
         resume_progress._passthrough_fields.update(auto_outcomes)
         reassessment["resume_progress_summary"] = resume_progress.to_dict()
         self._state.question_queue_state._passthrough_fields["resume_progress_summary"] = (
@@ -3666,9 +4060,7 @@ class IntentAgentOrchestrator:
 
         self._sync_alignment_invariants(trigger)
 
-        trigger_type = self._coerce_redefinition_action_type(
-            self._coerce_str(trigger.get("type"), "problem_redefinition"),
-        )
+        trigger_type = self._coerce_redefinition_update_type(trigger) or "problem_redefinition"
         if not self._is_authorized_redefinition_update(trigger, update_type=trigger_type):
             source = self._coerce_str(trigger.get("source"), "PLANNER").upper()
             raise ValueError(f"Unauthorized redefinition source: {source}")
@@ -3694,25 +4086,13 @@ class IntentAgentOrchestrator:
 
         changed_items = self._coerce_str_list(trigger.get("what_changed"))
         if not changed_items:
-            alignment_invariants = trigger.get("alignment_invariants", [])
-            if isinstance(alignment_invariants, list):
-                for invariant in alignment_invariants:
-                    if isinstance(invariant, dict):
-                        invariant_text = self._coerce_str(invariant.get("text"), "")
-                        invariant_status = self._coerce_str(
-                            invariant.get("status"),
-                            self._coerce_str(trigger.get("invariant_status", "HYPOTHESIS")),
-                        )
-                        if invariant_text:
-                            changed_items.append(f"{invariant_text} [{invariant_status}]")
-                    else:
-                        invariant_text = self._coerce_str(invariant, "")
-                        if invariant_text:
-                            changed_items.append(invariant_text)
+            trigger_reason = self._coerce_str(trigger.get("reason"))
+            if trigger_reason:
+                changed_items = [trigger_reason]
 
         if not changed_items:
             changed_items = [
-                "A planning constraint or assumption changed.",
+                "Planner identified a material scope/requirement shift.",
             ]
 
         if len(changed_items) > 3:
@@ -3779,44 +4159,27 @@ class IntentAgentOrchestrator:
         )
 
         default_prompt = (
-            "The planning scope has changed. Please confirm how you want to proceed "
-            "with this updated context."
+            "Planner identified a material shift in framing. Confirm which framing to use."
         )
         if trigger_type == "alignment_violation":
             default_prompt = (
-                "Alignment assumptions have changed. Confirm how to proceed with the "
-                "current scope and constraints."
+                "A proposed plan conflicts with current alignment invariants. "
+                "Confirm which direction to commit to."
             )
 
+        parsed_choices = self._redefinition_protocol_choices()
         user_text = self._coerce_str(trigger.get("question_text"), default_prompt)
-
-        raw_choices = trigger.get("answer_choices")
-        if isinstance(raw_choices, list):
-            parsed_choices = [
-                {
-                    "id": self._coerce_str(item.get("id")),
-                    "label": self._coerce_str(item.get("label")),
-                }
-                for item in raw_choices
-                if isinstance(item, dict)
-                and self._coerce_str(item.get("id"))
-                and self._coerce_str(item.get("label"))
-            ]
-            if not parsed_choices:
-                parsed_choices = []
-        else:
-            parsed_choices = []
-
-        if not parsed_choices:
-            parsed_choices = [
-                {"id": "adopt_new", "label": "Adopt the new understanding"},
-                {"id": "keep_original", "label": "Keep the original intent"},
-                {"id": "partial", "label": "Adopt parts of the new understanding"},
-            ]
+        user_text = self._ensure_choice_prompt_text(user_text, parsed_choices)
 
         trigger_key = self._coerce_str(trigger.get("event_id"), "")
 
         if existing_item is not None:
+            existing_item.system_binding = self._build_redefinition_binding(
+                existing_item.system_binding,
+                taxonomy_type=question_type,
+                text=user_text,
+                canonical_key=canonical_key,
+            )
             if isinstance(replacement_payload, dict) and (
                 replacement_requested
                 or self._coerce_str(replacement_payload.get("new_user_prompt_text"))
@@ -3925,7 +4288,7 @@ class IntentAgentOrchestrator:
                 choices=parsed_choices,
             )
             existing_item.blockers.severity = "BLOCKING"
-            existing_item.system_binding = self._normalize_question_binding(
+            existing_item.system_binding = self._build_redefinition_binding(
                 existing_item.system_binding,
                 taxonomy_type=question_type,
                 text=existing_item.user_prompt.text,
@@ -3985,7 +4348,7 @@ class IntentAgentOrchestrator:
                         choices=parsed_choices,
                     ),
                 ),
-                system_binding=self._normalize_question_binding(
+                system_binding=self._build_redefinition_binding(
                     {},
                     taxonomy_type=question_type,
                     text=self._coerce_str(failed_candidate.text, user_text),
@@ -4045,7 +4408,7 @@ class IntentAgentOrchestrator:
                     choices=parsed_choices,
                 ),
             ),
-            system_binding=self._normalize_question_binding(
+            system_binding=self._build_redefinition_binding(
                 {},
                 taxonomy_type=question_type,
                 text=self._coerce_str(final_candidate.text, user_text),
@@ -4088,7 +4451,7 @@ class IntentAgentOrchestrator:
             choices=parsed_choices,
         )
         item.blockers.severity = "BLOCKING"
-        item.system_binding = self._normalize_question_binding(
+        item.system_binding = self._build_redefinition_binding(
             item.system_binding,
             taxonomy_type=question_type,
             text=item.user_prompt.text,
