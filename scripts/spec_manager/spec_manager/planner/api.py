@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import re
-import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -121,19 +120,27 @@ class ReplayBundle:
     final_result: dict[str, Any]
     model_calls: list[dict[str, Any]]
     tool_calls: list[dict[str, Any]]
+    snapshot_files: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "trace_id": self.trace_id,
             "decision_key": self.decision_key,
             "request": _safe_deepcopy(self.request),
+            "request_snapshot": _safe_deepcopy(self.request),
             "next_actions": [_safe_deepcopy(row) for row in self.next_actions],
             "model_route": _safe_deepcopy(self.model_route),
             "planner_state": _safe_deepcopy(self.planner_state),
             "final_result": _safe_deepcopy(self.final_result),
             "model_calls": [_safe_deepcopy(row) for row in self.model_calls],
             "tool_calls": [_safe_deepcopy(row) for row in self.tool_calls],
+            "snapshot_files": _safe_deepcopy(self.snapshot_files),
         }
+        if isinstance(self.final_result, dict):
+            payload["status"] = str(self.final_result.get("status", "") or "")
+            payload["outputs"] = _safe_deepcopy(self.final_result.get("outputs", {}))
+            payload["error"] = str(self.final_result.get("error", "") or "")
+        return payload
 
 
 # ---------------------------------------------------------------------------
@@ -259,14 +266,9 @@ class GeneralPlanner:
         trace (including errors) and appends to ``index.jsonl``.
         """
         from spec_manager.planner.trace import (
-            DecisionRecord,
-            ModelCallRecord,
             PlannerTrace,
-            ToolCallRecord,
-            canonical_json,
             compute_decision_key,
             compute_input_hash,
-            content_hash,
         )
 
         trace_id = _new_trace_id()
@@ -331,6 +333,7 @@ class GeneralPlanner:
             layer=str(layer),
             capability=req.capability,
         )
+        self._capability_router.bind_trace(trace)
         try:
             # Override hook (for counterfactual testing / ground truth injection)
             if self._override_provider is not None:
@@ -339,12 +342,37 @@ class GeneralPlanner:
                     override_result.trace_id = trace_id
                     trace.status = override_result.status
                     trace.overridden = True
-                    trace.set_decision(
-                        DecisionRecord(
-                            decision_text=f"OVERRIDDEN: {override_result.status}",
+                    decision_record = self._build_decision_record(
+                        req=req,
+                        result=override_result,
+                        model_route=resolved_route,
+                        dispatch_gates={},
+                        requires_external_facts=requires_external_facts,
+                        high_risk=high_risk,
+                        overridden=True,
+                    )
+                    trace.set_decision(decision_record)
+                    trace.set_result(self._result_snapshot(override_result, decision_record))
+                    trace.add_artifact("override_outputs", override_result.outputs)
+                    self._record_canonical_artifacts(trace=trace, result=override_result)
+                    replay_bundle = self._build_replay_bundle(
+                        trace_id=trace_id,
+                        decision_key=decision_key,
+                        req=req,
+                        selected_model=selected_model,
+                        model_route=resolved_route,
+                        state_machine=state_machine,
+                        executed_actions=[],
+                        result=override_result,
+                        trace=trace,
+                    )
+                    trace.add_artifact("replay_bundle", replay_bundle.to_dict())
+                    trace.set_replay_payload(
+                        self._build_replay_payload(
+                            trace=trace,
+                            replay_bundle=replay_bundle,
                         )
                     )
-                    trace.add_artifact("override_outputs", override_result.outputs)
                     self._persist_trace(trace)
                     self._emit_decision_recorded_event(
                         trace=trace,
@@ -355,7 +383,6 @@ class GeneralPlanner:
                     )
                     return override_result
 
-            route_start = time.perf_counter()
             dispatch_gates: dict[str, Any] = {}
             effective_route = resolved_route
             if req.capability == "INGEST_USER_ANSWER":
@@ -372,7 +399,6 @@ class GeneralPlanner:
                         state_machine=state_machine,
                     )
                 )
-            duration_ms = (time.perf_counter() - route_start) * 1000.0
             result.trace_id = trace_id
             trace.status = result.status
             selected_model = effective_route.primary_model or selected_model
@@ -387,9 +413,16 @@ class GeneralPlanner:
                 next_actions=executed_actions,
             )
             self._persist_state_machine(req, state_machine)
-            outputs_payload = result.outputs if isinstance(result.outputs, dict) else {}
-            decision_text = str(outputs_payload.get("decision_text", "")).strip() or result.status
-            trace.set_decision(DecisionRecord(decision_text=decision_text))
+            decision_record = self._build_decision_record(
+                req=req,
+                result=result,
+                model_route=effective_route,
+                dispatch_gates=dispatch_gates,
+                requires_external_facts=requires_external_facts,
+                high_risk=high_risk,
+            )
+            trace.set_decision(decision_record)
+            trace.set_result(self._result_snapshot(result, decision_record))
             trace.add_artifact("outputs", result.outputs)
             trace.add_artifact("model_route", effective_route.to_dict())
             trace.add_artifact("planner_state", state_machine.to_dict())
@@ -397,67 +430,25 @@ class GeneralPlanner:
                 trace.add_artifact("next_actions", executed_actions)
             if dispatch_gates:
                 trace.add_artifact("dispatch_gates", dispatch_gates)
-            usage_tokens = _extract_tokens(result.outputs)
-            trace.record_model_call(
-                ModelCallRecord(
-                    agent_name=f"{str(layer).lower()}:{req.capability}",
-                    model=selected_model,
-                    duration_ms=duration_ms,
-                    tokens_in=usage_tokens[0],
-                    tokens_out=usage_tokens[1],
-                    model_params={
-                        "mode": self._mode,
-                        "capability": req.capability,
-                        "layer": str(layer),
-                        "planner_version": PLANNER_VERSION,
-                        "work_type": effective_route.work_type,
-                        "secondary_model": effective_route.secondary_model,
-                        "requires_external_facts": requires_external_facts,
-                        "high_risk": high_risk,
-                        "dispatch_gates": dispatch_gates,
-                    },
-                    prompt_text=canonical_json(req.inputs),
-                    response_text=canonical_json(result.outputs),
-                )
-            )
-            trace.record_tool_call(
-                ToolCallRecord(
-                    tool_name=f"planner.route.{str(req.capability).lower()}",
-                    inputs_hash=content_hash(canonical_json(req.inputs)),
-                    output_summary=result.status,
-                    duration_ms=duration_ms,
-                    tokens_in=usage_tokens[0],
-                    tokens_out=usage_tokens[1],
-                    tool_params={
-                        "layer": str(layer),
-                        "work_type": effective_route.work_type,
-                        "model": selected_model,
-                    },
-                )
-            )
-            replay_bundle = ReplayBundle(
+            self._record_canonical_artifacts(trace=trace, result=result)
+            replay_bundle = self._build_replay_bundle(
                 trace_id=trace_id,
                 decision_key=decision_key,
-                request=_request_snapshot(
-                    req,
-                    input_hash=input_hash,
-                    decision_key=decision_key,
-                    model_id=selected_model,
-                    planner_version=PLANNER_VERSION,
-                    model_route=effective_route.to_dict(),
-                ),
-                next_actions=executed_actions,
-                model_route=effective_route.to_dict(),
-                planner_state=state_machine.to_dict(),
-                final_result={
-                    "status": result.status,
-                    "outputs": _safe_deepcopy(result.outputs),
-                    "error": result.error,
-                },
-                model_calls=[_safe_deepcopy(call.__dict__) for call in trace.model_calls],
-                tool_calls=[_safe_deepcopy(call.__dict__) for call in trace.tool_calls],
+                req=req,
+                selected_model=selected_model,
+                model_route=effective_route,
+                state_machine=state_machine,
+                executed_actions=executed_actions,
+                result=result,
+                trace=trace,
             )
             trace.add_artifact("replay_bundle", replay_bundle.to_dict())
+            trace.set_replay_payload(
+                self._build_replay_payload(
+                    trace=trace,
+                    replay_bundle=replay_bundle,
+                )
+            )
             self._persist_trace(trace)
             self._emit_decision_recorded_event(
                 trace=trace,
@@ -475,9 +466,34 @@ class GeneralPlanner:
                 error=str(exc),
             )
             trace.status = "ERROR"
-            trace.set_decision(
-                DecisionRecord(
-                    decision_text=f"ERROR: {exc}",
+            decision_record = self._build_decision_record(
+                req=req,
+                result=result,
+                model_route=resolved_route,
+                dispatch_gates={},
+                requires_external_facts=requires_external_facts,
+                high_risk=high_risk,
+                error_text=str(exc),
+            )
+            trace.set_decision(decision_record)
+            trace.set_result(self._result_snapshot(result, decision_record))
+            trace.add_artifact("outputs", result.outputs)
+            replay_bundle = self._build_replay_bundle(
+                trace_id=trace_id,
+                decision_key=decision_key,
+                req=req,
+                selected_model=selected_model,
+                model_route=resolved_route,
+                state_machine=state_machine,
+                executed_actions=executed_actions,
+                result=result,
+                trace=trace,
+            )
+            trace.add_artifact("replay_bundle", replay_bundle.to_dict())
+            trace.set_replay_payload(
+                self._build_replay_payload(
+                    trace=trace,
+                    replay_bundle=replay_bundle,
                 )
             )
             self._persist_trace(trace)
@@ -495,6 +511,7 @@ class GeneralPlanner:
                     self._layer_router.select(layer).bind_trace(None)
                 except Exception:
                     logger.debug("Failed to clear layer trace binding", exc_info=True)
+            self._capability_router.bind_trace(None)
             ConstraintStoreAdapter.pop_planner_update_context(context_token)
 
     def _route_request_with_gates(
@@ -639,6 +656,7 @@ class GeneralPlanner:
                     planner=planner,
                     req=req,
                     tool_name=action.tool,
+                    action_inputs=action.inputs if isinstance(action.inputs, dict) else None,
                     interim=interim,
                 )
                 continue
@@ -648,6 +666,7 @@ class GeneralPlanner:
                     planner=planner,
                     req=req,
                     agent_name=action.agent,
+                    action_inputs=action.inputs if isinstance(action.inputs, dict) else None,
                     interim=interim,
                 )
                 continue
@@ -953,6 +972,412 @@ class GeneralPlanner:
             result.outputs.setdefault(
                 "next_actions", [dict(row) for row in next_actions if isinstance(row, dict)]
             )
+
+    @staticmethod
+    def _normalize_text_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            token = value.strip()
+            return [token] if token else []
+        if not isinstance(value, list):
+            return []
+        values: list[str] = []
+        for row in value:
+            token = str(row).strip()
+            if token:
+                values.append(token)
+        return values
+
+    @staticmethod
+    def _extract_decision_text(
+        *,
+        result: PlanningResult,
+        outputs: dict[str, Any],
+        overridden: bool,
+        error_text: str = "",
+    ) -> str:
+        if error_text:
+            return f"ERROR: {error_text}"
+        if overridden:
+            return f"OVERRIDDEN: {result.status}"
+        candidate = str(outputs.get("decision_text", "")).strip()
+        if candidate:
+            return candidate
+        return str(result.status).strip()
+
+    def _extract_decision_assumptions(
+        self,
+        *,
+        outputs: dict[str, Any],
+        model_route: ModelRouteDecision,
+        dispatch_gates: dict[str, Any],
+        requires_external_facts: bool,
+        high_risk: bool,
+    ) -> list[str]:
+        assumptions: list[str] = []
+        for key in ("assumptions", "assumption", "implicit_assumptions"):
+            assumptions.extend(self._normalize_text_list(outputs.get(key)))
+        assumptions.append(f"work_type={model_route.work_type}")
+        assumptions.append(f"requires_external_facts={requires_external_facts}")
+        assumptions.append(f"high_risk={high_risk}")
+        path = str(dispatch_gates.get("path", "")).strip()
+        if path:
+            assumptions.append(f"dispatch_path={path}")
+        return self._dedupe_preserve(assumptions)
+
+    def _extract_decision_evidence_refs(
+        self,
+        *,
+        req: PlanningRequest,
+        outputs: dict[str, Any],
+    ) -> list[str]:
+        refs: list[str] = []
+        for key in ("evidence_refs", "evidence_needed", "spec_refs", "code_refs"):
+            refs.extend(self._normalize_text_list(outputs.get(key)))
+        questions = outputs.get("questions")
+        if isinstance(questions, list):
+            for question in questions:
+                if isinstance(question, dict):
+                    refs.extend(self._normalize_text_list(question.get("evidence_needed")))
+                    refs.extend(self._normalize_text_list(question.get("evidence_refs")))
+        under_spec_events = outputs.get("under_spec_events")
+        if isinstance(under_spec_events, list):
+            for event in under_spec_events:
+                if not isinstance(event, dict):
+                    continue
+                refs.extend(self._normalize_text_list(event.get("trigger_evidence")))
+                refs.extend(self._normalize_text_list(event.get("evidence_refs")))
+                refs.extend(self._normalize_text_list(event.get("spec_refs")))
+                refs.extend(self._normalize_text_list(event.get("code_refs")))
+                refs.extend(self._normalize_text_list(event.get("pin_ref")))
+                refs.extend(self._normalize_text_list(event.get("pin_id")))
+        req_inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        for key in ("evidence_refs", "spec_refs", "code_refs"):
+            refs.extend(self._normalize_text_list(req_inputs.get(key)))
+        return self._dedupe_preserve(refs)
+
+    def _extract_decision_alternatives(
+        self,
+        *,
+        req: PlanningRequest,
+        outputs: dict[str, Any],
+        model_route: ModelRouteDecision,
+        dispatch_gates: dict[str, Any],
+    ) -> list[str]:
+        alternatives: list[str] = []
+        for key in ("alternatives_considered", "alternatives"):
+            alternatives.extend(self._normalize_text_list(outputs.get(key)))
+        proposal_models = self._extract_proposal_models(req)
+        model_options = self._dedupe_preserve(
+            [*proposal_models, model_route.primary_model, model_route.secondary_model]
+        )
+        if len(model_options) >= 2:
+            alternatives.extend([f"model:{model}" for model in model_options if model][:4])
+        if self._coerce_bool(dispatch_gates.get("deterministic_local_checked")):
+            alternatives.append("dispatch:deterministic_local")
+        path = str(dispatch_gates.get("path", "")).strip()
+        if path:
+            alternatives.append(f"dispatch:{path}")
+        if (
+            str(req.capability).strip().upper() in {"PLAN", "UNDER_SPEC", "INTEGRATION_ANALYSIS"}
+            and len(alternatives) < 2
+        ):
+            alternatives.extend(["dispatch:deterministic_local", "dispatch:capability_dispatch"])
+        return self._dedupe_preserve(alternatives)
+
+    def _extract_discriminative_checks(
+        self,
+        *,
+        result: PlanningResult,
+        outputs: dict[str, Any],
+        dispatch_gates: dict[str, Any],
+    ) -> list[str]:
+        checks: list[str] = []
+        for key in ("discriminative_checks", "checks"):
+            checks.extend(self._normalize_text_list(outputs.get(key)))
+        if self._coerce_bool(dispatch_gates.get("integration_analysis_checked")):
+            checks.append("Integration-analysis gate outcome can change route selection.")
+        if self._coerce_bool(dispatch_gates.get("external_research_required")):
+            checks.append("New external evidence can change the selected plan.")
+        if self._coerce_bool(dispatch_gates.get("critique_checked")):
+            checks.append("A failed critique gate can force a blocked/review decision.")
+        questions = outputs.get("questions")
+        if result.status == "BLOCKED" and isinstance(questions, list) and questions:
+            checks.append("Resolving blocked under-spec questions would change this decision.")
+        if result.status == "ERROR":
+            checks.append("Successful execution without runtime errors would change this decision.")
+        return self._dedupe_preserve(checks)
+
+    def _build_decision_record(
+        self,
+        *,
+        req: PlanningRequest,
+        result: PlanningResult,
+        model_route: ModelRouteDecision,
+        dispatch_gates: dict[str, Any],
+        requires_external_facts: bool,
+        high_risk: bool,
+        overridden: bool = False,
+        error_text: str = "",
+    ) -> Any:
+        from spec_manager.planner.trace import DecisionRecord
+
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        decision_text = self._extract_decision_text(
+            result=result,
+            outputs=outputs,
+            overridden=overridden,
+            error_text=error_text,
+        )
+        confidence_raw = outputs.get("confidence", outputs.get("score", 0.0))
+        return DecisionRecord(
+            decision_text=decision_text,
+            confidence=self._clamp_confidence(confidence_raw),
+            assumptions=self._extract_decision_assumptions(
+                outputs=outputs,
+                model_route=model_route,
+                dispatch_gates=dispatch_gates,
+                requires_external_facts=requires_external_facts,
+                high_risk=high_risk,
+            ),
+            evidence_refs=self._extract_decision_evidence_refs(req=req, outputs=outputs),
+            alternatives_considered=self._extract_decision_alternatives(
+                req=req,
+                outputs=outputs,
+                model_route=model_route,
+                dispatch_gates=dispatch_gates,
+            ),
+            discriminative_checks=self._extract_discriminative_checks(
+                result=result,
+                outputs=outputs,
+                dispatch_gates=dispatch_gates,
+            ),
+        )
+
+    @staticmethod
+    def _result_snapshot(result: PlanningResult, decision_record: Any) -> dict[str, Any]:
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        rationale = str(getattr(decision_record, "decision_text", "") or result.status).strip()
+        confidence = getattr(decision_record, "confidence", 0.0)
+        return {
+            "status": result.status,
+            "outputs": _safe_deepcopy(outputs),
+            "error": str(result.error or ""),
+            "confidence": confidence,
+            "rationale": rationale,
+        }
+
+    @staticmethod
+    def _normalize_graph_payload(payload: Any) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+        nodes = payload.get("nodes")
+        edges = payload.get("edges")
+        if isinstance(nodes, list) and isinstance(edges, list):
+            return {
+                "nodes": [row for row in nodes if isinstance(row, dict)],
+                "edges": [row for row in edges if isinstance(row, dict)],
+            }
+        for key in ("quality_graph", "code_skeleton_graph", "architecture_topology_graph"):
+            nested = payload.get(key)
+            graph = GeneralPlanner._normalize_graph_payload(nested)
+            if graph is not None:
+                return graph
+        return None
+
+    def _integration_graph_artifact(self, outputs: dict[str, Any]) -> dict[str, Any] | None:
+        for key in (
+            "integration_graph",
+            "topology",
+            "layer_skeleton",
+            "discovery",
+            "quality_graph",
+            "code_skeleton_graph",
+            "architecture_topology_graph",
+        ):
+            graph = self._normalize_graph_payload(outputs.get(key))
+            if graph is not None and (graph["nodes"] or graph["edges"]):
+                return graph
+        return None
+
+    @staticmethod
+    def _plan_artifact(outputs: dict[str, Any]) -> dict[str, Any] | None:
+        intentions = outputs.get("intentions")
+        if not isinstance(intentions, list):
+            return None
+        plan_payload: dict[str, Any] = {"intentions": _safe_deepcopy(intentions)}
+        plan_artifacts = outputs.get("plan_artifacts")
+        if isinstance(plan_artifacts, dict):
+            plan_payload["plan_artifacts"] = _safe_deepcopy(plan_artifacts)
+        for key in ("integration_notes", "decision_requirements", "decision_outcomes"):
+            if key in outputs:
+                plan_payload[key] = _safe_deepcopy(outputs.get(key))
+        return plan_payload
+
+    @staticmethod
+    def _under_spec_questions_artifact(result: PlanningResult) -> list[Any] | None:
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        blocked = bool(outputs.get("blocked", False) or result.status == "BLOCKED")
+        if not blocked:
+            return None
+        questions = outputs.get("questions")
+        if isinstance(questions, list):
+            return _safe_deepcopy(questions)
+        if questions:
+            return [str(questions).strip()]
+        return []
+
+    def _record_canonical_artifacts(
+        self,
+        *,
+        trace: Any,
+        result: PlanningResult,
+    ) -> None:
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        plan_payload = self._plan_artifact(outputs)
+        if plan_payload is not None:
+            trace.add_artifact("plan", plan_payload)
+        graph_payload = self._integration_graph_artifact(outputs)
+        if graph_payload is not None:
+            trace.add_artifact("integration_graph", graph_payload)
+        questions_payload = self._under_spec_questions_artifact(result)
+        if questions_payload is not None:
+            trace.add_artifact("under_spec_questions", questions_payload)
+
+    def _build_replay_bundle(
+        self,
+        *,
+        trace_id: str,
+        decision_key: str,
+        req: PlanningRequest,
+        selected_model: str,
+        model_route: ModelRouteDecision,
+        state_machine: PlannerStateMachine,
+        executed_actions: list[dict[str, Any]],
+        result: PlanningResult,
+        trace: Any,
+    ) -> ReplayBundle:
+        from spec_manager.planner.trace import compute_input_hash
+
+        request_snapshot = _request_snapshot(
+            req,
+            input_hash=compute_input_hash(req.capability, req.inputs),
+            decision_key=decision_key,
+            model_id=selected_model,
+            planner_version=PLANNER_VERSION,
+            model_route=model_route.to_dict(),
+        )
+        snapshot_files = self._capture_replay_snapshot_files(req)
+        return ReplayBundle(
+            trace_id=trace_id,
+            decision_key=decision_key,
+            request=request_snapshot,
+            next_actions=[dict(row) for row in executed_actions if isinstance(row, dict)],
+            model_route=model_route.to_dict(),
+            planner_state=state_machine.to_dict(),
+            final_result={
+                "status": result.status,
+                "outputs": _safe_deepcopy(result.outputs),
+                "error": result.error,
+            },
+            model_calls=[_safe_deepcopy(call.__dict__) for call in trace.model_calls],
+            tool_calls=[_safe_deepcopy(call.__dict__) for call in trace.tool_calls],
+            snapshot_files=snapshot_files,
+        )
+
+    @staticmethod
+    def _build_replay_payload(
+        *,
+        trace: Any,
+        replay_bundle: ReplayBundle,
+    ) -> dict[str, Any]:
+        payload = replay_bundle.to_dict()
+        payload["trace_id"] = str(getattr(trace, "trace_id", "") or payload.get("trace_id", ""))
+        payload["decision_key"] = str(
+            getattr(trace, "decision_key", "") or payload.get("decision_key", "")
+        )
+        payload["status"] = str(getattr(trace, "status", "") or payload.get("status", ""))
+        payload["request_snapshot"] = _safe_deepcopy(replay_bundle.request)
+        payload["result"] = _safe_deepcopy(getattr(trace, "result", {}) or {})
+        payload["decision"] = (
+            _safe_deepcopy(getattr(getattr(trace, "decision", None), "__dict__", {}))
+            if getattr(trace, "decision", None) is not None
+            else {}
+        )
+        if isinstance(payload.get("result"), dict):
+            payload.setdefault("outputs", payload["result"].get("outputs", {}))
+            payload.setdefault("error", payload["result"].get("error", ""))
+            payload.setdefault("confidence", payload["result"].get("confidence", 0.0))
+            payload.setdefault("rationale", payload["result"].get("rationale", ""))
+        return payload
+
+    @staticmethod
+    def _is_text_like_file(path: Path) -> bool:
+        try:
+            with path.open("rb") as handle:
+                sample = handle.read(4096)
+        except OSError:
+            return False
+        if b"\x00" in sample:
+            return False
+        try:
+            sample.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return True
+
+    @staticmethod
+    def _is_relative_to(path: Path, root: Path) -> bool:
+        try:
+            path.resolve().relative_to(root.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _capture_replay_snapshot_files(self, req: PlanningRequest) -> dict[str, str]:
+        workspace_root = self._workspace_root.resolve()
+        files: set[Path] = set()
+        slice_root_raw = str(req.context.slice_root or "").strip()
+        if slice_root_raw:
+            slice_root = Path(slice_root_raw)
+            if not slice_root.is_absolute():
+                slice_root = workspace_root / slice_root
+            if (
+                slice_root.exists()
+                and slice_root.is_dir()
+                and self._is_relative_to(slice_root, workspace_root)
+            ):
+                for path in slice_root.rglob("*"):
+                    if path.is_file() and self._is_text_like_file(path):
+                        files.add(path.resolve())
+        run_id = str(req.context.run_id or "").strip()
+        if run_id:
+            run_dir = workspace_root / ".pdd_runs" / run_id
+            if run_dir.exists() and run_dir.is_dir():
+                for path in run_dir.rglob("*"):
+                    if not path.is_file():
+                        continue
+                    if path.suffix.lower() not in {".json", ".yaml", ".yml", ".md", ".txt"}:
+                        continue
+                    if self._is_text_like_file(path):
+                        files.add(path.resolve())
+
+        snapshot_files: dict[str, str] = {}
+        max_files = 800
+        max_bytes = 2 * 1024 * 1024
+        for path in sorted(files):
+            if len(snapshot_files) >= max_files:
+                break
+            if not self._is_relative_to(path, workspace_root):
+                continue
+            try:
+                if path.stat().st_size > max_bytes:
+                    continue
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            rel_path = path.relative_to(workspace_root).as_posix()
+            snapshot_files[rel_path] = content
+        return snapshot_files
 
     @staticmethod
     def _load_state_machine(req: PlanningRequest) -> PlannerStateMachine:

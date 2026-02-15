@@ -115,6 +115,37 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return rows
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Record types
 # ---------------------------------------------------------------------------
@@ -189,9 +220,11 @@ class PlannerTrace:
     trace_id: str
     request_snapshot: dict[str, Any] = field(default_factory=dict)
     decision: DecisionRecord | None = None
+    result: dict[str, Any] = field(default_factory=dict)
     model_calls: list[ModelCallRecord] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
+    replay_payload: dict[str, Any] = field(default_factory=dict)
     decision_key: str = ""
     run_id: str = ""
     model_id: str = ""
@@ -216,9 +249,17 @@ class PlannerTrace:
         """Set (or overwrite) the final decision."""
         self.decision = decision
 
+    def set_result(self, result: dict[str, Any]) -> None:
+        """Set final planning-result payload for decision/replay files."""
+        self.result = dict(result) if isinstance(result, dict) else {}
+
     def add_artifact(self, name: str, data: Any) -> None:
         """Store a named artifact (graph, plan, etc.)."""
         self.artifacts[name] = data
+
+    def set_replay_payload(self, payload: dict[str, Any]) -> None:
+        """Set explicit replay payload written to replay.json."""
+        self.replay_payload = dict(payload) if isinstance(payload, dict) else {}
 
     # -- serialization ------------------------------------------------------
 
@@ -237,6 +278,7 @@ class PlannerTrace:
             "overridden": self.overridden,
             "request_snapshot": self.request_snapshot,
             "decision": asdict(self.decision) if self.decision else None,
+            "result": self.result,
             "model_calls": [asdict(m) for m in self.model_calls],
             "tool_calls": [asdict(t) for t in self.tool_calls],
             "artifacts": self.artifacts,
@@ -291,7 +333,17 @@ class PlannerTrace:
         _write_json(trace_dir / "request.json", request_payload)
 
         # 2. decision.json
-        decision_payload = asdict(self.decision) if self.decision else {}
+        decision_record = asdict(self.decision) if self.decision else {}
+        decision_payload = dict(self.result) if isinstance(self.result, dict) else {}
+        if decision_record:
+            decision_payload.update(decision_record)
+            decision_payload["decision_record"] = decision_record
+        if "confidence" not in decision_payload:
+            decision_payload["confidence"] = float(decision_record.get("confidence", 0.0))
+        if "rationale" not in decision_payload:
+            decision_payload["rationale"] = str(
+                decision_record.get("decision_text", decision_payload.get("status", ""))
+            ).strip()
         if self.decision_key:
             decision_payload["decision_key"] = self.decision_key
         if self.status:
@@ -339,7 +391,18 @@ class PlannerTrace:
             _write_json(artifacts_dir / f"{name}.json", data)
 
         # 6. replay.json
-        _write_json(trace_dir / "replay.json", self.to_dict())
+        replay_payload = (
+            dict(self.replay_payload)
+            if isinstance(self.replay_payload, dict) and self.replay_payload
+            else self.to_dict()
+        )
+        replay_payload.setdefault("trace_id", self.trace_id)
+        replay_payload.setdefault("decision_key", self.decision_key)
+        replay_payload.setdefault("status", self.status)
+        replay_payload.setdefault("request_snapshot", request_payload)
+        replay_payload.setdefault("decision", decision_record)
+        replay_payload.setdefault("result", decision_payload)
+        _write_json(trace_dir / "replay.json", replay_payload)
 
         # 7. Append to index.jsonl
         index_path = root / _TRACE_REL / "index.jsonl"
@@ -376,3 +439,75 @@ class PlannerTrace:
             capability=capability,
             slice_id=slice_id,
         )
+
+
+class PlannerDebugView:
+    """Read-only helper for answering planner QA questions from persisted trace files."""
+
+    def __init__(self, trace_dir: str | Path) -> None:
+        self._trace_dir = Path(trace_dir)
+
+    @classmethod
+    def from_workspace(cls, workspace_root: str | Path, trace_id: str) -> PlannerDebugView:
+        return cls(Path(workspace_root) / _TRACE_REL / trace_id)
+
+    def why_did_you_choose_this(self) -> str:
+        decision = _read_json(self._trace_dir / "decision.json")
+        rationale = str(decision.get("rationale", "") or "").strip()
+        if rationale:
+            return rationale
+        decision_text = str(decision.get("decision_text", "") or "").strip()
+        if decision_text:
+            return decision_text
+        status = str(decision.get("status", "") or "").strip()
+        return status or "No rationale captured."
+
+    def what_evidence_did_you_use(self) -> list[str]:
+        decision = _read_json(self._trace_dir / "decision.json")
+        refs = decision.get("evidence_refs")
+        if isinstance(refs, list):
+            return [str(ref).strip() for ref in refs if str(ref).strip()]
+        nested = decision.get("decision_record")
+        if isinstance(nested, dict) and isinstance(nested.get("evidence_refs"), list):
+            return [str(ref).strip() for ref in nested.get("evidence_refs", []) if str(ref).strip()]
+        return []
+
+    def which_models_touched_this(self) -> list[str]:
+        rows = _read_jsonl(self._trace_dir / "calls" / "model_calls.jsonl")
+        touched: list[str] = []
+        for row in rows:
+            agent = str(row.get("agent_name", "")).strip() or "<unknown-agent>"
+            model = str(row.get("model", "")).strip() or "<unknown-model>"
+            touched.append(f"{agent}:{model}")
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for token in touched:
+            if token in seen:
+                continue
+            seen.add(token)
+            deduped.append(token)
+        return deduped
+
+    def what_would_have_made_you_block_earlier(self) -> list[str]:
+        decision = _read_json(self._trace_dir / "decision.json")
+        checks = decision.get("discriminative_checks")
+        if isinstance(checks, list):
+            return [str(check).strip() for check in checks if str(check).strip()]
+        nested = decision.get("decision_record")
+        if isinstance(nested, dict) and isinstance(nested.get("discriminative_checks"), list):
+            return [
+                str(check).strip()
+                for check in nested.get("discriminative_checks", [])
+                if str(check).strip()
+            ]
+        return []
+
+    def render(self) -> dict[str, Any]:
+        return {
+            "why_did_you_choose_this": self.why_did_you_choose_this(),
+            "what_evidence_did_you_use": self.what_evidence_did_you_use(),
+            "which_models_touched_this": self.which_models_touched_this(),
+            "what_would_have_made_you_block_earlier": (
+                self.what_would_have_made_you_block_earlier()
+            ),
+        }

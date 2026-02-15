@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from spec_manager.planner.jit.actions import ActionType, NextAction
 from spec_manager.planner.jit.state_machine import PlanPhase
+from spec_manager.planner.trace import ModelCallRecord, ToolCallRecord, canonical_json, content_hash
 
 logger = logging.getLogger(__name__)
 
@@ -579,6 +581,10 @@ class CapabilityRouter:
 
     def __init__(self, *, integration_analyzer: IntegrationAnalyzer | None = None) -> None:
         self._integration_analyzer = integration_analyzer or IntegrationAnalyzer()
+        self._trace: Any | None = None
+
+    def bind_trace(self, trace: Any | None) -> None:
+        self._trace = trace
 
     def plan_actions(
         self,
@@ -732,51 +738,97 @@ class CapabilityRouter:
         planner: LayerPlanner,
         req: Any,
         tool_name: str,
+        action_inputs: dict[str, Any] | None = None,
         interim: dict[str, Any],
     ) -> None:
         ctx = req.context
+        started = time.perf_counter()
+        output_payload: Any = None
         if tool_name == "discover":
-            interim["discovery"] = planner.discover(ctx)
+            output_payload = planner.discover(ctx)
+            interim["discovery"] = output_payload
+            self._record_tool_invocation(
+                req=req,
+                tool_name=tool_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         if tool_name == "extract_layer_skeleton":
             discovery = self._ensure_discovery(planner=planner, ctx=ctx, interim=interim)
-            interim["layer_skeleton"] = self._extract_layer_skeleton(
+            output_payload = self._extract_layer_skeleton(
                 planner=planner,
                 ctx=ctx,
                 discovery=discovery,
+            )
+            interim["layer_skeleton"] = output_payload
+            self._record_tool_invocation(
+                req=req,
+                tool_name=tool_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
             )
             return
 
         if tool_name == "integration_analyzer":
             discovery = self._ensure_discovery(planner=planner, ctx=ctx, interim=interim)
-            interim["integration_analysis"] = self._integration_analyzer.analyze(
+            output_payload = self._integration_analyzer.analyze(
                 req=req,
                 discovery=discovery,
+            )
+            interim["integration_analysis"] = output_payload
+            self._record_tool_invocation(
+                req=req,
+                tool_name=tool_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
             )
             return
 
         if tool_name == "web_research":
             interim.setdefault("research", {})
             interim["research"]["status"] = "requested"
+            output_payload = {"status": "requested"}
+            self._record_tool_invocation(
+                req=req,
+                tool_name=tool_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         raise ValueError(f"Unknown tool action: {tool_name}")
 
-    @staticmethod
     def run_agent(
+        self,
         *,
         planner: LayerPlanner,
         req: Any,
         agent_name: str,
+        action_inputs: dict[str, Any] | None = None,
         interim: dict[str, Any],
     ) -> None:
         ctx = req.context
         inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        started = time.perf_counter()
+        output_payload: Any = None
 
         if agent_name == "resolve_signal":
             signal = inputs.get("signal")
-            interim["resolve_signal_response"] = planner.resolve_signal(ctx, signal)
+            output_payload = planner.resolve_signal(ctx, signal)
+            interim["resolve_signal_response"] = output_payload
+            self._record_agent_invocation(
+                req=req,
+                agent_name=agent_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         if agent_name == "gap_understanding":
@@ -791,13 +843,21 @@ class CapabilityRouter:
             integration_notes, decision_requirements = CapabilityRouter._derive_gap_artifacts(
                 prioritized_gaps
             )
-            interim["gap_outputs"] = {
+            output_payload = {
                 "gaps": prioritized_gaps,
                 "clustered_gaps": deduped_gaps,
                 "prioritized_gaps": prioritized_gaps,
                 "integration_notes": integration_notes,
                 "decision_requirements": decision_requirements,
             }
+            interim["gap_outputs"] = output_payload
+            self._record_agent_invocation(
+                req=req,
+                agent_name=agent_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         if agent_name == "build_plan":
@@ -816,7 +876,15 @@ class CapabilityRouter:
                 metadata["prior_artifacts"] = dict(prior_artifacts)
             if hasattr(ctx, "metadata"):
                 ctx.metadata = metadata
-            interim["plan"] = planner.build_plan(ctx, gaps, discovery)
+            output_payload = planner.build_plan(ctx, gaps, discovery)
+            interim["plan"] = output_payload
+            self._record_agent_invocation(
+                req=req,
+                agent_name=agent_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         if agent_name == "resolve_under_spec":
@@ -825,15 +893,185 @@ class CapabilityRouter:
             if not isinstance(discovery, dict):
                 discovery = planner.discover(ctx)
                 interim["discovery"] = discovery
-            interim["under_spec_result"] = planner.resolve_under_spec(ctx, events, discovery)
+            output_payload = planner.resolve_under_spec(ctx, events, discovery)
+            interim["under_spec_result"] = output_payload
+            self._record_agent_invocation(
+                req=req,
+                agent_name=agent_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         if agent_name == "triage_signal":
             signal = inputs.get("signal", {})
-            interim["triage_result"] = planner.triage_signal(ctx, signal)
+            output_payload = planner.triage_signal(ctx, signal)
+            interim["triage_result"] = output_payload
+            self._record_agent_invocation(
+                req=req,
+                agent_name=agent_name,
+                action_inputs=action_inputs,
+                output_payload=output_payload,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+            )
             return
 
         raise ValueError(f"Unknown agent action: {agent_name}")
+
+    @staticmethod
+    def _context_metadata(req: Any) -> dict[str, Any]:
+        context = getattr(req, "context", None)
+        metadata = getattr(context, "metadata", None)
+        if isinstance(metadata, dict):
+            return metadata
+        return {}
+
+    @staticmethod
+    def _extract_usage_tokens(payload: Any) -> tuple[int, int]:
+        if not isinstance(payload, dict):
+            return 0, 0
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        raw_in = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        raw_out = usage.get("output_tokens", usage.get("completion_tokens", 0))
+        try:
+            tokens_in = int(raw_in or 0)
+        except (TypeError, ValueError):
+            tokens_in = 0
+        try:
+            tokens_out = int(raw_out or 0)
+        except (TypeError, ValueError):
+            tokens_out = 0
+        return max(tokens_in, 0), max(tokens_out, 0)
+
+    @staticmethod
+    def _to_prompt_text(
+        *,
+        req: Any,
+        invocation_kind: str,
+        invocation_name: str,
+        action_inputs: dict[str, Any] | None,
+    ) -> str:
+        context = getattr(req, "context", None)
+        payload = {
+            "capability": str(getattr(req, "capability", "")).strip().upper(),
+            "layer": str(getattr(context, "layer", "")).strip().lower(),
+            "invocation_kind": invocation_kind,
+            "invocation_name": invocation_name,
+            "action_inputs": dict(action_inputs) if isinstance(action_inputs, dict) else {},
+            "request_inputs": dict(getattr(req, "inputs", {}))
+            if isinstance(getattr(req, "inputs", {}), dict)
+            else {},
+        }
+        return canonical_json(payload)
+
+    @staticmethod
+    def _to_response_text(output_payload: Any) -> str:
+        if isinstance(output_payload, (dict, list)):
+            return canonical_json(output_payload)
+        return str(output_payload)
+
+    @staticmethod
+    def _tool_output_summary(tool_name: str, output_payload: Any) -> str:
+        if isinstance(output_payload, dict):
+            if "status" in output_payload:
+                return str(output_payload.get("status", "")).strip()
+            if "blocked" in output_payload:
+                return "blocked" if bool(output_payload.get("blocked")) else "ok"
+            keys = sorted(output_payload.keys())
+            return f"{tool_name} -> keys={','.join(keys[:8])}"
+        if isinstance(output_payload, list):
+            return f"{tool_name} -> list[{len(output_payload)}]"
+        return str(output_payload).strip()[:240]
+
+    def _record_agent_invocation(
+        self,
+        *,
+        req: Any,
+        agent_name: str,
+        action_inputs: dict[str, Any] | None,
+        output_payload: Any,
+        duration_ms: float,
+    ) -> None:
+        trace = self._trace
+        if trace is None or not hasattr(trace, "record_model_call"):
+            return
+        metadata = self._context_metadata(req)
+        route = metadata.get("model_route") if isinstance(metadata.get("model_route"), dict) else {}
+        model_id = str(route.get("primary_model", metadata.get("primary_model", ""))).strip()
+        context_layer = str(getattr(getattr(req, "context", None), "layer", "")).strip().lower()
+        tokens_in, tokens_out = self._extract_usage_tokens(output_payload)
+        prompt_text = self._to_prompt_text(
+            req=req,
+            invocation_kind="agent",
+            invocation_name=agent_name,
+            action_inputs=action_inputs,
+        )
+        response_text = self._to_response_text(output_payload)
+        trace.record_model_call(
+            ModelCallRecord(
+                agent_name=agent_name,
+                model=model_id,
+                duration_ms=duration_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                model_params={
+                    "capability": str(getattr(req, "capability", "")).strip().upper(),
+                    "layer": context_layer,
+                    "work_type": str(route.get("work_type", "")).strip(),
+                    "secondary_model": str(route.get("secondary_model", "")).strip(),
+                },
+                prompt_text=prompt_text,
+                response_text=response_text,
+                prompt_hash=content_hash(prompt_text),
+                output_hash=content_hash(response_text),
+            )
+        )
+
+    def _record_tool_invocation(
+        self,
+        *,
+        req: Any,
+        tool_name: str,
+        action_inputs: dict[str, Any] | None,
+        output_payload: Any,
+        duration_ms: float,
+    ) -> None:
+        trace = self._trace
+        if trace is None or not hasattr(trace, "record_tool_call"):
+            return
+        metadata = self._context_metadata(req)
+        route = metadata.get("model_route") if isinstance(metadata.get("model_route"), dict) else {}
+        context_layer = str(getattr(getattr(req, "context", None), "layer", "")).strip().lower()
+        invocation_payload = {
+            "capability": str(getattr(req, "capability", "")).strip().upper(),
+            "tool_name": tool_name,
+            "action_inputs": dict(action_inputs) if isinstance(action_inputs, dict) else {},
+            "request_inputs": dict(getattr(req, "inputs", {}))
+            if isinstance(getattr(req, "inputs", {}), dict)
+            else {},
+        }
+        tokens_in, tokens_out = self._extract_usage_tokens(output_payload)
+        trace.record_tool_call(
+            ToolCallRecord(
+                tool_name=tool_name,
+                inputs_hash=content_hash(canonical_json(invocation_payload)),
+                output_summary=self._tool_output_summary(tool_name, output_payload),
+                duration_ms=duration_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                tool_params={
+                    "capability": str(getattr(req, "capability", "")).strip().upper(),
+                    "layer": context_layer,
+                    "work_type": str(route.get("work_type", "")).strip(),
+                    "model": str(
+                        route.get("primary_model", metadata.get("primary_model", ""))
+                    ).strip(),
+                },
+            )
+        )
 
     @staticmethod
     def finalize(req: Any, interim: dict[str, Any]) -> Any:
