@@ -9,7 +9,13 @@ from pathlib import Path
 import yaml
 
 from spec_manager.core.agent_utils import run_agent
-from spec_manager.intake.types import LibraryDef
+from spec_manager.intake.types import (
+    INTAKE_MODE_INTENT,
+    INTAKE_MODE_PROSE,
+    IntakeMode,
+    LibraryDef,
+    normalize_intake_mode,
+)
 from spec_manager.refinement.formats import _strip_code_fences
 
 logger = logging.getLogger(__name__)
@@ -19,6 +25,7 @@ def discover_libraries(
     summaries: list[dict],
     output_dir: Path,
     *,
+    intake_mode: IntakeMode | str = INTAKE_MODE_PROSE,
     existing_libraries: list[LibraryDef] | None = None,
     unroutable_files: list[str] | None = None,
 ) -> list[LibraryDef]:
@@ -35,6 +42,11 @@ def discover_libraries(
     Returns:
         List of discovered LibraryDef objects.
     """
+    normalized_mode = normalize_intake_mode(str(intake_mode))
+    if normalized_mode == INTAKE_MODE_INTENT:
+        logger.info("Skipping library discovery for intent-level intake mode")
+        return list(existing_libraries or [])
+
     if not summaries:
         logger.warning("No summaries provided for library discovery")
         return []

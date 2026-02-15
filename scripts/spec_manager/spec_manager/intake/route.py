@@ -9,7 +9,16 @@ from collections import defaultdict
 from pathlib import Path
 
 from spec_manager.core.agent_utils import run_agent
-from spec_manager.intake.types import LibraryDef, ResolvedReference, RouteEntry, SourceSpan
+from spec_manager.intake.types import (
+    INTAKE_MODE_INTENT,
+    INTAKE_MODE_PROSE,
+    IntakeMode,
+    LibraryDef,
+    ResolvedReference,
+    RouteEntry,
+    SourceSpan,
+    normalize_intake_mode,
+)
 from spec_manager.refinement.formats import _strip_code_fences
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,12 @@ Ask: "Could I achieve the same GOAL with a completely different approach?"
   -> DETAIL/ALGORITHM (expressible as functions)
 """
 
+_INTENT_DESTINATIONS = (
+    "system/workflows",
+    "system/entities",
+    "system/interfaces",
+)
+
 
 def _build_numbered_content(file_path: Path) -> tuple[str, int]:
     """Read a file and return its content with line numbers."""
@@ -64,15 +79,33 @@ def _build_numbered_content(file_path: Path) -> tuple[str, int]:
     return numbered, len(lines)
 
 
-def _build_library_context(libraries: list[LibraryDef]) -> str:
-    """Format library definitions for inclusion in the routing prompt."""
+def _build_destination_context(
+    libraries: list[LibraryDef],
+    *,
+    intake_mode: IntakeMode,
+) -> str:
+    """Format valid routing destinations for inclusion in the prompt."""
+    if intake_mode == INTAKE_MODE_INTENT:
+        return (
+            "## Available Destinations\n\n"
+            "Intent intake is pre-decomposition. Route each span to one of:\n"
+            "- system/workflows\n"
+            "- system/entities\n"
+            "- system/interfaces\n"
+        )
+
     parts = ["## Available Libraries\n"]
     for lib in libraries:
         parts.append(f"- **{lib.lib_id}**: {lib.name} — {lib.description}")
     return "\n".join(parts)
 
 
-def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
+def _parse_route_entries(
+    data: dict,
+    source_file: str,
+    *,
+    intake_mode: IntakeMode,
+) -> list[RouteEntry]:
     """Parse JSON routing output into RouteEntry objects."""
     entries: list[RouteEntry] = []
 
@@ -86,11 +119,19 @@ def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
         if bucket is None:
             raise ValueError(f"Route in {source_file} missing 'bucket'. Route data: {route_data}")
 
-        library = route_data.get("library", "")
-        if not library:
+        raw_library = str(route_data.get("library", "")).strip()
+        raw_destination = str(route_data.get("destination", "")).strip()
+        destination = raw_destination or raw_library
+        if not destination:
+            expected_field = "destination" if intake_mode == INTAKE_MODE_INTENT else "library"
             raise ValueError(
-                f"Route in {source_file} missing 'library'. "
+                f"Route in {source_file} missing '{expected_field}'. "
                 f"Bucket={bucket}, lines {route_data.get('start')}-{route_data.get('end')}."
+            )
+        if intake_mode == INTAKE_MODE_INTENT and destination not in _INTENT_DESTINATIONS:
+            raise ValueError(
+                f"Route in {source_file} has invalid destination {destination!r}. "
+                f"Expected one of: {_INTENT_DESTINATIONS}"
             )
         raw_ref_stubs = route_data.get("ref_stubs", [])
         if not isinstance(raw_ref_stubs, list):
@@ -104,7 +145,7 @@ def _parse_route_entries(data: dict, source_file: str) -> list[RouteEntry]:
                     start=route_data["start"],
                     end=route_data["end"],
                 ),
-                library=library,
+                library=destination,
                 bucket=bucket,
                 element_id=route_data.get("element_id", ""),
                 notes=route_data.get("notes", ""),
@@ -122,6 +163,12 @@ _BUCKET_PREFIXES: dict[str, str] = {
     "CONSTRAINTS": "CON",
     "ANALYSIS": "ANL",
 }
+
+
+def _destination_token(destination: str) -> str:
+    """Normalize a destination string into a stable token for element IDs."""
+    token = re.sub(r"[^A-Za-z0-9]+", "-", destination).strip("-").upper()
+    return token or "DEST"
 
 
 def _reassign_element_ids(routes: list[RouteEntry]) -> None:
@@ -143,7 +190,7 @@ def _reassign_element_ids(routes: list[RouteEntry]) -> None:
             )
         key = (route.library, route.bucket)
         counters[key] += 1
-        route.element_id = f"{prefix}-{route.library}-{counters[key]:03d}"
+        route.element_id = f"{prefix}-{_destination_token(route.library)}-{counters[key]:03d}"
 
 
 def _assign_route_ids(routes: list[RouteEntry]) -> None:
@@ -492,8 +539,10 @@ def _resolve_ref_stubs(routes: list[RouteEntry], source_dir: Path) -> None:
 def _route_file(
     source_file: Path,
     source_dir: Path,
-    library_context: str,
+    destination_context: str,
     output_dir: Path,
+    *,
+    intake_mode: IntakeMode,
 ) -> list[RouteEntry]:
     """Route a single source file. Returns RouteEntry list."""
     numbered_content, total_lines = _build_numbered_content(source_file)
@@ -502,13 +551,20 @@ def _route_file(
         logger.warning("Skipping empty file: %s", source_file.name)
         return []
 
+    destination_field = "destination" if intake_mode == INTAKE_MODE_INTENT else "library"
+    destination_hint = (
+        "Set `destination` to one of: system/workflows, system/entities, system/interfaces."
+        if intake_mode == INTAKE_MODE_INTENT
+        else "Set `library` to one of the available library IDs."
+    )
     prompt = (
         f"{_CLASSIFICATION_GUIDANCE}\n\n"
-        f"{library_context}\n\n"
+        f"{destination_context}\n\n"
         "## Output Requirements\n\n"
         "Return JSON with a top-level `routes` array.\n"
-        "Each route MUST include: `start`, `end`, `library`, `bucket`, "
+        f"Each route MUST include: `start`, `end`, `{destination_field}`, `bucket`, "
         "`element_id`, `notes`, `ref_stubs`.\n"
+        f"{destination_hint}\n"
         "Use one of these buckets: ANALYSIS, CONSTRAINTS, DETAIL/ALGORITHM, "
         "DETAIL/STORE, DETAIL/SHAPE, IGNORED.\n\n"
         "## INPUT DATA\n\n"
@@ -544,7 +600,7 @@ def _route_file(
         )
 
     rel_path = str(source_file.relative_to(source_dir))
-    entries = _parse_route_entries(data, rel_path)
+    entries = _parse_route_entries(data, rel_path, intake_mode=intake_mode)
     logger.info(
         "Routed %s: %d entries (%d lines)",
         source_file.name,
@@ -562,6 +618,8 @@ def route_sources(
     libraries: list[LibraryDef],
     summaries: list[dict],
     output_dir: Path,
+    *,
+    intake_mode: IntakeMode | str = INTAKE_MODE_PROSE,
 ) -> tuple[list[RouteEntry], list[LibraryDef]]:
     """Build a routing table mapping source spans to destinations.
 
@@ -581,6 +639,9 @@ def route_sources(
     """
     from spec_manager.intake.discover import discover_libraries
 
+    normalized_mode = normalize_intake_mode(str(intake_mode))
+    rediscovery_enabled = normalized_mode == INTAKE_MODE_PROSE
+
     source_files = sorted(source_dir.glob("**/*.md"))
     if not source_files:
         logger.warning("No .md files found in %s", source_dir)
@@ -590,19 +651,29 @@ def route_sources(
     all_routes: list[RouteEntry] = []
     pending_files = list(source_files)
 
-    for rediscovery_round in range(_MAX_REDISCOVERY_ROUNDS + 1):
-        library_context = _build_library_context(current_libraries)
+    max_rounds = _MAX_REDISCOVERY_ROUNDS if rediscovery_enabled else 0
+    for rediscovery_round in range(max_rounds + 1):
+        destination_context = _build_destination_context(
+            current_libraries,
+            intake_mode=normalized_mode,
+        )
         failed_files: list[Path] = []
         failed_errors: list[str] = []
 
         for source_file in pending_files:
             logger.info("Routing %s", source_file.name)
             try:
-                entries = _route_file(source_file, source_dir, library_context, output_dir)
+                entries = _route_file(
+                    source_file,
+                    source_dir,
+                    destination_context,
+                    output_dir,
+                    intake_mode=normalized_mode,
+                )
                 all_routes.extend(entries)
             except ValueError as e:
                 error_msg = str(e)
-                if "missing 'library'" in error_msg:
+                if rediscovery_enabled and "missing 'library'" in error_msg:
                     failed_files.append(source_file)
                     failed_errors.append(error_msg)
                     logger.warning(
@@ -616,7 +687,13 @@ def route_sources(
         if not failed_files:
             break
 
-        if rediscovery_round >= _MAX_REDISCOVERY_ROUNDS:
+        if not rediscovery_enabled:
+            raise ValueError(
+                f"Routing failed for {len(failed_files)} files in intent mode. "
+                f"Files: {[f.name for f in failed_files]}. Errors: {failed_errors}"
+            )
+
+        if rediscovery_round >= max_rounds:
             raise ValueError(
                 f"Routing failed for {len(failed_files)} files after "
                 f"{_MAX_REDISCOVERY_ROUNDS} rediscovery rounds. "
@@ -635,6 +712,7 @@ def route_sources(
         new_libraries = discover_libraries(
             summaries,
             output_dir,
+            intake_mode=normalized_mode,
             existing_libraries=current_libraries,
             unroutable_files=unroutable_file_ids,
         )
@@ -674,7 +752,8 @@ def route_sources(
                     "end": entry.src.end,
                 },
                 "dest": {
-                    "library": entry.library,
+                    "destination": entry.library,
+                    **({"library": entry.library} if normalized_mode == INTAKE_MODE_PROSE else {}),
                     "bucket": entry.bucket,
                     "element_id": entry.element_id,
                 },

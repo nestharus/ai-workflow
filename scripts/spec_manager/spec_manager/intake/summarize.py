@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 from spec_manager.core.agent_utils import run_agent
+from spec_manager.intake.types import INTAKE_MODE_PROSE, IntakeMode, normalize_intake_mode
 from spec_manager.refinement.formats import _strip_code_fences
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,12 @@ def _as_text_list(value: object) -> list[str]:
     return []
 
 
-def _render_summary_markdown(source_rel_path: str, summary: dict) -> str:
+def _render_summary_markdown(
+    source_rel_path: str,
+    summary: dict,
+    *,
+    include_decomposition_hints: bool,
+) -> str:
     """Render a high-level routing summary artifact as markdown."""
     overview = _pick_first_text(
         summary,
@@ -42,10 +48,14 @@ def _render_summary_markdown(source_rel_path: str, summary: dict) -> str:
         or summary.get("responsibilities")
         or summary.get("topics")
     )
-    library_hints = _as_text_list(
-        summary.get("library_hints")
-        or summary.get("candidate_libraries")
-        or summary.get("libraries")
+    library_hints = (
+        _as_text_list(
+            summary.get("library_hints")
+            or summary.get("candidate_libraries")
+            or summary.get("libraries")
+        )
+        if include_decomposition_hints
+        else []
     )
 
     lines = [
@@ -76,7 +86,12 @@ def _render_summary_markdown(source_rel_path: str, summary: dict) -> str:
     return "\n".join(lines)
 
 
-def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
+def summarize_sources(
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    intake_mode: IntakeMode | str = INTAKE_MODE_PROSE,
+) -> list[dict]:
     """Summarize all markdown source files for routing decisions.
 
     Args:
@@ -86,6 +101,9 @@ def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
     Returns:
         List of parsed summary dicts, one per source file.
     """
+    normalized_mode = normalize_intake_mode(str(intake_mode))
+    include_decomposition_hints = normalized_mode == INTAKE_MODE_PROSE
+
     summaries_dir = output_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
 
@@ -102,7 +120,19 @@ def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
             logger.warning("Skipping empty file: %s", source_file.name)
             continue
 
-        prompt = f"## INPUT DATA\n\nFile: {source_file.relative_to(source_dir)}\n\n{content}"
+        mode_guidance = ""
+        if not include_decomposition_hints:
+            mode_guidance = (
+                "## MODE\n"
+                "Input is intent-level. Summarize domain concerns and behavioral intent only.\n"
+                "Do NOT suggest library/module decomposition.\n\n"
+            )
+
+        prompt = (
+            f"{mode_guidance}"
+            f"## INPUT DATA\n\n"
+            f"File: {source_file.relative_to(source_dir)}\n\n{content}"
+        )
 
         last_json_error: json.JSONDecodeError | None = None
         for attempt in range(3):
@@ -143,11 +173,19 @@ def summarize_sources(source_dir: Path, output_dir: Path) -> list[dict]:
             )
         summary["file_id"] = canonical_id
 
+        if not include_decomposition_hints:
+            for key in ("library_hints", "candidate_libraries", "libraries"):
+                summary.pop(key, None)
+
         # Write high-level routing summary artifact.
         source_rel_path = str(source_file.relative_to(source_dir))
         summary_file = summaries_dir / f"{source_file.stem}.md"
         summary_file.write_text(
-            _render_summary_markdown(source_rel_path, summary),
+            _render_summary_markdown(
+                source_rel_path,
+                summary,
+                include_decomposition_hints=include_decomposition_hints,
+            ),
             encoding="utf-8",
         )
 

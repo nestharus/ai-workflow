@@ -3,6 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+IntakeMode = Literal["prose", "intent"]
+
+INTAKE_MODE_PROSE: IntakeMode = "prose"
+INTAKE_MODE_INTENT: IntakeMode = "intent"
+SUPPORTED_INTAKE_MODES = frozenset({INTAKE_MODE_PROSE, INTAKE_MODE_INTENT})
+
+
+def normalize_intake_mode(value: str) -> IntakeMode:
+    """Validate and canonicalize intake mode values."""
+    normalized = str(value).strip().lower()
+    if normalized not in SUPPORTED_INTAKE_MODES:
+        raise ValueError(
+            f"Unsupported intake mode {value!r}. Expected one of: {sorted(SUPPORTED_INTAKE_MODES)}"
+        )
+    return INTAKE_MODE_PROSE if normalized == INTAKE_MODE_PROSE else INTAKE_MODE_INTENT
 
 
 @dataclass

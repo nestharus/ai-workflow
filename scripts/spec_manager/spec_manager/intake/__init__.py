@@ -6,10 +6,22 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from spec_manager.intake.types import (
+    INTAKE_MODE_INTENT,
+    INTAKE_MODE_PROSE,
+    IntakeMode,
+    normalize_intake_mode,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def run_phase0(source_dir: Path, output_dir: Path) -> dict[str, Any]:
+def run_phase0(
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    intake_mode: IntakeMode | str = INTAKE_MODE_PROSE,
+) -> dict[str, Any]:
     """Run the full Phase 0 routing pipeline.
 
     Steps:
@@ -28,23 +40,58 @@ def run_phase0(source_dir: Path, output_dir: Path) -> dict[str, Any]:
     """
     from spec_manager.intake.assemble import assemble_output
     from spec_manager.intake.coverage import check_coverage
-    from spec_manager.intake.discover import discover_libraries
     from spec_manager.intake.route import route_sources
     from spec_manager.intake.summarize import summarize_sources
 
+    normalized_mode = normalize_intake_mode(str(intake_mode))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 1: Summarize
     logger.info("Phase 0 Step 1: Summarizing source files...")
-    summaries = summarize_sources(source_dir, output_dir)
+    summaries = summarize_sources(
+        source_dir,
+        output_dir,
+        intake_mode=normalized_mode,
+    )
+
+    if normalized_mode == INTAKE_MODE_INTENT:
+        logger.info("Phase 0 intent mode: skipping library discovery and assembly")
+        routes, _ = route_sources(
+            source_dir,
+            [],
+            summaries,
+            output_dir,
+            intake_mode=normalized_mode,
+        )
+        return {
+            "mode": normalized_mode,
+            "files_summarized": len(summaries),
+            "libraries_discovered": 0,
+            "routes_created": len(routes),
+            "coverage_files_fully_routed": 0,
+            "coverage_files_incomplete": 0,
+            "output_dir": str(output_dir),
+        }
+
+    from spec_manager.intake.discover import discover_libraries
 
     # Step 2: Discover libraries
     logger.info("Phase 0 Step 2: Discovering libraries...")
-    libraries = discover_libraries(summaries, output_dir)
+    libraries = discover_libraries(
+        summaries,
+        output_dir,
+        intake_mode=normalized_mode,
+    )
 
     # Step 3: Route (may re-run discovery if content doesn't fit any library)
     logger.info("Phase 0 Step 3: Routing source spans...")
-    routes, libraries = route_sources(source_dir, libraries, summaries, output_dir)
+    routes, libraries = route_sources(
+        source_dir,
+        libraries,
+        summaries,
+        output_dir,
+        intake_mode=normalized_mode,
+    )
 
     # Step 4: Coverage check
     logger.info("Phase 0 Step 4: Checking coverage...")
@@ -72,6 +119,7 @@ def run_phase0(source_dir: Path, output_dir: Path) -> dict[str, Any]:
     libraries_dir = assemble_output(source_dir, routes, libraries, output_dir)
 
     return {
+        "mode": normalized_mode,
         "files_summarized": len(summaries),
         "libraries_discovered": len(libraries),
         "routes_created": len(routes),

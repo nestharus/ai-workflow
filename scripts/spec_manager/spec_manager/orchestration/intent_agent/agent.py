@@ -4466,6 +4466,80 @@ class IntentAgentOrchestrator:
         item.timestamps["updated_at"] = item.quality_gate.last_checked_at
         return item
 
+    def _load_phase0_evidence_for_skeleton(self) -> dict[str, Any] | None:
+        """Load structured Phase 0 outputs for optional skeleton prefill."""
+        libraries_root = self._run_dir / "libraries"
+        if not libraries_root.exists() or not libraries_root.is_dir():
+            return None
+
+        library_records: list[dict[str, Any]] = []
+        top_level_constraint_refs: list[dict[str, str]] = []
+        for lib_dir in sorted(p for p in libraries_root.iterdir() if p.is_dir()):
+            lib_id = lib_dir.name
+            charter_path = lib_dir / "charter.md"
+            constraints_path = lib_dir / "constraints_index.json"
+
+            overview_lines: list[str] = []
+            responsibilities: list[str] = []
+            boundaries: list[str] = []
+            if charter_path.exists():
+                section = ""
+                collecting_overview = False
+                for raw_line in charter_path.read_text(encoding="utf-8").splitlines():
+                    line = raw_line.strip()
+                    if line.startswith("## "):
+                        section = line[3:].strip().lower()
+                        collecting_overview = section == "overview"
+                        continue
+                    if collecting_overview:
+                        if line.startswith("- ") or line.startswith("### "):
+                            collecting_overview = False
+                        elif line:
+                            overview_lines.append(line)
+                    if line.startswith("- "):
+                        bullet = line[2:].strip()
+                        if not bullet:
+                            continue
+                        if "responsibil" in section:
+                            responsibilities.append(bullet)
+                        elif "boundar" in section:
+                            boundaries.append(bullet)
+
+            lib_constraint_refs: list[dict[str, str]] = []
+            if constraints_path.exists():
+                try:
+                    raw_constraints = json.loads(constraints_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    raw_constraints = []
+                if isinstance(raw_constraints, list):
+                    for raw_constraint in raw_constraints:
+                        if not isinstance(raw_constraint, dict):
+                            continue
+                        element_id = str(raw_constraint.get("element_id", "")).strip()
+                        if not element_id:
+                            continue
+                        ref = {"constraint_id": element_id, "source": "phase0"}
+                        lib_constraint_refs.append(ref)
+                        top_level_constraint_refs.append(ref)
+
+            library_records.append(
+                {
+                    "lib_id": lib_id,
+                    "name": lib_id,
+                    "description": " ".join(overview_lines).strip(),
+                    "responsibilities": responsibilities,
+                    "boundaries": boundaries,
+                    "constraint_refs": lib_constraint_refs,
+                }
+            )
+
+        if not library_records and not top_level_constraint_refs:
+            return None
+        return {
+            "libraries": library_records,
+            "constraint_refs": top_level_constraint_refs,
+        }
+
     # TODO [R2-6.1]: Implement produce_skeleton() — skeleton generation
     #   - Check should_produce_skeleton() first
     #   - Use SkeletonSynthesisStrategy to produce SkeletonSpec
@@ -4509,13 +4583,23 @@ class IntentAgentOrchestrator:
         # Gather open question IDs and planner refs.
         open_items = self._queue.get_open_items()
         open_question_ids = [it.question_id for it in open_items]
-        constraint_refs: list[str] = []
+        constraint_refs: list[dict[str, str]] = []
         decision_refs: list[str] = []
+        seen_constraint_ids: set[str] = set()
         for ref in self._state.question_key_map.values():
-            constraint_refs.extend(ref.planner_constraint_ids)
+            for constraint_id in ref.planner_constraint_ids:
+                if constraint_id in seen_constraint_ids:
+                    continue
+                seen_constraint_ids.add(constraint_id)
+                constraint_refs.append(
+                    {
+                        "constraint_id": constraint_id,
+                        "source": "planner",
+                    }
+                )
             decision_refs.extend(ref.planner_decision_ids)
-        constraint_refs = self._dedupe_ordered(constraint_refs)
         decision_refs = self._dedupe_ordered(decision_refs)
+        phase0_evidence = self._load_phase0_evidence_for_skeleton()
 
         # Concept map dict.
         cm = self._state.concept_map
@@ -4544,6 +4628,7 @@ class IntentAgentOrchestrator:
             ],
             constraint_refs=constraint_refs,
             decision_refs=decision_refs,
+            phase0_outputs=phase0_evidence,
             run_agent=self._run_agent,
         )
 

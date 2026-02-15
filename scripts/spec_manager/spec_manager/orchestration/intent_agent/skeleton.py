@@ -282,6 +282,54 @@ def _project_open_questions_for_summary(
     return records, omissions
 
 
+def _normalize_constraint_ref_source(raw_source: Any, *, default: str) -> str:
+    """Normalize constraint provenance labels."""
+    source = str(raw_source).strip().lower()
+    return source or default
+
+
+def _normalize_constraint_refs(
+    raw_refs: Any,
+    *,
+    default_source: str,
+) -> list[dict[str, str]]:
+    """Normalize constraint references into {constraint_id, source} rows."""
+    if raw_refs is None:
+        return []
+
+    items = raw_refs if isinstance(raw_refs, list) else [raw_refs]
+
+    normalized: list[dict[str, str]] = []
+    index_by_id: dict[str, int] = {}
+    for raw in items:
+        if isinstance(raw, dict):
+            constraint_id = str(raw.get("constraint_id", raw.get("id", raw.get("ref", "")))).strip()
+            source = _normalize_constraint_ref_source(raw.get("source"), default=default_source)
+        else:
+            constraint_id = str(raw).strip()
+            source = default_source
+
+        if not constraint_id:
+            continue
+
+        existing_index = index_by_id.get(constraint_id)
+        if existing_index is None:
+            index_by_id[constraint_id] = len(normalized)
+            normalized.append({"constraint_id": constraint_id, "source": source})
+            continue
+
+        existing = normalized[existing_index]
+        if existing.get("source") != "phase0" and source == "phase0":
+            existing["source"] = "phase0"
+
+    return normalized
+
+
+def _constraint_ref_ids(constraint_refs: list[dict[str, str]]) -> list[str]:
+    """Extract ID list from normalized constraint references."""
+    return [entry["constraint_id"] for entry in constraint_refs if entry.get("constraint_id")]
+
+
 def _docstring_literal(text: str) -> str:
     """Escape triple-quotes for safe one-line docstrings."""
     return text.replace('"""', '"').strip()
@@ -530,10 +578,168 @@ class SkeletonSpec:
     interfaces: list[InterfaceStub] = field(default_factory=list)
     open_questions: list[dict[str, str]] = field(default_factory=list)
     open_question_ids: list[str] = field(default_factory=list)
-    constraint_refs: list[str] = field(default_factory=list)  # planner constraint IDs
+    constraint_refs: list[dict[str, str]] = field(default_factory=list)
     decision_refs: list[str] = field(default_factory=list)  # planner decision IDs
     tradeoff_positions: list[dict[str, str]] = field(default_factory=list)
     question_ref_omissions: list[dict[str, Any]] = field(default_factory=list)
+    phase0_evidence: dict[str, Any] = field(default_factory=dict)
+
+
+def _extract_phase0_library_records(phase0_outputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize structured Phase 0 library records into a stable shape."""
+    raw_libraries = phase0_outputs.get("libraries")
+    if not isinstance(raw_libraries, list):
+        raw_libraries = phase0_outputs.get("library_summaries", [])
+    if not isinstance(raw_libraries, list):
+        return []
+
+    records: list[dict[str, Any]] = []
+    for raw in raw_libraries:
+        if not isinstance(raw, dict):
+            continue
+        lib_id = str(raw.get("lib_id", raw.get("library_id", raw.get("id", "")))).strip()
+        name = str(raw.get("name", raw.get("title", ""))).strip()
+        description = str(
+            raw.get(
+                "description",
+                raw.get("summary", raw.get("responsibility_summary", "")),
+            )
+        ).strip()
+        responsibilities = _coerce_text_list(
+            raw.get("responsibilities", raw.get("charter_responsibilities", []))
+        )
+        boundaries = _coerce_text_list(raw.get("boundaries", raw.get("charter_boundaries", [])))
+        constraint_refs = _normalize_constraint_refs(
+            raw.get("constraint_refs", []),
+            default_source="phase0",
+        )
+        if not (lib_id or name or description or responsibilities or boundaries or constraint_refs):
+            continue
+        records.append(
+            {
+                "lib_id": lib_id,
+                "name": name,
+                "description": description,
+                "responsibilities": responsibilities,
+                "boundaries": boundaries,
+                "constraint_refs": constraint_refs,
+            }
+        )
+    return records
+
+
+def _build_phase0_prefill(phase0_outputs: dict[str, Any] | None) -> dict[str, Any]:
+    """Derive skeleton-prefill context from structured Phase 0 outputs."""
+    if not isinstance(phase0_outputs, dict) or not phase0_outputs:
+        return {
+            "problem_frame_patch": {},
+            "workflows": [],
+            "entities": [],
+            "interfaces": [],
+            "open_questions": [],
+            "constraint_refs": [],
+            "phase0_evidence": {},
+        }
+
+    library_records = _extract_phase0_library_records(phase0_outputs)
+    top_level_constraints = _normalize_constraint_refs(
+        phase0_outputs.get("constraint_refs", []),
+        default_source="phase0",
+    )
+    record_constraints: list[dict[str, str]] = []
+    for record in library_records:
+        record_constraints.extend(record.get("constraint_refs", []))
+    phase0_constraint_refs = _normalize_constraint_refs(
+        [*top_level_constraints, *record_constraints],
+        default_source="phase0",
+    )
+
+    goal_candidates: list[str] = []
+    for record in library_records:
+        goal_candidates.extend(record.get("responsibilities", []))
+    goals = _dedupe_non_empty_strings(goal_candidates)[:12]
+
+    restatement = str(
+        phase0_outputs.get(
+            "restatement",
+            phase0_outputs.get("intent_summary", phase0_outputs.get("summary", "")),
+        )
+    ).strip()
+    if not restatement and library_records:
+        restatement = "Intent derived from Phase 0 library responsibilities and constraints."
+
+    workflow_specs: list[WorkflowStub] = []
+    seen_workflows: set[str] = set()
+    for record in library_records:
+        source_label = record.get("lib_id") or record.get("name") or "Phase 0"
+        for responsibility in record.get("responsibilities", []):
+            normalized_name = _to_python_identifier(responsibility, fallback="workflow")
+            if not normalized_name or normalized_name in seen_workflows:
+                continue
+            seen_workflows.add(normalized_name)
+            workflow_specs.append(
+                WorkflowStub(
+                    name=normalized_name,
+                    description=f"Derived from {source_label}: {responsibility}",
+                    parameters=["input_payload"],
+                    return_type="Any",
+                )
+            )
+            if len(workflow_specs) >= 16:
+                break
+        if len(workflow_specs) >= 16:
+            break
+
+    interface_specs: list[InterfaceStub] = []
+    seen_interfaces: set[str] = set()
+    for record in library_records:
+        source_label = record.get("lib_id") or record.get("name") or "Phase 0"
+        for boundary in record.get("boundaries", []):
+            normalized_name = _to_python_class_name(boundary, fallback="ExternalInterface")
+            if not normalized_name or normalized_name in seen_interfaces:
+                continue
+            seen_interfaces.add(normalized_name)
+            interface_specs.append(
+                InterfaceStub(
+                    name=normalized_name,
+                    description=f"External boundary derived from {source_label}: {boundary}",
+                    direction="bidirectional",
+                    operations=[],
+                )
+            )
+            if len(interface_specs) >= 16:
+                break
+        if len(interface_specs) >= 16:
+            break
+
+    open_questions, _ = _project_open_questions_for_summary(
+        phase0_outputs.get("open_questions", []),
+        fallback=[],
+    )
+    phase0_evidence = {
+        "source": "phase0",
+        "libraries": [
+            {
+                "lib_id": record.get("lib_id", ""),
+                "name": record.get("name", ""),
+                "description": record.get("description", ""),
+            }
+            for record in library_records
+        ],
+    }
+
+    return {
+        "problem_frame_patch": {
+            "current_restatement": restatement,
+            "goals": goals,
+        },
+        "workflows": workflow_specs,
+        "entities": [],
+        "interfaces": interface_specs,
+        "open_questions": open_questions,
+        "constraint_refs": phase0_constraint_refs,
+        "phase0_evidence": phase0_evidence,
+    }
 
 
 class SkeletonSynthesisTransientParseError(RuntimeError):
@@ -576,18 +782,43 @@ class SkeletonSynthesisStrategy:
         concept_map: dict[str, Any],
         open_question_ids: list[str],
         open_questions: list[dict[str, str]] | None = None,
-        constraint_refs: list[str] | None = None,
+        constraint_refs: list[str | dict[str, Any]] | None = None,
         decision_refs: list[str] | None = None,
+        phase0_outputs: dict[str, Any] | None = None,
         *,
         run_agent: Any = None,
     ) -> SkeletonSpec:
         """Produce a pre-decomposition skeleton specification."""
-        constraint_refs = _dedupe_non_empty_strings(list(constraint_refs or []))
-        decision_refs = _dedupe_non_empty_strings(list(decision_refs or []))
-        open_question_records = list(
-            open_questions or [{"question_id": qid} for qid in open_question_ids]
+        phase0_prefill = _build_phase0_prefill(phase0_outputs)
+
+        effective_problem_frame = dict(problem_frame)
+        phase0_problem_frame_patch = phase0_prefill.get("problem_frame_patch", {})
+        if isinstance(phase0_problem_frame_patch, dict):
+            phase0_restatement = str(
+                phase0_problem_frame_patch.get("current_restatement", "")
+            ).strip()
+            if (
+                phase0_restatement
+                and not str(effective_problem_frame.get("current_restatement", "")).strip()
+            ):
+                effective_problem_frame["current_restatement"] = phase0_restatement
+            if not _coerce_text_list(effective_problem_frame.get("goals", [])):
+                effective_problem_frame["goals"] = _coerce_text_list(
+                    phase0_problem_frame_patch.get("goals", [])
+                )
+
+        normalized_constraint_refs = _normalize_constraint_refs(
+            [*(constraint_refs or []), *phase0_prefill.get("constraint_refs", [])],
+            default_source="intent_agent",
         )
+        decision_refs = _dedupe_non_empty_strings(list(decision_refs or []))
+        phase0_open_questions = list(phase0_prefill.get("open_questions", []))
+        open_question_records = list(open_questions or [])
+        open_question_records.extend(phase0_open_questions)
+        if not open_question_records:
+            open_question_records = [{"question_id": qid} for qid in open_question_ids]
         fallback_question_records = [{"question_id": qid} for qid in open_question_ids]
+        fallback_question_records.extend(phase0_open_questions)
         normalized_open_questions, input_question_omissions = _project_open_questions_for_summary(
             open_question_records,
             fallback=fallback_question_records,
@@ -596,26 +827,39 @@ class SkeletonSynthesisStrategy:
             record["question_id"] for record in normalized_open_questions
         ]
         tradeoff_positions = _normalize_tradeoff_positions(
-            problem_frame.get("tradeoff_positions", [])
+            effective_problem_frame.get("tradeoff_positions", [])
         )
 
         if run_agent is None:
             return SkeletonSpec(
-                problem_frame=problem_frame,
+                problem_frame=effective_problem_frame,
                 concept_map=concept_map,
+                workflows=list(phase0_prefill.get("workflows", [])),
+                entities=list(phase0_prefill.get("entities", [])),
+                interfaces=list(phase0_prefill.get("interfaces", [])),
                 open_questions=normalized_open_questions,
                 open_question_ids=normalized_open_question_ids,
-                constraint_refs=constraint_refs,
+                constraint_refs=normalized_constraint_refs,
                 decision_refs=decision_refs,
                 tradeoff_positions=tradeoff_positions,
                 question_ref_omissions=input_question_omissions,
+                phase0_evidence=dict(phase0_prefill.get("phase0_evidence", {})),
             )
 
-        scope_raw = problem_frame.get("scope", {})
+        scope_raw = effective_problem_frame.get("scope", {})
         if isinstance(scope_raw, dict):
             scope_text = json.dumps(scope_raw, indent=2)
         else:
             scope_text = json.dumps(str(scope_raw))
+        phase0_prompt_section = ""
+        phase0_evidence = phase0_prefill.get("phase0_evidence", {})
+        if isinstance(phase0_evidence, dict) and phase0_evidence:
+            phase0_prompt_section = (
+                "## Phase 0 Evidence (authoritative for prose intake)\n"
+                f"{json.dumps(phase0_evidence, indent=2)}\n\n"
+                "Use this evidence to pre-fill intent framing and skeleton stubs. "
+                "Do not invent library boundaries.\n\n"
+            )
 
         def _extract_question_metadata(
             item: dict[str, Any],
@@ -631,21 +875,23 @@ class SkeletonSynthesisStrategy:
                 )
             return _normalize_question_refs([], fallback=fallback)
 
+        constraint_ref_ids = _constraint_ref_ids(normalized_constraint_refs)
         prompt = (
             "You are a systems analyst. Given the following problem frame, "
             "produce a pre-decomposition skeleton specification.\n\n"
+            f"{phase0_prompt_section}"
             "## Problem Frame\n"
-            f"Restatement: {problem_frame.get('current_restatement', '')}\n"
-            f"Goals: {json.dumps(problem_frame.get('goals', []))}\n"
-            f"Non-goals: {json.dumps(problem_frame.get('non_goals', []))}\n"
+            f"Restatement: {effective_problem_frame.get('current_restatement', '')}\n"
+            f"Goals: {json.dumps(effective_problem_frame.get('goals', []))}\n"
+            f"Non-goals: {json.dumps(effective_problem_frame.get('non_goals', []))}\n"
             f"Scope: {scope_text}\n"
             "Frame assumptions: "
-            f"{json.dumps(problem_frame.get('frame_assumptions', []), indent=2)}\n"
+            f"{json.dumps(effective_problem_frame.get('frame_assumptions', []), indent=2)}\n"
             f"Tradeoff positions: {json.dumps(tradeoff_positions, indent=2)}\n\n"
             "## Open Question Metadata\n"
             f"{json.dumps(normalized_open_questions, indent=2)}\n\n"
             f"## Constraint refs (IDs only)\n"
-            f"{json.dumps(constraint_refs)}\n"
+            f"{json.dumps(constraint_ref_ids)}\n"
             "## Decision refs (IDs only)\n"
             f"{json.dumps(decision_refs)}\n\n"
             "Produce a JSON object with exactly three keys:\n"
@@ -692,14 +938,18 @@ class SkeletonSynthesisStrategy:
                 type(data).__name__,
             )
             return SkeletonSpec(
-                problem_frame=problem_frame,
+                problem_frame=effective_problem_frame,
                 concept_map=concept_map,
+                workflows=list(phase0_prefill.get("workflows", [])),
+                entities=list(phase0_prefill.get("entities", [])),
+                interfaces=list(phase0_prefill.get("interfaces", [])),
                 open_questions=normalized_open_questions,
                 open_question_ids=normalized_open_question_ids,
-                constraint_refs=constraint_refs,
+                constraint_refs=normalized_constraint_refs,
                 decision_refs=decision_refs,
                 tradeoff_positions=tradeoff_positions,
                 question_ref_omissions=input_question_omissions,
+                phase0_evidence=dict(phase0_prefill.get("phase0_evidence", {})),
             )
 
         expected_sections = ("workflows", "entities", "interfaces")
@@ -905,18 +1155,26 @@ class SkeletonSynthesisStrategy:
                 )
             )
 
+        if not workflows and phase0_prefill.get("workflows"):
+            workflows = list(phase0_prefill.get("workflows", []))
+        if not entities and phase0_prefill.get("entities"):
+            entities = list(phase0_prefill.get("entities", []))
+        if not interfaces and phase0_prefill.get("interfaces"):
+            interfaces = list(phase0_prefill.get("interfaces", []))
+
         return SkeletonSpec(
-            problem_frame=problem_frame,
+            problem_frame=effective_problem_frame,
             concept_map=concept_map,
             workflows=workflows,
             entities=entities,
             interfaces=interfaces,
             open_questions=normalized_open_questions,
             open_question_ids=normalized_open_question_ids,
-            constraint_refs=constraint_refs,
+            constraint_refs=normalized_constraint_refs,
             decision_refs=decision_refs,
             tradeoff_positions=tradeoff_positions,
             question_ref_omissions=question_ref_omissions,
+            phase0_evidence=dict(phase0_prefill.get("phase0_evidence", {})),
         )
 
 
@@ -959,7 +1217,10 @@ def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
         spec.open_questions,
         fallback=open_question_fallback,
     )
-    constraint_refs = _dedupe_non_empty_strings(spec.constraint_refs)
+    constraint_refs = _normalize_constraint_refs(
+        spec.constraint_refs,
+        default_source="intent_agent",
+    )
     decision_refs = _dedupe_non_empty_strings(spec.decision_refs)
 
     intent_lines = [
@@ -978,8 +1239,13 @@ def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
         "## Confirmed Constraints (refs by ID)",
     ]
     if constraint_refs:
-        for constraint_id in constraint_refs:
-            intent_lines.append(f"- {constraint_id}")
+        for ref in constraint_refs:
+            constraint_id = ref.get("constraint_id", "")
+            source = ref.get("source", "")
+            if not constraint_id:
+                continue
+            source_suffix = f" (source: {source})" if source else ""
+            intent_lines.append(f"- {constraint_id}{source_suffix}")
     else:
         intent_lines.append("- None yet")
 
@@ -1033,6 +1299,14 @@ def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
             intent_lines.append(f"- {decision_id}")
     else:
         intent_lines.append("- None yet")
+
+    phase0_evidence = spec.phase0_evidence if isinstance(spec.phase0_evidence, dict) else {}
+    if phase0_evidence:
+        intent_lines.append("")
+        intent_lines.append("## Phase 0 Evidence Summary")
+        intent_lines.append("```json")
+        intent_lines.append(json.dumps(phase0_evidence, indent=2))
+        intent_lines.append("```")
 
     if open_question_omissions:
         intent_lines.append("")
@@ -1167,7 +1441,7 @@ def render_intent_snapshot(
     problem_frame: dict[str, Any],
     concept_map: dict[str, Any],
     open_questions: list[dict[str, str]],
-    constraint_refs: list[str],
+    constraint_refs: list[str | dict[str, Any]],
     output_dir: Path,
     *,
     decision_refs: list[str] | None = None,
@@ -1194,6 +1468,10 @@ def render_intent_snapshot(
         if tradeoff_positions is not None
         else problem_frame.get("tradeoff_positions", [])
     )
+    normalized_constraint_refs = _normalize_constraint_refs(
+        constraint_refs,
+        default_source="intent_agent",
+    )
     snapshot = {
         "problem_frame": projected_problem_frame,
         "concept_map": projected_concept_map,
@@ -1210,7 +1488,8 @@ def render_intent_snapshot(
         ],
         "tradeoff_positions": projected_tradeoff_positions,
         "open_question_ref_omissions": question_ref_omissions,
-        "constraint_refs": _dedupe_non_empty_strings(constraint_refs),
+        "constraint_refs": normalized_constraint_refs,
+        "constraint_ref_ids": _constraint_ref_ids(normalized_constraint_refs),
         "decision_refs": _dedupe_non_empty_strings(list(decision_refs or [])),
     }
 
