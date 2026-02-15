@@ -1,12 +1,8 @@
 """L1 layer planner — code-as-spec skeleton analysis.
 
 L1 works with PDD skeleton files that contain spec comments and function
-stubs.  It discovers code concerns (functions, classes, spec-comment blocks)
+stubs. It discovers code concerns (functions, classes, spec-comment blocks)
 and produces function-level implementation intentions.
-
-The planner delegates heavy lifting to injected tools (research, integration,
-evidence) so it stays decoupled from the refinement and orchestration layers.
-When no tool is supplied the corresponding step is simply skipped.
 """
 
 from __future__ import annotations
@@ -21,51 +17,10 @@ from typing import Any, Literal
 logger = logging.getLogger(__name__)
 
 
-class L1Planner:
-    """LayerPlanner implementation for the L1 (code-as-spec) layer.
-
-    Parameters
-    ----------
-    research_tool:
-        Optional callable used to perform LLM-backed research queries
-        against slice context.
-    integration_tool:
-        Optional callable used to check integration constraints between
-        functions / files within the slice.
-    evidence_tool:
-        Optional callable used to look up evidence bundles for under-spec
-        resolution and signal handling.
-    """
-
-    def __init__(
-        self,
-        research_tool: Callable[..., Any] | None = None,
-        integration_tool: Callable[..., Any] | None = None,
-        evidence_tool: Callable[..., Any] | None = None,
-        constraints_tool: Any = None,
-        constraints_store_adapter: Any = None,
-    ) -> None:
-        self.layer: Literal["l1"] = "l1"
-        self._research_tool = research_tool
-        self._integration_tool = integration_tool
-        self._evidence_tool = evidence_tool
-        self._constraints_tool = constraints_tool
-        self._constraints_store_adapter = constraints_store_adapter
-
-    # ------------------------------------------------------------------
-    # Protocol methods
-    # ------------------------------------------------------------------
+class L1DiscoveryRouter:
+    """Discovers L1 code-as-spec skeleton topology for a slice."""
 
     def discover(self, ctx: Any) -> dict[str, Any]:
-        """Build a code-as-spec skeleton graph from slice files.
-
-        Reads every text file under ``ctx.slice_root``, classifies each
-        into skeleton nodes (function / class / spec_comment_block) and
-        best-effort edges (declares / mentions / calls).
-
-        Returns a dict with ``nodes`` and ``edges`` lists plus a
-        ``file_index`` mapping filenames to their node ids.
-        """
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
         if slice_root is None or not slice_root.exists():
             logger.warning("L1 discover: slice_root missing or does not exist (%s)", ctx.slice_root)
@@ -91,18 +46,185 @@ class L1Planner:
             "file_index": file_index,
         }
 
+
+class L1LayerResearchAdapter:
+    """Research + constraints adapter for L1 strategy and under-spec work."""
+
+    def __init__(self, research_tool: Any = None, constraints_tool: Any = None) -> None:
+        self._research_tool = research_tool
+        self._constraints_tool = constraints_tool
+
+    def run_agent(self, prompt: str) -> str:
+        return self._query_text(prompt, dimension="layer")
+
+    def resolve_under_spec(
+        self,
+        ctx: Any,
+        events: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        nodes = discovery.get("nodes", [])
+        node_lookup = {n["id"]: n for n in nodes}
+        func_nodes = [n for n in nodes if n.get("kind") == "function"]
+        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
+
+        if mode == "interactive":
+            questions = _compose_l1_interactive_questions(events, func_nodes, node_lookup)
+            return {
+                "blocked": bool(questions),
+                "questions": questions,
+                "resolved": [],
+                "constraints": {},
+            }
+
+        resolved: list[dict[str, Any]] = []
+        unresolved: list[dict[str, Any]] = []
+        constraints: dict[str, str] = {}
+
+        for event in events:
+            target = str(event.get("target", "")).strip()
+            question = str(event.get("question", event.get("description", ""))).strip()
+            if not question:
+                question = f"Cannot resolve: {target or '?'}"
+
+            # Strategy 1: constraints tool (authoritative source) first.
+            constrained_answer = self._resolve_from_constraints(ctx, question)
+            if constrained_answer:
+                constraints[question] = constrained_answer
+                resolved.append(
+                    {
+                        "event": event,
+                        "resolution": "constraints_tool",
+                        "answer": constrained_answer,
+                    }
+                )
+                continue
+
+            matched = _match_gap_to_node(target, func_nodes, node_lookup)
+
+            # Strategy 2: local skeleton context.
+            if matched and matched.get("spec_comment_ref"):
+                resolved.append(
+                    {
+                        "event": event,
+                        "resolution": "local_context",
+                        "spec_comment_ref": matched["spec_comment_ref"],
+                    }
+                )
+                continue
+
+            # Strategy 3: unified research tool lookup.
+            research_answer = self._query_text(question or target, dimension="layer")
+            if research_answer:
+                resolved.append(
+                    {
+                        "event": event,
+                        "resolution": "research_tool",
+                        "detail": research_answer,
+                    }
+                )
+                continue
+
+            unresolved.append(event)
+
+        blocked = len(unresolved) > 0
+        questions = [
+            str(e.get("question", f"Cannot resolve: {e.get('target', '?')}")) for e in unresolved
+        ]
+
+        return {
+            "blocked": blocked,
+            "questions": questions,
+            "resolved": resolved,
+            "constraints": constraints,
+        }
+
+    def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
+        if signal is None:
+            return None
+
+        if isinstance(signal, dict):
+            target = signal.get("target", signal.get("name", ""))
+        else:
+            target = getattr(signal, "target", getattr(signal, "name", ""))
+
+        target = str(target).strip()
+        if not target:
+            return None
+
+        answer = self._query_text(target, dimension="layer")
+        if not answer:
+            return None
+        return {
+            "resolution": "research_tool",
+            "target": target,
+            "detail": answer,
+        }
+
+    def _resolve_from_constraints(self, ctx: Any, question: str) -> str:
+        if not question or self._constraints_tool is None:
+            return ""
+        slice_id = str(getattr(ctx, "slice_id", "") or "__system__")
+        try:
+            if hasattr(self._constraints_tool, "check_coverage"):
+                coverage = self._constraints_tool.check_coverage(slice_id, [question])
+                if isinstance(coverage, dict):
+                    record = coverage.get(question)
+                    answer = str(getattr(record, "answer", "") or "").strip()
+                    if answer:
+                        return answer
+        except Exception:
+            logger.debug("L1 constraints tool failed for question=%s", question, exc_info=True)
+        return ""
+
+    def _query_text(self, question: str, *, dimension: str) -> str:
+        prompt = str(question or "").strip()
+        if not prompt or self._research_tool is None:
+            return ""
+
+        try:
+            if callable(self._research_tool):
+                raw = self._research_tool(prompt)
+                return str(raw).strip()
+
+            if hasattr(self._research_tool, "research"):
+                from spec_manager.planner.tools.research_tool import ResearchQuery
+
+                result = self._research_tool.research(
+                    ResearchQuery(question=prompt, dimension=dimension)
+                )
+                synthesis = str(getattr(result, "synthesis", "") or "").strip()
+                if synthesis:
+                    return synthesis
+
+            if hasattr(self._research_tool, "search"):
+                search_result = self._research_tool.search(prompt, max_results=1)
+                best_hit = getattr(search_result, "best_hit", None)
+                if best_hit is not None:
+                    return str(getattr(best_hit, "text", "") or "").strip()
+        except Exception:
+            logger.debug("L1 research query failed", exc_info=True)
+        return ""
+
+
+class L1SkeletonPlanner:
+    """Builds L1 plan intentions from gaps + discovery using shared strategies."""
+
+    def __init__(
+        self,
+        *,
+        research_adapter: L1LayerResearchAdapter,
+        constraints_store_adapter: Any = None,
+    ) -> None:
+        self._research_adapter = research_adapter
+        self._constraints_store_adapter = constraints_store_adapter
+
     def build_plan(
         self,
         ctx: Any,
         gaps: list[dict[str, Any]],
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
-        """Produce function implementation intentions from gaps + discovery.
-
-        Each intention is a dict with keys:
-        ``function_name``, ``file``, ``approach``, ``spec_comment_ref``,
-        ``dependencies``.
-        """
         nodes = discovery.get("nodes", [])
         func_nodes = [n for n in nodes if n.get("kind") == "function"]
         node_lookup = {n["id"]: n for n in nodes}
@@ -123,8 +245,6 @@ class L1Planner:
             }
             intentions.append(intention)
 
-        # If no gaps were supplied, generate one intention per undiscovered
-        # function node so the plan is never empty when discovery found code.
         if not gaps and func_nodes:
             for fn in func_nodes:
                 intentions.append(
@@ -161,7 +281,6 @@ class L1Planner:
         discovery: dict[str, Any],
         base_intentions: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Run the shared planning-session strategies for L1 decisions."""
         from spec_manager.planner.strategies.authority_strategy import AuthorityDeciderStrategy
         from spec_manager.planner.strategies.constraint_strategies import (
             CandidateEvaluatorStrategy,
@@ -216,16 +335,17 @@ class L1Planner:
             discovery=discovery,
             intentions=[dict(i) for i in base_intentions],
         )
+        run_agent = self._research_adapter.run_agent
         strategies = [
             ImpactClassifierStrategy(),
-            ProblemFramerStrategy(run_agent=self._research_tool),
+            ProblemFramerStrategy(run_agent=run_agent),
             ConstraintBootstrapStrategy(workspace_root),
-            ConstraintEnricherStrategy(run_agent=self._research_tool),
+            ConstraintEnricherStrategy(run_agent=run_agent),
             TradeoffMapperStrategy(workspace_root),
             NonSoftwareChecklistStrategy(),
             CandidateEvaluatorStrategy(),
             AuthorityDeciderStrategy(workspace_root),
-            QuestionComposerStrategy(run_agent=self._research_tool),
+            QuestionComposerStrategy(run_agent=run_agent),
         ]
         runner = PlanningSessionRunner(strategies)
         session = runner.run(session)
@@ -241,127 +361,88 @@ class L1Planner:
             result["decision_outcomes"] = [o.to_dict() for o in session.decision_outcomes]
         return result
 
+
+class L1Planner:
+    """LayerPlanner implementation for the L1 (code-as-spec) layer."""
+
+    def __init__(
+        self,
+        research_tool: Callable[..., Any] | None = None,
+        integration_tool: Callable[..., Any] | None = None,
+        constraints_tool: Any = None,
+        constraints_store_adapter: Any = None,
+    ) -> None:
+        self.layer: Literal["l1"] = "l1"
+        self.layer_research_adapter = L1LayerResearchAdapter(
+            research_tool=research_tool,
+            constraints_tool=constraints_tool,
+        )
+        self.discovery_router = L1DiscoveryRouter()
+        self.skeleton_planner = L1SkeletonPlanner(
+            research_adapter=self.layer_research_adapter,
+            constraints_store_adapter=constraints_store_adapter,
+        )
+        self._integration_tool = integration_tool
+        self._trace: Any | None = None
+
+    def bind_trace(self, trace: Any | None) -> None:
+        self._trace = trace
+
+    def discover(self, ctx: Any) -> dict[str, Any]:
+        discovery = self.discovery_router.discover(ctx)
+        _emit_trace_event(
+            self._trace,
+            layer=self.layer,
+            event="discover",
+            payload={
+                "nodes": len(discovery.get("nodes", [])),
+                "edges": len(discovery.get("edges", [])),
+            },
+        )
+        return discovery
+
+    def build_plan(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        plan = self.skeleton_planner.build_plan(ctx, gaps, discovery)
+        _emit_trace_event(
+            self._trace,
+            layer=self.layer,
+            event="build_plan",
+            payload={
+                "intentions": len(plan.get("intentions", [])),
+                "decision_requirements": len(plan.get("decision_requirements", [])),
+            },
+        )
+        return plan
+
     def resolve_under_spec(
         self,
         ctx: Any,
         events: list[dict[str, Any]],
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
-        """Attempt to resolve under-spec events using local code context.
-
-        Resolution strategy (in order):
-        1. Match event target against skeleton nodes — if spec comments
-           provide enough context, resolve locally.
-        2. Delegate to ``evidence_tool`` if available.
-        3. Block with questions for human review.
-        """
-        nodes = discovery.get("nodes", [])
-        node_lookup = {n["id"]: n for n in nodes}
-        func_nodes = [n for n in nodes if n.get("kind") == "function"]
-        mode = _normalize_mode(getattr(ctx, "mode", "auto"))
-
-        if mode == "interactive":
-            questions = _compose_l1_interactive_questions(events, func_nodes, node_lookup)
-            return {
-                "blocked": bool(questions),
-                "questions": questions,
-                "resolved": [],
-                "constraints": {},
-            }
-
-        resolved: list[dict[str, Any]] = []
-        unresolved: list[dict[str, Any]] = []
-
-        for event in events:
-            target = event.get("target", "")
-            matched = _match_gap_to_node(target, func_nodes, node_lookup)
-
-            # Strategy 1: local skeleton context
-            if matched and matched.get("spec_comment_ref"):
-                resolved.append(
-                    {
-                        "event": event,
-                        "resolution": "local_context",
-                        "spec_comment_ref": matched["spec_comment_ref"],
-                    }
-                )
-                continue
-
-            # Strategy 2: evidence tool
-            if self._evidence_tool is not None:
-                try:
-                    evidence_result = self._evidence_tool(target, ctx)
-                    if evidence_result:
-                        resolved.append(
-                            {
-                                "event": event,
-                                "resolution": "evidence_tool",
-                                "detail": evidence_result,
-                            }
-                        )
-                        continue
-                except Exception:
-                    logger.debug("Evidence tool raised for target=%s", target, exc_info=True)
-
-            # Strategy 3: block
-            unresolved.append(event)
-
-        blocked = len(unresolved) > 0
-        questions = [
-            e.get("question", f"Cannot resolve: {e.get('target', '?')}") for e in unresolved
-        ]
-
-        return {
-            "blocked": blocked,
-            "questions": questions,
-            "resolved": resolved,
-            "constraints": {},
-        }
+        result = self.layer_research_adapter.resolve_under_spec(ctx, events, discovery)
+        _emit_trace_event(
+            self._trace,
+            layer=self.layer,
+            event="resolve_under_spec",
+            payload={
+                "blocked": bool(result.get("blocked", False)),
+                "resolved": len(result.get("resolved", [])),
+                "questions": len(result.get("questions", [])),
+            },
+        )
+        return result
 
     def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
-        """Try to resolve an ambiguity signal from skeleton context.
-
-        Falls back to the evidence tool if one is wired.  Returns a
-        resolution dict or ``None`` when nothing can be done.
-        """
-        if signal is None:
-            return None
-
-        # Extract a target string from various signal shapes.
-        if isinstance(signal, dict):
-            target = signal.get("target", signal.get("name", ""))
-        else:
-            target = getattr(signal, "target", getattr(signal, "name", ""))
-
-        if not target:
-            return None
-
-        # Evidence tool lookup
-        if self._evidence_tool is not None:
-            try:
-                result = self._evidence_tool(target, ctx)
-                if result:
-                    return {"resolution": "evidence_tool", "target": target, "detail": result}
-            except Exception:
-                logger.debug("Evidence tool raised for signal target=%s", target, exc_info=True)
-
-        return None
+        return self.layer_research_adapter.resolve_signal(ctx, signal)
 
     def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
-        """Triage a coordination signal from a halted L1 agent.
-
-        Algorithm:
-        1. Search work items by spec text + artifact channel
-        2. Classify: in-progress / unrouted / underspecified
-        3. Return action + monitor specs
-
-        Returns dict with:
-        - action: ("WAIT_ON_WORK_ITEM" | "ROUTE_AND_WAIT" | "EXPAND_SPEC"
-                  | "WAKE_IMMEDIATELY" | "NOOP")
-        - monitors: list[dict]  (MonitorSpec-compatible dicts)
-        - routing: list[dict]  (new work items to route, if any)
-        - expansion: dict | None  (spec expansion details, if needed)
-        """
+        """Triage a coordination signal from a halted L1 agent."""
         from spec_manager.orchestration.coordination.work_items import (
             SearchQuery,
             WorkItemStore,
@@ -393,7 +474,10 @@ class L1Planner:
             return {"action": "NOOP", "monitors": []}
 
         coordination_dir = workspace_root / ".pdd_runs" / ctx.run_id / "coordination"
-        store = WorkItemStore(coordination_dir, semantic_rerank_tool=self._research_tool)
+        store = WorkItemStore(
+            coordination_dir,
+            semantic_rerank_tool=self.layer_research_adapter.run_agent,
+        )
         search_outcome = store.search_with_coverage(query)
         primary_match = search_outcome.get("primary_match")
         secondary_matches = search_outcome.get("secondary_matches", [])
@@ -531,6 +615,23 @@ class L1Planner:
             or str(need.get("summary", "")).strip()
             or "Missing spec-level behavior needed by blocked consumer.",
         }
+
+
+def _emit_trace_event(
+    trace: Any | None,
+    *,
+    layer: str,
+    event: str,
+    payload: dict[str, Any],
+) -> None:
+    if trace is None or not hasattr(trace, "add_artifact"):
+        return
+    existing = getattr(trace, "artifacts", {}).get("layer_events", [])
+    events = (
+        [row for row in existing if isinstance(row, dict)] if isinstance(existing, list) else []
+    )
+    events.append({"layer": layer, "event": event, "payload": payload})
+    trace.add_artifact("layer_events", events)
 
 
 # ---------------------------------------------------------------------------

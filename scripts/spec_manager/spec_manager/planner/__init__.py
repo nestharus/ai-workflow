@@ -10,13 +10,13 @@ Key types:
     PlanningContext  -- per-request context (run, slice, layer, bundle refs)
     PlanningRequest  -- capability + context + inputs
     PlanningResult   -- status + outputs + trace
-    Planner          -- main entry point; routes to layer planners
+    GeneralPlanner   -- main entry point; routes to layer planners
 """
 
 from __future__ import annotations
 
 from spec_manager.planner.api import (
-    Planner,
+    GeneralPlanner,
     PlanningContext,
     PlanningRequest,
     PlanningResult,
@@ -35,11 +35,11 @@ __all__ = [
     "ConstraintFact",
     "ConstraintStoreAdapter",
     "DecisionRequirement",
+    "GeneralPlanner",
     "ImpactClassification",
     "L1Planner",
     "L2Planner",
     "L3Planner",
-    "Planner",
     "PlanningContext",
     "PlanningRequest",
     "PlanningResult",

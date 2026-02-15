@@ -1,7 +1,7 @@
-"""Core types and Planner API for the planning module.
+"""Core types and planner API for the planning module.
 
 Defines the public data types (PlanningContext, PlanningRequest,
-PlanningResult) and the Planner class that serves as the single
+PlanningResult) and the GeneralPlanner class that serves as the single
 auto-mode decision authority.
 """
 
@@ -90,11 +90,11 @@ class PlanningResult:
 
 
 # ---------------------------------------------------------------------------
-# Planner
+# General Planner
 # ---------------------------------------------------------------------------
 
 
-class Planner:
+class GeneralPlanner:
     """Single auto-mode decision authority across the spec manager lifecycle.
 
     Routes each ``PlanningRequest`` to the appropriate layer planner
@@ -115,7 +115,6 @@ class Planner:
         register_defaults: bool = True,
         research_tool: Any = None,
         integration_tool: Any = None,
-        evidence_tool: Any = None,
         constraints_tool: Any = None,
         override_provider: Callable[[PlanningRequest], PlanningResult | None] | None = None,
         model_id: str = "",
@@ -147,7 +146,6 @@ class Planner:
             self._register_default_planners(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
-                evidence_tool=evidence_tool,
                 constraints_tool=constraints_tool,
             )
 
@@ -155,7 +153,6 @@ class Planner:
         self,
         research_tool: Any = None,
         integration_tool: Any = None,
-        evidence_tool: Any = None,
         constraints_tool: Any = None,
     ) -> None:
         """Register real L1/L2/L3 planners with injected tools."""
@@ -168,7 +165,6 @@ class Planner:
             L1Planner(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
-                evidence_tool=evidence_tool,
                 constraints_tool=constraints_tool,
                 constraints_store_adapter=self._constraints_adapter,
             ),
@@ -178,7 +174,6 @@ class Planner:
             L2Planner(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
-                evidence_tool=evidence_tool,
                 constraints_tool=constraints_tool,
                 constraints_store_adapter=self._constraints_adapter,
                 work_item_store=self._work_item_store,
@@ -190,7 +185,6 @@ class Planner:
             L3Planner(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
-                evidence_tool=evidence_tool,
                 constraints_tool=constraints_tool,
             ),
         )
@@ -297,6 +291,7 @@ class Planner:
                 result = self._handle_ingest_user_answer(req)
             else:
                 planner = self._layer_router.select(layer)
+                planner.bind_trace(trace)
                 result = self._capability_router.route(planner, req)
             duration_ms = (time.perf_counter() - route_start) * 1000.0
             result.trace_id = trace_id
@@ -366,6 +361,11 @@ class Planner:
             )
             return result
         finally:
+            if req.capability != "INGEST_USER_ANSWER":
+                try:
+                    self._layer_router.select(layer).bind_trace(None)
+                except Exception:
+                    logger.debug("Failed to clear layer trace binding", exc_info=True)
             ConstraintStoreAdapter.pop_planner_update_context(context_token)
 
     @staticmethod
@@ -434,42 +434,42 @@ class Planner:
     def _extract_update_identifiers(
         outputs: dict[str, Any],
     ) -> tuple[list[str], list[str], list[str]]:
-        decision_ids = Planner._coerce_id_list(outputs.get("decision_ids"))
-        decision_ids.extend(Planner._coerce_id_list(outputs.get("decision_id")))
-        constraint_ids = Planner._coerce_id_list(outputs.get("constraint_ids"))
-        constraint_ids.extend(Planner._coerce_id_list(outputs.get("constraint_id")))
-        canonical_keys = Planner._coerce_id_list(outputs.get("canonical_keys"))
-        canonical_keys.extend(Planner._coerce_id_list(outputs.get("canonical_key")))
+        decision_ids = GeneralPlanner._coerce_id_list(outputs.get("decision_ids"))
+        decision_ids.extend(GeneralPlanner._coerce_id_list(outputs.get("decision_id")))
+        constraint_ids = GeneralPlanner._coerce_id_list(outputs.get("constraint_ids"))
+        constraint_ids.extend(GeneralPlanner._coerce_id_list(outputs.get("constraint_id")))
+        canonical_keys = GeneralPlanner._coerce_id_list(outputs.get("canonical_keys"))
+        canonical_keys.extend(GeneralPlanner._coerce_id_list(outputs.get("canonical_key")))
 
         under_spec_events = outputs.get("under_spec_events")
         if isinstance(under_spec_events, list):
             for event in under_spec_events:
                 if not isinstance(event, dict):
                     continue
-                decision_ids.extend(Planner._coerce_id_list(event.get("decision_id")))
-                decision_ids.extend(Planner._coerce_id_list(event.get("decision_ids")))
-                constraint_ids.extend(Planner._coerce_id_list(event.get("constraint_id")))
-                constraint_ids.extend(Planner._coerce_id_list(event.get("constraint_ids")))
-                canonical_keys.extend(Planner._coerce_id_list(event.get("canonical_key")))
-                canonical_keys.extend(Planner._coerce_id_list(event.get("canonical_keys")))
+                decision_ids.extend(GeneralPlanner._coerce_id_list(event.get("decision_id")))
+                decision_ids.extend(GeneralPlanner._coerce_id_list(event.get("decision_ids")))
+                constraint_ids.extend(GeneralPlanner._coerce_id_list(event.get("constraint_id")))
+                constraint_ids.extend(GeneralPlanner._coerce_id_list(event.get("constraint_ids")))
+                canonical_keys.extend(GeneralPlanner._coerce_id_list(event.get("canonical_key")))
+                canonical_keys.extend(GeneralPlanner._coerce_id_list(event.get("canonical_keys")))
 
-        for requirement in Planner._extract_decision_requirements(outputs):
-            decision_ids.extend(Planner._coerce_id_list(requirement.get("decision_id")))
-            decision_ids.extend(Planner._coerce_id_list(requirement.get("decision_ids")))
-            canonical_keys.extend(Planner._coerce_id_list(requirement.get("canonical_key")))
-            canonical_keys.extend(Planner._coerce_id_list(requirement.get("canonical_keys")))
+        for requirement in GeneralPlanner._extract_decision_requirements(outputs):
+            decision_ids.extend(GeneralPlanner._coerce_id_list(requirement.get("decision_id")))
+            decision_ids.extend(GeneralPlanner._coerce_id_list(requirement.get("decision_ids")))
+            canonical_keys.extend(GeneralPlanner._coerce_id_list(requirement.get("canonical_key")))
+            canonical_keys.extend(GeneralPlanner._coerce_id_list(requirement.get("canonical_keys")))
 
         return (
-            Planner._dedupe_preserve(decision_ids),
-            Planner._dedupe_preserve(constraint_ids),
-            Planner._dedupe_preserve(canonical_keys),
+            GeneralPlanner._dedupe_preserve(decision_ids),
+            GeneralPlanner._dedupe_preserve(constraint_ids),
+            GeneralPlanner._dedupe_preserve(canonical_keys),
         )
 
     @staticmethod
     def _extract_review_questions(outputs: dict[str, Any]) -> list[dict[str, Any]]:
         review_questions: list[dict[str, Any]] = []
 
-        for requirement in Planner._extract_decision_requirements(outputs):
+        for requirement in GeneralPlanner._extract_decision_requirements(outputs):
             requirement_authority = str(requirement.get("authority_required", "")).strip().lower()
             if requirement_authority not in {"human_required", "user_required"}:
                 continue
@@ -487,27 +487,37 @@ class Planner:
                 or f"authority_required={requirement_authority}"
             )
             payload: dict[str, Any] = {}
-            requirement_ids = Planner._coerce_id_list(requirement.get("decision_requirement_id"))
-            requirement_ids.extend(
-                Planner._coerce_id_list(requirement.get("decision_requirement_ids"))
+            requirement_ids = GeneralPlanner._coerce_id_list(
+                requirement.get("decision_requirement_id")
             )
-            requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_id")))
-            requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_ids")))
-            requirement_ids = Planner._dedupe_preserve(requirement_ids)
+            requirement_ids.extend(
+                GeneralPlanner._coerce_id_list(requirement.get("decision_requirement_ids"))
+            )
+            requirement_ids.extend(
+                GeneralPlanner._coerce_id_list(requirement.get("requirement_id"))
+            )
+            requirement_ids.extend(
+                GeneralPlanner._coerce_id_list(requirement.get("requirement_ids"))
+            )
+            requirement_ids = GeneralPlanner._dedupe_preserve(requirement_ids)
             if requirement_ids:
                 payload["decision_requirement_ids"] = requirement_ids
-            requirement_decision_ids = Planner._coerce_id_list(requirement.get("decision_id"))
-            requirement_decision_ids.extend(
-                Planner._coerce_id_list(requirement.get("decision_ids"))
+            requirement_decision_ids = GeneralPlanner._coerce_id_list(
+                requirement.get("decision_id")
             )
-            requirement_decision_ids = Planner._dedupe_preserve(requirement_decision_ids)
+            requirement_decision_ids.extend(
+                GeneralPlanner._coerce_id_list(requirement.get("decision_ids"))
+            )
+            requirement_decision_ids = GeneralPlanner._dedupe_preserve(requirement_decision_ids)
             if requirement_decision_ids:
                 payload["decision_ids"] = requirement_decision_ids
-            requirement_canonical_keys = Planner._coerce_id_list(requirement.get("canonical_key"))
-            requirement_canonical_keys.extend(
-                Planner._coerce_id_list(requirement.get("canonical_keys"))
+            requirement_canonical_keys = GeneralPlanner._coerce_id_list(
+                requirement.get("canonical_key")
             )
-            requirement_canonical_keys = Planner._dedupe_preserve(requirement_canonical_keys)
+            requirement_canonical_keys.extend(
+                GeneralPlanner._coerce_id_list(requirement.get("canonical_keys"))
+            )
+            requirement_canonical_keys = GeneralPlanner._dedupe_preserve(requirement_canonical_keys)
             if requirement_canonical_keys:
                 payload["canonical_keys"] = requirement_canonical_keys
             review_questions.append(
@@ -571,7 +581,9 @@ class Planner:
         if review_questions:
             return review_questions
 
-        review_required = any(Planner._coerce_bool(outputs.get(flag)) for flag in explicit_flags)
+        review_required = any(
+            GeneralPlanner._coerce_bool(outputs.get(flag)) for flag in explicit_flags
+        )
         if not review_required and authority_required in {"human_required", "user_required"}:
             review_required = True
         if not review_required:
@@ -848,7 +860,7 @@ class Planner:
         context: PlanningContext | None = None,
         slice_id: str = "",
     ) -> PlanningResult:
-        """Ingest an Intent-Agent answer translation through Planner.plan()."""
+        """Ingest an Intent-Agent answer translation through GeneralPlanner.plan()."""
         inputs: dict[str, Any] = {}
         run_id_hint = ""
         if isinstance(translation, Path):
@@ -1895,7 +1907,7 @@ class Planner:
         if not artifact_key:
             artifact_key = str(event.get("source_file", event.get("file", ""))).strip()
         signal_id = f"{context.slice_id}:{context.iteration}:{event_id}:{event_index}"
-        spec_refs = Planner._extract_spec_refs_from_event(
+        spec_refs = GeneralPlanner._extract_spec_refs_from_event(
             event=event,
             question=question,
             source_line=source_line,

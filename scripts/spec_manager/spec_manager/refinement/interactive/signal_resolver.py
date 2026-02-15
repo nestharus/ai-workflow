@@ -51,8 +51,7 @@ class PlannerSignalResolver:
         evidence_index: object | None = None,
         use_research: bool = False,
     ) -> None:
-        from spec_manager.planner.api import Planner
-        from spec_manager.planner.tools.evidence_tool import EvidenceTool
+        from spec_manager.planner.api import GeneralPlanner
         from spec_manager.planner.tools.research_tool import ResearchTool
 
         ws = workspace or Path(".")
@@ -85,13 +84,11 @@ class PlannerSignalResolver:
             steering_script=steering_script,
             workspace=ws,
         )
-        evidence_tool = EvidenceTool(evidence_searcher=evidence_searcher)
 
-        self._planner = Planner(
+        self._planner = GeneralPlanner(
             workspace_root=ws,
             mode="auto",
             research_tool=research_tool,
-            evidence_tool=evidence_tool,
         )
 
     def resolve(self, signal: InputSignal) -> SteeringResponse | None:

@@ -5,8 +5,8 @@ entrypoints, wiring declarations) into a decision-point planning loop.
 Discovery is scoped to the current slice context rather than scanning
 the full workspace graph up front.
 
-Tools (research, integration, evidence) are injected at construction
-time and are optional -- ``None`` means "skip that capability for now".
+Tools (research and integration) are injected at construction time and are
+optional -- ``None`` means "skip that capability for now".
 Actual LLM invocations will be wired through the tool callables later;
 this module structures the data and delegates.
 """
@@ -216,6 +216,118 @@ def _extract_arch_file_refs_from_integration_payload(payload: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+class L2DiscoveryRouter:
+    """Discovery collaborator for L2 architecture artifacts."""
+
+    def __init__(self, discover_fn: Callable[[Any], dict[str, Any]]) -> None:
+        self._discover_fn = discover_fn
+
+    def discover(self, ctx: Any) -> dict[str, Any]:
+        return self._discover_fn(ctx)
+
+
+class L2SkeletonPlanner:
+    """Plan-building collaborator for L2 architecture wiring intentions."""
+
+    def __init__(
+        self,
+        build_plan_fn: Callable[[Any, list[dict[str, Any]], dict[str, Any]], dict[str, Any]],
+    ) -> None:
+        self._build_plan_fn = build_plan_fn
+
+    def build_plan(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._build_plan_fn(ctx, gaps, discovery)
+
+
+class L2LayerResearchAdapter:
+    """Research + constraints adapter for L2 planning and under-spec flow."""
+
+    def __init__(
+        self,
+        *,
+        research_tool: Any = None,
+        constraints_tool: Any = None,
+        resolve_under_spec_fn: Callable[
+            [Any, list[dict[str, Any]], dict[str, Any]], dict[str, Any]
+        ],
+        resolve_signal_fn: Callable[[Any, Any], dict[str, Any] | None],
+    ) -> None:
+        self._research_tool = research_tool
+        self._constraints_tool = constraints_tool
+        self._resolve_under_spec_fn = resolve_under_spec_fn
+        self._resolve_signal_fn = resolve_signal_fn
+
+    def run_agent(self, prompt: str) -> str:
+        question = str(prompt or "").strip()
+        if not question or self._research_tool is None:
+            return ""
+        try:
+            if callable(self._research_tool):
+                raw = self._research_tool(question)
+                return str(raw).strip()
+            if hasattr(self._research_tool, "research"):
+                from spec_manager.planner.tools.research_tool import ResearchQuery
+
+                result = self._research_tool.research(
+                    ResearchQuery(question=question, dimension="layer")
+                )
+                synthesis = str(getattr(result, "synthesis", "") or "").strip()
+                if synthesis:
+                    return synthesis
+            if hasattr(self._research_tool, "search"):
+                raw_search = self._research_tool.search(question, max_results=1)
+                best_hit = getattr(raw_search, "best_hit", None)
+                if best_hit is not None:
+                    return str(getattr(best_hit, "text", "") or "").strip()
+        except Exception:
+            logger.debug("L2 research query failed", exc_info=True)
+        return ""
+
+    def resolve_from_constraints(self, ctx: Any, question: str) -> str:
+        if not question or self._constraints_tool is None:
+            return ""
+        slice_id = str(getattr(ctx, "slice_id", "") or "__system__")
+        try:
+            if hasattr(self._constraints_tool, "check_coverage"):
+                coverage = self._constraints_tool.check_coverage(slice_id, [question])
+                if isinstance(coverage, dict):
+                    record = coverage.get(question)
+                    answer = str(getattr(record, "answer", "") or "").strip()
+                    if answer:
+                        return answer
+        except Exception:
+            logger.debug("L2 constraints tool failed", exc_info=True)
+        return ""
+
+    def resolve_under_spec(
+        self,
+        ctx: Any,
+        events: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._resolve_under_spec_fn(ctx, events, discovery)
+
+    def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
+        return self._resolve_signal_fn(ctx, signal)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> str:
+        query = str(kwargs.get("query") or (args[0] if args else "")).strip()
+        if not query:
+            return ""
+        return self.run_agent(query)
+
+    def search(self, query: str, max_results: int = 1) -> list[dict[str, Any]]:
+        text = self.run_agent(query)
+        if not text:
+            return []
+        return [{"text": text, "score": 0.5, "max_results": max_results}]
+
+
 class L2Planner:
     """Architecture-layer planner.
 
@@ -230,9 +342,6 @@ class L2Planner:
     integration_tool:
         Optional callable for integration / artifact routing analysis.
         ``None`` to skip.
-    evidence_tool:
-        Optional callable for evidence-store lookups.
-        ``None`` to skip.
     constraints_store_adapter:
         Optional orchestration adapter handle. L2 planning always runs
         the strategy pipeline and bootstraps constraints from workspace
@@ -243,7 +352,6 @@ class L2Planner:
         self,
         research_tool: _ToolFn = None,
         integration_tool: _ToolFn = None,
-        evidence_tool: _ToolFn = None,
         constraints_tool: _ToolFn = None,
         constraints_store_adapter: Any = None,
         work_item_store: Any = None,
@@ -252,17 +360,42 @@ class L2Planner:
         self.layer: Literal["l2"] = "l2"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
-        self._evidence_tool = evidence_tool
         self._constraints_tool = constraints_tool
         self._constraints_store_adapter = constraints_store_adapter
         self._work_item_store = work_item_store
         self._wait_graph = wait_graph
+        self._trace: Any | None = None
+
+        self.discovery_router = L2DiscoveryRouter(self._discover_impl)
+        self.skeleton_planner = L2SkeletonPlanner(self._build_plan_impl)
+        self.layer_research_adapter = L2LayerResearchAdapter(
+            research_tool=research_tool,
+            constraints_tool=constraints_tool,
+            resolve_under_spec_fn=self._resolve_under_spec_impl,
+            resolve_signal_fn=self._resolve_signal_impl,
+        )
 
     # ------------------------------------------------------------------
     # LayerPlanner interface
     # ------------------------------------------------------------------
 
+    def bind_trace(self, trace: Any | None) -> None:
+        self._trace = trace
+
     def discover(self, ctx: Any) -> dict[str, Any]:
+        discovery = self.discovery_router.discover(ctx)
+        _emit_trace_event(
+            self._trace,
+            layer=self.layer,
+            event="discover",
+            payload={
+                "arch_files": len(discovery.get("arch_files", [])),
+                "issues": len(discovery.get("discovery_issues", [])),
+            },
+        )
+        return discovery
+
+    def _discover_impl(self, ctx: Any) -> dict[str, Any]:
         """Route slice-scoped architecture artifacts into a discovery summary."""
         workspace_root, scope_roots = self._resolve_discovery_roots(ctx)
         routed_arch_files = _discover_arch_files(
@@ -340,6 +473,24 @@ class L2Planner:
         return topology
 
     def build_plan(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        plan = self.skeleton_planner.build_plan(ctx, gaps, discovery)
+        _emit_trace_event(
+            self._trace,
+            layer=self.layer,
+            event="build_plan",
+            payload={
+                "intentions": len(plan.get("intentions", [])),
+                "decision_requirements": len(plan.get("decision_requirements", [])),
+            },
+        )
+        return plan
+
+    def _build_plan_impl(
         self,
         ctx: Any,
         gaps: list[dict[str, Any]],
@@ -685,7 +836,7 @@ class L2Planner:
             discovery=discovery,
         )
 
-        run_agent = self._research_tool
+        run_agent = self.layer_research_adapter.run_agent
 
         strategies = [
             ImpactClassifierStrategy(),
@@ -699,7 +850,7 @@ class L2Planner:
                 run_agent=run_agent,
                 work_item_store=self._work_item_store,
                 wait_graph=self._wait_graph,
-                evidence_tool=self._evidence_tool,
+                evidence_tool=self.layer_research_adapter,
             ),
             CandidateEvaluatorStrategy(),
             AuthorityDeciderStrategy(workspace_root),
@@ -741,14 +892,33 @@ class L2Planner:
         events: list[dict[str, Any]],
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
+        result = self.layer_research_adapter.resolve_under_spec(ctx, events, discovery)
+        _emit_trace_event(
+            self._trace,
+            layer=self.layer,
+            event="resolve_under_spec",
+            payload={
+                "blocked": bool(result.get("blocked", False)),
+                "resolved_constraints": len(result.get("constraints", {})),
+                "questions": len(result.get("questions", [])),
+            },
+        )
+        return result
+
+    def _resolve_under_spec_impl(
+        self,
+        ctx: Any,
+        events: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
         """Try to resolve under-spec events using architecture context.
 
         Resolution strategy (in order):
-        1. Use routed architecture artifacts from *discovery* to see if the
-           answer is derivable from known manifests / wiring declarations.
-        2. If an ``evidence_tool`` is available, query it for prior
-           findings that could fill the gap.
-        3. If still unresolved, return ``blocked=True`` with questions
+        1. Query constraints first for authoritative answers.
+        2. Use routed architecture artifacts from *discovery* when constraints
+           do not already answer the question.
+        3. Ask the shared research tool for additional evidence.
+        4. If still unresolved, return ``blocked=True`` with questions
            for human input.
         """
         mode = _normalize_mode(getattr(ctx, "mode", "auto"))
@@ -768,10 +938,16 @@ class L2Planner:
 
         for event in events:
             event_id = event.get("id", event.get("event_id", ""))
-            question = event.get("question", event.get("description", ""))
+            question = str(event.get("question", event.get("description", ""))).strip()
             constraint_key = event_id or question
 
-            # Strategy 1: resolve from routed architecture artifacts.
+            # Strategy 1: constraints first.
+            constraint_answer = self.layer_research_adapter.resolve_from_constraints(ctx, question)
+            if constraint_answer:
+                resolved_constraints[constraint_key] = constraint_answer
+                continue
+
+            # Strategy 2: resolve from routed architecture artifacts.
             artifact_answer = self._resolve_event_from_artifacts(
                 event=event,
                 question=question,
@@ -783,33 +959,13 @@ class L2Planner:
                 resolved_constraints[constraint_key] = artifact_answer
                 continue
 
-            # Strategy 2: evidence lookup.
-            if self._evidence_tool is not None:
-                try:
-                    evidence_hit: Any
-                    if callable(self._evidence_tool):
-                        evidence_hit = self._evidence_tool(
-                            query=question,
-                            layer="l2",
-                            ctx_metadata=getattr(ctx, "metadata", {}),
-                        )
-                    elif hasattr(self._evidence_tool, "search"):
-                        evidence_hit = self._evidence_tool.search(question, max_results=1)
-                    else:
-                        evidence_hit = None
+            # Strategy 3: shared research lookup.
+            answer = self.layer_research_adapter.run_agent(question)
+            if answer:
+                resolved_constraints[constraint_key] = answer
+                continue
 
-                    answer = self._coerce_evidence_answer(evidence_hit)
-                    if answer:
-                        resolved_constraints[constraint_key] = answer
-                        continue
-                except Exception:
-                    logger.warning(
-                        "L2 evidence_tool failed for event %s",
-                        event_id,
-                        exc_info=True,
-                    )
-
-            # Strategy 3: cannot resolve -- block.
+            # Strategy 4: cannot resolve -- block.
             if question:
                 remaining_questions.append(question)
             elif constraint_key:
@@ -1048,37 +1204,25 @@ class L2Planner:
         return rendered[:1000] if rendered else ""
 
     def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
+        return self.layer_research_adapter.resolve_signal(ctx, signal)
+
+    def _resolve_signal_impl(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
         """Attempt to resolve an ambiguity signal from architecture context.
 
-        If an ``evidence_tool`` is available, look up prior evidence
-        that might clarify the signal.  Returns a resolution dict or
-        ``None`` when the signal cannot be resolved at this layer.
+        Uses the shared research adapter to fetch prior evidence that may
+        clarify the signal. Returns ``None`` when unresolved.
         """
         if signal is None:
             return None
 
         signal_text = signal if isinstance(signal, str) else getattr(signal, "text", str(signal))
-
-        if self._evidence_tool is not None:
-            try:
-                result = self._evidence_tool(
-                    query=signal_text,
-                    layer="l2",
-                    ctx_metadata=getattr(ctx, "metadata", {}),
-                )
-                if result:
-                    return {
-                        "resolved": True,
-                        "source": "evidence",
-                        "detail": result,
-                    }
-            except Exception:
-                logger.warning(
-                    "L2 evidence_tool failed in resolve_signal",
-                    exc_info=True,
-                )
-
-        # Cannot resolve at this layer.
+        result = self.layer_research_adapter.run_agent(str(signal_text))
+        if result:
+            return {
+                "resolved": True,
+                "source": "research_tool",
+                "detail": result,
+            }
         return None
 
     def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
@@ -1184,6 +1328,23 @@ class L2Planner:
             "scope": inter_scope,
             "why": "cross_boundary_evidence_waiting_existing_l2_decision",
         }
+
+
+def _emit_trace_event(
+    trace: Any | None,
+    *,
+    layer: str,
+    event: str,
+    payload: dict[str, Any],
+) -> None:
+    if trace is None or not hasattr(trace, "add_artifact"):
+        return
+    existing = getattr(trace, "artifacts", {}).get("layer_events", [])
+    events = (
+        [row for row in existing if isinstance(row, dict)] if isinstance(existing, list) else []
+    )
+    events.append({"layer": layer, "event": event, "payload": payload})
+    trace.add_artifact("layer_events", events)
 
 
 # ---------------------------------------------------------------------------

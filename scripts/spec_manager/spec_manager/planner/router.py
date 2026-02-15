@@ -24,9 +24,21 @@ Layer = Literal["l1", "l2", "l3", "any"]
 
 @runtime_checkable
 class LayerPlanner(Protocol):
-    """Protocol that every per-layer planner must satisfy."""
+    """Protocol that every per-layer planner must satisfy.
+
+    Each layer planner is composed from three collaborators:
+    ``discovery_router``, ``skeleton_planner``, and
+    ``layer_research_adapter``.
+    """
 
     layer: Layer
+    discovery_router: Any
+    skeleton_planner: Any
+    layer_research_adapter: Any
+
+    def bind_trace(self, trace: Any | None) -> None:
+        """Bind per-request trace context for layer-level instrumentation."""
+        ...
 
     def discover(self, ctx: Any) -> dict[str, Any]:
         """Gather layer-specific discovery data for the slice."""
@@ -63,25 +75,60 @@ class _StubPlanner:
 
     def __init__(self, layer: Layer) -> None:
         self.layer: Layer = layer
+        self.discovery_router = _StubDiscoveryRouter()
+        self.skeleton_planner = _StubSkeletonPlanner()
+        self.layer_research_adapter = _StubResearchAdapter()
+        self._trace: Any | None = None
+
+    def bind_trace(self, trace: Any | None) -> None:
+        self._trace = trace
 
     def discover(self, ctx: Any) -> dict[str, Any]:
-        return {}
+        return self.discovery_router.discover(ctx)
 
     def build_plan(
         self, ctx: Any, gaps: list[dict[str, Any]], discovery: dict[str, Any]
     ) -> dict[str, Any]:
-        return {"intentions": []}
+        return self.skeleton_planner.build_plan(ctx, gaps, discovery)
 
     def resolve_under_spec(
         self, ctx: Any, events: list[dict[str, Any]], discovery: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self.layer_research_adapter.resolve_under_spec(ctx, events, discovery)
+
+    def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
+        return self.layer_research_adapter.resolve_signal(ctx, signal)
+
+    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
+        return {"action": "NOOP", "monitors": []}
+
+
+class _StubDiscoveryRouter:
+    def discover(self, ctx: Any) -> dict[str, Any]:
+        return {}
+
+
+class _StubSkeletonPlanner:
+    def build_plan(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"intentions": []}
+
+
+class _StubResearchAdapter:
+    def resolve_under_spec(
+        self,
+        ctx: Any,
+        events: list[dict[str, Any]],
+        discovery: dict[str, Any],
     ) -> dict[str, Any]:
         return {"blocked": False, "constraints": {}}
 
     def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
         return None
-
-    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
-        return {"action": "NOOP", "monitors": []}
 
 
 # ---------------------------------------------------------------------------
@@ -192,11 +239,11 @@ class CapabilityRouter:
             return PlanningResult(status=status, outputs=triage_result)
 
         if capability == "INGEST_USER_ANSWER":
-            # Normally handled in Planner.plan() before reaching the router.
-            # If reached here, return ERROR since it requires Planner-level state.
+            # Normally handled in GeneralPlanner.plan() before reaching the router.
+            # If reached here, return ERROR since it requires root-planner state.
             return PlanningResult(
                 status="ERROR",
-                error="INGEST_USER_ANSWER must be handled by Planner, not LayerPlanner",
+                error="INGEST_USER_ANSWER must be handled by GeneralPlanner, not LayerPlanner",
             )
 
         return PlanningResult(

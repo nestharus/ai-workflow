@@ -865,7 +865,7 @@ class PlannerEvalHarness:
     ) -> dict[str, Any]:
         """Re-run a planner decision using the original request + overrides."""
         from spec_manager.planner.api import (
-            Planner,
+            GeneralPlanner,
             PlanningContext,
             PlanningRequest,
         )
@@ -902,7 +902,7 @@ class PlannerEvalHarness:
             metadata=metadata,
         )
 
-        planner = Planner(
+        planner = GeneralPlanner(
             workspace_root=workspace_root,
             mode=ctx.mode,
             model_id=model_id,

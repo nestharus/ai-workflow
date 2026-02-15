@@ -124,13 +124,13 @@ def build_intent_agent_with_planner(
 ) -> IntentAgentOrchestrator:
     """Build an Intent Agent with Planner ingestion wired at orchestration layer."""
 
-    from spec_manager.planner.api import Planner
+    from spec_manager.planner.api import GeneralPlanner
 
-    planner_cell: dict[str, Planner] = {}
+    planner_cell: dict[str, GeneralPlanner] = {}
 
     def _on_translation_saved(translation: AnswerTranslation) -> Any:
         if "planner" not in planner_cell:
-            planner_cell["planner"] = Planner(workspace_root=workspace_root)
+            planner_cell["planner"] = GeneralPlanner(workspace_root=workspace_root)
         planner = planner_cell["planner"]
         return planner.ingest_user_answer(translation)
 

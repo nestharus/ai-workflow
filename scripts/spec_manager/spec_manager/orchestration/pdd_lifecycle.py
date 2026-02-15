@@ -194,11 +194,10 @@ class PddLifecycle:
         wait_graph: Any = None,
         on_constraint_saved: Callable[[str, str, str], None] | None = None,
     ) -> Any:
-        """Build a Planner instance with lifecycle tools and coordination wiring."""
+        """Build a GeneralPlanner instance with lifecycle tools and coordination wiring."""
         from spec_manager.orchestration.source_analysis_cache import SourceAnalysisCache
-        from spec_manager.planner.api import Planner
+        from spec_manager.planner.api import GeneralPlanner
         from spec_manager.planner.tools.constraints_tool import ConstraintsTool
-        from spec_manager.planner.tools.evidence_tool import EvidenceTool
         from spec_manager.planner.tools.integration_tool import IntegrationTool
         from spec_manager.planner.tools.research_tool import ResearchTool
 
@@ -254,7 +253,6 @@ class PddLifecycle:
             research_coordinator=research_coordinator,
             workspace=self.manager.workspace_path,
         )
-        evidence_tool = EvidenceTool(evidence_searcher=evidence_searcher)
 
         # Build source analysis cache and integration/constraints tools
         source_cache = SourceAnalysisCache(
@@ -267,11 +265,10 @@ class PddLifecycle:
         )
         constraints_tool = ConstraintsTool(workspace_root=self.manager.workspace_path)
 
-        return Planner(
+        return GeneralPlanner(
             workspace_root=self.manager.workspace_path,
             mode=self.mode,
             research_tool=research_tool,
-            evidence_tool=evidence_tool,
             integration_tool=integration_tool,
             constraints_tool=constraints_tool,
             override_provider=self._planner_override_provider,
