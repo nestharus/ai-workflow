@@ -474,9 +474,15 @@ class ComplianceScorer:
             ComplianceResult with blockers/warnings from promotion gates.
         """
         from spec_manager.compliance.promotion.orchestrator import LayerPromotionGate
+        from spec_manager.orchestration.evidence import EvidenceBundle
 
+        evidence_bundle = EvidenceBundle(
+            workspace_root=str(config.project_root),
+            slice_root=str(config.project_root),
+        )
         gate = LayerPromotionGate(
             config=config,
+            evidence_bundle=evidence_bundle,
             pin_registry=pin_registry,
             provenance_registry_path=provenance_registry_path,
         )

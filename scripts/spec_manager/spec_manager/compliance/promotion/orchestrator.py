@@ -50,6 +50,7 @@ from spec_manager.compliance.promotion.result import (
 from spec_manager.compliance.promotion.test_pin_gate import (
     check_test_pin_alignment_gate,
 )
+from spec_manager.orchestration.evidence import EvidenceBundle
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 if TYPE_CHECKING:
@@ -64,28 +65,24 @@ class LayerPromotionGate:
     def __init__(
         self,
         config: PromotionGateConfig,
+        evidence_bundle: EvidenceBundle,
         pin_registry: PinFunctionRegistry | None = None,
-        graph_snapshot: dict[str, Any] | None = None,
-        pins_snapshot: dict[str, Any] | None = None,
         provenance_registry_path: Path | None = None,
         evidence_index: EvidenceIndex | None = None,
         entities_artifact: EntitiesArtifact | None = None,
         algorithmic_analyzed: list[Any] | None = None,
         architectural_analyzed: list[Any] | None = None,
-        gap_inventory: list[dict[str, Any]] | None = None,
         component_manifest_path: Path | None = None,
     ) -> None:
         self._config = config
+        self._bundle = evidence_bundle
         self._pin_registry = pin_registry
-        self._graph_snapshot = graph_snapshot or {}
-        self._pins_snapshot = pins_snapshot or {}
         self._provenance_registry_path = provenance_registry_path
         self._evidence_index = evidence_index
         self._entities_artifact = entities_artifact
         self._project_root = Path(config.project_root)
         self._algorithmic_analyzed = algorithmic_analyzed
         self._architectural_analyzed = architectural_analyzed
-        self._gap_inventory = gap_inventory
         self._component_manifest_path_override = component_manifest_path
 
     def run_all_checks(self) -> PromotionReport:
@@ -148,22 +145,13 @@ class LayerPromotionGate:
         """Dispatch one gate execution."""
         if gate_id == GateId.NO_REMAINING_COMMENTS:
             return (
-                check_no_remaining_comments(
-                    algorithmic_files,
-                    gate_spec,
-                    analyzed=self._algorithmic_analyzed,
-                    gap_inventory=self._gap_inventory,
-                ),
+                check_no_remaining_comments(self._bundle, gate_spec),
                 pin_coverage_report,
             )
 
         if gate_id == GateId.NO_STUB_FUNCTIONS:
             return (
-                check_no_stub_functions(
-                    algorithmic_files,
-                    gate_spec,
-                    analyzed=self._algorithmic_analyzed,
-                ),
+                check_no_stub_functions(self._bundle, gate_spec),
                 pin_coverage_report,
             )
 
@@ -175,23 +163,13 @@ class LayerPromotionGate:
 
         if gate_id == GateId.CALL_GRAPH_CONNECTED:
             return (
-                check_call_graph_connected(
-                    algorithmic_files,
-                    self._project_root,
-                    gate_spec,
-                    analyzed=self._algorithmic_analyzed,
-                ),
+                check_call_graph_connected(self._bundle, gate_spec),
                 pin_coverage_report,
             )
 
         if gate_id == GateId.STORE_MONOGAMY:
             return (
-                check_store_monogamy(
-                    algorithmic_files,
-                    self._project_root,
-                    gate_spec,
-                    analyzed=self._algorithmic_analyzed,
-                ),
+                check_store_monogamy(self._bundle, gate_spec),
                 pin_coverage_report,
             )
 
@@ -422,53 +400,40 @@ class LayerPromotionGate:
         )
 
     def _resolve_algorithmic_files(self) -> list[Path]:
-        """Resolve algorithmic files from snapshots first, then roots."""
-        snapshot_files = self._collect_files_from_pins_snapshot()
-        if snapshot_files:
-            return snapshot_files
-        return self._resolve_files(self._config.algorithmic_roots)
+        """Resolve algorithmic files strictly from EvidenceBundle artifacts."""
+        files = self._collect_files_from_pins_snapshot()
+        files.extend(self._collect_algorithmic_files_from_facts())
+        return self._dedupe_paths(files)
 
     def _resolve_architectural_files(self) -> list[Path]:
-        """Resolve architectural files from snapshots first, then roots."""
-        snapshot_files = self._collect_files_from_graph_snapshot()
-        if snapshot_files:
-            return snapshot_files
-        return self._resolve_files(self._config.architectural_roots)
+        """Resolve architectural files strictly from EvidenceBundle artifacts."""
+        return self._dedupe_paths(self._collect_files_from_graph_snapshot())
 
     def _collect_files_from_pins_snapshot(self) -> list[Path]:
         """Collect algorithmic file paths from a pins snapshot payload."""
-        payload = self._pins_snapshot if isinstance(self._pins_snapshot, dict) else {}
+        payload = self._load_snapshot_payload(self._bundle.pins_snapshot.path)
         pins = payload.get("pins")
         if not isinstance(pins, list):
             return []
 
         files: list[Path] = []
-        seen: set[str] = set()
         for pin in pins:
             if not isinstance(pin, dict):
                 continue
             candidate = pin.get("file_path") or pin.get("file")
             if not isinstance(candidate, str) or not candidate.strip():
                 continue
-            resolved = (self._project_root / candidate).resolve()
-            if not resolved.is_file():
-                continue
-            key = resolved.as_posix()
-            if key in seen:
-                continue
-            seen.add(key)
-            files.append(resolved)
+            files.append(self._as_project_path(candidate))
         return files
 
     def _collect_files_from_graph_snapshot(self) -> list[Path]:
         """Collect architectural file paths from a graph snapshot payload."""
-        payload = self._graph_snapshot if isinstance(self._graph_snapshot, dict) else {}
+        payload = self._load_snapshot_payload(self._bundle.graph_snapshot.path)
         edges = payload.get("edges")
         if not isinstance(edges, list):
             return []
 
         files: list[Path] = []
-        seen: set[str] = set()
         for edge in edges:
             if not isinstance(edge, dict):
                 continue
@@ -479,15 +444,58 @@ class LayerPromotionGate:
                     candidate = raw_dst.split(":", 1)[0]
             if not isinstance(candidate, str) or not candidate.strip():
                 continue
-            resolved = (self._project_root / candidate).resolve()
-            if not resolved.is_file():
+            files.append(self._as_project_path(candidate))
+        return files
+
+    def _collect_algorithmic_files_from_facts(self) -> list[Path]:
+        files: list[Path] = []
+        for fn in (self._bundle.facts.functions or {}).values():
+            if not isinstance(fn, dict):
                 continue
-            key = resolved.as_posix()
+            file_path = fn.get("file")
+            if isinstance(file_path, str) and file_path.strip():
+                files.append(self._as_project_path(file_path))
+        for atom in (self._bundle.facts.atoms or {}).values():
+            if not isinstance(atom, dict):
+                continue
+            file_path = atom.get("file")
+            if isinstance(file_path, str) and file_path.strip():
+                files.append(self._as_project_path(file_path))
+        return files
+
+    def _load_snapshot_payload(self, relative_path: str) -> dict[str, Any]:
+        if not isinstance(relative_path, str) or not relative_path.strip():
+            return {}
+        snapshot_path = self._evidence_iteration_dir() / relative_path
+        try:
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _evidence_iteration_dir(self) -> Path:
+        evidence_root = Path(
+            self._bundle.slice_root or self._bundle.workspace_root or self._project_root
+        )
+        return self._bundle.iter_dir(evidence_root)
+
+    def _as_project_path(self, candidate: str) -> Path:
+        path = Path(candidate)
+        if path.is_absolute():
+            return path.resolve()
+        return (self._project_root / path).resolve()
+
+    @staticmethod
+    def _dedupe_paths(paths: list[Path]) -> list[Path]:
+        deduped: list[Path] = []
+        seen: set[str] = set()
+        for path in paths:
+            key = path.as_posix()
             if key in seen:
                 continue
             seen.add(key)
-            files.append(resolved)
-        return files
+            deduped.append(path)
+        return deduped
 
     def _atom_registry_for_coverage(self) -> AtomRegistry:
         from spec_manager.branches.atoms import AtomRegistry as _AtomRegistry
@@ -500,16 +508,6 @@ class LayerPromotionGate:
         if self._provenance_registry_path:
             return ProvenanceRegistry.load(self._provenance_registry_path)
         return ProvenanceRegistry()
-
-    def _resolve_files(self, roots: list[str]) -> list[Path]:
-        from spec_manager.core.language import source_rglob
-
-        files: list[Path] = []
-        for root in roots:
-            root_path = self._project_root / root
-            if root_path.exists():
-                files.extend(source_rglob(root_path))
-        return files
 
     def _load_component_manifest(self) -> tuple[Path | None, dict[str, Any] | None]:
         """Load component manifest from explicit path or run reports."""

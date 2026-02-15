@@ -177,6 +177,11 @@ class FactsRef:
     functions: dict[str, Any] = field(default_factory=dict)
     stores: dict[str, Any] = field(default_factory=dict)
     atoms: dict[str, Any] = field(default_factory=dict)
+    remaining_gap_pins: list[dict[str, Any]] = field(default_factory=list)
+    stub_nodes: list[dict[str, Any]] = field(default_factory=list)
+    call_graph_nodes: list[str] = field(default_factory=list)
+    call_graph_edges: list[dict[str, Any]] = field(default_factory=list)
+    store_owners: dict[str, list[str]] = field(default_factory=dict)
     constraints_refs: list[str] = field(default_factory=list)
     llm_claims: list[dict[str, Any]] = field(default_factory=list)
 

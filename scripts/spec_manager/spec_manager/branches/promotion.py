@@ -22,6 +22,7 @@ from typing import Any
 from spec_manager.compliance.promotion.config import GateId, PromotionGateConfig
 from spec_manager.compliance.promotion.orchestrator import LayerPromotionGate
 from spec_manager.compliance.promotion.result import PromotionReport
+from spec_manager.orchestration.evidence import EvidenceBundle
 
 from .atoms import AtomRegistry
 from .compliance import ComplianceGateResult
@@ -213,7 +214,11 @@ class PromotionEngine:
             str(alg_dir.relative_to(self._layout.run_root)),
         ]
 
-        gate = LayerPromotionGate(config)
+        evidence_bundle = EvidenceBundle(
+            workspace_root=str(self._layout.run_root),
+            slice_root=str(self._layout.run_root),
+        )
+        gate = LayerPromotionGate(config, evidence_bundle=evidence_bundle)
         report = gate.run_all_checks()
         result = _promotion_report_to_compliance_result(report)
 

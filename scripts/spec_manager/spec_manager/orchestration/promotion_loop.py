@@ -5301,7 +5301,7 @@ class PromoteStep:
         return StepResult(status="OK")
 
     def _promote_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """L2: run canonical promotion gates with snapshot adapters."""
+        """L2: run canonical promotion gates as EvidenceBundle queries."""
         from spec_manager.compliance.promotion.config import PromotionGateConfig
         from spec_manager.compliance.promotion.orchestrator import LayerPromotionGate
         from spec_manager.schemas.pin_functions import PinFunctionRegistry
@@ -5309,27 +5309,6 @@ class PromoteStep:
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
         if not slice_root:
             return StepResult(status="RETRY", error="L2 PROMOTE missing slice root")
-
-        evidence_root = _evidence_base_path(
-            slice_root=ctx.slice_root,
-            workspace_root=ctx.workspace_root,
-        )
-        iteration_dir = bundle.iter_dir(evidence_root)
-
-        pins_snapshot: dict[str, Any] = {}
-        graph_snapshot: dict[str, Any] = {}
-        try:
-            if bundle.pins_snapshot.path:
-                pins_snapshot = json.loads(
-                    (iteration_dir / bundle.pins_snapshot.path).read_text(encoding="utf-8")
-                )
-            if bundle.graph_snapshot.path:
-                graph_snapshot = json.loads(
-                    (iteration_dir / bundle.graph_snapshot.path).read_text(encoding="utf-8")
-                )
-        except (OSError, json.JSONDecodeError):
-            pins_snapshot = {}
-            graph_snapshot = {}
 
         registry_path = slice_root / ".spec" / "pin_registry.json"
         pin_registry: PinFunctionRegistry | None = None
@@ -5346,9 +5325,8 @@ class PromoteStep:
 
         gate = LayerPromotionGate(
             config=config,
+            evidence_bundle=bundle,
             pin_registry=pin_registry,
-            graph_snapshot=graph_snapshot,
-            pins_snapshot=pins_snapshot,
         )
         report = gate.run_all_checks()
 
@@ -7068,7 +7046,41 @@ class PromotionLoop:
         functions = dict(bundle.facts.functions or {})
         stores = dict(bundle.facts.stores or {})
         atoms = dict(bundle.facts.atoms or {})
+        remaining_gap_pins = list(bundle.facts.remaining_gap_pins or [])
+        stub_nodes = list(bundle.facts.stub_nodes or [])
+        call_graph_nodes = {
+            str(node).strip() for node in (bundle.facts.call_graph_nodes or []) if str(node).strip()
+        }
+        call_graph_edges = list(bundle.facts.call_graph_edges or [])
+        store_owners = {
+            str(store_id).strip(): [
+                str(owner).strip()
+                for owner in owners
+                if isinstance(owner, str) and str(owner).strip()
+            ]
+            for store_id, owners in (bundle.facts.store_owners or {}).items()
+            if str(store_id).strip() and isinstance(owners, list)
+        }
         llm_claims = list(bundle.facts.llm_claims or [])
+
+        def _canonical_signal(value: Any) -> str:
+            if not isinstance(value, str):
+                return "REFERENCE"
+            signal = value.strip().upper()
+            if signal in {"CALL", "CALLS"}:
+                return "CALL"
+            if signal in {"STORE_TOUCH", "AGGREGATION"}:
+                return "STORE_TOUCH"
+            if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
+                return "EVENT"
+            return "REFERENCE"
+
+        def _append_unique(records: list[dict[str, Any]], candidate: dict[str, Any]) -> None:
+            fingerprint = json.dumps(candidate, sort_keys=True)
+            for existing in records:
+                if json.dumps(existing, sort_keys=True) == fingerprint:
+                    return
+            records.append(candidate)
 
         for entry in bundle.source_index.entries or []:
             if not isinstance(entry, dict):
@@ -7094,6 +7106,16 @@ class PromotionLoop:
                     "file": file_path,
                     "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
                 }
+                if bool(fn.get("is_stub")):
+                    _append_unique(
+                        stub_nodes,
+                        {
+                            "node_id": qualified_name,
+                            "file_path": file_path,
+                            "line": fn.get("start_line"),
+                            "stub_type": fn.get("stub_reason") or "analysis_stub",
+                        },
+                    )
 
         for pin in bundle.implementation.pin_proposals or []:
             pin_id = pin.get("pin_id") or pin.get("id") or pin.get("fqn") or ""
@@ -7104,21 +7126,97 @@ class PromotionLoop:
                 "boundaries": pin.get("span", {}),
                 "responsibilities": pin.get("responsibilities", []),
             }
+            call_graph_nodes.add(str(pin_id).strip())
 
         for edge in bundle.implementation.edge_proposals or []:
-            if edge.get("signal_type") != "STORE_TOUCH":
+            signal_type = _canonical_signal(
+                edge.get("signal_type") or edge.get("type") or edge.get("projection_type")
+            )
+            src = str(
+                edge.get("src") or edge.get("src_id") or edge.get("pin_func_id") or ""
+            ).strip()
+            dst = str(
+                edge.get("dst")
+                or edge.get("dst_id")
+                or edge.get("arch_location")
+                or edge.get("store_id")
+                or ""
+            ).strip()
+
+            if signal_type == "CALL" and src and dst:
+                call_graph_nodes.update({src, dst})
+                _append_unique(
+                    call_graph_edges,
+                    {
+                        "src": src,
+                        "dst": dst,
+                        "signal_type": "CALL",
+                        "confidence": edge.get("confidence", 1.0),
+                    },
+                )
+
+            if signal_type != "STORE_TOUCH":
                 continue
-            store_id = edge.get("dst") or edge.get("store_id") or ""
+            store_id = dst
             if not store_id:
                 continue
-            owner = edge.get("src", "")
+            owner = src
             owner_atoms = [owner] if owner else []
             existing = stores.get(store_id, {})
+            if not isinstance(existing, dict):
+                existing = {}
             previous = existing.get("owner_atoms", [])
             stores[store_id] = {
                 "owner_atoms": sorted(set(previous + owner_atoms)),
                 "schema": existing.get("schema", {}),
             }
+            current_store_owners = set(store_owners.get(store_id, []))
+            current_store_owners.update(owner_atoms)
+            store_owners[store_id] = sorted(owner for owner in current_store_owners if owner)
+
+        gap_inputs: list[dict[str, Any]] = []
+        for gap in bundle.gaps.open_gaps or []:
+            if isinstance(gap, dict):
+                gap_inputs.append(gap)
+        for gap in bundle.implementation.gap_inventory or []:
+            if isinstance(gap, dict):
+                gap_inputs.append(gap)
+
+        comment_gap_kinds = {"spec_comment_unimplemented", "executable_comment", "comment_gap"}
+        for gap in gap_inputs:
+            raw_kind = gap.get("kind") or gap.get("gap_type") or gap.get("type") or ""
+            kind = str(raw_kind).strip()
+            kind_lower = kind.lower()
+            if "stub" in kind_lower:
+                node_id = (
+                    str(gap.get("pin_id") or gap.get("atom_id") or gap.get("anchor") or "").strip()
+                    or str(gap.get("file") or "").strip()
+                )
+                _append_unique(
+                    stub_nodes,
+                    {
+                        "node_id": node_id,
+                        "file_path": gap.get("file")
+                        or (gap.get("location") or {}).get("file")
+                        or "",
+                        "line": (gap.get("span") or {}).get("start_line"),
+                        "stub_type": kind or "stub_gap",
+                    },
+                )
+            if "comment" not in kind_lower and kind_lower not in comment_gap_kinds:
+                continue
+            _append_unique(
+                remaining_gap_pins,
+                {
+                    "pin_id": str(
+                        gap.get("pin_id") or gap.get("atom_id") or gap.get("anchor") or ""
+                    ).strip(),
+                    "kind": kind,
+                    "file": gap.get("file") or (gap.get("location") or {}).get("file"),
+                    "description": gap.get("description", ""),
+                    "span": gap.get("span", {}),
+                },
+            )
 
         seen_claims: set[str] = set()
         for claim in llm_claims:
@@ -7144,11 +7242,25 @@ class PromotionLoop:
         bundle.facts.functions = functions
         bundle.facts.stores = stores
         bundle.facts.atoms = atoms
+        bundle.facts.remaining_gap_pins = remaining_gap_pins
+        bundle.facts.stub_nodes = stub_nodes
+        bundle.facts.call_graph_nodes = sorted(node for node in call_graph_nodes if node)
+        bundle.facts.call_graph_edges = call_graph_edges
+        bundle.facts.store_owners = {
+            store_id: sorted(set(owners))
+            for store_id, owners in store_owners.items()
+            if store_id and owners
+        }
         bundle.facts.llm_claims = llm_claims
         if (
             bundle.facts.functions
             or bundle.facts.stores
             or bundle.facts.atoms
+            or bundle.facts.remaining_gap_pins
+            or bundle.facts.stub_nodes
+            or bundle.facts.call_graph_nodes
+            or bundle.facts.call_graph_edges
+            or bundle.facts.store_owners
             or bundle.facts.llm_claims
             or bundle.facts.constraints_refs
         ):
@@ -7218,6 +7330,11 @@ class PromotionLoop:
             bundle.facts.functions
             or bundle.facts.stores
             or bundle.facts.atoms
+            or bundle.facts.remaining_gap_pins
+            or bundle.facts.stub_nodes
+            or bundle.facts.call_graph_nodes
+            or bundle.facts.call_graph_edges
+            or bundle.facts.store_owners
             or bundle.facts.constraints_refs
             or bundle.facts.llm_claims
         ):
@@ -7229,6 +7346,11 @@ class PromotionLoop:
                     "functions": bundle.facts.functions,
                     "stores": bundle.facts.stores,
                     "atoms": bundle.facts.atoms,
+                    "remaining_gap_pins": bundle.facts.remaining_gap_pins,
+                    "stub_nodes": bundle.facts.stub_nodes,
+                    "call_graph_nodes": bundle.facts.call_graph_nodes,
+                    "call_graph_edges": bundle.facts.call_graph_edges,
+                    "store_owners": bundle.facts.store_owners,
                     "constraints_refs": bundle.facts.constraints_refs,
                     "llm_claims": bundle.facts.llm_claims,
                 },

@@ -27,6 +27,7 @@ from spec_manager.compliance.promotion.algorithmic_gates import (
 )
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult
+from spec_manager.orchestration.evidence import EvidenceBundle
 
 from .atoms import AtomRegistry
 from .layout import BranchLayout
@@ -100,6 +101,13 @@ def _gate_result_to_tuple(result: GateCheckResult) -> tuple[bool, list[str]]:
     return result.passed, errors
 
 
+def _empty_evidence_bundle(run_root: Path) -> EvidenceBundle:
+    return EvidenceBundle(
+        workspace_root=str(run_root),
+        slice_root=str(run_root),
+    )
+
+
 class ComplianceChecker:
     """Checks compliance gates before promotion (design doc Section 12).
 
@@ -160,8 +168,23 @@ class ComplianceChecker:
         if not files:
             return True, []
 
+        from spec_manager.compliance.detection.comment_scanner import scan_comments
+
+        evidence_bundle = _empty_evidence_bundle(self._layout.run_root)
+        for file_path in files:
+            for gap in scan_comments(file_path):
+                evidence_bundle.facts.remaining_gap_pins.append(
+                    {
+                        "pin_id": "",
+                        "kind": "comment_gap",
+                        "file": gap.file_path,
+                        "description": gap.text,
+                        "span": {"start_line": gap.line},
+                    }
+                )
+
         gate_spec = GateSpec(gate_id=GateId.NO_REMAINING_COMMENTS)
-        result = check_no_remaining_comments(files, gate_spec)
+        result = check_no_remaining_comments(evidence_bundle, gate_spec)
         return _gate_result_to_tuple(result)
 
     def check_no_stubs(self) -> tuple[bool, list[str]]:
@@ -178,8 +201,22 @@ class ComplianceChecker:
         if not files:
             return True, []
 
+        from spec_manager.compliance.detection.stub_scanner import scan_stubs
+
+        evidence_bundle = _empty_evidence_bundle(self._layout.run_root)
+        for file_path in files:
+            for stub in scan_stubs(file_path):
+                evidence_bundle.facts.stub_nodes.append(
+                    {
+                        "node_id": stub.name,
+                        "file_path": stub.file_path,
+                        "line": stub.line,
+                        "stub_type": stub.stub_type,
+                    }
+                )
+
         gate_spec = GateSpec(gate_id=GateId.NO_STUB_FUNCTIONS)
-        result = check_no_stub_functions(files, gate_spec)
+        result = check_no_stub_functions(evidence_bundle, gate_spec)
         return _gate_result_to_tuple(result)
 
     def check_tests_pass(self) -> tuple[bool, list[str]]:
@@ -211,8 +248,26 @@ class ComplianceChecker:
         if not files:
             return True, []
 
+        from spec_manager.compliance.promotion.call_graph import build_call_graph
+
+        evidence_bundle = _empty_evidence_bundle(self._layout.run_root)
+        graph = build_call_graph(files, self._layout.run_root)
+        evidence_bundle.facts.call_graph_nodes = sorted(graph.nodes)
+        evidence_bundle.facts.call_graph_edges = [
+            {
+                "src": edge.caller,
+                "dst": edge.callee,
+                "signal_type": "CALL",
+                "confidence": edge.confidence,
+            }
+            for edge in graph.edges
+        ]
+        evidence_bundle.facts.atoms = {
+            atom.atom_id: {"file": atom.file_path} for atom in self._atom_registry.list_all()
+        }
+
         gate_spec = GateSpec(gate_id=GateId.CALL_GRAPH_CONNECTED)
-        result = check_call_graph_connected(files, self._layout.run_root, gate_spec)
+        result = check_call_graph_connected(evidence_bundle, gate_spec)
         return _gate_result_to_tuple(result)
 
     def check_store_monogamy(self, slices: list[VerticalSlice]) -> tuple[bool, list[str]]:
