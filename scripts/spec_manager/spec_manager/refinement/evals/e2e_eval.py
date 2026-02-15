@@ -954,7 +954,7 @@ class E2EEval:
                     if step.step_name in (
                         "PLAN",
                         "IMPLEMENT",
-                        "UNDER_SPEC_CHECK",
+                        "COORDINATE",
                         "ANALYZE",
                         "GAP_EXPLORATION",
                         "PROMOTE",

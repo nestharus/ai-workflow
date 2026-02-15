@@ -12,11 +12,11 @@ State machine (per slice)::
       ↓
     GAP_EXPLORATION    (P3 + GapQueue view)
       ↓
-    PLAN               (P8)
+    PLAN               (P8, L2/L3 only)
       ↓
     IMPLEMENT          (P9) ← emits patch + pin/edge proposals + evidence
       ↓
-    UNDER_SPEC_CHECK   (block-or-decide)
+    COORDINATE         (reactive triage / monitor registration)
       ↓
     ANALYZE            (P1 + P2 + analyze_source cache)
       ↓
@@ -3511,22 +3511,443 @@ class ImplementStep:
 class CoordinateStep:
     """Resolve under-specification and coordination signals.
 
-    Delegates all layers to UnderSpecManager so unresolved events block
-    promotion until constraints are provided.
+    - L1: triage under-spec events as coordination signals and park slice in
+      WAITING while monitors watch for dependencies to resolve.
+    - L2/L3: resolve under-spec events through UnderSpecManager (block-or-resolve).
     """
 
-    name = "UNDER_SPEC_CHECK"
+    name = "COORDINATE"
 
     def __init__(self, planner: Any = None) -> None:
         self._planner = planner
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """Resolve under-spec events for the active layer."""
+        if ctx.layer == "l1":
+            return self._coordinate_l1(ctx, bundle)
         return self._resolve_under_spec(ctx, bundle)
 
     def _coordinate_l1(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Compatibility shim; L1 now uses the unified under-spec resolver."""
-        return self._resolve_under_spec(ctx, bundle)
+        """Triage L1 under-spec events into monitors and return WAITING."""
+        raw_events = [
+            e for e in (bundle.implementation.under_spec_events or []) if isinstance(e, dict)
+        ]
+        if not raw_events:
+            return StepResult(status="OK")
+
+        signals = self._load_l1_signals(ctx, bundle, raw_events)
+        triage_decisions: list[dict[str, Any]] = []
+        blockers: list[dict[str, Any]] = []
+        resolved_questions: set[str] = set()
+        wait_required = False
+
+        for signal in signals:
+            triage = self._triage_l1_signal(ctx, bundle, signal)
+            action = str(triage.get("action", "NOOP")).strip().upper()
+            monitors_raw = triage.get("monitors", [])
+            monitors = monitors_raw if isinstance(monitors_raw, list) else []
+            routing_raw = triage.get("routing", [])
+            routing = routing_raw if isinstance(routing_raw, list) else []
+            signal_id = str(signal.get("signal_id", "")).strip()
+            summary = str((signal.get("need") or {}).get("summary", "")).strip()
+
+            routed_count = self._register_routing_work_items(ctx, routing)
+            registered_monitors = self._register_l1_monitors(
+                ctx,
+                signal_id=signal_id,
+                monitors=monitors,
+            )
+
+            triage_decisions.append(
+                {
+                    "signal_id": signal_id,
+                    "action": action or "NOOP",
+                    "summary": summary,
+                    "routing_count": routed_count,
+                    "monitor_count": len(registered_monitors),
+                }
+            )
+
+            if action == "WAKE_IMMEDIATELY":
+                if summary:
+                    resolved_questions.add(summary)
+                continue
+
+            if action == "NOOP" and not registered_monitors:
+                # No concrete resolution was provided; keep waiting by default.
+                wait_required = True
+            elif action != "NOOP" or registered_monitors:
+                wait_required = True
+
+            if summary:
+                blockers.append(
+                    {
+                        "signal_id": signal_id,
+                        "question": summary,
+                        "action": action or "NOOP",
+                    }
+                )
+
+        if resolved_questions:
+            bundle.implementation.under_spec_events = [
+                event
+                for event in raw_events
+                if str(event.get("question", "")).strip() not in resolved_questions
+            ]
+        else:
+            bundle.implementation.under_spec_events = raw_events
+
+        bundle.under_spec.decisions = triage_decisions
+        if wait_required and bundle.implementation.under_spec_events:
+            bundle.under_spec.blockers = blockers
+            return StepResult(status="WAITING")
+
+        bundle.under_spec.blockers = []
+        return StepResult(status="OK")
+
+    def _load_l1_signals(
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        raw_events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Load persisted coordination signals, or synthesize from under-spec events."""
+        from spec_manager.orchestration.coordination.signals import CoordinationSignal
+
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        iteration_dir = bundle.iter_dir(evidence_root)
+        try:
+            loaded = CoordinationSignal.load_from(iteration_dir)
+        except Exception as exc:
+            logger.debug("Failed loading coordination signals for %s: %s", ctx.slice_id, exc)
+            loaded = []
+
+        signals: list[dict[str, Any]] = []
+        for signal in loaded:
+            payload = signal.to_dict()
+            payload["run_id"] = str(payload.get("run_id") or ctx.run_id)
+            payload["layer"] = str(payload.get("layer") or ctx.layer)
+            payload["slice_id"] = str(payload.get("slice_id") or ctx.slice_id)
+            payload["iteration"] = int(payload.get("iteration") or bundle.iteration or 0)
+            signals.append(payload)
+        if signals:
+            return signals
+
+        synthesized = [
+            self._signal_from_under_spec_event(ctx=ctx, bundle=bundle, event=event, event_index=idx)
+            for idx, event in enumerate(raw_events)
+        ]
+        try:
+            iteration_dir.mkdir(parents=True, exist_ok=True)
+            (iteration_dir / "signals.json").write_text(
+                json.dumps(synthesized, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.debug(
+                "Failed to persist synthesized signals for %s",
+                ctx.slice_id,
+                exc_info=True,
+            )
+        return synthesized
+
+    @staticmethod
+    def _signal_from_under_spec_event(
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        event: dict[str, Any],
+        event_index: int,
+    ) -> dict[str, Any]:
+        """Project an L1 under-spec event into a CoordinationSignal-compatible dict."""
+        classification_map = {
+            "MISSING_CONSTRAINT": "AMBIGUOUS_SPEC",
+            "CONFLICTING_CONSTRAINTS": "CONFLICTING_REQUIREMENTS",
+            "EXTERNAL_DEP_UNKNOWN": "MISSING_INTERFACE",
+            "EXTERNAL_DEPENDENCY_UNKNOWN": "MISSING_INTERFACE",
+            "NEEDS_PRODUCT_DECISION": "AMBIGUOUS_SPEC",
+            "NEEDS_API_DECISION": "MISSING_INTERFACE",
+        }
+        question = str(event.get("question", "")).strip() or "Under-specification detected"
+        raw_event_id = str(event.get("event_id", "")).strip()
+        event_id = raw_event_id or hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
+        classification = classification_map.get(
+            str(event.get("kind", "")).strip(),
+            "AMBIGUOUS_SPEC",
+        )
+        source_line_raw = event.get("source_line", 0)
+        try:
+            source_line = int(source_line_raw or 0)
+        except (TypeError, ValueError):
+            source_line = 0
+
+        artifact_key = str(
+            event.get("needed_for")
+            or (event.get("context") if isinstance(event.get("context"), str) else "")
+            or ""
+        ).strip()
+        if not artifact_key:
+            artifact_key = str(event.get("source_file", "")).strip()
+        signal_id = f"{ctx.slice_id}:{bundle.iteration}:{event_id}:{event_index}"
+        return {
+            "signal_version": 1,
+            "signal_id": signal_id,
+            "run_id": ctx.run_id,
+            "layer": ctx.layer,
+            "slice_id": ctx.slice_id,
+            "iteration": bundle.iteration,
+            "status": "HALT",
+            "classification": classification,
+            "need": {
+                "summary": question,
+                "artifact_key": artifact_key,
+            },
+            "spec_refs": [
+                {
+                    "spec_text": question,
+                    "source_file": str(event.get("source_file", event.get("file", ""))).strip(),
+                    "source_symbol": "",
+                    "source_line_hint": source_line,
+                }
+            ],
+            "search_hints": {
+                "keywords": [token for token in re.split(r"[^a-zA-Z0-9]+", artifact_key) if token],
+                "possible_owner_slices": [],
+            },
+            "payload": {"under_spec_event": event},
+        }
+
+    def _triage_l1_signal(
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        signal: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call planner TRIAGE_SIGNAL when available."""
+        if self._planner is None or not hasattr(self._planner, "triage_signal"):
+            return {"action": "WAIT_ON_WORK_ITEM", "monitors": []}
+
+        try:
+            from spec_manager.planner.api import PlanningContext
+
+            planning_ctx = PlanningContext(
+                run_id=ctx.run_id,
+                slice_id=ctx.slice_id,
+                iteration=bundle.iteration,
+                layer=ctx.layer,
+                mode=ctx.mode,
+                workspace_root=ctx.workspace_root,
+                slice_root=ctx.slice_root,
+                bundle_ref=bundle,
+                signal_ref=signal,
+                metadata={"source": "COORDINATE"},
+            )
+            triage_result = self._planner.triage_signal(planning_ctx, signal)
+            if isinstance(triage_result, dict):
+                return triage_result
+            outputs = getattr(triage_result, "outputs", None)
+            if isinstance(outputs, dict):
+                return outputs
+        except Exception as exc:
+            logger.warning("L1 signal triage failed for %s: %s", ctx.slice_id, exc, exc_info=True)
+
+        return {"action": "WAIT_ON_WORK_ITEM", "monitors": []}
+
+    @staticmethod
+    def _register_routing_work_items(ctx: SliceContext, routing: list[dict[str, Any]]) -> int:
+        """Persist triage-routed work items for monitor tracking."""
+        if not routing:
+            return 0
+
+        from spec_manager.orchestration.coordination.work_items import WorkItem, WorkItemStore
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        coordination_dir = workspace / ".pdd_runs" / ctx.run_id / "coordination"
+        store = WorkItemStore(coordination_dir)
+        added = 0
+        for payload in routing:
+            if not isinstance(payload, dict):
+                continue
+            work_item = WorkItem.from_dict(payload)
+            if not work_item.work_item_id:
+                continue
+            if not work_item.owner_slice_id:
+                work_item.owner_slice_id = ctx.slice_id
+            if not work_item.status:
+                work_item.status = "NEW"
+            if store.get(work_item.work_item_id) is not None:
+                continue
+            store.add(work_item)
+            added += 1
+        return added
+
+    @staticmethod
+    def _normalize_monitor_condition(
+        monitor_payload: dict[str, Any],
+        *,
+        slice_id: str,
+    ) -> dict[str, Any]:
+        """Normalize planner monitor payload into a ConditionChecker-compatible dict."""
+        condition = dict(monitor_payload)
+        raw_type = str(condition.get("type", "")).strip()
+        if not raw_type:
+            kind = str(condition.get("kind", "")).strip().lower()
+            if kind == "work_item_status":
+                raw_type = "work_item_done"
+            elif kind == "symbol_available":
+                raw_type = "git_symbol_exists"
+            elif kind in {"constraint_present", "constraint_available"}:
+                raw_type = "constraint_present"
+        if raw_type == "work_item_done":
+            work_item_id = str(condition.get("work_item_id", "")).strip()
+            if not work_item_id:
+                return {}
+            required_status = (
+                str(condition.get("required_status", "MERGED")).strip().upper() or "MERGED"
+            )
+            return {
+                "type": "work_item_done",
+                "work_item_id": work_item_id,
+                "required_status": required_status,
+            }
+        if raw_type == "git_symbol_exists":
+            symbol = str(condition.get("symbol_fqn") or condition.get("artifact_key") or "").strip()
+            if not symbol:
+                return {}
+            ref = str(condition.get("ref", "")).strip() or "HEAD"
+            file_glob = str(condition.get("file_glob", "")).strip() or "**/*.py"
+            signature_regex = str(condition.get("signature_regex", "")).strip()
+            if not signature_regex:
+                signature_regex = rf"\b{re.escape(symbol.split('.')[-1] or symbol)}\b"
+            return {
+                "type": "git_symbol_exists",
+                "ref": ref,
+                "file_glob": file_glob,
+                "symbol_fqn": symbol,
+                "signature_regex": signature_regex,
+            }
+        if raw_type == "constraint_present":
+            constraint_key = str(condition.get("constraint_key", "")).strip() or slice_id
+            return {
+                "type": "constraint_present",
+                "constraint_key": constraint_key,
+                "constraint_dir": str(
+                    condition.get("constraint_dir", "analysis/constraints")
+                ).strip(),
+                "constraint_id": str(condition.get("constraint_id", "")).strip(),
+                "slice_id": str(condition.get("slice_id", "")).strip() or slice_id,
+            }
+        return {}
+
+    @staticmethod
+    def _monitor_fingerprint(*, signal_id: str, condition: dict[str, Any]) -> str:
+        """Stable identity for deduplicating monitor registrations."""
+        payload = {"signal_id": signal_id, "condition": condition}
+        serialized = json.dumps(payload, sort_keys=True, ensure_ascii=True)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _register_l1_monitors(
+        self,
+        ctx: SliceContext,
+        *,
+        signal_id: str,
+        monitors: list[dict[str, Any]],
+    ) -> list[str]:
+        """Register planner-provided monitors for L1 WAITING coordination."""
+        if not monitors:
+            return []
+
+        from spec_manager.orchestration.coordination.monitors import (
+            MonitorExecution,
+            MonitorRegistry,
+            MonitorSpec,
+            MonitorTimeout,
+            MonitorWake,
+            SliceInfo,
+        )
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        coordination_dir = workspace / ".pdd_runs" / ctx.run_id / "coordination"
+        coordination_dir.mkdir(parents=True, exist_ok=True)
+        registry = MonitorRegistry(coordination_dir)
+        existing_active = [
+            s for s in registry.get_active() if s.waiting_slice.slice_id == ctx.slice_id
+        ]
+
+        fingerprints = {
+            self._monitor_fingerprint(signal_id=s.signal_id, condition=s.condition)
+            for s in existing_active
+        }
+        registered: list[str] = []
+        for payload in monitors:
+            if not isinstance(payload, dict):
+                continue
+            normalized_signal_id = str(payload.get("signal_id", "")).strip() or signal_id
+            condition = self._normalize_monitor_condition(payload, slice_id=ctx.slice_id)
+            if not condition:
+                continue
+
+            fingerprint = self._monitor_fingerprint(
+                signal_id=normalized_signal_id,
+                condition=condition,
+            )
+            if fingerprint in fingerprints:
+                continue
+
+            timeout_raw = payload.get("timeout_seconds", payload.get("timeout_sec", 3600))
+            try:
+                timeout_sec = max(int(timeout_raw), 1)
+            except (TypeError, ValueError):
+                timeout_sec = 3600
+
+            poll_interval_raw = payload.get("poll_interval_sec", 20)
+            try:
+                poll_interval_sec = max(int(poll_interval_raw), 1)
+            except (TypeError, ValueError):
+                poll_interval_sec = 20
+
+            mode = str(payload.get("mode", "hybrid")).strip().lower()
+            if mode not in {"hybrid", "poll", "event"}:
+                mode = "hybrid"
+            event_triggers_raw = payload.get("event_triggers", [])
+            event_triggers = (
+                [str(item) for item in event_triggers_raw if str(item).strip()]
+                if isinstance(event_triggers_raw, list)
+                else []
+            )
+            monitor_id = str(payload.get("monitor_id", "")).strip()
+            spec = MonitorSpec(
+                monitor_id=monitor_id,
+                run_id=ctx.run_id,
+                waiting_slice=SliceInfo(layer=ctx.layer, slice_id=ctx.slice_id),
+                signal_id=normalized_signal_id,
+                condition=condition,
+                execution=MonitorExecution(
+                    mode=cast("Literal['hybrid', 'poll', 'event']", mode),
+                    poll_interval_sec=poll_interval_sec,
+                    event_triggers=event_triggers,
+                ),
+                timeout=MonitorTimeout(
+                    timeout_sec=timeout_sec,
+                    on_timeout="ESCALATE",
+                ),
+                wake=MonitorWake(
+                    action="WAKE_SLICE",
+                    payload={
+                        "slice_id": ctx.slice_id,
+                        "layer": ctx.layer,
+                        "signal_id": normalized_signal_id,
+                        "kind": str(payload.get("kind", "")).strip(),
+                    },
+                ),
+            )
+            registry.register(spec)
+            fingerprints.add(fingerprint)
+            registered.append(spec.monitor_id)
+        return registered
 
     def _resolve_under_spec(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L2/L3: resolve under-spec events via UnderSpecManager.
@@ -7428,6 +7849,17 @@ DEFAULT_BUILD_STEPS: tuple[type, ...] = (
     VerifyStep,
     AlignStep,
 )
+L1_REACTIVE_BUILD_STEPS: tuple[type, ...] = (
+    CollectBaselineStep,
+    GapExplorationStep,
+    ImplementStep,
+    CoordinateStep,
+    AnalyzeStep,
+    PromoteStep,
+    IntegrateStep,
+    VerifyStep,
+    AlignStep,
+)
 ARCHITECTURE_MODE_STEPS: tuple[type, ...] = (
     CollectBaselineStep,
     GapExplorationStep,
@@ -7444,7 +7876,7 @@ CODE_QUALITY_MODE_STEPS: tuple[type, ...] = DEFAULT_BUILD_STEPS
 
 RUN_MODE_STEP_DISPATCH: dict[LifecycleRunMode, dict[Layer, tuple[type, ...]]] = {
     "build": {
-        "l1": DEFAULT_BUILD_STEPS,
+        "l1": L1_REACTIVE_BUILD_STEPS,
         "l2": DEFAULT_BUILD_STEPS,
         "l3": DEFAULT_BUILD_STEPS,
     },
@@ -7454,12 +7886,12 @@ RUN_MODE_STEP_DISPATCH: dict[LifecycleRunMode, dict[Layer, tuple[type, ...]]] = 
         "l3": (CollectBaselineStep, IntegrateStep, VerifyStep),
     },
     "architecture": {
-        "l1": ARCHITECTURE_MODE_STEPS,
+        "l1": L1_REACTIVE_BUILD_STEPS,
         "l2": ARCHITECTURE_MODE_STEPS,
         "l3": ARCHITECTURE_MODE_STEPS,
     },
     "code_quality": {
-        "l1": CODE_QUALITY_MODE_STEPS,
+        "l1": L1_REACTIVE_BUILD_STEPS,
         "l2": CODE_QUALITY_MODE_STEPS,
         "l3": CODE_QUALITY_MODE_STEPS,
     },
@@ -8097,7 +8529,13 @@ class PromotionLoop:
 
         all_tickets: list[DemotionTicket] = []
         iteration = 0
-        waiting_iterations = 0
+        wake_count_seed = 0
+        if isinstance(slice_ref.metadata, dict):
+            try:
+                wake_count_seed = int(slice_ref.metadata.get("wake_count", 0) or 0)
+            except (TypeError, ValueError):
+                wake_count_seed = 0
+        waiting_iterations = max(wake_count_seed, 0)
 
         # Per-ticket retry budget: track (failing_files_key, gate) → count
         retry_tracker: dict[tuple[str, str], int] = {}
@@ -8333,11 +8771,35 @@ class PromotionLoop:
             # Handle WAITING: save bundle and return to scheduler
             if waiting:
                 waiting_iterations += 1
+                # WAITING is not stagnation; reset counters so parked slices do not
+                # amplify into false stagnation failures.
+                self._gap_queue.mark_progress()
+                self._gap_queue.last_content_hash = ""
                 # Collect pending signal info from bundle
                 pending = [
                     {"question": e.get("question", ""), "kind": e.get("kind", "")}
                     for e in (bundle.implementation.under_spec_events or [])
                 ]
+                if waiting_iterations >= run_context.max_wait_cycles:
+                    bundle.status = "BLOCKED"
+                    self._persist_iteration_artifacts(ctx, bundle)
+                    bundle.save(evidence_root)
+                    blocked_questions = [
+                        str(item.get("question", "")).strip()
+                        for item in pending
+                        if str(item.get("question", "")).strip()
+                    ]
+                    return SliceResult(
+                        slice_id=ctx.slice_id,
+                        status="BLOCKED",
+                        iterations=iteration,
+                        remaining_gaps=len(bundle.gaps.open_gaps),
+                        demotion_tickets=all_tickets,
+                        blocked_questions=blocked_questions,
+                        pending_signals=pending,
+                        wake_count=waiting_iterations,
+                        error=f"Exceeded max_wait_cycles ({run_context.max_wait_cycles})",
+                    )
                 return SliceResult(
                     slice_id=ctx.slice_id,
                     status="WAITING",
