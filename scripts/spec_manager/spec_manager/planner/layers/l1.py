@@ -185,6 +185,14 @@ class L1Planner:
             metadata.get("touched_files_count", 0),
             default=_estimate_touched_files(gaps),
         )
+        security_privacy_compliance = _coerce_bool(
+            metadata.get("security_privacy_compliance", False)
+        )
+        security_privacy_compliance = (
+            security_privacy_compliance
+            or _coerce_bool(metadata.get("introduces_security_privacy_compliance", False))
+            or _coerce_bool(metadata.get("has_security_privacy_compliance_implication", False))
+        )
         session_ctx: dict[str, Any] = {
             "layer": "L1",
             "slice_id": getattr(ctx, "slice_id", ""),
@@ -198,6 +206,7 @@ class L1Planner:
             "introduces_infra": triggers["introduces_infra"]
             or _coerce_bool(metadata.get("introduces_infra", False)),
             "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
+            "security_privacy_compliance": security_privacy_compliance,
             "pipeline_triggers": list(triggers["trigger_labels"]),
         }
 

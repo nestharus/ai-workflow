@@ -30,7 +30,7 @@ class ArchitecturePlannerStrategy:
     1. Decision point detection via :class:`DecisionPointDetector`.
     2. ARCH_DECISION work item creation for coordination tracking.
     3. ScopePacket population from routed source artifacts.
-    4. Candidate proposal via :class:`ProposerOrchestrator` (K=3 for HIGH, K=1 for MEDIUM).
+    4. Candidate proposal via :class:`ProposerOrchestrator` (K=3 for HIGH, K=2 for MEDIUM).
     5. Candidate evaluation via :class:`CandidateEvaluator`.
     6. Artifact persistence via :func:`persist_decision_artifacts`.
     7. WaitGraph edge creation for blocked decisions.
@@ -89,8 +89,8 @@ class ArchitecturePlannerStrategy:
         # 2. Create ARCH_DECISION work items for coordination tracking
         self._create_work_items(decision_points, slice_id)
 
-        # Determine K based on impact; use session tradeoff axes if available
-        k = 3 if session.impact and session.impact.impact == "HIGH" else 1
+        # Determine K based on impact; MEDIUM receives a small option set (2-3).
+        k = 3 if session.impact and session.impact.impact == "HIGH" else 2
 
         proposer = ProposerOrchestrator(
             workspace_root=self._workspace_root,

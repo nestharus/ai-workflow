@@ -249,12 +249,15 @@ class L2Planner:
         strategy pipeline (impact classification, constraint loading,
         problem framing, architecture decisions, authority checks).
 
-        Otherwise falls back to direct gap-to-intention mapping.
+        Without a store adapter, this method still runs deterministic impact
+        classification first and only invokes ``research_tool`` for
+        MEDIUM/HIGH impact. It always retains a local topology-aware fallback.
         """
         if self._constraints_store_adapter is not None:
             return self._build_plan_via_strategies(ctx, gaps, discovery)
 
-        if self._research_tool is not None:
+        impact_level = self._classify_fallback_impact(ctx, gaps, discovery)
+        if self._research_tool is not None and impact_level in {"MEDIUM", "HIGH"}:
             try:
                 result = self._research_tool(
                     layer="l2",
@@ -270,7 +273,14 @@ class L2Planner:
                     exc_info=True,
                 )
 
-        # Fallback: produce topology-aware intentions from gaps.
+        return self._build_local_topology_fallback_plan(gaps, discovery)
+
+    def _build_local_topology_fallback_plan(
+        self,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Produce topology-aware intentions without strategy/session orchestration."""
         nodes = [n for n in discovery.get("nodes", []) if isinstance(n, dict)]
         edges = [e for e in discovery.get("edges", []) if isinstance(e, dict)]
         pin_node_ids = {
@@ -366,6 +376,48 @@ class L2Planner:
             )
         return {"intentions": intentions}
 
+    def _classify_fallback_impact(
+        self,
+        ctx: Any,
+        gaps: list[dict[str, Any]],
+        discovery: dict[str, Any],
+    ) -> str:
+        """Classify impact for no-store fallback so LLM calls stay proportionate."""
+        from spec_manager.planner.strategies.constraint_strategies import ImpactClassifierStrategy
+        from spec_manager.planner.strategies.protocol import PlanningSession
+
+        metadata = getattr(ctx, "metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        session_ctx: dict[str, Any] = {
+            "layer": "L2",
+            "slice_id": getattr(ctx, "slice_id", ""),
+            "run_id": getattr(ctx, "run_id", "default"),
+            "workspace_root": str(Path(getattr(ctx, "workspace_root", "") or "")),
+            "mode": _normalize_mode(getattr(ctx, "mode", "auto")),
+            "interactive": _normalize_mode(getattr(ctx, "mode", "auto")) == "interactive",
+            "touched_files_count": _estimate_touched_files(gaps),
+            "introduces_external_dep": _coerce_bool(metadata.get("introduces_external_dep", False)),
+            "introduces_infra": _coerce_bool(metadata.get("introduces_infra", False)),
+            "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
+            "security_privacy_compliance": _coerce_bool(
+                metadata.get("security_privacy_compliance", False)
+            )
+            or _coerce_bool(metadata.get("introduces_security_privacy_compliance", False))
+            or _coerce_bool(metadata.get("has_security_privacy_compliance_implication", False)),
+        }
+
+        session = PlanningSession(
+            ctx=session_ctx,
+            gaps=gaps,
+            discovery=discovery,
+        )
+        session = ImpactClassifierStrategy().run(session)
+        if session.impact is None:
+            return "LOW"
+        return session.impact.impact
+
     def _build_plan_via_strategies(
         self,
         ctx: Any,
@@ -394,6 +446,14 @@ class L2Planner:
         metadata = getattr(ctx, "metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}
+        security_privacy_compliance = _coerce_bool(
+            metadata.get("security_privacy_compliance", False)
+        )
+        security_privacy_compliance = (
+            security_privacy_compliance
+            or _coerce_bool(metadata.get("introduces_security_privacy_compliance", False))
+            or _coerce_bool(metadata.get("has_security_privacy_compliance_implication", False))
+        )
 
         session_ctx: dict[str, Any] = {
             "layer": "L2",
@@ -406,6 +466,7 @@ class L2Planner:
             "introduces_external_dep": _coerce_bool(metadata.get("introduces_external_dep", False)),
             "introduces_infra": _coerce_bool(metadata.get("introduces_infra", False)),
             "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
+            "security_privacy_compliance": security_privacy_compliance,
         }
 
         session = PlanningSession(

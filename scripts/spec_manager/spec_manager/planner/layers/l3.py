@@ -210,6 +210,14 @@ class L3Planner:
         metadata = getattr(ctx, "metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}
+        security_privacy_compliance = _coerce_bool(
+            metadata.get("security_privacy_compliance", False)
+        )
+        security_privacy_compliance = (
+            security_privacy_compliance
+            or _coerce_bool(metadata.get("introduces_security_privacy_compliance", False))
+            or _coerce_bool(metadata.get("has_security_privacy_compliance_implication", False))
+        )
 
         touched_files_count = metadata.get(
             "touched_files_count", discovery.get("changed_file_count", 0)
@@ -230,6 +238,7 @@ class L3Planner:
             "introduces_external_dep": _coerce_bool(metadata.get("introduces_external_dep", False)),
             "introduces_infra": _coerce_bool(metadata.get("introduces_infra", False)),
             "cross_library_contract": _coerce_bool(metadata.get("cross_library_contract", False)),
+            "security_privacy_compliance": security_privacy_compliance,
         }
 
         session = PlanningSession(

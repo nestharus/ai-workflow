@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 
 # Non-software dimensions that trigger checklist items.
 _NON_SOFTWARE_DIMENSIONS = ("legal", "economic", "organizational", "temporal", "operational")
+_SECURITY_PRIVACY_COMPLIANCE_KEYWORDS = (
+    "security",
+    "privacy",
+    "compliance",
+    "regulatory",
+    "regulation",
+    "gdpr",
+    "hipaa",
+    "pci",
+    "soc2",
+    "audit",
+)
 
 
 class ImpactClassifierStrategy:
@@ -44,18 +56,29 @@ class ImpactClassifierStrategy:
     def run(self, session: PlanningSession) -> PlanningSession:
         layer = session.ctx.get("layer", "L1")
         gap_kinds = [g.get("kind", "") for g in session.gaps if g.get("kind")]
-        touched = session.ctx.get("touched_files_count", 0)
-        ext_dep = session.ctx.get("introduces_external_dep", False)
-        infra = session.ctx.get("introduces_infra", False)
-        cross_lib = session.ctx.get("cross_library_contract", False)
+        gap_severities = _collect_gap_severities(session.gaps)
+
+        try:
+            touched = max(int(session.ctx.get("touched_files_count", 0) or 0), 0)
+        except (TypeError, ValueError):
+            touched = 0
+        ext_dep = _coerce_bool(session.ctx.get("introduces_external_dep", False))
+        infra = _coerce_bool(session.ctx.get("introduces_infra", False))
+        cross_lib = _coerce_bool(session.ctx.get("cross_library_contract", False))
+        security_privacy_compliance = _has_security_privacy_compliance_signal(
+            ctx=session.ctx,
+            gaps=session.gaps,
+        )
 
         session.impact = classify_impact(
             layer=layer,
             gap_kinds=gap_kinds,
+            gap_severities=gap_severities,
             touched_files_count=touched,
             introduces_external_dep=ext_dep,
             introduces_infra=infra,
             cross_library_contract=cross_lib,
+            security_privacy_compliance=security_privacy_compliance,
         )
         return session
 
@@ -440,6 +463,73 @@ def _impact_at_least_medium(session: PlanningSession) -> bool:
     if session.impact is None:
         return False
     return session.impact.impact in ("MEDIUM", "HIGH")
+
+
+def _collect_gap_severities(gaps: list[dict[str, Any]]) -> list[str]:
+    severities: list[str] = []
+    for gap in gaps:
+        for key in ("severity", "severity_level", "priority", "risk_level"):
+            value = gap.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                severities.append(text)
+                break
+    return severities
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _has_security_privacy_compliance_signal(
+    *,
+    ctx: dict[str, Any],
+    gaps: list[dict[str, Any]],
+) -> bool:
+    for key in (
+        "security_privacy_compliance",
+        "introduces_security_privacy_compliance",
+        "has_security_privacy_compliance_implication",
+        "security_implication",
+        "privacy_implication",
+        "compliance_implication",
+    ):
+        if _coerce_bool(ctx.get(key, False)):
+            return True
+
+    text_chunks: list[str] = []
+    for gap in gaps:
+        for key in (
+            "kind",
+            "target",
+            "description",
+            "summary",
+            "question",
+            "dimension",
+            "severity",
+        ):
+            value = gap.get(key)
+            if value is None:
+                continue
+            text = str(value).strip().lower()
+            if text:
+                text_chunks.append(text)
+
+    try:
+        text_chunks.append(json.dumps(ctx, default=str).lower())
+    except (TypeError, ValueError):
+        text_chunks.append(str(ctx).lower())
+
+    full_text = " ".join(text_chunks)
+    return any(keyword in full_text for keyword in _SECURITY_PRIVACY_COMPLIANCE_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------
