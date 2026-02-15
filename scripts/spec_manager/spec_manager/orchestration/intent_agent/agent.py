@@ -11,7 +11,7 @@ non-negotiable.
 
 Event sources:
     1. User messages — text input from the user
-    2. UserQuestionSignals — from Planner, UnderSpec, PromotionLoop, Lifecycle
+    2. UserQuestionSignals — from Planner, UnderSpec, PromotionLoop, Intent Agent
     3. PlannerUpdates — constraint_saved, decision_recorded events
 
 Per response2.md Section 1.4: Resumption is deterministic:
@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,11 @@ logger = logging.getLogger(__name__)
 
 _VALID_REDEFINITION_QUESTION_TYPES = frozenset({"VALIDATION", "SCOPE", "TRADEOFF"})
 _REDEFINITION_UPDATE_SOURCES = frozenset({"PLANNER"})
+_CANONICAL_ORIGIN_KINDS = frozenset({"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP"})
+_ORIGIN_KIND_ALIASES = {
+    "PDD_LIFECYCLE": "PROMOTION_LOOP",
+    "SLICE_AGENT": "UNDER_SPEC",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +325,9 @@ class IntentAgentOrchestrator:
         self,
         run_dir: Path,
         *,
+        on_translation_saved: Callable[[AnswerTranslation], Any],
         mode: str = "interactive",
         run_agent: Any = None,
-        on_translation_saved: Any = None,
         on_planner_signal: Any = None,
         intent_frame_strategy: IntentFrameStrategy | None = None,
         concept_map_strategy: ConceptMapStrategy | None = None,
@@ -332,6 +338,10 @@ class IntentAgentOrchestrator:
         queue_reassess_strategy: QueueReassessStrategy | None = None,
         skeleton_synthesis_strategy: SkeletonSynthesisStrategy | None = None,
     ) -> None:
+        if not callable(on_translation_saved):
+            raise TypeError(
+                "IntentAgentOrchestrator requires a callable on_translation_saved planner hook"
+            )
         self._run_dir = run_dir
         self._mode = mode
         self._on_translation_saved = on_translation_saved
@@ -456,6 +466,18 @@ class IntentAgentOrchestrator:
         text = value.strip()
         return text or default
 
+    def _canonical_origin_kind(self, source_kind: str, *, field_name: str) -> str:
+        normalized = self._coerce_str(source_kind).upper()
+        if not normalized:
+            raise ValueError(f"{field_name} must be a non-empty source kind")
+        canonical = _ORIGIN_KIND_ALIASES.get(normalized, normalized)
+        if canonical not in _CANONICAL_ORIGIN_KINDS:
+            raise ValueError(
+                f"{field_name} source kind {source_kind!r} is invalid; "
+                f"expected one of {sorted(_CANONICAL_ORIGIN_KINDS)}"
+            )
+        return canonical
+
     def _coerce_str_list(self, value: Any) -> list[str]:
         if value is None:
             return []
@@ -474,12 +496,6 @@ class IntentAgentOrchestrator:
         if isinstance(value, str):
             return value.strip().lower() in {"true", "1", "yes", "y", "on"}
         return False
-
-    @staticmethod
-    def _sanitize_event_token(value: str) -> str:
-        token = "".join(ch if (ch.isalnum() or ch in {"_", "-", "."}) else "_" for ch in value)
-        token = token.strip("_.-")
-        return token[:64]
 
     def _record_presented_action(
         self,
@@ -1170,167 +1186,38 @@ class IntentAgentOrchestrator:
             )
         return projected
 
-    def _planner_update_requires_review_decision(self, update: dict[str, Any]) -> bool:
-        review_flags = (
-            "review_decision",
-            "review_required",
-            "requires_review",
-            "needs_review",
-            "needs_human_review",
-            "human_authority_required",
-            "authority_bypassed",
-            "decision_without_authority",
-            "decision_requires_authority_review",
-        )
-        if any(self._coerce_bool(update.get(flag)) for flag in review_flags):
-            return True
-
-        authority_required = self._coerce_str(update.get("authority_required")).lower()
-        authority_payload = update.get("authority")
-        if not authority_required and isinstance(authority_payload, dict):
-            authority_required = self._coerce_str(
-                authority_payload.get("required", authority_payload.get("authority_required", "")),
-            ).lower()
-
-        event_kind = self._coerce_str(update.get("event_kind", update.get("type", ""))).lower()
-        has_decision_ids = bool(
-            self._coerce_update_ids(update.get("decision_ids", []))
-            or self._coerce_update_ids(update.get("decision_id", ""))
-        )
-        has_constraint_ids = bool(
-            self._coerce_update_ids(update.get("constraint_ids", []))
-            or self._coerce_update_ids(update.get("constraint_id", ""))
-        )
-
-        if authority_required in {"human_required", "user_required"} and (
-            has_decision_ids
-            or has_constraint_ids
-            or event_kind in {"decision_recorded", "constraint_saved"}
-        ):
-            return True
-
-        reason = self._coerce_str(update.get("reason")).lower()
-        is_decision_like = (
-            has_decision_ids
-            or has_constraint_ids
-            or event_kind
-            in {
-                "decision_recorded",
-                "constraint_saved",
-            }
-        )
-        return is_decision_like and any(
-            token in reason
-            for token in (
-                "without user authority",
-                "authority bypass",
-                "human authority required",
-                "manual review required",
-            )
-        )
-
-    def _enqueue_review_decision_question(self, update: dict[str, Any]) -> str | None:
-        if self._queue is None:
+    def _extract_review_question_signal(self, update: dict[str, Any]) -> UserQuestionSignal | None:
+        if not self._coerce_bool(update.get("review_required")):
             return None
 
-        decision_id = self._coerce_str(
-            update.get(
-                "decision_id",
-                self._coerce_str_list(update.get("decision_ids", []))[0]
-                if self._coerce_str_list(update.get("decision_ids", []))
-                else "",
-            ),
-        )
-        constraint_id = self._coerce_str(
-            update.get(
-                "constraint_id",
-                self._coerce_str_list(update.get("constraint_ids", []))[0]
-                if self._coerce_str_list(update.get("constraint_ids", []))
-                else "",
-            ),
-        )
-        event_ref = self._coerce_str(
-            update.get(
-                "event_id",
-                update.get("trace_id", decision_id or constraint_id),
-            ),
-        )
-        token = self._sanitize_event_token(event_ref or decision_id or constraint_id or "review")
-        canonical_key = f"intent.review_decision.{token}" if token else "intent.review_decision"
-
-        reason = self._coerce_str(
-            update.get("reason"),
-            "Planner advanced work without explicit user authority in auto mode.",
-        )
-        event_kind = self._coerce_str(
-            update.get("event_kind", update.get("type", "planner_update")),
-        )
-
-        question_id = f"q_{uuid.uuid4().hex[:12]}"
-        now = datetime.now(UTC).isoformat()
-        item = QuestionItem(
-            question_id=question_id,
-            status="OPEN",
-            taxonomy_type="VALIDATION",
-            scope_kind="SYSTEM_WIDE",
-            canonical_key=canonical_key,
-            user_prompt=UserPrompt(
-                text="Review decision made in auto mode.",
-                scenario=(
-                    f"Event: {event_kind or 'planner_update'}\n"
-                    f"Decision ID: {decision_id or 'n/a'}\n"
-                    f"Constraint ID: {constraint_id or 'n/a'}\n"
-                    f"Reason: {reason}"
-                ),
-                why_it_matters="A decision was taken without direct user authority.",
-                answer_spec=AnswerSpec(
-                    kind="choice",
-                    choices=[
-                        {"id": "accept_auto", "label": "Accept auto decision"},
-                        {"id": "revise_decision", "label": "Revise the decision"},
-                        {"id": "manual_resolution", "label": "Require manual resolution"},
-                    ],
-                ),
-            ),
-            system_binding={
-                "review_decision": True,
-                "planner_event_id": event_ref,
-                "decision_id": decision_id,
-                "constraint_id": constraint_id,
-                "source_update": dict(update),
-            },
-            origins=[
-                QuestionOrigin(
-                    source_kind="PLANNER",
-                    trace_id=event_ref,
-                    created_at=now,
-                ),
-            ],
-            blockers=QuestionBlockers(severity="BLOCKING"),
-            quality_gate=QualityGateStatus(status="PASS", attempts=1, last_checked_at=now),
-            timestamps={"created_at": now, "updated_at": now},
-        )
-
-        existing = self._queue.dedup(item)
-        if existing is None:
-            self._queue.enqueue(item)
-            enqueued = item
-        else:
-            enqueued = existing
-            if enqueued.status != "OPEN":
-                enqueued.status = "OPEN"
-                enqueued.timestamps["updated_at"] = now
-
-        if self._event_log is not None:
-            self._event_log.append(
-                "question_enqueued",
-                {
-                    "question_id": enqueued.question_id,
-                    "canonical_key": enqueued.canonical_key,
-                    "reason": "review decision",
-                },
+        raw_signal = update.get("user_question_signal")
+        if raw_signal is None:
+            raw_signal = update.get("review_question_signal")
+        if not isinstance(raw_signal, dict):
+            logger.warning(
+                "Planner update requested review without user_question_signal payload: %s",
+                json.dumps(update, sort_keys=True),
             )
-        return enqueued.question_id
+            return None
+        try:
+            signal = UserQuestionSignal.from_dict(raw_signal)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Invalid planner-provided user_question_signal: %s (event=%s)",
+                exc,
+                self._coerce_str(update.get("event_id", update.get("trace_id", ""))),
+            )
+            return None
+        return signal
+
+    def _ingest_review_decision_signal(self, update: dict[str, Any]) -> str | None:
+        signal = self._extract_review_question_signal(update)
+        if signal is None:
+            return None
+        item = self.ingest_signal(signal)
+        if item is None:
+            return None
+        return item.question_id
 
     def _apply_auto_mode_planner_outcomes(
         self,
@@ -1364,9 +1251,7 @@ class IntentAgentOrchestrator:
 
         review_question_ids: list[str] = []
         for update in updates:
-            if not self._planner_update_requires_review_decision(update):
-                continue
-            review_question_id = self._enqueue_review_decision_question(update)
+            review_question_id = self._ingest_review_decision_signal(update)
             if review_question_id:
                 review_question_ids.append(review_question_id)
 
@@ -1593,13 +1478,17 @@ class IntentAgentOrchestrator:
             self._ensure_initialized()
         assert self._state is not None
         assert self._queue is not None
+        source_kind = self._canonical_origin_kind(
+            signal.source.kind,
+            field_name="signal.source.kind",
+        )
 
         if self._event_log is not None:
             self._event_log.append(
                 "signal_received",
                 {
                     "signal_id": signal.uq_id,
-                    "source_kind": signal.source.kind,
+                    "source_kind": source_kind,
                     "canonical_key_hint": signal.question.canonical_key_hint,
                 },
             )
@@ -1722,7 +1611,7 @@ class IntentAgentOrchestrator:
                 system_binding=system_binding,
                 origins=[
                     QuestionOrigin(
-                        source_kind=signal.source.kind,
+                        source_kind=source_kind,
                         trace_id=signal.source.trace_id,
                         signal_id=signal.uq_id,
                         slice_id=signal.source.slice_id,
@@ -1755,7 +1644,7 @@ class IntentAgentOrchestrator:
                 item.system_binding = system_binding
                 item.origins.append(
                     QuestionOrigin(
-                        source_kind=signal.source.kind,
+                        source_kind=source_kind,
                         trace_id=signal.source.trace_id,
                         signal_id=signal.uq_id,
                         slice_id=signal.source.slice_id,
@@ -1920,43 +1809,39 @@ class IntentAgentOrchestrator:
         # 3. Save translation artifact.
         translation.save(self._run_dir)
 
-        # 4a. Submit to Planner for ingestion via callback.
+        # 4a. Submit to Planner for ingestion through the required planner hook.
         planner_ingest_ok = False
         planner_error = ""
         planner_trace_id = ""
         planner_status = "OK"
-        if self._on_translation_saved is not None:
-            try:
-                ingest_result = self._on_translation_saved(translation)
-                if isinstance(ingest_result, dict):
-                    planner_trace_id = str(ingest_result.get("trace_id", "")).strip()
-                    planner_status = str(ingest_result.get("status", "OK")).upper()
-                    planner_error = str(ingest_result.get("error", "")).strip()
-                    if planner_status and planner_status not in {"OK", "NOOP"}:
-                        planner_error = planner_error or f"planner status {planner_status}"
-                elif hasattr(ingest_result, "status"):
-                    planner_status = str(getattr(ingest_result, "status", "OK")).upper()
-                    planner_trace_id = str(getattr(ingest_result, "trace_id", "")).strip()
-                    planner_error = str(getattr(ingest_result, "error", "")).strip()
-                    if planner_status and planner_status not in {"OK", "NOOP"}:
-                        planner_error = planner_error or f"planner status {planner_status}"
-                else:
-                    planner_error = "planner callback returned unsupported response type"
-            except Exception:
-                logger.warning(
-                    "on_translation_saved callback failed for translation %s",
-                    translation.translation_id,
-                    exc_info=True,
-                )
-                planner_error = "callback exception"
-            if planner_status not in {"OK", "NOOP"}:
-                planner_error = planner_error or f"planner status {planner_status}"
-            planner_ingest_ok = not planner_error
-        else:
-            # No callback — treat as unsuccessful for deterministic lifecycle.
-            # Queue closure must be driven by planner_updates signals.
-            planner_ingest_ok = False
-            planner_error = "no planner ingestion callback configured"
+        try:
+            ingest_result = self._on_translation_saved(translation)
+            if isinstance(ingest_result, dict):
+                planner_trace_id = str(ingest_result.get("trace_id", "")).strip()
+                planner_status = str(ingest_result.get("status", "OK")).upper()
+                planner_error = str(ingest_result.get("error", "")).strip()
+                if planner_status and planner_status not in {"OK", "NOOP"}:
+                    planner_error = planner_error or f"planner status {planner_status}"
+            elif ingest_result is None:
+                planner_status = "OK"
+            elif hasattr(ingest_result, "status"):
+                planner_status = str(getattr(ingest_result, "status", "OK")).upper()
+                planner_trace_id = str(getattr(ingest_result, "trace_id", "")).strip()
+                planner_error = str(getattr(ingest_result, "error", "")).strip()
+                if planner_status and planner_status not in {"OK", "NOOP"}:
+                    planner_error = planner_error or f"planner status {planner_status}"
+            else:
+                planner_error = "planner callback returned unsupported response type"
+        except Exception:
+            logger.warning(
+                "on_translation_saved callback failed for translation %s",
+                translation.translation_id,
+                exc_info=True,
+            )
+            planner_error = "callback exception"
+        if planner_status not in {"OK", "NOOP"}:
+            planner_error = planner_error or f"planner status {planner_status}"
+        planner_ingest_ok = not planner_error
 
         provenance.answer_translation_ref = translation.translation_id
         if planner_trace_id:
@@ -2843,7 +2728,10 @@ class IntentAgentOrchestrator:
         if not question_id:
             question_id = f"q_{uuid.uuid4().hex[:12]}"
 
-        source_text = self._coerce_str(trigger.get("source"), "PLANNER").upper()
+        source_text = self._canonical_origin_kind(
+            self._coerce_str(trigger.get("source"), "PLANNER"),
+            field_name="redefinition.source",
+        )
 
         source_trace = self._coerce_str(
             trigger.get("event_id"),

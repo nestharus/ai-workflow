@@ -58,7 +58,9 @@ def _validate_source_kind(
 class SignalSource:
     """Source of a UserQuestionSignal."""
 
-    kind: str = ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | SLICE_AGENT
+    kind: str = (
+        ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | INTENT_AGENT | SLICE_AGENT
+    )
     trace_id: str = ""
     slice_id: str = ""
     layer: str = ""

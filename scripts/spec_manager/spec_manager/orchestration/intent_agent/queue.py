@@ -49,9 +49,8 @@ _VALID_TAXONOMY_TYPES = frozenset(
     {"INTENT", "CONSTRAINT", "TRADEOFF", "SCOPE", "VALIDATION"},
 )
 _VALID_SCOPE_KINDS = frozenset({"SYSTEM_WIDE", "FEATURE_SPECIFIC"})
-_VALID_SOURCE_KINDS = frozenset(
-    {"PLANNER", "UNDER_SPEC", "PROMOTION_LOOP", "PDD_LIFECYCLE", "INTENT_AGENT", "SLICE_AGENT"},
-)
+_VALID_SOURCE_KINDS = frozenset({"INTENT_AGENT", "PLANNER", "UNDER_SPEC", "PROMOTION_LOOP"})
+_SOURCE_KIND_ALIASES = {"PDD_LIFECYCLE": "PROMOTION_LOOP", "SLICE_AGENT": "UNDER_SPEC"}
 _VALID_SEVERITY = frozenset({"BLOCKING", "HIGH_RISK", "MEDIUM_RISK", "INFO"})
 _VALID_QG_STATUSES = frozenset({"PASS", "FAIL", "PENDING"})
 _VALID_ANSWER_KINDS = frozenset({"choice", "yes_no", "value", "bounded_text"})
@@ -186,6 +185,16 @@ def _coerce_system_binding(value: Any) -> dict[str, Any]:
     return system_binding
 
 
+def _canonical_source_kind(value: Any, field_name: str) -> str:
+    raw = _ensure_str(value, field_name).strip().upper()
+    canonical = _SOURCE_KIND_ALIASES.get(raw, raw)
+    if canonical not in _VALID_SOURCE_KINDS:
+        raise QueueValidationError(
+            f"{field_name} {value!r} is invalid; expected one of {sorted(_VALID_SOURCE_KINDS)}"
+        )
+    return canonical
+
+
 def _is_truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -255,9 +264,7 @@ class UserPrompt:
 class QuestionOrigin:
     """Provenance for where a question came from."""
 
-    source_kind: str = (
-        ""  # PLANNER | UNDER_SPEC | PROMOTION_LOOP | PDD_LIFECYCLE | INTENT_AGENT | SLICE_AGENT
-    )
+    source_kind: str = ""  # INTENT_AGENT | PLANNER | UNDER_SPEC | PROMOTION_LOOP
     trace_id: str = ""
     signal_id: str = ""
     slice_id: str = ""
@@ -383,10 +390,10 @@ class QuestionItem:
         for idx, origin in enumerate(self.origins):
             if not isinstance(origin, QuestionOrigin):
                 raise QueueValidationError(f"origins[{idx}] must be a QuestionOrigin")
-            if origin.source_kind not in _VALID_SOURCE_KINDS:
-                raise QueueValidationError(
-                    f"origins[{idx}].source_kind {origin.source_kind!r} is invalid"
-                )
+            origin.source_kind = _canonical_source_kind(
+                origin.source_kind,
+                f"origins[{idx}].source_kind",
+            )
             _ensure_no_extra_keys(
                 vars(origin),
                 {
@@ -712,10 +719,7 @@ class QuestionItem:
             for required_origin in ("source_kind", "created_at"):
                 if required_origin not in origin_raw:
                     raise QueueValidationError(f"origin missing required field {required_origin!r}")
-            if origin_raw["source_kind"] not in _VALID_SOURCE_KINDS:
-                raise QueueValidationError(
-                    f"origin.source_kind {origin_raw['source_kind']!r} is invalid"
-                )
+            source_kind = _canonical_source_kind(origin_raw["source_kind"], "origin.source_kind")
             _ensure_iso_datetime(origin_raw.get("created_at", ""), "origin.created_at")
 
             spec_refs = origin_raw.get("spec_refs", [])
@@ -775,7 +779,7 @@ class QuestionItem:
 
             origins.append(
                 QuestionOrigin(
-                    source_kind=origin_raw.get("source_kind", ""),
+                    source_kind=source_kind,
                     trace_id=origin_raw.get("trace_id", ""),
                     signal_id=origin_raw.get("signal_id", ""),
                     slice_id=origin_raw.get("slice_id", ""),
