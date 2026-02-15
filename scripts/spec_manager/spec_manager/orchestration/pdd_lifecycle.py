@@ -282,27 +282,34 @@ class PddLifecycle:
     def _build_run_context_config(self) -> dict[str, Any]:
         """Build run context config payload with model profile and resolved ids."""
         config: dict[str, Any] = {}
-        if self._model_profile is None:
-            return config
+        if self._model_profile is not None:
+            if hasattr(self._model_profile, "to_dict"):
+                config["model_profile"] = self._model_profile.to_dict()
+            elif isinstance(self._model_profile, dict):
+                config["model_profile"] = dict(self._model_profile)
+            else:
+                config["model_profile"] = {"name": str(self._model_profile)}
 
-        if hasattr(self._model_profile, "to_dict"):
-            config["model_profile"] = self._model_profile.to_dict()
-        elif isinstance(self._model_profile, dict):
-            config["model_profile"] = dict(self._model_profile)
-        else:
-            config["model_profile"] = {"name": str(self._model_profile)}
-
-        model_ids = {
-            role: model_id
-            for role in ("planner", "refinement", "review", "judge")
-            if (model_id := self._resolve_model_id_for_role(role))
-        }
-        if model_ids:
-            config["model_ids"] = model_ids
+            model_ids = {
+                role: model_id
+                for role in ("planner", "refinement", "review", "judge")
+                if (model_id := self._resolve_model_id_for_role(role))
+            }
+            if model_ids:
+                config["model_ids"] = model_ids
         config["integrate_full_test_every_n_iterations"] = (
             self.integrate_full_test_every_n_iterations
         )
         config["refinement_max_issues"] = self.refinement_max_issues
+        existing_pipeline_ci = config.get("pipeline_ci")
+        pipeline_ci: dict[str, Any] = {
+            "max_pending_batches": 1,
+            "run_gates": True,
+            "run_tests": True,
+        }
+        if isinstance(existing_pipeline_ci, dict):
+            pipeline_ci.update(existing_pipeline_ci)
+        config["pipeline_ci"] = pipeline_ci
         return config
 
     # ------------------------------------------------------------------
@@ -1623,6 +1630,65 @@ class PddLifecycle:
         # Build coordination infrastructure
         monitor_executor, wake_queue = self._build_coordination(layer, run_context)
 
+        ci_ticks: list[dict[str, Any]] = []
+        ci_tick_slices: set[str] = set()
+        run_gates: bool | dict[str, Any] = True
+        run_tests: bool | dict[str, Any] = True
+        max_pending_batches = 1
+        if isinstance(run_context.config, dict):
+            pipeline_ci = run_context.config.get("pipeline_ci")
+            if isinstance(pipeline_ci, dict):
+                run_gates = cast("bool | dict[str, Any]", pipeline_ci.get("run_gates", True))
+                run_tests = cast("bool | dict[str, Any]", pipeline_ci.get("run_tests", True))
+                raw_max_pending = pipeline_ci.get("max_pending_batches", 1)
+                try:
+                    max_pending_batches = max(0, int(raw_max_pending))
+                except (TypeError, ValueError):
+                    max_pending_batches = 1
+
+        def record_ci_tick(slice_id: str) -> None:
+            wm = self.worktree_manager
+            if wm is None:
+                return
+
+            tick = wm.tick_pipeline(
+                active_layer=layer,
+                max_pending_batches=max_pending_batches,
+                run_gates=run_gates,
+                run_tests=run_tests,
+            )
+            ci_ticks.append(
+                {
+                    "slice_id": slice_id,
+                    "main_updated": tick.main_updated,
+                    "demotions": len(tick.demotion_tickets),
+                }
+            )
+            ci_tick_slices.add(slice_id)
+
+            # Write CI batch receipt
+            if hasattr(self, "_state_mgr"):
+                batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
+                batch_dir.mkdir(parents=True, exist_ok=True)
+                batch_id = f"batch_{slice_id}_{len(ci_ticks)}"
+                receipt = {
+                    "batch_id": batch_id,
+                    "slice_id": slice_id,
+                    "layer": layer,
+                    "main_updated": tick.main_updated,
+                    "demotions": len(tick.demotion_tickets),
+                }
+                receipt_path = batch_dir / f"{batch_id}.json"
+                receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+
+        def on_slice_result(result: Any) -> None:
+            if str(getattr(result, "status", "")).upper() != "COMPLETE":
+                return
+            slice_id = str(getattr(result, "slice_id", "")).strip()
+            if not slice_id:
+                return
+            record_ci_tick(slice_id)
+
         scheduler = ReactivePromotionScheduler(
             loop=loop,
             config=SchedulerConfig(max_parallel=self.max_parallel),
@@ -1630,8 +1696,22 @@ class PddLifecycle:
             wake_queue=wake_queue,
         )
         gap_counts = self._load_gap_priority_counts(layer, slice_refs)
-        sched_result = scheduler.run(slice_refs, run_context, gap_counts=gap_counts)
+        sched_result = scheduler.run(
+            slice_refs,
+            run_context,
+            gap_counts=gap_counts,
+            on_slice_result=on_slice_result if self.worktree_manager else None,
+        )
         slice_results = sched_result.slice_results
+
+        # Fallback for schedulers/mocks that do not invoke ``on_slice_result``.
+        if self.worktree_manager:
+            for sr in slice_results:
+                if sr.status != "COMPLETE":
+                    continue
+                if sr.slice_id in ci_tick_slices:
+                    continue
+                record_ci_tick(sr.slice_id)
 
         # Per-layer demotion budget check (budget #3)
         total_layer_demotions = sum(len(sr.demotion_tickets) for sr in slice_results)
@@ -1643,41 +1723,6 @@ class PddLifecycle:
                 total_layer_demotions,
                 self.max_demotions_per_layer,
             )
-
-        # CI backpressure: tick pipeline after each completed slice
-        ci_ticks: list[dict[str, Any]] = []
-        candidate_in_flight = False
-        for sr in slice_results:
-            if sr.status == "COMPLETE" and self.worktree_manager:
-                if candidate_in_flight:
-                    logger.info(
-                        "Backpressure: waiting for candidate before processing slice '%s'",
-                        sr.slice_id,
-                    )
-                tick = self.worktree_manager.tick_pipeline(active_layer=layer)
-                ci_ticks.append(
-                    {
-                        "slice_id": sr.slice_id,
-                        "main_updated": tick.main_updated,
-                        "demotions": len(tick.demotion_tickets),
-                    }
-                )
-                candidate_in_flight = bool(tick.demotion_tickets)
-
-                # Write CI batch receipt
-                if hasattr(self, "_state_mgr"):
-                    batch_dir = self._state_mgr.run_dir / "ci" / layer / "batches"
-                    batch_dir.mkdir(parents=True, exist_ok=True)
-                    batch_id = f"batch_{sr.slice_id}_{len(ci_ticks)}"
-                    receipt = {
-                        "batch_id": batch_id,
-                        "slice_id": sr.slice_id,
-                        "layer": layer,
-                        "main_updated": tick.main_updated,
-                        "demotions": len(tick.demotion_tickets),
-                    }
-                    receipt_path = batch_dir / f"{batch_id}.json"
-                    receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
 
         all_terminal = all(r.status in _TERMINAL_SLICE_STATUSES for r in slice_results)
 

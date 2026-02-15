@@ -559,20 +559,22 @@ class WorktreeManager:
             clean_sha = self.vcs.get_head_sha(self._layer_worktrees[layer].get("clean", Path()))
 
             if existing_candidate and existing_candidate != clean_sha:
-                # Candidate in flight — assume it passes and promote
-                batch = self.promote_dirty_to_clean(
+                # Candidate lock is exclusive per layer; do not start or promote
+                # another candidate until this one is explicitly resolved.
+                logger.debug(
+                    "Candidate in flight for %s at %s; skipping promotion tick",
                     layer,
-                    gates=run_gates,
-                    tests=run_tests,
+                    existing_candidate[:12],
                 )
-            else:
-                # Snapshot and promote
-                self.snapshot_candidate(layer)
-                batch = self.promote_dirty_to_clean(
-                    layer,
-                    gates=run_gates,
-                    tests=run_tests,
-                )
+                continue
+
+            # Snapshot and promote the current dirty head.
+            self.snapshot_candidate(layer)
+            batch = self.promote_dirty_to_clean(
+                layer,
+                gates=run_gates,
+                tests=run_tests,
+            )
 
             result.layer_results[layer] = batch
 

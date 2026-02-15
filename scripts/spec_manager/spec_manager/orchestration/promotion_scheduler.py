@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
@@ -137,6 +138,7 @@ class ReactivePromotionScheduler:
         run_context: RunContext,
         *,
         gap_counts: dict[str, int] | None = None,
+        on_slice_result: Callable[[SliceResult], None] | None = None,
     ) -> SchedulerResult:
         """Execute slices with bounded concurrency and reactive wake support.
 
@@ -144,6 +146,8 @@ class ReactivePromotionScheduler:
             slice_refs: Slices to process.
             run_context: Run-scoped configuration.
             gap_counts: Optional gap counts per slice_id for priority ordering.
+            on_slice_result: Optional callback invoked whenever a slice emits
+                a terminal result within the scheduler event loop.
 
         Returns:
             SchedulerResult with all slice results.
@@ -157,9 +161,18 @@ class ReactivePromotionScheduler:
         max_parallel = min(self._config.max_parallel, len(ordered))
 
         if max_parallel <= 1 and not self._has_reactive_support():
-            return self._run_sequential(ordered, run_context)
+            return self._run_sequential(
+                ordered,
+                run_context,
+                on_slice_result=on_slice_result,
+            )
 
-        return self._run_reactive(ordered, run_context, max(max_parallel, 1))
+        return self._run_reactive(
+            ordered,
+            run_context,
+            max(max_parallel, 1),
+            on_slice_result=on_slice_result,
+        )
 
     def _has_reactive_support(self) -> bool:
         """True if monitor executor and wake queue are available."""
@@ -184,6 +197,8 @@ class ReactivePromotionScheduler:
         self,
         slice_refs: list[SliceRef],
         run_context: RunContext,
+        *,
+        on_slice_result: Callable[[SliceResult], None] | None = None,
     ) -> SchedulerResult:
         """Run slices sequentially (fallback for max_parallel=1, no reactive).
 
@@ -195,23 +210,41 @@ class ReactivePromotionScheduler:
         converted: list[SliceResult] = []
         for r in results:
             if r.status == "WAITING":
-                converted.append(
-                    SliceResult(
-                        slice_id=r.slice_id,
-                        status="FAILED",
-                        iterations=r.iterations,
-                        error="WAITING not supported (no monitor executor)",
-                    )
+                emitted = SliceResult(
+                    slice_id=r.slice_id,
+                    status="FAILED",
+                    iterations=r.iterations,
+                    error="WAITING not supported (no monitor executor)",
                 )
             else:
-                converted.append(r)
+                emitted = r
+            converted.append(emitted)
+            self._notify_slice_result(emitted, on_slice_result)
         return self._aggregate(converted)
+
+    @staticmethod
+    def _notify_slice_result(
+        result: SliceResult,
+        on_slice_result: Callable[[SliceResult], None] | None,
+    ) -> None:
+        """Invoke ``on_slice_result`` without allowing callback failures to abort scheduling."""
+        if on_slice_result is None:
+            return
+        try:
+            on_slice_result(result)
+        except Exception:
+            logger.exception(
+                "on_slice_result callback raised for slice '%s'",
+                result.slice_id,
+            )
 
     def _run_reactive(
         self,
         slice_refs: list[SliceRef],
         run_context: RunContext,
         max_workers: int,
+        *,
+        on_slice_result: Callable[[SliceResult], None] | None = None,
     ) -> SchedulerResult:
         """Run slices with reactive wake support.
 
@@ -313,18 +346,19 @@ class ReactivePromotionScheduler:
                                 )
                             else:
                                 # No reactive support — treat WAITING as FAILED
-                                completed_results.append(
-                                    SliceResult(
-                                        slice_id=slice_id,
-                                        status="FAILED",
-                                        iterations=result.iterations,
-                                        error="WAITING not supported (no monitor executor)",
-                                    )
+                                emitted = SliceResult(
+                                    slice_id=slice_id,
+                                    status="FAILED",
+                                    iterations=result.iterations,
+                                    error="WAITING not supported (no monitor executor)",
                                 )
+                                completed_results.append(emitted)
+                                self._notify_slice_result(emitted, on_slice_result)
                                 if self._config.stop_on_first_failure:
                                     cancel_event.set()
                         elif result.status == "FAILED":
                             completed_results.append(result)
+                            self._notify_slice_result(result, on_slice_result)
                             if self._config.stop_on_first_failure:
                                 logger.warning(
                                     "Slice '%s' failed — cancelling remaining slices",
@@ -334,6 +368,7 @@ class ReactivePromotionScheduler:
                         else:
                             # COMPLETE, BLOCKED, MAX_ITERATIONS, STAGNATED
                             completed_results.append(result)
+                            self._notify_slice_result(result, on_slice_result)
 
                     # Check wake queue for events that can re-queue waiting slices
                     if self._has_reactive_support() and waiting_set:
@@ -364,14 +399,14 @@ class ReactivePromotionScheduler:
                             sid,
                             wc,
                         )
-                        completed_results.append(
-                            SliceResult(
-                                slice_id=sid,
-                                status="FAILED",
-                                error=f"Exceeded max_wait_cycles ({wc})",
-                                wake_count=wc,
-                            )
+                        emitted = SliceResult(
+                            slice_id=sid,
+                            status="FAILED",
+                            error=f"Exceeded max_wait_cycles ({wc})",
+                            wake_count=wc,
                         )
+                        completed_results.append(emitted)
+                        self._notify_slice_result(emitted, on_slice_result)
                         if self._config.stop_on_first_failure:
                             cancel_event.set()
 
@@ -382,14 +417,14 @@ class ReactivePromotionScheduler:
                             # No reactive support; fail all waiting slices
                             for sid in list(waiting_set):
                                 wc = wake_counts.get(sid, 0)
-                                completed_results.append(
-                                    SliceResult(
-                                        slice_id=sid,
-                                        status="FAILED",
-                                        error="WAITING not supported",
-                                        wake_count=wc,
-                                    )
+                                emitted = SliceResult(
+                                    slice_id=sid,
+                                    status="FAILED",
+                                    error="WAITING not supported",
+                                    wake_count=wc,
                                 )
+                                completed_results.append(emitted)
+                                self._notify_slice_result(emitted, on_slice_result)
                             waiting_set.clear()
                         else:
                             idle_polls += 1
@@ -409,14 +444,14 @@ class ReactivePromotionScheduler:
                     if cancel_event.is_set() and not active_futures:
                         for sid in list(waiting_set):
                             wc = wake_counts.get(sid, 0)
-                            completed_results.append(
-                                SliceResult(
-                                    slice_id=sid,
-                                    status="FAILED",
-                                    error="Cancelled by scheduler",
-                                    wake_count=wc,
-                                )
+                            emitted = SliceResult(
+                                slice_id=sid,
+                                status="FAILED",
+                                error="Cancelled by scheduler",
+                                wake_count=wc,
                             )
+                            completed_results.append(emitted)
+                            self._notify_slice_result(emitted, on_slice_result)
                         waiting_set.clear()
                         break
 
