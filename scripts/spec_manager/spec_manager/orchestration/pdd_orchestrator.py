@@ -312,7 +312,7 @@ class PddOrchestrator:
         ]
 
         # 4. Global verification (P6 + P7)
-        all_complete = all(r.status == "COMPLETE" for r in slice_results)
+        all_complete = all(r.status in {"COMPLETE", "SKIPPED"} for r in slice_results)
         if all_complete:
             try:
                 p6_result = self.run_phase(Phase.CROSS_LIBRARY)

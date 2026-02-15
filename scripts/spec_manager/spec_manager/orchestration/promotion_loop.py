@@ -339,9 +339,15 @@ class SliceResult:
     """Final result of running the promotion loop on one slice."""
 
     slice_id: str = ""
-    status: Literal["COMPLETE", "BLOCKED", "FAILED", "MAX_ITERATIONS", "STAGNATED", "WAITING"] = (
-        "COMPLETE"
-    )
+    status: Literal[
+        "COMPLETE",
+        "SKIPPED",
+        "BLOCKED",
+        "FAILED",
+        "MAX_ITERATIONS",
+        "STAGNATED",
+        "WAITING",
+    ] = "COMPLETE"
     iterations: int = 0
     remaining_gaps: int = 0
     demotion_tickets: list[DemotionTicket] = field(default_factory=list)
@@ -3201,11 +3207,17 @@ class IntegrateStep:
 
             raw_slice_targets: Any = None
             raw_full_targets: Any = None
-            run_full = False
+            full_test_every_n = 0
             if isinstance(ctx.config, dict):
                 raw_slice_targets = ctx.config.get("integrate_slice_test_targets")
                 raw_full_targets = ctx.config.get("integrate_full_test_targets")
-                run_full = bool(ctx.config.get("integrate_run_full_tests", False))
+                raw_full_cadence = ctx.config.get("integrate_full_test_every_n_iterations", 0)
+                try:
+                    full_test_every_n = int(raw_full_cadence)
+                except (TypeError, ValueError):
+                    full_test_every_n = 0
+                if full_test_every_n < 1:
+                    full_test_every_n = 0
 
             slice_targets = (
                 [str(t) for t in raw_slice_targets if str(t).strip()]
@@ -3223,6 +3235,7 @@ class IntegrateStep:
 
             full_payload: dict[str, Any] | None = None
             full_passed = True
+            run_full = full_test_every_n > 0 and bundle.iteration % full_test_every_n == 0
             if run_full:
                 full_result = runner.run(root=verify_root, scope="FULL", targets=full_targets)
                 full_payload = serialize_test_result(full_result, scope="FULL", root=verify_root)
@@ -4169,6 +4182,8 @@ class AlignStep:
             logger.warning("POWER alignment check failed: %s", exc, exc_info=True)
             return StepResult(status="RETRY", error=f"POWER alignment check failed: {exc}")
 
+        return StepResult(status="OK")
+
 
 # ------------------------------------------------------------------
 # Default step sequence
@@ -4590,6 +4605,45 @@ class PromotionLoop:
         bundle.implementation.under_spec_events = existing_events
         return question
 
+    @staticmethod
+    def _refinement_issue_threshold(ctx: SliceContext) -> int:
+        """Resolve per-slice refinement issue threshold from run config."""
+        threshold = 0
+        if isinstance(ctx.config, dict):
+            raw_threshold = ctx.config.get("refinement_max_issues", 0)
+            try:
+                threshold = int(raw_threshold)
+            except (TypeError, ValueError):
+                threshold = 0
+        return max(threshold, 0)
+
+    @staticmethod
+    def _refinement_issue_count(ctx: SliceContext, bundle: EvidenceBundle) -> int:
+        """Load issue_count from the current iteration refinement artifact."""
+        if not bundle.refinement.path:
+            return 0
+
+        evidence_root = _evidence_base_path(
+            slice_root=ctx.slice_root,
+            workspace_root=ctx.workspace_root,
+        )
+        refinement_path = bundle.iter_dir(evidence_root) / bundle.refinement.path
+        if not refinement_path.exists():
+            return 0
+
+        try:
+            payload = json.loads(refinement_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Unreadable refinement artifact at %s", refinement_path)
+            return 1
+
+        issue_count_raw = payload.get("issue_count")
+        if isinstance(issue_count_raw, int):
+            return max(issue_count_raw, 0)
+
+        issues = payload.get("issues", [])
+        return len(issues) if isinstance(issues, list) else 0
+
     def run_slice(
         self,
         slice_ref: SliceRef,
@@ -4671,6 +4725,7 @@ class PromotionLoop:
 
             retry = False
             waiting = False
+            step_statuses: dict[str, str] = {}
 
             for step in self._steps:
                 logger.debug("Running step: %s", step.name)
@@ -4679,10 +4734,23 @@ class PromotionLoop:
                     question = self._register_gap_queue_stagnation_under_spec(ctx, bundle)
                     if question:
                         logger.warning(
-                            "Slice '%s': GapQueue stagnation detected; treating as under-spec",
+                            "Slice '%s': GapQueue stagnation detected; terminating as STAGNATED",
                             ctx.slice_id,
                         )
-                        result = StepResult(status="BLOCKED", error=question)
+                        stagnation_result = StepResult(status="FAIL", error=question)
+                        self._record_provenance(bundle, step.name, stagnation_result, ctx)
+                        self._refresh_facts(bundle)
+                        bundle.status = "FAILED"
+                        self._persist_iteration_artifacts(ctx, bundle)
+                        bundle.save(evidence_root)
+                        return SliceResult(
+                            slice_id=ctx.slice_id,
+                            status="STAGNATED",
+                            iterations=iteration,
+                            remaining_gaps=len(bundle.gaps.open_gaps),
+                            demotion_tickets=all_tickets,
+                            error=question,
+                        )
 
                 if result.emitted_tickets:
                     all_tickets.extend(result.emitted_tickets)
@@ -4731,6 +4799,7 @@ class PromotionLoop:
                 saved_bundle_path = bundle.save(evidence_root)
                 if not result.bundle_path:
                     result.bundle_path = str(saved_bundle_path)
+                step_statuses[step.name] = result.status
 
                 if result.status == "OK":
                     next_bundle_path = Path(result.bundle_path)
@@ -4814,7 +4883,45 @@ class PromotionLoop:
 
             # Check termination
             remaining = len(bundle.gaps.open_gaps)
+            unresolved_slice_demotions = len(bundle.demotions.pending)
+            refinement_issue_count = self._refinement_issue_count(ctx, bundle)
+            refinement_issue_threshold = self._refinement_issue_threshold(ctx)
+            configured_steps = {step.name for step in self._steps}
+            required_steps = tuple(
+                step_name
+                for step_name in ("PROMOTE", "INTEGRATE", "VERIFY", "ALIGN")
+                if step_name in configured_steps
+            )
+            required_steps_ok = all(
+                step_statuses.get(step_name) == "OK" for step_name in required_steps
+            )
             if remaining == 0:
+                completion_failures: list[str] = []
+                if unresolved_slice_demotions > 0:
+                    completion_failures.append(
+                        f"unresolved_demotion_tickets={unresolved_slice_demotions}"
+                    )
+                if refinement_issue_count > refinement_issue_threshold:
+                    completion_failures.append(
+                        "refinement_threshold_failed"
+                        f"({refinement_issue_count}>{refinement_issue_threshold})"
+                    )
+                if not required_steps_ok:
+                    completion_failures.append("required_gates_not_all_ok")
+
+                if completion_failures:
+                    bundle.status = "FAILED"
+                    self._persist_iteration_artifacts(ctx, bundle)
+                    bundle.save(evidence_root)
+                    return SliceResult(
+                        slice_id=ctx.slice_id,
+                        status="STAGNATED",
+                        iterations=iteration,
+                        remaining_gaps=0,
+                        demotion_tickets=all_tickets,
+                        error="; ".join(completion_failures),
+                    )
+
                 bundle.status = "COMPLETE"
                 self._persist_iteration_artifacts(ctx, bundle)
                 bundle.save(evidence_root)
@@ -4828,9 +4935,10 @@ class PromotionLoop:
 
             # Still gaps — loop
             logger.info(
-                "Slice '%s': %d gaps remaining, continuing",
+                "Slice '%s': %d gaps remaining (unresolved_demotions=%d), continuing",
                 ctx.slice_id,
                 remaining,
+                unresolved_slice_demotions,
             )
 
         # Max iterations reached

@@ -55,7 +55,7 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from spec_manager.orchestration.models import Layer
 from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
@@ -78,6 +78,8 @@ _LAYER_REFINEMENT: dict[Layer, str] = {
     "l2": "_architectural_refinement",
     "l3": "_code_quality_refinement",
 }
+
+_TERMINAL_SLICE_STATUSES = {"COMPLETE", "PROMOTED", "SKIPPED"}
 
 
 class PddLifecycle:
@@ -108,6 +110,14 @@ class PddLifecycle:
         max_pipeline_passes: Overall pipeline pass cap (budget #4).
             Maximum number of times the L1→L2→L3 pipeline can run.
         max_parallel: Maximum concurrent slice loops per layer scheduler.
+        integrate_full_test_every_n_iterations: Periodic full-suite cadence
+            for per-slice integration tests.
+        refinement_max_issues: Max allowed refinement/coupling issues before a
+            slice/layer is considered incomplete.
+        qa_enforcement: QA policy mode (``"hard"`` blocks on QA failures,
+            ``"soft"`` records failures but continues).
+        qa_min_pass_rate: Minimum QA pass rate required when
+            ``qa_enforcement="hard"``.
         model_profile: Optional model profile used for role-based model routing.
         planner_override_provider: Optional planner provider override for tests/evals.
     """
@@ -126,6 +136,10 @@ class PddLifecycle:
         max_demotions_per_layer: int = 50,
         max_pipeline_passes: int = 2,
         max_parallel: int = 1,
+        integrate_full_test_every_n_iterations: int = 5,
+        refinement_max_issues: int = 0,
+        qa_enforcement: Literal["hard", "soft"] = "hard",
+        qa_min_pass_rate: float = 1.0,
         model_profile: Any = None,
         planner_override_provider: Any = None,
     ) -> None:
@@ -139,8 +153,14 @@ class PddLifecycle:
         self.worktree_manager: WorktreeManager | None = worktree_manager
         self.max_approval_iterations = max_approval_iterations
         self.max_demotions_per_layer = max_demotions_per_layer
-        self.max_pipeline_passes = max_pipeline_passes
+        self.max_pipeline_passes = max(1, max_pipeline_passes)
         self.max_parallel = max(1, max_parallel)
+        self.integrate_full_test_every_n_iterations = max(1, integrate_full_test_every_n_iterations)
+        self.refinement_max_issues = max(0, refinement_max_issues)
+        self.qa_enforcement: Literal["hard", "soft"] = (
+            "hard" if qa_enforcement == "hard" else "soft"
+        )
+        self.qa_min_pass_rate = min(max(float(qa_min_pass_rate), 0.0), 1.0)
         self._model_profile = model_profile
         self._planner_override_provider = planner_override_provider
         self._compute_quality = False
@@ -273,6 +293,10 @@ class PddLifecycle:
         }
         if model_ids:
             config["model_ids"] = model_ids
+        config["integrate_full_test_every_n_iterations"] = (
+            self.integrate_full_test_every_n_iterations
+        )
+        config["refinement_max_issues"] = self.refinement_max_issues
         return config
 
     # ------------------------------------------------------------------
@@ -365,91 +389,224 @@ class PddLifecycle:
             else:
                 results["setup"] = self.worktree_manager.setup_layers()
 
-        # L1: Code-as-Spec (with human approval loop)
-        state_mgr.update_state(phase="l1", active_layer="l1")
-        l1_result, approval = self._run_l1_with_approval()
-        results["l1"] = l1_result
-        results["approval"] = approval
-        self._record_git_ref(f"pdd/{self.manager.run_id}/l1-approved")
-        state_mgr.update_state(
-            layers_completed=["l1"],
-            phase="l1_l2_transition",
-            active_layer="l1",
-        )
+        # Bounded full-pipeline passes (budget #4).
+        results["pipeline_pass_history"] = []
+        global_termination: dict[str, Any] = {"passed": False}
+        for pipeline_pass in range(1, self.max_pipeline_passes + 1):
+            results["pipeline_pass"] = pipeline_pass
+            pass_outcome: dict[str, Any] = {
+                "pipeline_pass": pipeline_pass,
+                "l2_blocked": False,
+                "l2_blocked_reason": "",
+                "l3_blocked": False,
+                "l3_blocked_reason": "",
+                "release_blocked": False,
+                "release_blocked_reason": "",
+            }
 
-        # C02: Validate L1 completion before L2 starts
-        l1_slices_data = l1_result.get("slices", {})
-        l1_slices = (
-            l1_slices_data.get("slices", []) if isinstance(l1_slices_data, dict) else l1_slices_data
-        )
-        incomplete = [s for s in l1_slices if s.get("status") not in ("COMPLETE", "PROMOTED")]
-        if incomplete:
-            incomplete_ids = [s.get("slice_id", "?") for s in incomplete]
-            logger.warning(
-                "L1 has %d incomplete slices: %s — L2 input may be partial",
-                len(incomplete),
-                incomplete_ids,
+            # L1: Code-as-Spec (with human approval loop)
+            state_mgr.update_state(phase="l1", active_layer="l1")
+            l1_result, approval = self._run_l1_with_approval()
+            pass_outcome["l1"] = l1_result
+            pass_outcome["approval"] = approval
+            self._record_git_ref(f"pdd/{self.manager.run_id}/l1-approved")
+            state_mgr.update_state(
+                layers_completed=["l1"],
+                phase="l1_l2_transition",
+                active_layer="l1",
             )
-            results["l1_incomplete_slices"] = incomplete_ids
-            if not l1_result.get("all_complete", False):
-                logger.error(
-                    "L1 NOT all_complete — blocking L2 transition. "
-                    "Incomplete slices must be resolved before L2 can start."
+
+            l1_termination = (
+                l1_result.get("layer_termination") if isinstance(l1_result, dict) else None
+            )
+            if (
+                isinstance(l1_termination, dict)
+                and l1_termination
+                and not l1_termination.get("passed", False)
+            ):
+                pass_outcome["l2_blocked"] = True
+                pass_outcome["l2_blocked_reason"] = "L1 layer termination checks failed"
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "retry",
+                        "reason": pass_outcome["l2_blocked_reason"],
+                    }
                 )
-                results["l2_blocked"] = True
-                results["l2_blocked_reason"] = "L1 slices incomplete"
+                if pipeline_pass >= self.max_pipeline_passes:
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
+                    state_mgr.update_state(phase="blocked_pipeline_cap")
+                    return results
+                continue
+
+            # L1→L2 transition: architectural refinement (may demote to L1)
+            pass_outcome["l1_l2_transition"] = self._run_transition("l1", "l2")
+            if pass_outcome["l1_l2_transition"].get("governance_blocked"):
+                pass_outcome["l2_blocked"] = True
+                pass_outcome["l2_blocked_reason"] = str(
+                    pass_outcome["l1_l2_transition"].get("error") or "L1→L2 transition blocked"
+                )
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "retry",
+                        "reason": pass_outcome["l2_blocked_reason"],
+                    }
+                )
+                if pipeline_pass >= self.max_pipeline_passes:
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
+                    state_mgr.update_state(phase="blocked_pipeline_cap")
+                    return results
+                continue
+            state_mgr.update_state(
+                transitions_completed=["l1_l2"],
+                phase="l2",
+                active_layer="l2",
+            )
+
+            # L2: Architecture
+            pass_outcome["l2"] = self._run_layer("l2")
+            self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
+            if self.mode == "interactive":
+                pass_outcome["l2_checkpoint"] = self._request_l2_checkpoint(pass_outcome["l2"])
+            l2_termination = (
+                pass_outcome["l2"].get("layer_termination")
+                if isinstance(pass_outcome["l2"], dict)
+                else None
+            )
+            if (
+                isinstance(l2_termination, dict)
+                and l2_termination
+                and not l2_termination.get("passed", False)
+            ):
+                pass_outcome["l3_blocked"] = True
+                pass_outcome["l3_blocked_reason"] = "L2 layer termination checks failed"
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "retry",
+                        "reason": pass_outcome["l3_blocked_reason"],
+                    }
+                )
+                if pipeline_pass >= self.max_pipeline_passes:
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l3_blocked_reason"]
+                    state_mgr.update_state(phase="blocked_pipeline_cap")
+                    return results
+                continue
+            state_mgr.update_state(
+                layers_completed=["l1", "l2"],
+                phase="l2_l3_transition",
+                active_layer="l2",
+            )
+
+            # L2→L3 transition: code quality refinement (may demote to L2)
+            pass_outcome["l2_l3_transition"] = self._run_transition("l2", "l3")
+            if pass_outcome["l2_l3_transition"].get("governance_blocked"):
+                pass_outcome["l3_blocked"] = True
+                pass_outcome["l3_blocked_reason"] = str(
+                    pass_outcome["l2_l3_transition"].get("error") or "L2→L3 transition blocked"
+                )
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "retry",
+                        "reason": pass_outcome["l3_blocked_reason"],
+                    }
+                )
+                if pipeline_pass >= self.max_pipeline_passes:
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["l3_blocked_reason"]
+                    state_mgr.update_state(phase="blocked_pipeline_cap")
+                    return results
+                continue
+            state_mgr.update_state(
+                transitions_completed=["l1_l2", "l2_l3"],
+                phase="l3",
+                active_layer="l3",
+            )
+
+            # L3: Clean Code
+            pass_outcome["l3"] = self._run_layer("l3")
+            self._record_git_ref(f"pdd/{self.manager.run_id}/l3/clean")
+            state_mgr.update_state(
+                layers_completed=["l1", "l2", "l3"],
+                phase="qa",
+                active_layer="",
+            )
+
+            l3_termination = (
+                pass_outcome["l3"].get("layer_termination")
+                if isinstance(pass_outcome["l3"], dict)
+                else None
+            )
+            if (
+                isinstance(l3_termination, dict)
+                and l3_termination
+                and not l3_termination.get("passed", False)
+            ):
+                pass_outcome["release_blocked"] = True
+                pass_outcome["release_blocked_reason"] = "L3 layer termination checks failed"
+                results.update(pass_outcome)
+                results["pipeline_pass_history"].append(
+                    {
+                        "pass": pipeline_pass,
+                        "status": "retry",
+                        "reason": pass_outcome["release_blocked_reason"],
+                    }
+                )
+                if pipeline_pass >= self.max_pipeline_passes:
+                    results["release_blocked"] = True
+                    results["release_blocked_reason"] = pass_outcome["release_blocked_reason"]
+                    state_mgr.update_state(phase="blocked_pipeline_cap")
+                    return results
+                continue
+
+            # Final QA eval
+            pass_outcome["qa"] = self.qa()
+            pass_outcome["qa_gate"] = self._evaluate_qa_gate(pass_outcome["qa"])
+            pass_outcome["global_termination"] = self._evaluate_global_termination(pass_outcome)
+
+            results.update(pass_outcome)
+            global_termination = pass_outcome["global_termination"]
+            results["pipeline_pass_history"].append(
+                {
+                    "pass": pipeline_pass,
+                    "status": "pass" if global_termination.get("passed", False) else "retry",
+                    "reason": (
+                        ""
+                        if global_termination.get("passed", False)
+                        else "Global termination checks failed"
+                    ),
+                }
+            )
+            if global_termination.get("passed", False):
+                break
+
+            logger.warning(
+                "Pipeline pass %d/%d failed global termination checks",
+                pipeline_pass,
+                self.max_pipeline_passes,
+            )
+            if pipeline_pass >= self.max_pipeline_passes:
+                results["release_blocked"] = True
+                results["release_blocked_reason"] = (
+                    "Global termination checks failed and pipeline pass cap reached"
+                )
+                state_mgr.update_state(phase="blocked_pipeline_cap")
                 return results
 
-        # L1→L2 transition: architectural refinement (may demote to L1)
-        results["l1_l2_transition"] = self._run_transition("l1", "l2")
-        if results["l1_l2_transition"].get("governance_blocked"):
-            logger.error("Blocking L2 start: L1→L2 transition governance gate failed")
-            results["l2_blocked"] = True
-            results["l2_blocked_reason"] = "L1→L2 transition governance gate failed"
+        if not global_termination.get("passed", False):
+            results["release_blocked"] = True
+            results["release_blocked_reason"] = "Global termination checks did not pass"
+            state_mgr.update_state(phase="blocked_global_termination")
             return results
-        state_mgr.update_state(
-            transitions_completed=["l1_l2"],
-            phase="l2",
-            active_layer="l2",
-        )
-
-        # L2: Architecture
-        results["l2"] = self._run_layer("l2")
-        self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
-
-        # Optional L2 checkpoint: approve architecture topology before L3
-        if self.mode == "interactive":
-            results["l2_checkpoint"] = self._request_l2_checkpoint(results["l2"])
-        state_mgr.update_state(
-            layers_completed=["l1", "l2"],
-            phase="l2_l3_transition",
-            active_layer="l2",
-        )
-
-        # L2→L3 transition: code quality refinement (may demote to L2)
-        results["l2_l3_transition"] = self._run_transition("l2", "l3")
-        if results["l2_l3_transition"].get("governance_blocked"):
-            logger.error("Blocking L3 start: L2→L3 transition governance gate failed")
-            results["l3_blocked"] = True
-            results["l3_blocked_reason"] = "L2→L3 transition governance gate failed"
-            return results
-        state_mgr.update_state(
-            transitions_completed=["l1_l2", "l2_l3"],
-            phase="l3",
-            active_layer="l3",
-        )
-
-        # L3: Clean Code
-        results["l3"] = self._run_layer("l3")
-        self._record_git_ref(f"pdd/{self.manager.run_id}/l3/clean")
-        state_mgr.update_state(
-            layers_completed=["l1", "l2", "l3"],
-            phase="qa",
-            active_layer="",
-        )
-
-        # Final QA eval
-        results["qa"] = self.qa()
 
         # Scoring
         from spec_manager.evaluation.scoring import RunReporter
@@ -586,12 +743,29 @@ class PddLifecycle:
 
         # Release signoff (auto-approve in auto mode)
         results["release_signoff"] = self._request_release_signoff(results)
+        if not bool((results["release_signoff"] or {}).get("approved", False)):
+            results["release_blocked"] = True
+            results["release_blocked_reason"] = "Release signoff rejected"
+            state_mgr.update_state(phase="blocked_release_signoff")
+            return results
 
         # Re-render final report after release signoff so L3 decision appears
         # in the consolidated approval checkpoint section.
         report_path, scorecard_json_path = report_gen.generate(results, scorecard)
         results["final_report_path"] = str(report_path)
         results["scorecard_json_path"] = str(scorecard_json_path)
+
+        results["merge_tag"] = self._perform_release_merge_and_tag()
+        if not (
+            bool(results["merge_tag"].get("merged", False))
+            and bool(results["merge_tag"].get("tagged", False))
+        ):
+            results["release_blocked"] = True
+            mt = results["merge_tag"]
+            err = mt.get("merge_error") or mt.get("tag_error")
+            results["release_blocked_reason"] = "Merge/tag action failed: " + str(err)
+            state_mgr.update_state(phase="blocked_merge_tag")
+            return results
 
         self._record_git_ref(f"pdd/{self.manager.run_id}/release")
 
@@ -636,6 +810,373 @@ class PddLifecycle:
             logger.warning("QA eval failed: %s", exc)
             return {"error": str(exc)}
 
+    def _evaluate_qa_gate(self, qa_result: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate QA result using configured hard/soft policy."""
+        if not isinstance(qa_result, dict):
+            return {
+                "passed": False,
+                "enforcement": self.qa_enforcement,
+                "error": "QA result is not a dict",
+                "pass_rate": 0.0,
+            }
+        pass_rate_raw = qa_result.get("pass_rate", 1.0)
+        try:
+            pass_rate = float(pass_rate_raw)
+        except (TypeError, ValueError):
+            pass_rate = 0.0
+        has_error = bool(str(qa_result.get("error", "")).strip())
+        threshold_ok = pass_rate >= self.qa_min_pass_rate
+        enforced_pass = not has_error and threshold_ok
+        return {
+            "passed": enforced_pass if self.qa_enforcement == "hard" else True,
+            "enforcement": self.qa_enforcement,
+            "pass_rate": pass_rate,
+            "min_pass_rate": self.qa_min_pass_rate,
+            "qa_error": qa_result.get("error", ""),
+            "enforced_pass": enforced_pass,
+        }
+
+    @staticmethod
+    def _layer_slice_rows(layer_result: dict[str, Any]) -> list[dict[str, Any]]:
+        slices_data = layer_result.get("slices", {})
+        if isinstance(slices_data, dict):
+            rows = slices_data.get("slices", [])
+            return rows if isinstance(rows, list) else []
+        return slices_data if isinstance(slices_data, list) else []
+
+    def _count_pending_demotions_for_layer(self, layer: Layer) -> int:
+        """Count unresolved demotion tickets targeting a specific layer."""
+        tickets_dir = (
+            self.manager.workspace_path
+            / ".pdd_runs"
+            / self.manager.run_id
+            / "demotions"
+            / "tickets"
+        )
+        if not tickets_dir.exists():
+            return 0
+        target = layer.upper()
+        pending = 0
+        for ticket_path in sorted(tickets_dir.glob("*.json")):
+            try:
+                payload = json.loads(ticket_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            ticket = payload.get("ticket", payload)
+            if not isinstance(ticket, dict):
+                continue
+            if str(ticket.get("target_layer", "")).strip().upper() != target:
+                continue
+            if str(ticket.get("apply_status", "")).strip().upper() != "APPLIED":
+                pending += 1
+        return pending
+
+    def _evaluate_layer_termination(
+        self, layer: Layer, layer_result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Evaluate SEC-039 layer-complete conditions."""
+        rows = self._layer_slice_rows(layer_result)
+        non_terminal = [
+            row.get("slice_id", "?")
+            for row in rows
+            if str(row.get("status", "")).strip().upper() not in _TERMINAL_SLICE_STATUSES
+        ]
+        all_slices_terminal = len(non_terminal) == 0
+
+        layer_clean = True
+        if self.worktree_manager is not None:
+            layer_clean = bool(self.worktree_manager.is_layer_clean(layer))
+
+        pending_demotions = self._count_pending_demotions_for_layer(layer)
+        no_pending_demotions = pending_demotions == 0
+
+        exit_refinement = layer_result.get("exit_refinement", {})
+        exit_demotions = 0
+        exit_error = False
+        if isinstance(exit_refinement, dict):
+            raw_demotions = exit_refinement.get("demotion_tickets", 0)
+            try:
+                exit_demotions = int(raw_demotions)
+            except (TypeError, ValueError):
+                exit_demotions = 0
+            exit_error = bool(str(exit_refinement.get("error", "")).strip())
+        exit_refinement_clean = exit_demotions <= 0 and not exit_error
+
+        passed = (
+            all_slices_terminal and layer_clean and no_pending_demotions and exit_refinement_clean
+        )
+        checks = {
+            "passed": passed,
+            "all_slices_terminal": all_slices_terminal,
+            "non_terminal_slices": non_terminal,
+            "layer_clean": layer_clean,
+            "pending_demotions": pending_demotions,
+            "exit_refinement_clean": exit_refinement_clean,
+            "exit_refinement_demotions": exit_demotions,
+            "exit_refinement_error": exit_error,
+        }
+        if not passed:
+            logger.warning("Layer %s termination checks failed: %s", layer, checks)
+        return checks
+
+    def _run_global_connectivity_check(self) -> dict[str, Any]:
+        """Run global P6 connectivity check over clean-root code."""
+        from spec_manager.analysis.adjacency.runner import (
+            AdjacencyAnalysisConfig,
+            run_adjacency_analysis,
+        )
+
+        source_root = self.manager.workspace_path
+        if self.worktree_manager is not None:
+            clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
+            if clean_root is not None and Path(clean_root).exists():
+                source_root = clean_root
+
+        try:
+            report = run_adjacency_analysis(
+                AdjacencyAnalysisConfig(source_dirs=[source_root], spec_dirs=[source_root])
+            )
+            disconnected = len(report.disconnected_warnings or [])
+            return {
+                "passed": disconnected == 0 and report.total_nodes > 0,
+                "total_nodes": report.total_nodes,
+                "total_edges": report.total_edges,
+                "num_components": report.num_components,
+                "disconnected_warnings": list(report.disconnected_warnings or []),
+                "source_root": str(source_root),
+            }
+        except Exception as exc:
+            logger.warning("Global connectivity check failed: %s", exc, exc_info=True)
+            return {"passed": False, "error": str(exc), "source_root": str(source_root)}
+
+    def _run_global_lineage_check(self) -> dict[str, Any]:
+        """Run global P7 lineage completeness check over clean-root code."""
+        from spec_manager.projection.lineage.builder import (
+            AtomDefinition,
+            LineageBuilder,
+            scan_imports_from_directory,
+        )
+
+        source_root = self.manager.workspace_path
+        if self.worktree_manager is not None:
+            clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
+            if clean_root is not None and Path(clean_root).exists():
+                source_root = clean_root
+
+        try:
+            import_records = scan_imports_from_directory(source_root)
+            atom_defs: list[AtomDefinition] = []
+            branch_manager = getattr(self.manager, "branches", None)
+            if branch_manager is not None:
+                list_atoms = getattr(branch_manager, "list_atoms", None)
+                if callable(list_atoms):
+                    for atom in list_atoms():
+                        atom_defs.append(
+                            AtomDefinition(
+                                atom_id=getattr(atom, "atom_id", ""),
+                                function_name=getattr(atom, "function_name", ""),
+                                file_path=getattr(atom, "file_path", ""),
+                                module_path="",
+                                signature_hash=(
+                                    getattr(atom, "signature_hash", "")
+                                    or getattr(atom, "content_hash", "")
+                                ),
+                            )
+                        )
+            if not atom_defs:
+                return {
+                    "passed": False,
+                    "error": "No atoms available for lineage completeness check",
+                    "source_root": str(source_root),
+                }
+            lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
+            lineage_table = lineage_builder.build_lineage()
+            known_atom_ids = {a.atom_id for a in atom_defs}
+            orphan_atoms = lineage_table.find_orphan_atoms(known_atom_ids)
+            return {
+                "passed": len(orphan_atoms) == 0,
+                "import_edges": len(import_records),
+                "lineage_edges": len(lineage_table.edges),
+                "known_atoms": len(known_atom_ids),
+                "orphan_atoms": len(orphan_atoms),
+                "orphan_atom_ids": sorted(orphan_atoms)[:50],
+                "source_root": str(source_root),
+            }
+        except Exception as exc:
+            logger.warning("Global lineage check failed: %s", exc, exc_info=True)
+            return {"passed": False, "error": str(exc), "source_root": str(source_root)}
+
+    def _run_clean_root_full_tests(self) -> dict[str, Any]:
+        """Run clean-root full test suite as a global termination gate."""
+        from spec_manager.core.testing.registry import TestRunnerRegistry
+
+        root = self.manager.workspace_path
+        if self.worktree_manager is not None:
+            clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
+            if clean_root is not None and Path(clean_root).exists():
+                root = clean_root
+        try:
+            runner = TestRunnerRegistry().pick(root=root)
+            result = runner.run(root=root, scope="FULL")
+            return {
+                "passed": bool(getattr(result, "passed", False)),
+                "runner_id": getattr(result, "runner_id", ""),
+                "command": list(getattr(result, "command", []) or []),
+                "failed_tests": int(getattr(result, "failed_tests", 0)),
+                "source_root": str(root),
+            }
+        except Exception as exc:
+            logger.warning("Clean-root full suite failed: %s", exc, exc_info=True)
+            return {"passed": False, "error": str(exc), "source_root": str(root)}
+
+    def _ci_receipts_pass(self) -> dict[str, Any]:
+        """Validate CI batch receipts for PASS status."""
+        if self.worktree_manager is None:
+            return {
+                "passed": True,
+                "receipt_count": 0,
+                "note": "Worktree manager unavailable; CI receipts not required",
+            }
+        run_ci_dir = self.manager.workspace_path / ".pdd_runs" / self.manager.run_id / "ci"
+        if not run_ci_dir.exists():
+            return {"passed": False, "error": "CI receipts directory missing", "receipt_count": 0}
+
+        receipt_files = sorted(run_ci_dir.glob("*/batches/*.json"))
+        if not receipt_files:
+            return {"passed": False, "error": "No CI receipts found", "receipt_count": 0}
+
+        failing_receipts: list[str] = []
+        for receipt_path in receipt_files:
+            try:
+                payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                failing_receipts.append(str(receipt_path))
+                continue
+            demotions = int(payload.get("demotions", 0) or 0)
+            main_updated = bool(payload.get("main_updated", True))
+            if demotions > 0 or not main_updated:
+                failing_receipts.append(str(receipt_path))
+        return {
+            "passed": len(failing_receipts) == 0,
+            "receipt_count": len(receipt_files),
+            "failing_receipts": failing_receipts[:20],
+        }
+
+    def _evaluate_global_termination(self, results: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate SEC-039 global termination preconditions."""
+        has_strict_layer_data = all(
+            isinstance((results.get(layer, {}) or {}).get("layer_termination"), dict)
+            and bool((results.get(layer, {}) or {}).get("layer_termination"))
+            for layer in ("l1", "l2", "l3")
+        )
+        layer_checks = {
+            layer: (results.get(layer, {}) or {}).get("layer_termination", {})
+            for layer in ("l1", "l2", "l3")
+        }
+        all_slices_terminal = all(
+            bool(check.get("all_slices_terminal", True)) for check in layer_checks.values()
+        )
+        l3_clean = bool((layer_checks.get("l3") or {}).get("layer_clean", True))
+        if has_strict_layer_data:
+            ci_receipts = self._ci_receipts_pass()
+            connectivity = self._run_global_connectivity_check()
+            lineage = self._run_global_lineage_check()
+            full_tests = self._run_clean_root_full_tests()
+        else:
+            ci_receipts = {"passed": True, "note": "Strict layer termination metadata unavailable"}
+            connectivity = {
+                "passed": True,
+                "note": "Strict layer termination metadata unavailable",
+            }
+            lineage = {
+                "passed": True,
+                "note": "Strict layer termination metadata unavailable",
+            }
+            full_tests = {
+                "passed": True,
+                "note": "Strict layer termination metadata unavailable",
+            }
+        qa_gate = self._evaluate_qa_gate(results.get("qa", {}))
+        checks = {
+            "all_slices_terminal": all_slices_terminal,
+            "p6_connectivity": bool(connectivity.get("passed", False)),
+            "p7_lineage": bool(lineage.get("passed", False)),
+            "l3_clean": l3_clean,
+            "ci_receipts_pass": bool(ci_receipts.get("passed", False)),
+            "clean_root_full_tests_pass": bool(full_tests.get("passed", False)),
+            "qa_gate_pass": bool(qa_gate.get("passed", False)),
+        }
+        passed = all(checks.values())
+        return {
+            "passed": passed,
+            "checks": checks,
+            "layer_termination": layer_checks,
+            "connectivity": connectivity,
+            "lineage": lineage,
+            "clean_root_full_tests": full_tests,
+            "ci_receipts": ci_receipts,
+            "qa_gate": qa_gate,
+        }
+
+    def _perform_release_merge_and_tag(self) -> dict[str, Any]:
+        """Perform merge-to-main and release tag creation."""
+        vcs = self.worktree_manager.vcs if self.worktree_manager else None
+        if vcs is None:
+            try:
+                from spec_manager.vcs.operations import GitVcs
+
+                vcs = GitVcs(repo_root=self.manager.workspace_path)
+            except Exception as exc:
+                return {"merged": False, "tagged": False, "error": str(exc)}
+
+        merge_ok = True
+        merge_error = ""
+        source_branch = ""
+        if self.worktree_manager is not None:
+            source_branch = self.worktree_manager.layer_branch("l3", "clean")
+            merge_result = vcs.merge(self.manager.workspace_path, source_branch)
+            if isinstance(merge_result, tuple) and len(merge_result) == 2:
+                merge_ok, merge_error = bool(merge_result[0]), str(merge_result[1])
+            elif isinstance(merge_result, bool):
+                merge_ok, merge_error = merge_result, ""
+            else:
+                merge_ok, merge_error = True, ""
+        else:
+            source_branch = vcs.get_current_branch(self.manager.workspace_path) or "HEAD"
+
+        tag_name = f"pdd/{self.manager.run_id}/release"
+        tag_ok = False
+        tag_error = ""
+        if merge_ok:
+            head_sha = vcs.rev_parse("HEAD") or ""
+            if head_sha:
+                existing_tag = vcs.rev_parse(f"refs/tags/{tag_name}")
+                if existing_tag:
+                    tag_ok = True
+                else:
+                    tag_result = vcs.create_tag(
+                        tag_name,
+                        head_sha,
+                        message=f"PDD release for run {self.manager.run_id}",
+                    )
+                    if isinstance(tag_result, tuple) and len(tag_result) == 2:
+                        tag_ok, tag_error = bool(tag_result[0]), str(tag_result[1])
+                    elif isinstance(tag_result, bool):
+                        tag_ok, tag_error = tag_result, ""
+                    else:
+                        tag_ok, tag_error = True, ""
+            else:
+                tag_error = "Unable to resolve HEAD for release tag"
+
+        return {
+            "merged": merge_ok,
+            "merge_error": merge_error,
+            "source_branch": source_branch,
+            "tagged": tag_ok,
+            "tag_name": tag_name,
+            "tag_error": tag_error,
+        }
+
     # ------------------------------------------------------------------
     # Layer orchestration
     # ------------------------------------------------------------------
@@ -662,6 +1203,12 @@ class PddLifecycle:
 
         # Exit refinement (typed per layer)
         results["exit_refinement"] = refinement_method()
+
+        # Layer termination predicate: all terminal slices, clean lane state,
+        # no pending demotions, and clean exit refinement.
+        termination = self._evaluate_layer_termination(layer, results)
+        results["layer_termination"] = termination
+        results["all_complete"] = bool(termination.get("all_slices_terminal", False))
 
         logger.info("=== Layer %s: DONE ===", layer.upper())
         return results
@@ -734,6 +1281,8 @@ class PddLifecycle:
         results["transition_stuck"] = transition_stuck
         if transition_stuck:
             results["error"] = f"Transition {from_layer}→{to_layer} stuck after {max_rounds} rounds"
+            results["governance_blocked"] = True
+            return results
 
         # Transition governance gate: no open governance FAIL + required artifacts present
         governance = self._run_governance_check(
@@ -897,6 +1446,8 @@ class PddLifecycle:
                     receipt_path = batch_dir / f"{batch_id}.json"
                     receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
 
+        all_terminal = all(r.status in _TERMINAL_SLICE_STATUSES for r in slice_results)
+
         return {
             "layer": layer,
             "slices": [
@@ -911,7 +1462,7 @@ class PddLifecycle:
                 for r in slice_results
             ],
             "ci_ticks": ci_ticks,
-            "all_complete": sched_result.all_complete,
+            "all_complete": all_terminal,
             "waiting_slices": sched_result.waiting_slices,
             "total_layer_demotions": total_layer_demotions,
             "budget_exceeded": budget_exceeded,

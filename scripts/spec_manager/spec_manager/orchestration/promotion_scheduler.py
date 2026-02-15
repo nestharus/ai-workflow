@@ -95,6 +95,7 @@ class SchedulerResult:
         return {
             "total_slices": len(self.slice_results),
             "complete": sum(1 for r in self.slice_results if r.status == "COMPLETE"),
+            "skipped": sum(1 for r in self.slice_results if r.status == "SKIPPED"),
             "blocked": len(self.blocked_slices),
             "failed": len(self.failed_slices),
             "waiting": len(self.waiting_slices),
@@ -532,7 +533,7 @@ class ReactivePromotionScheduler:
             else [r.slice_id for r in results if r.status == "WAITING"]
         )
         total_iters = sum(r.iterations for r in results)
-        all_complete = all(r.status == "COMPLETE" for r in results)
+        all_complete = all(r.status in {"COMPLETE", "SKIPPED"} for r in results)
 
         return SchedulerResult(
             slice_results=results,
