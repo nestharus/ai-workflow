@@ -8,8 +8,10 @@ auto-mode decision authority.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -32,7 +34,7 @@ Capability = Literal[
     "RESOLVE_SIGNAL",  # interactive refinement + under-spec questions
     "GAP",  # gap understanding / clustering / prioritization
     "PLAN",  # plan synthesis (intentions / wiring / refactor)
-    "UNDER_SPEC",  # resolve or block; produce constraints or questions
+    "UNDER_SPEC",  # resolve or block; produce constraints + routing + monitors
     "INTEGRATION_ANALYSIS",
     "TRIAGE_SIGNAL",  # reactive triage of coordination signals
 ]
@@ -419,7 +421,9 @@ class Planner:
     ) -> dict[str, Any]:
         """Resolve or block under-spec events.
 
-        Returns a dict with ``blocked`` (bool) and ``constraints`` keys.
+        Returns an explicit contract with:
+        ``blocked``, ``constraints``, ``questions``, ``resolved``,
+        ``routing`` (work items), ``monitors``, and ``expansions``.
         """
         req = PlanningRequest(
             capability="UNDER_SPEC",
@@ -427,7 +431,334 @@ class Planner:
             inputs={"events": events},
         )
         result = self.plan(req)
-        return result.outputs
+        outputs = result.outputs if isinstance(result.outputs, dict) else {}
+        return self._normalize_under_spec_outputs(
+            context=context,
+            events=events,
+            outputs=outputs,
+            status=result.status,
+        )
+
+    def _normalize_under_spec_outputs(
+        self,
+        *,
+        context: PlanningContext,
+        events: list[dict[str, Any]],
+        outputs: dict[str, Any],
+        status: str,
+    ) -> dict[str, Any]:
+        blocked = bool(outputs.get("blocked", False) or status == "BLOCKED")
+        constraints_raw = outputs.get("constraints", {})
+        constraints = constraints_raw if isinstance(constraints_raw, dict) else {}
+        questions_raw = outputs.get("questions", [])
+        questions = (
+            [str(q).strip() for q in questions_raw if str(q).strip()]
+            if isinstance(questions_raw, list)
+            else []
+        )
+        resolved_raw = outputs.get("resolved", [])
+        resolved = (
+            [row for row in resolved_raw if isinstance(row, dict)]
+            if isinstance(resolved_raw, list)
+            else []
+        )
+        routing_raw = outputs.get("routing", [])
+        routing = (
+            [row for row in routing_raw if isinstance(row, dict)]
+            if isinstance(routing_raw, list)
+            else []
+        )
+        monitors_raw = outputs.get("monitors", [])
+        monitors = (
+            [row for row in monitors_raw if isinstance(row, dict)]
+            if isinstance(monitors_raw, list)
+            else []
+        )
+
+        expansions: list[dict[str, Any]] = []
+        expansions_raw = outputs.get("expansions", [])
+        if isinstance(expansions_raw, list):
+            expansions.extend(row for row in expansions_raw if isinstance(row, dict))
+        single_expansion = outputs.get("expansion")
+        if isinstance(single_expansion, dict):
+            expansions.append(single_expansion)
+
+        # When UNDER_SPEC remains blocked with no routable payload, synthesize
+        # spec expansion work-items via TRIAGE_SIGNAL so callers can route
+        # provider work and register monitors explicitly.
+        if blocked and not routing and events:
+            triage_payload = self._expand_under_spec_via_triage(context=context, events=events)
+            routing.extend(triage_payload["routing"])
+            monitors.extend(triage_payload["monitors"])
+            expansions.extend(triage_payload["expansions"])
+
+        contradictions_raw = outputs.get("contradictions", [])
+        contradictions = (
+            [str(item) for item in contradictions_raw if str(item).strip()]
+            if isinstance(contradictions_raw, list)
+            else []
+        )
+
+        confidence_raw = outputs.get("confidence", outputs.get("score", 0.0))
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        return {
+            "blocked": blocked,
+            "constraints": constraints,
+            "questions": questions,
+            "resolved": resolved,
+            "routing": routing,
+            "monitors": monitors,
+            "expansions": expansions,
+            "confidence": max(0.0, min(1.0, confidence)),
+            "contradictions": contradictions,
+        }
+
+    def _expand_under_spec_via_triage(
+        self,
+        *,
+        context: PlanningContext,
+        events: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        routing: list[dict[str, Any]] = []
+        monitors: list[dict[str, Any]] = []
+        expansions: list[dict[str, Any]] = []
+
+        for index, event in enumerate(events):
+            if not isinstance(event, dict):
+                continue
+
+            signal = self._synthesize_under_spec_signal(
+                context=context,
+                event=event,
+                event_index=index,
+            )
+            triage_ctx = PlanningContext(
+                run_id=context.run_id,
+                slice_id=context.slice_id,
+                iteration=context.iteration,
+                layer="l1",
+                mode=context.mode,
+                workspace_root=context.workspace_root,
+                slice_root=context.slice_root,
+                bundle_ref=context.bundle_ref,
+                signal_ref=signal,
+                metadata={"source": "UNDER_SPEC_EXPANSION"},
+            )
+
+            triage_result = self.triage_signal(triage_ctx, signal)
+            triage_outputs = (
+                triage_result.outputs
+                if hasattr(triage_result, "outputs") and isinstance(triage_result.outputs, dict)
+                else {}
+            )
+            triage_routing = triage_outputs.get("routing", [])
+            triage_monitors = triage_outputs.get("monitors", [])
+            confidence_raw = triage_outputs.get("confidence", 0.0)
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            proposal_models_raw = triage_outputs.get("proposal_models", [])
+            proposal_models = (
+                [str(model) for model in proposal_models_raw if str(model).strip()]
+                if isinstance(proposal_models_raw, list)
+                else []
+            )
+
+            triage_routing_dicts = (
+                [row for row in triage_routing if isinstance(row, dict)]
+                if isinstance(triage_routing, list)
+                else []
+            )
+            triage_monitor_dicts = (
+                [row for row in triage_monitors if isinstance(row, dict)]
+                if isinstance(triage_monitors, list)
+                else []
+            )
+
+            consistency_passed = self._consistency_check(
+                signal=signal,
+                routing_payloads=triage_routing_dicts,
+            )
+            contradictions_raw = triage_outputs.get("contradictions", [])
+            contradictions = (
+                [str(item) for item in contradictions_raw if str(item).strip()]
+                if isinstance(contradictions_raw, list)
+                else []
+            )
+
+            for payload in triage_routing_dicts:
+                metadata = payload.get("metadata")
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata = dict(metadata)
+                metadata["event_id"] = str(event.get("event_id", "")).strip()
+                metadata["signal_id"] = signal["signal_id"]
+                metadata["spec_refs"] = list(signal["spec_refs"])
+                metadata["provenance"] = (
+                    f"Expansion created to resolve signal_id {signal['signal_id']}."
+                )
+                metadata["confidence"] = confidence
+                metadata["proposal_models"] = proposal_models
+                metadata["consistency_passed"] = consistency_passed
+                payload["metadata"] = metadata
+                routing.append(payload)
+
+            for payload in triage_monitor_dicts:
+                payload = dict(payload)
+                payload.setdefault("signal_id", signal["signal_id"])
+                monitors.append(payload)
+
+            expansions.append(
+                {
+                    "event_id": str(event.get("event_id", "")).strip(),
+                    "signal_id": signal["signal_id"],
+                    "action": str(triage_outputs.get("action", "NOOP")).strip().upper() or "NOOP",
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "proposal_models": proposal_models,
+                    "consistency_passed": consistency_passed,
+                    "contradictions": contradictions,
+                    "spec_refs": list(signal["spec_refs"]),
+                    "routing": triage_routing_dicts,
+                    "monitors": triage_monitor_dicts,
+                    "why": str(triage_outputs.get("why", "")).strip(),
+                    "missing_detail": str(triage_outputs.get("missing_detail", "")).strip(),
+                }
+            )
+
+        return {
+            "routing": routing,
+            "monitors": monitors,
+            "expansions": expansions,
+        }
+
+    @staticmethod
+    def _synthesize_under_spec_signal(
+        *,
+        context: PlanningContext,
+        event: dict[str, Any],
+        event_index: int,
+    ) -> dict[str, Any]:
+        question = str(event.get("question", "")).strip() or "Under-specification detected"
+        raw_event_id = str(event.get("event_id", "")).strip()
+        event_id = raw_event_id or hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
+        source_line_raw = event.get("source_line", 0)
+        try:
+            source_line = int(source_line_raw or 0)
+        except (TypeError, ValueError):
+            source_line = 0
+
+        ctx_payload = event.get("context", {})
+        artifact_key = ""
+        if isinstance(ctx_payload, dict):
+            artifact_key = str(
+                ctx_payload.get("needed_for")
+                or ctx_payload.get("artifact_key")
+                or ctx_payload.get("context")
+                or ""
+            ).strip()
+        if not artifact_key:
+            artifact_key = str(event.get("needed_for", "")).strip()
+        if not artifact_key:
+            artifact_key = str(event.get("source_file", event.get("file", ""))).strip()
+        signal_id = f"{context.slice_id}:{context.iteration}:{event_id}:{event_index}"
+        spec_refs = Planner._extract_spec_refs_from_event(
+            event=event,
+            question=question,
+            source_line=source_line,
+        )
+
+        return {
+            "signal_version": 1,
+            "signal_id": signal_id,
+            "run_id": context.run_id,
+            "layer": context.layer,
+            "slice_id": context.slice_id,
+            "iteration": context.iteration,
+            "status": "HALT",
+            "classification": "AMBIGUOUS_SPEC",
+            "need": {
+                "summary": question,
+                "artifact_key": artifact_key,
+            },
+            "spec_refs": spec_refs,
+            "search_hints": {
+                "keywords": [token for token in re.split(r"[^a-zA-Z0-9]+", artifact_key) if token],
+                "possible_owner_slices": [],
+            },
+            "payload": {"under_spec_event": event},
+        }
+
+    @staticmethod
+    def _extract_spec_refs_from_event(
+        *,
+        event: dict[str, Any],
+        question: str,
+        source_line: int,
+    ) -> list[dict[str, Any]]:
+        context_payload = event.get("context", {})
+        if isinstance(context_payload, dict):
+            refs = context_payload.get("spec_refs", [])
+            if isinstance(refs, list):
+                normalized: list[dict[str, Any]] = []
+                for raw in refs:
+                    if not isinstance(raw, dict):
+                        continue
+                    text = str(raw.get("spec_text", "")).strip()
+                    source_file = str(raw.get("source_file", "")).strip()
+                    source_symbol = str(raw.get("source_symbol", "")).strip()
+                    line_hint_raw = raw.get("source_line_hint", source_line)
+                    try:
+                        line_hint = int(line_hint_raw or 0)
+                    except (TypeError, ValueError):
+                        line_hint = 0
+                    if not (text or source_file):
+                        continue
+                    normalized.append(
+                        {
+                            "spec_text": text or question,
+                            "source_file": source_file,
+                            "source_symbol": source_symbol,
+                            "source_line_hint": line_hint,
+                        }
+                    )
+                if normalized:
+                    return normalized
+
+        return [
+            {
+                "spec_text": question,
+                "source_file": str(event.get("source_file", event.get("file", ""))).strip(),
+                "source_symbol": "",
+                "source_line_hint": source_line,
+            }
+        ]
+
+    @staticmethod
+    def _consistency_check(
+        *,
+        signal: dict[str, Any],
+        routing_payloads: list[dict[str, Any]],
+    ) -> bool:
+        spec_text = " ".join(
+            str(ref.get("spec_text", "")).strip().lower()
+            for ref in signal.get("spec_refs", [])
+            if isinstance(ref, dict)
+        ).strip()
+        routed_text = " ".join(
+            str(payload.get("spec_text", "")).strip().lower() for payload in routing_payloads
+        ).strip()
+        if not spec_text or not routed_text:
+            return False
+        spec_tokens = {t for t in re.split(r"[^a-z0-9]+", spec_text) if t}
+        routed_tokens = {t for t in re.split(r"[^a-z0-9]+", routed_text) if t}
+        if not spec_tokens or not routed_tokens:
+            return False
+        return len(spec_tokens & routed_tokens) > 0
 
     def triage_signal(
         self,

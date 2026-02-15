@@ -1,20 +1,20 @@
 """Under-specification manager.
 
-Implements the hard-stop blocking policy: when the implementation step
-emits under-spec events that cannot be resolved from existing constraints,
-the slice is BLOCKED until constraints are provided.
+Implements hard-stop blocking for unresolved under-spec events. Resolution
+may produce either:
+
+* validated decision constraints, or
+* routed spec-expansion work-items + monitors (for provider-side updates).
 
 Modes:
   * **interactive** — emits :class:`UserQuestionSignal` events to the
-    Intent Agent queue.  The Planner is the only constraint writer;
-    the slice stays BLOCKED until constraints arrive.
-  * **auto** — delegates to :class:`ResearchCoordinator` which may propose
-    constraints.  Only if the proposal passes validation does the slice
-    unblock; otherwise it stays BLOCKED.
+    Intent Agent queue; unresolved events remain blocked.
+  * **auto** — delegates to Planner (preferred) or legacy coordinator;
+    low-confidence / contradictory expansions are escalated back to
+    interactive blocking instead of silently unblocking.
 
-Constraints are persisted as YAML files in
-``<workspace>/analysis/constraints/<slice_id>.yaml`` so that subsequent
-iterations can pick them up deterministically.
+Constraints are persisted in
+``<workspace>/analysis/constraints/<slice_id>.yaml``.
 """
 
 from __future__ import annotations
@@ -111,6 +111,10 @@ class UnderSpecOutcome:
     bundle_status: Literal["IN_PROGRESS", "BLOCKED"] = "IN_PROGRESS"
     blocked_on: list[str] = field(default_factory=list)
     resume_hint: dict[str, str] = field(default_factory=dict)
+    routing: list[dict[str, Any]] = field(default_factory=list)
+    monitors: list[dict[str, Any]] = field(default_factory=list)
+    expansions: list[dict[str, Any]] = field(default_factory=list)
+    expansion_path: str = ""
 
     @property
     def is_blocked(self) -> bool:
@@ -119,6 +123,18 @@ class UnderSpecOutcome:
     @property
     def blocked_questions(self) -> list[str]:
         return [e.question for e in self.blocked if e.question]
+
+
+@dataclass
+class _ResolutionPayload:
+    """Internal resolution payload shared across auto/interactive paths."""
+
+    constraints: list[Constraint] = field(default_factory=list)
+    blocked: list[UnderSpecEvent] = field(default_factory=list)
+    routing: list[dict[str, Any]] = field(default_factory=list)
+    monitors: list[dict[str, Any]] = field(default_factory=list)
+    expansions: list[dict[str, Any]] = field(default_factory=list)
+    needs_interactive_review: list[UnderSpecEvent] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------
@@ -139,6 +155,9 @@ class UnderSpecManager:
         planner: Optional planner instance for resolution.
         run_id: PDD run identifier (used for signal store path).
     """
+
+    _MIN_CONSTRAINT_CONFIDENCE = 0.70
+    _MIN_EXPANSION_CONFIDENCE = 0.75
 
     def __init__(
         self,
@@ -194,16 +213,31 @@ class UnderSpecManager:
         )
 
         # Phase 2: Attempt resolution of uncovered events
-        new_constraints: list[Constraint] = []
-        still_blocked: list[UnderSpecEvent] = []
         self._last_constraint_request_path = ""
 
         if self._mode == "interactive":
-            new_constraints, still_blocked = self._resolve_interactive(slice_id, uncovered)
+            constraints, blocked = self._resolve_interactive(slice_id, uncovered)
+            resolution = _ResolutionPayload(constraints=constraints, blocked=blocked)
         else:
-            new_constraints, still_blocked = self._resolve_auto(slice_id, uncovered, layer=layer)
+            resolution = self._resolve_auto(slice_id, uncovered, layer=layer)
+            if resolution.needs_interactive_review:
+                logger.info(
+                    "Escalating %d under-spec expansion candidate(s) to interactive "
+                    "review for slice '%s'",
+                    len(resolution.needs_interactive_review),
+                    slice_id,
+                )
+                _, escalated_blocked = self._resolve_interactive(
+                    slice_id, resolution.needs_interactive_review
+                )
+                resolution.blocked.extend(escalated_blocked)
 
         constraint_request_path = self._last_constraint_request_path
+        new_constraints = resolution.constraints
+        still_blocked = resolution.blocked
+        routed_work_items = resolution.routing
+        routed_monitors = resolution.monitors
+        expansions = resolution.expansions
 
         # Phase 3: Validate and persist new constraints
         validated: list[Constraint] = []
@@ -234,10 +268,22 @@ class UnderSpecManager:
             e for e in uncovered if e.event_id in {c.constraint_id for c in validated}
         ]
         decisions = self._build_decisions(validated)
+        decisions.extend(self._build_expansion_decisions(expansions))
 
         decisions_path = ""
         if decisions:
             decisions_path = str(self._write_decisions(slice_id, decisions))
+
+        expansion_path = ""
+        if routed_work_items or routed_monitors or expansions:
+            expansion_path = str(
+                self._write_expansion_artifacts(
+                    slice_id=slice_id,
+                    work_items=routed_work_items,
+                    monitors=routed_monitors,
+                    expansions=expansions,
+                )
+            )
 
         if still_blocked and not constraint_request_path:
             constraint_request_path = str(self._write_constraint_request(slice_id, still_blocked))
@@ -253,6 +299,8 @@ class UnderSpecManager:
                 "constraint_request_path": constraint_request_path,
                 "decisions_path": decisions_path,
             }
+            if expansion_path:
+                resume_hint["expansion_path"] = expansion_path
             blockers_path = str(
                 self._write_blockers(
                     slice_id=slice_id,
@@ -274,6 +322,10 @@ class UnderSpecManager:
             bundle_status=bundle_status,
             blocked_on=blocked_on,
             resume_hint=resume_hint,
+            routing=routed_work_items,
+            monitors=routed_monitors,
+            expansions=expansions,
+            expansion_path=expansion_path,
         )
 
     # ------------------------------------------------------------------
@@ -362,7 +414,7 @@ class UnderSpecManager:
         events: list[UnderSpecEvent],
         *,
         layer: str = "any",
-    ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
+    ) -> _ResolutionPayload:
         """Resolve via planner (preferred) or ResearchCoordinator (fallback).
 
         The planner routes to layer-specific resolution and research tools.
@@ -378,7 +430,8 @@ class UnderSpecManager:
             slice_id,
             layer,
         )
-        return self._resolve_via_coordinator(slice_id, events)
+        constraints, blocked = self._resolve_via_coordinator(slice_id, events)
+        return _ResolutionPayload(constraints=constraints, blocked=blocked)
 
     def _resolve_via_planner(
         self,
@@ -386,10 +439,14 @@ class UnderSpecManager:
         events: list[UnderSpecEvent],
         *,
         layer: str = "any",
-    ) -> tuple[list[Constraint], list[UnderSpecEvent]]:
+    ) -> _ResolutionPayload:
         """Resolve under-spec events via the planner module."""
         constraints: list[Constraint] = []
         blocked: list[UnderSpecEvent] = []
+        routing: list[dict[str, Any]] = []
+        monitors: list[dict[str, Any]] = []
+        expansions: list[dict[str, Any]] = []
+        needs_interactive_review: list[UnderSpecEvent] = []
 
         try:
             from spec_manager.planner.api import PlanningContext
@@ -403,13 +460,14 @@ class UnderSpecManager:
             )
             result = self._planner.resolve_under_spec(ctx, event_dicts)
 
-            resolved_ids = set()
+            resolved_ids: set[str] = set()
 
             # Extract constraints from planner result
             for key, value in result.get("constraints", {}).items():
                 answer = ""
                 confidence = 0.7
                 trace: list[str] = []
+                authority_required = "planner_ok"
 
                 if isinstance(value, str):
                     answer = value.strip()
@@ -421,10 +479,48 @@ class UnderSpecManager:
                     raw_trace = value.get("trace")
                     if isinstance(raw_trace, list):
                         trace = [str(item) for item in raw_trace]
+                    authority_required = str(value.get("authority_required", "planner_ok")).strip()
+                    if not authority_required:
+                        authority_required = "planner_ok"
 
                 if answer:
                     matching = [e for e in events if e.event_id == key or e.question == key]
                     for event in matching:
+                        gate_reason = ""
+                        if authority_required != "planner_ok":
+                            gate_reason = "human_authority_required"
+                        elif confidence < self._MIN_CONSTRAINT_CONFIDENCE:
+                            gate_reason = "confidence_below_threshold"
+                        if gate_reason:
+                            blocked_event = UnderSpecEvent.from_dict(event.to_dict())
+                            gate_ctx = dict(blocked_event.context or {})
+                            gate_ctx["auto_resolve_gate"] = {
+                                "decision": "blocked",
+                                "reason": gate_reason,
+                                "authority_required": authority_required,
+                                "confidence": confidence,
+                            }
+                            blocked_event.context = gate_ctx
+                            blocked.append(blocked_event)
+                            continue
+
+                        event_trace = list(trace)
+                        signal_id = (
+                            str(event.context.get("signal_id", "")).strip()
+                            if isinstance(event.context, dict)
+                            else ""
+                        )
+                        if not signal_id:
+                            signal_id = event.event_id
+                        if signal_id:
+                            event_trace.append(f"signal_id={signal_id}")
+                        if event.source_file:
+                            event_trace.append(
+                                f"spec_ref={event.source_file}:{event.source_line or 1}"
+                            )
+                        if isinstance(value, dict):
+                            event_trace.append("resolution_kind=decision_constraint")
+                        event_trace.append("auto_resolve_gate=passed")
                         constraints.append(
                             Constraint(
                                 constraint_id=event.event_id,
@@ -433,10 +529,102 @@ class UnderSpecManager:
                                 source="planner",
                                 confidence=confidence,
                                 validated=False,
-                                trace=trace,
+                                authority_required=authority_required,
+                                trace=event_trace,
                             )
                         )
                         resolved_ids.add(event.event_id)
+
+            routing_raw = result.get("routing", [])
+            if isinstance(routing_raw, list):
+                routing = [row for row in routing_raw if isinstance(row, dict)]
+            monitors_raw = result.get("monitors", [])
+            if isinstance(monitors_raw, list):
+                monitors = [row for row in monitors_raw if isinstance(row, dict)]
+            expansions_raw = result.get("expansions", [])
+            if isinstance(expansions_raw, list):
+                expansions = [row for row in expansions_raw if isinstance(row, dict)]
+            if not expansions and routing:
+                global_confidence_raw = result.get("confidence", 0.0)
+                try:
+                    global_confidence = float(global_confidence_raw)
+                except (TypeError, ValueError):
+                    global_confidence = 0.0
+                for event in events:
+                    event_routing = [
+                        row for row in routing if self._expansion_event_id(row) == event.event_id
+                    ]
+                    if not event_routing:
+                        continue
+                    first_metadata = event_routing[0].get("metadata", {})
+                    first_metadata = first_metadata if isinstance(first_metadata, dict) else {}
+                    signal_id = str(first_metadata.get("signal_id", "")).strip()
+                    event_monitors = [
+                        row
+                        for row in monitors
+                        if (
+                            str(row.get("signal_id", "")).strip() == signal_id
+                            if signal_id
+                            else True
+                        )
+                    ]
+                    expansions.append(
+                        {
+                            "event_id": event.event_id,
+                            "signal_id": signal_id,
+                            "action": str(result.get("action", "EXPAND_SPEC")).strip().upper()
+                            or "EXPAND_SPEC",
+                            "confidence": first_metadata.get("confidence", global_confidence),
+                            "proposal_models": first_metadata.get("proposal_models", []),
+                            "consistency_passed": bool(
+                                first_metadata.get("consistency_passed", False)
+                            ),
+                            "contradictions": result.get("contradictions", []),
+                            "spec_refs": first_metadata.get("spec_refs", []),
+                            "routing": event_routing,
+                            "monitors": event_monitors,
+                            "why": str(result.get("why", "")).strip(),
+                            "missing_detail": str(result.get("missing_detail", "")).strip(),
+                        }
+                    )
+
+            for expansion in expansions:
+                event_id = self._expansion_event_id(expansion)
+                if not event_id:
+                    continue
+                event = next((e for e in events if e.event_id == event_id), None)
+                if event is None:
+                    continue
+                valid, reasons = self._validate_expansion(expansion)
+                expansion["validation"] = {
+                    "passed": valid,
+                    "reasons": reasons,
+                }
+                if valid:
+                    resolved_ids.add(event_id)
+                else:
+                    blocked.append(event)
+                    needs_interactive_review.append(event)
+
+            accepted_event_ids = {
+                self._expansion_event_id(expansion)
+                for expansion in expansions
+                if isinstance(expansion.get("validation"), dict)
+                and bool(expansion["validation"].get("passed", False))
+            }
+            accepted_event_ids.discard("")
+            if accepted_event_ids:
+                routing = [
+                    row for row in routing if self._expansion_event_id(row) in accepted_event_ids
+                ]
+                monitors = [
+                    row
+                    for row in monitors
+                    if self._monitor_event_id(row, expansions) in accepted_event_ids
+                ]
+            else:
+                routing = []
+                monitors = []
 
             # Remaining events are blocked
             for event in events:
@@ -447,7 +635,14 @@ class UnderSpecManager:
             logger.warning("Planner resolution failed: %s", exc)
             blocked = list(events)
 
-        return constraints, blocked
+        return _ResolutionPayload(
+            constraints=constraints,
+            blocked=self._dedupe_events(blocked),
+            routing=routing,
+            monitors=monitors,
+            expansions=expansions,
+            needs_interactive_review=self._dedupe_events(needs_interactive_review),
+        )
 
     def _resolve_via_coordinator(
         self,
@@ -490,8 +685,18 @@ class UnderSpecManager:
                             confidence=0.7,
                             validated=False,
                             trace=[
-                                "under_spec_resolution_mode=legacy_coordinator_fallback",
-                                f"slice_id={slice_id}",
+                                token
+                                for token in [
+                                    "under_spec_resolution_mode=legacy_coordinator_fallback",
+                                    f"slice_id={slice_id}",
+                                    f"signal_id={event.event_id}",
+                                    (
+                                        f"spec_ref={event.source_file}:{event.source_line or 1}"
+                                        if event.source_file
+                                        else ""
+                                    ),
+                                ]
+                                if token
                             ],
                         )
                     )
@@ -528,7 +733,8 @@ class UnderSpecManager:
         A valid constraint must:
         - Have non-empty answer text
         - Be concrete (not just "TBD" or similar)
-        - Not contradict itself
+        - Meet confidence threshold
+        - Not advertise contradiction / failed consistency checks in trace
         """
         answer = constraint.answer.strip().lower()
 
@@ -541,7 +747,121 @@ class UnderSpecManager:
             return False
 
         # Minimum length check
-        return len(answer) >= 5
+        if len(answer) < 5:
+            return False
+
+        try:
+            confidence = float(constraint.confidence)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < self._MIN_CONSTRAINT_CONFIDENCE:
+            return False
+
+        trace_tokens = [str(item).strip().lower() for item in constraint.trace if str(item).strip()]
+        return not self._trace_has_contradiction(trace_tokens)
+
+    @staticmethod
+    def _trace_has_contradiction(trace_tokens: list[str]) -> bool:
+        contradiction_markers = (
+            "contradiction=true",
+            "contradiction_detected",
+            "consistency_check=failed",
+            "consistency_passed=false",
+        )
+        return any(marker in token for token in trace_tokens for marker in contradiction_markers)
+
+    def _validate_expansion(self, expansion: dict[str, Any]) -> tuple[bool, list[str]]:
+        reasons: list[str] = []
+
+        confidence_raw = expansion.get("confidence", 0.0)
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < self._MIN_EXPANSION_CONFIDENCE:
+            reasons.append("low_confidence")
+
+        contradictions_raw = expansion.get("contradictions", [])
+        contradictions = (
+            [str(item).strip() for item in contradictions_raw if str(item).strip()]
+            if isinstance(contradictions_raw, list)
+            else []
+        )
+        if contradictions:
+            reasons.append("contradictions_detected")
+
+        if "consistency_passed" in expansion and not bool(
+            expansion.get("consistency_passed", False)
+        ):
+            reasons.append("consistency_check_failed")
+
+        signal_id = str(expansion.get("signal_id", "")).strip()
+        if not signal_id:
+            reasons.append("missing_signal_id")
+
+        spec_refs_raw = expansion.get("spec_refs", [])
+        valid_spec_refs = [
+            row
+            for row in (spec_refs_raw if isinstance(spec_refs_raw, list) else [])
+            if isinstance(row, dict)
+            and (str(row.get("spec_text", "")).strip() or str(row.get("source_file", "")).strip())
+        ]
+        if not valid_spec_refs:
+            reasons.append("missing_spec_refs")
+
+        proposal_models_raw = expansion.get("proposal_models", [])
+        if self._mode == "auto" and isinstance(proposal_models_raw, list) and proposal_models_raw:
+            normalized_models = {
+                str(model).strip() for model in proposal_models_raw if str(model).strip()
+            }
+            if len(normalized_models) < 3:
+                reasons.append("insufficient_model_diversity")
+
+        routing_raw = expansion.get("routing", [])
+        routing = (
+            [row for row in routing_raw if isinstance(row, dict)]
+            if isinstance(routing_raw, list)
+            else []
+        )
+        if not routing:
+            reasons.append("missing_routing")
+
+        monitors_raw = expansion.get("monitors", [])
+        monitors = (
+            [row for row in monitors_raw if isinstance(row, dict)]
+            if isinstance(monitors_raw, list)
+            else []
+        )
+        if not monitors:
+            reasons.append("missing_monitors")
+
+        return len(reasons) == 0, reasons
+
+    @staticmethod
+    def _expansion_event_id(payload: dict[str, Any]) -> str:
+        metadata = payload.get("metadata", {})
+        if isinstance(metadata, dict):
+            event_id = str(metadata.get("event_id", "")).strip()
+            if event_id:
+                return event_id
+        return str(payload.get("event_id", "")).strip()
+
+    @classmethod
+    def _monitor_event_id(
+        cls,
+        monitor: dict[str, Any],
+        expansions: list[dict[str, Any]],
+    ) -> str:
+        event_id = cls._expansion_event_id(monitor)
+        if event_id:
+            return event_id
+        signal_id = str(monitor.get("signal_id", "")).strip()
+        if not signal_id:
+            return ""
+        for expansion in expansions:
+            if str(expansion.get("signal_id", "")).strip() == signal_id:
+                return cls._expansion_event_id(expansion)
+        return ""
 
     def _constraint_path(self, slice_id: str) -> Path:
         return self._workspace / "analysis" / "constraints" / f"{slice_id}.yaml"
@@ -570,8 +890,14 @@ class UnderSpecManager:
             "Status: BLOCKED",
             f"Generated: {datetime.now(UTC).isoformat()}",
             "",
-            "Provide constraints in YAML at:",
+            "Decision-gap answers must be written as constraints in YAML at:",
             f"- `analysis/constraints/{slice_id}.yaml`",
+            "",
+            "Code/spec expansion gaps must be routed as expansion work-items.",
+            "Accepted expansion forms:",
+            "1. New spec comments in skeleton files (preferred).",
+            "2. New stub function(s) with spec comments.",
+            "3. Constraint entries (decision gaps only).",
             "",
             "## Questions",
             "",
@@ -602,6 +928,9 @@ class UnderSpecManager:
         lines.extend(
             [
                 "## Required Decision Format",
+                "",
+                "Use this format only for decision constraints. Code/spec expansion",
+                "changes should be represented as routed work-items, not inline answers.",
                 "",
                 "YAML:",
                 "```yaml",
@@ -659,6 +988,61 @@ class UnderSpecManager:
                 }
             )
         return decisions
+
+    @staticmethod
+    def _build_expansion_decisions(expansions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        decisions: list[dict[str, Any]] = []
+        for expansion in expansions:
+            signal_id = str(expansion.get("signal_id", "")).strip()
+            event_id = str(expansion.get("event_id", "")).strip()
+            action = str(expansion.get("action", "")).strip()
+            validation = expansion.get("validation", {})
+            reasons = (
+                [str(reason) for reason in validation.get("reasons", [])]
+                if isinstance(validation, dict) and isinstance(validation.get("reasons"), list)
+                else []
+            )
+            decisions.append(
+                {
+                    "event_id": event_id,
+                    "signal_id": signal_id,
+                    "action": action,
+                    "resolution_type": "spec_expansion",
+                    "confidence": expansion.get("confidence", 0.0),
+                    "validation_passed": bool(validation.get("passed", False))
+                    if isinstance(validation, dict)
+                    else False,
+                    "validation_reasons": reasons,
+                    "spec_refs": expansion.get("spec_refs", []),
+                    "routing_count": len(expansion.get("routing", []))
+                    if isinstance(expansion.get("routing", []), list)
+                    else 0,
+                    "monitor_count": len(expansion.get("monitors", []))
+                    if isinstance(expansion.get("monitors", []), list)
+                    else 0,
+                }
+            )
+        return decisions
+
+    def _write_expansion_artifacts(
+        self,
+        *,
+        slice_id: str,
+        work_items: list[dict[str, Any]],
+        monitors: list[dict[str, Any]],
+        expansions: list[dict[str, Any]],
+    ) -> Path:
+        payload = {
+            "slice_id": slice_id,
+            "status": "PENDING_PROVIDER_EXPANSION",
+            "work_items": work_items,
+            "monitors": monitors,
+            "expansions": expansions,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        path = self._under_spec_dir(slice_id) / "expansion_routing.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
 
     def _write_decisions(self, slice_id: str, decisions: list[dict[str, Any]]) -> Path:
         payload = {
