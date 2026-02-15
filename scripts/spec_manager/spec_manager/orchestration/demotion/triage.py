@@ -90,7 +90,7 @@ _GATE_ROUTING: dict[str, Layer | None] = {
 _SOURCE_ROUTING: dict[str, Layer | None] = {
     "ALGORITHMIC_GATE": "L1",
     "ARCH_GATE": "L2",
-    "TEST_FAILURE": "L1",
+    "TEST_FAILURE": None,
     "LINEAGE": "L2",
     "REVIEW": "L3",
     "GATE_FAILURE": None,
@@ -246,6 +246,16 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
 
     # 3. Try source-based routing
     if ctx.source:
+        if ctx.source == "TEST_FAILURE":
+            return DemotionRouting(
+                target_layer=ctx.active_layer,
+                action="fix_in_layer",
+                reason=(
+                    "Source 'TEST_FAILURE' defaults to current layer; "
+                    "demote lower only when stronger diagnosis signals exist"
+                ),
+                confidence=0.7,
+            )
         target = _SOURCE_ROUTING.get(ctx.source)
         if target is None and ctx.source in _SOURCE_ROUTING:
             return DemotionRouting(

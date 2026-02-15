@@ -790,7 +790,6 @@ class PddLifecycle:
 
             # L2: Architecture
             pass_outcome["l2"] = self._run_layer("l2")
-            self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
             if self.mode == "interactive":
                 pass_outcome["l2_checkpoint"] = self._request_l2_checkpoint(pass_outcome["l2"])
                 if bool(pass_outcome["l2_checkpoint"].get("approved", False)):
@@ -832,6 +831,7 @@ class PddLifecycle:
                     state_mgr.update_state(phase="blocked_pipeline_cap")
                     return results
                 continue
+            self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
             state_mgr.update_state(
                 layers_completed=["l1", "l2"],
                 phase="l2_l3_transition",
@@ -891,13 +891,6 @@ class PddLifecycle:
 
             # L3: Clean Code
             pass_outcome["l3"] = self._run_layer("l3")
-            self._record_git_ref(f"pdd/{self.manager.run_id}/l3/clean")
-            state_mgr.update_state(
-                layers_completed=["l1", "l2", "l3"],
-                phase="qa",
-                active_layer="",
-            )
-
             l3_termination = (
                 pass_outcome["l3"].get("layer_termination")
                 if isinstance(pass_outcome["l3"], dict)
@@ -924,6 +917,12 @@ class PddLifecycle:
                     state_mgr.update_state(phase="blocked_pipeline_cap")
                     return results
                 continue
+            self._record_git_ref(f"pdd/{self.manager.run_id}/l3/clean")
+            state_mgr.update_state(
+                layers_completed=["l1", "l2", "l3"],
+                phase="qa",
+                active_layer="",
+            )
 
             # Final QA mode: evals/tests -> demotions -> slice rework rounds.
             pass_outcome["qa_mode"] = self._run_qa_mode()
@@ -2910,17 +2909,30 @@ class PddLifecycle:
                 "all_complete": True,
             }
 
-        # Create slice worktrees if managed
+        # Create slice worktrees if managed.
+        # L2 runs directly in l2/dirty (Option A): no per-slice grandchildren.
         if self.worktree_manager:
-            for ref in slice_refs:
-                try:
-                    wt_path = self.worktree_manager.create_slice_worktree(layer, ref.slice_id)
-                    ref.worktree_path = str(wt_path)
-                except RuntimeError:
-                    # Worktree may already exist from a previous iteration
-                    existing = self.worktree_manager.get_slice_worktree(layer, ref.slice_id)
-                    if existing:
-                        ref.worktree_path = str(existing)
+            if layer == "l2":
+                layer_dirty = self._resolve_layer_worktree("l2", "dirty")
+                if layer_dirty is not None:
+                    dirty_path = str(layer_dirty)
+                    for ref in slice_refs:
+                        ref.worktree_path = dirty_path
+                else:
+                    logger.warning(
+                        "L2 dirty worktree unavailable; using discovered slice roots "
+                        "for architecture run"
+                    )
+            else:
+                for ref in slice_refs:
+                    try:
+                        wt_path = self.worktree_manager.create_slice_worktree(layer, ref.slice_id)
+                        ref.worktree_path = str(wt_path)
+                    except RuntimeError:
+                        # Worktree may already exist from a previous iteration
+                        existing = self.worktree_manager.get_slice_worktree(layer, ref.slice_id)
+                        if existing:
+                            ref.worktree_path = str(existing)
 
         # Run PromotionLoop via scheduler
         run_context_config = self._build_run_context_config()
@@ -3137,10 +3149,11 @@ class PddLifecycle:
                 return
             record_ci_tick(slice_id, trigger="on_complete")
 
+        layer_parallelism = 1 if layer == "l2" else self.max_parallel
         scheduler = ReactivePromotionScheduler(
             loop=loop,
             config=SchedulerConfig(
-                max_parallel=self.max_parallel,
+                max_parallel=layer_parallelism,
                 monitor_poll_interval_sec=max(1, int(tick_interval_sec)),
             ),
             monitor_executor=monitor_executor,

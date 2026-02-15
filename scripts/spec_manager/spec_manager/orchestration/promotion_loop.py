@@ -54,6 +54,7 @@ from datetime import UTC, datetime
 from difflib import unified_diff
 from pathlib import Path
 from time import monotonic
+from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
 
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
@@ -5834,7 +5835,33 @@ class IntegrateStep:
         failure_evidence: dict[str, Any] = {}
         dirty_root, _ = resolve_worktree_roots()
 
+        def is_direct_dirty_slice() -> bool:
+            if dirty_root is None or not ctx.slice_root:
+                return False
+            slice_root = Path(ctx.slice_root)
+            try:
+                return slice_root.resolve() == dirty_root.resolve()
+            except OSError:
+                return slice_root == dirty_root
+
         def run_merge_cycle(*, cycle: str) -> Any:
+            if is_direct_dirty_slice():
+                merge_result = SimpleNamespace(
+                    success=True,
+                    error="",
+                    merge_sha=wm.vcs.get_head_sha(dirty_root),
+                )
+                merge_attempts.append(
+                    {
+                        "attempt": len(merge_attempts) + 1,
+                        "cycle": cycle,
+                        "strategy": "direct_dirty_no_merge",
+                        "success": True,
+                        "error": "",
+                    }
+                )
+                return merge_result
+
             merge_result = wm.merge_slice_to_dirty(ctx.layer, ctx.slice_id, strategy="merge")
             merge_attempts.append(
                 {
