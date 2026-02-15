@@ -59,7 +59,7 @@ class SchedulerConfig:
         monitor_poll_interval_sec: Seconds between monitor executor poll cycles.
         max_wait_cycles: Maximum times a slice can be woken before escalating to FAILED.
         max_idle_polls: Maximum consecutive idle monitor polls (no wake events)
-            before the scheduler exits with remaining slices as WAITING.
+            before the scheduler escalates remaining waiting slices to FAILED.
     """
 
     max_parallel: int = 4
@@ -431,10 +431,24 @@ class ReactivePromotionScheduler:
                             if idle_polls >= self._config.max_idle_polls:
                                 logger.warning(
                                     "Scheduler exceeded max_idle_polls (%d) — "
-                                    "exiting with %d waiting slices",
+                                    "escalating %d waiting slices to FAILED",
                                     self._config.max_idle_polls,
                                     len(waiting_set),
                                 )
+                                for sid in list(waiting_set):
+                                    wc = wake_counts.get(sid, 0)
+                                    emitted = SliceResult(
+                                        slice_id=sid,
+                                        status="FAILED",
+                                        error=(
+                                            "Exceeded max_idle_polls while waiting "
+                                            "for monitor wake events"
+                                        ),
+                                        wake_count=wc,
+                                    )
+                                    completed_results.append(emitted)
+                                    self._notify_slice_result(emitted, on_slice_result)
+                                waiting_set.clear()
                                 break
                             # Wait for monitor to signal or timeout
                             monitor_signal.wait(timeout=self._config.monitor_poll_interval_sec)
@@ -462,19 +476,20 @@ class ReactivePromotionScheduler:
                 monitor_signal.set()  # Unblock any wait
                 monitor_thread.join(timeout=5.0)
 
-        # Any slices still in waiting_set at exit are reported as waiting
+        # Defensive fallback: scheduler exits with terminal outcomes only.
         remaining_waiting = list(waiting_set.keys())
         for sid in remaining_waiting:
             wc = wake_counts.get(sid, 0)
             completed_results.append(
                 SliceResult(
                     slice_id=sid,
-                    status="WAITING",
+                    status="FAILED",
+                    error="Scheduler terminated while slice was still waiting",
                     wake_count=wc,
                 )
             )
 
-        return self._aggregate(completed_results, remaining_waiting)
+        return self._aggregate(completed_results, [])
 
     def _process_wake_events(
         self,

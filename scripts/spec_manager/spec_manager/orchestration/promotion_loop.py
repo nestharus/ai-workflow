@@ -3557,6 +3557,21 @@ class CoordinateStep:
                 signal_id=signal_id,
                 monitors=monitors,
             )
+            if (
+                not registered_monitors
+                and self._is_needs_decision_signal(signal)
+                and action != "WAKE_IMMEDIATELY"
+            ):
+                fallback_monitor = self._build_constraint_present_monitor(
+                    ctx=ctx,
+                    signal=signal,
+                    signal_id=signal_id,
+                )
+                registered_monitors = self._register_l1_monitors(
+                    ctx,
+                    signal_id=signal_id,
+                    monitors=[fallback_monitor],
+                )
 
             triage_decisions.append(
                 {
@@ -3718,6 +3733,70 @@ class CoordinateStep:
                 "possible_owner_slices": [],
             },
             "payload": {"under_spec_event": event},
+        }
+
+    @staticmethod
+    def _is_needs_decision_signal(signal: dict[str, Any]) -> bool:
+        """True when a signal represents unresolved decision-level ambiguity."""
+        classification = str(signal.get("classification", "")).strip().upper()
+        if classification in {"AMBIGUOUS_SPEC", "CONFLICTING_REQUIREMENTS", "MISSING_INTERFACE"}:
+            return True
+
+        payload = signal.get("payload")
+        if not isinstance(payload, dict):
+            return False
+
+        origin_kind = str(payload.get("origin_event_kind", "")).strip().upper()
+        if origin_kind.startswith("NEEDS_") or origin_kind in {
+            "MISSING_CONSTRAINT",
+            "CONFLICTING_CONSTRAINTS",
+            "EXTERNAL_DEP_UNKNOWN",
+        }:
+            return True
+
+        under_spec_event = payload.get("under_spec_event")
+        if not isinstance(under_spec_event, dict):
+            return False
+        event_kind = str(under_spec_event.get("kind", "")).strip().upper()
+        return event_kind.startswith("NEEDS_") or event_kind in {
+            "MISSING_CONSTRAINT",
+            "CONFLICTING_CONSTRAINTS",
+            "EXTERNAL_DEP_UNKNOWN",
+        }
+
+    @staticmethod
+    def _build_constraint_present_monitor(
+        *,
+        ctx: SliceContext,
+        signal: dict[str, Any],
+        signal_id: str,
+    ) -> dict[str, Any]:
+        """Build a constraint-present fallback monitor for unresolved decisions."""
+        need = signal.get("need")
+        need_payload = need if isinstance(need, dict) else {}
+        constraint_key = str(need_payload.get("artifact_key", "")).strip() or ctx.slice_id
+
+        constraint_id = ""
+        payload = signal.get("payload")
+        if isinstance(payload, dict):
+            constraint_id = str(payload.get("constraint_id", "")).strip()
+            if not constraint_id:
+                under_spec_event = payload.get("under_spec_event")
+                if isinstance(under_spec_event, dict):
+                    constraint_id = str(under_spec_event.get("event_id", "")).strip()
+
+        return {
+            "signal_id": signal_id,
+            "kind": "constraint_present",
+            "type": "constraint_present",
+            "constraint_key": constraint_key,
+            "constraint_dir": "analysis/constraints",
+            "constraint_id": constraint_id,
+            "slice_id": ctx.slice_id,
+            "mode": "hybrid",
+            "event_triggers": ["SLICE_MERGED", "GIT_DIRTY_ADVANCED"],
+            "poll_interval_sec": 20,
+            "timeout_seconds": 3600,
         }
 
     def _triage_l1_signal(

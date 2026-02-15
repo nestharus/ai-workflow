@@ -2984,7 +2984,7 @@ class PddLifecycle:
         )
 
         # Build coordination infrastructure
-        monitor_executor, wake_queue = self._build_coordination(layer, run_context)
+        monitor_executor, wake_queue = self._build_coordination(layer, run_context, planner=planner)
 
         ci_ticks: list[dict[str, Any]] = []
         ci_tick_slices: set[str] = set()
@@ -3144,12 +3144,28 @@ class PddLifecycle:
             normalized = str(slice_id).strip()
             if not normalized:
                 return None
-            return record_ci_tick(normalized, trigger="post_merge")
+            receipt = record_ci_tick(normalized, trigger="post_merge")
+            try:
+                monitor_executor.on_event("SLICE_MERGED")
+            except Exception:
+                logger.warning(
+                    "Failed to emit coordination event SLICE_MERGED for %s",
+                    normalized,
+                    exc_info=True,
+                )
+            return receipt
 
         def on_periodic_tick() -> None:
             nonlocal periodic_tick_counter
             periodic_tick_counter += 1
             record_ci_tick(f"periodic-{periodic_tick_counter}", trigger="periodic")
+            try:
+                monitor_executor.on_event("GIT_DIRTY_ADVANCED")
+            except Exception:
+                logger.warning(
+                    "Failed to emit coordination event GIT_DIRTY_ADVANCED",
+                    exc_info=True,
+                )
 
         run_context.ci_tick_callback = on_slice_merge if self.worktree_manager else None
         run_context.ci_periodic_tick_callback = on_periodic_tick if self.worktree_manager else None
@@ -3225,7 +3241,12 @@ class PddLifecycle:
             "budget_exceeded": budget_exceeded,
         }
 
-    def _build_coordination(self, layer: Layer, run_context: Any) -> tuple[Any, Any]:
+    def _build_coordination(
+        self,
+        layer: Layer,
+        run_context: Any,
+        planner: Any | None = None,
+    ) -> tuple[Any, Any]:
         """Build coordination infrastructure for a layer run.
 
         Creates WorkItemStore, WakeQueue, MonitorRegistry, ConditionChecker,
@@ -3255,9 +3276,12 @@ class PddLifecycle:
         wake_queue = WakeQueue(coordination_dir)
         monitor_registry = MonitorRegistry(coordination_dir)
 
+        constraints_store = getattr(planner, "_constraints_adapter", None)
+
         checker = ConditionChecker(
             workspace_root=workspace,
             work_item_store=work_item_store,
+            constraints_store=constraints_store,
         )
 
         monitor_executor = MonitorExecutor(
