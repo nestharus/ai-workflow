@@ -44,6 +44,7 @@ class DemotionTicket:
         "LINEAGE",
         "REVIEW",
         "GATE_FAILURE",
+        "VERIFY",
     ] = "ALGORITHMIC_GATE"
     gate: str | None = None
 

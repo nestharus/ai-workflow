@@ -23,7 +23,7 @@ State machine (per slice)::
     PROMOTE            (P4/P5 promotion + compliance gates + refinement)
       ├─ if gates fail → DEMOTE → RESTART_ITER
       ↓
-    INTEGRATE (CI)     (merge to parent + tick pipeline)
+    INTEGRATE (CI)     (merge to parent + extract to clean + run tests)
       ├─ if tests fail → DOWNWARD_FLOW → DEMOTE → RESTART_ITER
       ↓
     VERIFY             (P6 + P7 + architectural gates)
@@ -3089,7 +3089,7 @@ class PromoteStep:
 
 
 class IntegrateStep:
-    """Merge slice into dirty, tick CI pipeline.
+    """Merge slice into dirty, extract to clean sibling, and run CI.
 
     On CI failure, invokes an Investigator agent (budget=2 attempts)
     before falling through to demotion.  If the Investigator produces
@@ -3102,18 +3102,211 @@ class IntegrateStep:
         self._investigator_budget = investigator_budget
 
     def run(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
-        """Merge grandchild → dirty, tick pipeline."""
+        """Merge grandchild → dirty, extract to clean, and run real tests."""
+        from spec_manager.core.testing.registry import TestRunnerRegistry
+
         evidence_root = _evidence_base_path(
             slice_root=ctx.slice_root,
             workspace_root=ctx.workspace_root,
         )
         wm = ctx.worktree_manager
 
+        def resolve_worktree_roots() -> tuple[Path | None, Path | None]:
+            dirty_root = Path(ctx.dirty_parent_root) if ctx.dirty_parent_root else None
+            clean_root = Path(ctx.clean_sibling_root) if ctx.clean_sibling_root else None
+            if wm is not None:
+                lane_map = getattr(wm, "_layer_worktrees", {}).get(ctx.layer, {})
+                if dirty_root is None and lane_map.get("dirty") is not None:
+                    dirty_root = Path(lane_map["dirty"])
+                if clean_root is None and lane_map.get("clean") is not None:
+                    clean_root = Path(lane_map["clean"])
+            return dirty_root, clean_root
+
+        def serialize_test_result(result: Any, *, scope: str, root: Path) -> dict[str, Any]:
+            failures = []
+            for failure in list(getattr(result, "failures", []) or []):
+                failures.append(
+                    {
+                        "test_id": getattr(failure, "test_id", None),
+                        "file": getattr(failure, "file", None),
+                        "message": getattr(failure, "message", ""),
+                        "raw_excerpt_path": getattr(failure, "raw_excerpt_path", ""),
+                    }
+                )
+            return {
+                "scope": scope,
+                "root": str(root),
+                "passed": bool(getattr(result, "passed", False)),
+                "runner_id": getattr(result, "runner_id", ""),
+                "command": list(getattr(result, "command", []) or []),
+                "stdout_path": getattr(result, "stdout_path", ""),
+                "stderr_path": getattr(result, "stderr_path", ""),
+                "total_tests": int(getattr(result, "total_tests", 0)),
+                "passed_tests": int(getattr(result, "passed_tests", 0)),
+                "failed_tests": int(getattr(result, "failed_tests", 0)),
+                "duration_ms": float(getattr(result, "duration_ms", 0.0)),
+                "failures": failures,
+            }
+
+        def run_ci_suite() -> dict[str, Any]:
+            dirty_root, clean_root = resolve_worktree_roots()
+            if clean_root is None or dirty_root is None:
+                return {
+                    "passed": False,
+                    "error": (
+                        "Layer worktree roots unavailable for integration CI "
+                        f"(dirty={dirty_root}, clean={clean_root})"
+                    ),
+                    "failure_refs": ["worktree_roots_unavailable"],
+                    "slice_tests": {},
+                    "full_tests": None,
+                    "dirty_root": str(dirty_root) if dirty_root else "",
+                    "clean_root": str(clean_root) if clean_root else "",
+                    "extraction": {"success": False, "error": "worktree roots unavailable"},
+                }
+
+            candidate_sha = wm.snapshot_candidate(ctx.layer)
+            if not candidate_sha:
+                return {
+                    "passed": False,
+                    "error": f"Failed to snapshot candidate for {ctx.layer}",
+                    "failure_refs": ["candidate_snapshot_failed"],
+                    "slice_tests": {},
+                    "full_tests": None,
+                    "dirty_root": str(dirty_root),
+                    "clean_root": str(clean_root),
+                    "extraction": {"success": False, "error": "candidate snapshot failed"},
+                }
+
+            promoted = wm.promote_dirty_to_clean(ctx.layer, gates=False, tests=False)
+            wm.clear_candidate(ctx.layer)
+            if not promoted.success:
+                return {
+                    "passed": False,
+                    "error": promoted.error or "Failed to extract dirty to clean sibling",
+                    "failure_refs": ["extract_to_clean_failed"],
+                    "slice_tests": {},
+                    "full_tests": None,
+                    "dirty_root": str(dirty_root),
+                    "clean_root": str(clean_root),
+                    "extraction": {
+                        "success": False,
+                        "candidate_sha": candidate_sha,
+                        "error": promoted.error,
+                    },
+                }
+
+            verify_root = clean_root if clean_root.exists() else dirty_root
+            runner = TestRunnerRegistry().pick(root=verify_root)
+
+            raw_slice_targets: Any = None
+            raw_full_targets: Any = None
+            run_full = False
+            if isinstance(ctx.config, dict):
+                raw_slice_targets = ctx.config.get("integrate_slice_test_targets")
+                raw_full_targets = ctx.config.get("integrate_full_test_targets")
+                run_full = bool(ctx.config.get("integrate_run_full_tests", False))
+
+            slice_targets = (
+                [str(t) for t in raw_slice_targets if str(t).strip()]
+                if isinstance(raw_slice_targets, list)
+                else None
+            )
+            full_targets = (
+                [str(t) for t in raw_full_targets if str(t).strip()]
+                if isinstance(raw_full_targets, list)
+                else None
+            )
+
+            slice_result = runner.run(root=verify_root, scope="SLICE", targets=slice_targets)
+            slice_payload = serialize_test_result(slice_result, scope="SLICE", root=verify_root)
+
+            full_payload: dict[str, Any] | None = None
+            full_passed = True
+            if run_full:
+                full_result = runner.run(root=verify_root, scope="FULL", targets=full_targets)
+                full_payload = serialize_test_result(full_result, scope="FULL", root=verify_root)
+                full_passed = bool(getattr(full_result, "passed", False))
+
+            refs: list[str] = []
+
+            def append_failure_refs(scope_payload: dict[str, Any], scope_label: str) -> None:
+                if not scope_payload or scope_payload.get("passed", True):
+                    return
+                failures = scope_payload.get("failures", []) or []
+                if failures:
+                    for failure in failures:
+                        test_id = str(failure.get("test_id") or failure.get("file") or "unknown")
+                        refs.append(f"{scope_label}:{test_id}")
+                    return
+                refs.append(f"{scope_label}:failed")
+
+            append_failure_refs(slice_payload, "slice")
+            if full_payload is not None:
+                append_failure_refs(full_payload, "full")
+
+            deduped_refs: list[str] = []
+            seen: set[str] = set()
+            for ref in refs:
+                if ref not in seen:
+                    seen.add(ref)
+                    deduped_refs.append(ref)
+
+            return {
+                "passed": bool(getattr(slice_result, "passed", False)) and full_passed,
+                "error": "",
+                "failure_refs": deduped_refs,
+                "slice_tests": slice_payload,
+                "full_tests": full_payload,
+                "dirty_root": str(dirty_root),
+                "clean_root": str(clean_root),
+                "extraction": {
+                    "success": True,
+                    "candidate_sha": candidate_sha,
+                    "clean_sha": promoted.clean_sha,
+                },
+            }
+
+        def build_downward_flow_report(
+            *,
+            merge: Any,
+            ci: dict[str, Any],
+            investigator: dict[str, Any] | None,
+        ) -> dict[str, Any]:
+            failed_scopes: list[str] = []
+            if isinstance(ci.get("slice_tests"), dict) and not ci["slice_tests"].get(
+                "passed", True
+            ):
+                failed_scopes.append("SLICE")
+            if isinstance(ci.get("full_tests"), dict) and not ci["full_tests"].get("passed", True):
+                failed_scopes.append("FULL")
+            return {
+                "run_id": ctx.run_id,
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "merge": {
+                    "success": bool(getattr(merge, "success", False)),
+                    "merge_sha": getattr(merge, "merge_sha", ""),
+                    "error": getattr(merge, "error", ""),
+                },
+                "integration_roots": {
+                    "dirty_parent_root": ci.get("dirty_root", ""),
+                    "clean_sibling_root": ci.get("clean_root", ""),
+                },
+                "extraction": ci.get("extraction", {}),
+                "failed_scopes": failed_scopes,
+                "failure_refs": list(ci.get("failure_refs", []) or []),
+                "slice_tests": ci.get("slice_tests", {}),
+                "full_tests": ci.get("full_tests", {}),
+                "investigator": investigator or {},
+            }
+
         def record_artifacts(
             *,
             merge: Any | None,
-            tick: Any | None,
+            ci: dict[str, Any] | None,
             investigator: dict[str, Any] | None = None,
+            downward_flow: dict[str, Any] | None = None,
             emitted: list[DemotionTicket] | None = None,
             error: str = "",
             skipped: bool = False,
@@ -3129,12 +3322,16 @@ class IntegrateStep:
                 "investigator": investigator or {},
                 "demotion_count": len(emitted or []),
                 "error": error,
+                "downward_flow": downward_flow or {},
             }
-            if tick is not None:
-                integration_payload["pipeline"] = {
-                    "main_updated": bool(getattr(tick, "main_updated", False)),
-                    "main_sha": getattr(tick, "main_sha", None),
-                    "demotion_tickets": list(getattr(tick, "demotion_tickets", []) or []),
+            if ci is not None:
+                integration_payload["ci"] = {
+                    "passed": bool(ci.get("passed", False)),
+                    "error": str(ci.get("error", "")),
+                    "failure_refs": list(ci.get("failure_refs", []) or []),
+                    "dirty_root": str(ci.get("dirty_root", "")),
+                    "clean_root": str(ci.get("clean_root", "")),
+                    "extraction": ci.get("extraction", {}),
                 }
             bundle.integration.path = _write_iteration_json(
                 bundle,
@@ -3144,54 +3341,32 @@ class IntegrateStep:
             )
 
             tests_payload: dict[str, Any] = {"slice_id": ctx.slice_id, "layer": ctx.layer}
-            if tick is not None:
-                layers: list[dict[str, Any]] = []
-                for layer_name, layer_result in (getattr(tick, "layer_results", {}) or {}).items():
-                    layers.append(
-                        {
-                            "layer": layer_name,
-                            "gates_passed": bool(getattr(layer_result, "gates_passed", False)),
-                            "tests_passed": bool(getattr(layer_result, "tests_passed", False)),
-                            "error": getattr(layer_result, "error", ""),
-                            "demotion_tickets": list(
-                                getattr(layer_result, "demotion_tickets", []) or []
-                            ),
-                        }
-                    )
-                tests_payload["layers"] = layers
+            if ci is not None and isinstance(ci.get("slice_tests"), dict):
+                tests_payload["result"] = ci["slice_tests"]
             else:
-                tests_payload["note"] = "No pipeline tick result available"
+                tests_payload["note"] = "No slice test result available"
             bundle.tests.slice_path = _write_iteration_json(
                 bundle,
                 evidence_root,
                 "tests.slice.json",
                 tests_payload,
             )
+            bundle.tests.full_path = ""
+            if ci is not None and isinstance(ci.get("full_tests"), dict):
+                bundle.tests.full_path = _write_iteration_json(
+                    bundle,
+                    evidence_root,
+                    "tests.full.json",
+                    {
+                        "slice_id": ctx.slice_id,
+                        "layer": ctx.layer,
+                        "result": ci["full_tests"],
+                    },
+                )
 
         if wm is None:
-            record_artifacts(merge=None, tick=None, skipped=True)
+            record_artifacts(merge=None, ci=None, skipped=True)
             return StepResult(status="OK")
-
-        def failure_refs(tick: Any) -> list[str]:
-            refs: list[str] = list(getattr(tick, "demotion_tickets", []) or [])
-            for layer_name, layer_result in (getattr(tick, "layer_results", {}) or {}).items():
-                if not bool(getattr(layer_result, "gates_passed", True)):
-                    refs.extend(
-                        list(getattr(layer_result, "demotion_tickets", []) or [])
-                        or [f"{layer_name}:gates_failed"]
-                    )
-                if not bool(getattr(layer_result, "tests_passed", True)):
-                    refs.extend(
-                        list(getattr(layer_result, "demotion_tickets", []) or [])
-                        or [f"{layer_name}:tests_failed"]
-                    )
-            deduped: list[str] = []
-            seen: set[str] = set()
-            for ref in refs:
-                if ref not in seen:
-                    seen.add(ref)
-                    deduped.append(ref)
-            return deduped
 
         merge_strategy = "merge"
         if isinstance(ctx.config, dict):
@@ -3212,7 +3387,7 @@ class IntegrateStep:
             )
             record_artifacts(
                 merge=merge_result,
-                tick=None,
+                ci=None,
                 emitted=[ticket],
                 error=merge_result.error,
             )
@@ -3222,32 +3397,43 @@ class IntegrateStep:
                 error=merge_result.error,
             )
 
-        # 2. Tick CI pipeline
-        tick_result = wm.tick_pipeline(active_layer=ctx.layer, run_tests=True)
-        tick_failures = failure_refs(tick_result)
-
-        if not tick_failures:
-            record_artifacts(merge=merge_result, tick=tick_result)
+        # 2. Extract dirty -> clean and run real tests in clean sibling.
+        ci_result = run_ci_suite()
+        if ci_result.get("passed", False):
+            record_artifacts(merge=merge_result, ci=ci_result)
             return StepResult(status="OK")
 
-        # 3. CI failed — try Investigator before demotion
-        investigator_result = self._try_investigator(ctx, tick_result)
+        # 3. CI failed — try Investigator before demotion.
+        investigator_result = self._try_investigator(
+            ctx, list(ci_result.get("failure_refs", []) or [])
+        )
         if investigator_result and investigator_result.get("fixed"):
-            # Re-tick pipeline after fix
-            tick_result = wm.tick_pipeline(active_layer=ctx.layer, run_tests=True)
-            tick_failures = failure_refs(tick_result)
-            if not tick_failures:
+            ci_result = run_ci_suite()
+            if ci_result.get("passed", False):
                 record_artifacts(
                     merge=merge_result,
-                    tick=tick_result,
+                    ci=ci_result,
                     investigator=investigator_result,
                 )
                 return StepResult(status="OK")
 
-        # 4. Investigator failed or didn't fix — emit demotion tickets
-        tickets = []
-        for dt_ref in tick_failures:
-            logger.warning("Pipeline demotion: %s", dt_ref)
+        # 4. Investigator failed or didn't fix — persist structured failure report.
+        downward_flow_report = build_downward_flow_report(
+            merge=merge_result,
+            ci=ci_result,
+            investigator=investigator_result,
+        )
+        downward_flow_path = _write_iteration_json(
+            bundle,
+            evidence_root,
+            "downward_flow.failure.json",
+            downward_flow_report,
+        )
+
+        # 5. Route to demotion tickets from structured failure refs.
+        tickets: list[DemotionTicket] = []
+        for dt_ref in list(ci_result.get("failure_refs", []) or []):
+            logger.warning("Integration demotion: %s", dt_ref)
             tickets.append(
                 DemotionTicket(
                     run_id=ctx.run_id,
@@ -3256,32 +3442,45 @@ class IntegrateStep:
                     target_layer="L1",
                     severity="BLOCKER",
                     diagnosis=f"CI failure after integration: {dt_ref}",
+                    evidence_refs=[downward_flow_path],
                 )
             )
 
         if tickets:
             record_artifacts(
                 merge=merge_result,
-                tick=tick_result,
+                ci=ci_result,
                 investigator=investigator_result,
+                downward_flow={
+                    "path": downward_flow_path,
+                    "failure_refs": list(ci_result.get("failure_refs", []) or []),
+                },
                 emitted=tickets,
-                error=f"CI pipeline failed with {len(tickets)} demotion(s)",
+                error=f"CI failed with {len(tickets)} demotion(s)",
             )
             return StepResult(
                 status="RETRY",
                 emitted_tickets=tickets,
-                error=f"CI pipeline failed with {len(tickets)} demotion(s)",
+                error=f"CI failed with {len(tickets)} demotion(s)",
             )
 
-        record_artifacts(merge=merge_result, tick=tick_result, investigator=investigator_result)
+        record_artifacts(
+            merge=merge_result,
+            ci=ci_result,
+            investigator=investigator_result,
+            downward_flow={"path": downward_flow_path},
+            error=ci_result.get("error", "") or "Integration CI failed without classified failures",
+        )
         return StepResult(status="OK")
 
-    def _try_investigator(self, ctx: SliceContext, tick_result: Any) -> dict[str, Any] | None:
+    def _try_investigator(
+        self, ctx: SliceContext, failure_refs: list[str]
+    ) -> dict[str, Any] | None:
         """Invoke Investigator agent to fix CI failures.
 
         Args:
             ctx: Slice context.
-            tick_result: The failing pipeline tick result.
+            failure_refs: Structured refs for failing tests/checks.
 
         Returns:
             Dict with ``fixed`` bool, or None if investigator unavailable.
@@ -3314,7 +3513,7 @@ class IntegrateStep:
                     "- L3: refactor only, no behavior change\n\n"
                     'Return JSON: {"fixed": true/false, "patch": "...", '
                     '"root_cause": "...", "evidence": "..."}\n\n'
-                    f"Failing tickets: {tick_result.demotion_tickets[:5]}\n"
+                    f"Failing refs: {(failure_refs or [])[:8]}\n"
                     f"Slice: {ctx.slice_id}\n"
                 )
 
@@ -3368,10 +3567,12 @@ class VerifyStep:
         from spec_manager.orchestration.evidence import Finding
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
+        verification_root = self._resolve_verification_root(ctx, workspace)
         findings: list[dict[str, Any]] = []
         notes: dict[str, Any] = {
             "layer": ctx.layer,
             "slice_id": ctx.slice_id,
+            "verification_root": str(verification_root),
             "timestamp": time.time(),
             "findings": [],
         }
@@ -3429,7 +3630,7 @@ class VerifyStep:
                 out = run_agent(
                     agent_name=agent_name,
                     prompt=prompt,
-                    workspace=workspace,
+                    workspace=verification_root,
                 )
                 cleaned = _strip_code_fences(out)
                 return json.loads(_extract_json_payload(cleaned))
@@ -3450,43 +3651,66 @@ class VerifyStep:
             "Return JSON: "
             '{"status": "PASS"|"WARN"|"FAIL", "findings": [{"severity": ..., "evidence": ..., '
             '"location": {}, "required_change_type": ...}]}\n\n'
-            f"Slice: {ctx.slice_id}\nLayer: {ctx.layer}\n"
+            f"Slice: {ctx.slice_id}\nLayer: {ctx.layer}\nVerification root: {verification_root}\n"
         )
         oversight = run_agent_json("pipeline-oversight-enforcer", oversight_prompt)
-        if oversight:
-            status = oversight.get("status", "PASS")
-            for of in oversight.get("findings", []) or []:
-                emit_finding(
-                    dimension="GOVERNANCE",
-                    category="governance",
-                    severity=of.get("severity", "MAJOR"),
-                    required_change_type=of.get("required_change_type", "refactor_only"),
-                    location=of.get("location", {}),
-                    evidence=of.get("evidence", "Oversight finding"),
-                    confidence=0.8,
+        oversight_findings = oversight.get("findings", []) if isinstance(oversight, dict) else []
+        for of in oversight_findings or []:
+            emit_finding(
+                dimension="GOVERNANCE",
+                category="governance",
+                severity=of.get("severity", "MAJOR"),
+                required_change_type=of.get("required_change_type", "refactor_only"),
+                location=of.get("location", {}),
+                evidence=of.get("evidence", "Oversight finding"),
+                confidence=0.8,
+            )
+
+        oversight_status = (
+            str(oversight.get("status", "")).strip().upper() if isinstance(oversight, dict) else ""
+        )
+        if oversight_status not in {"PASS", "WARN", "FAIL"}:
+            emit_finding(
+                dimension="GOVERNANCE",
+                category="governance",
+                severity="BLOCKER",
+                required_change_type="refactor_only",
+                evidence=(
+                    "Pipeline oversight verifier produced no valid PASS/WARN/FAIL status; "
+                    "failing closed."
+                ),
+                confidence=1.0,
+            )
+            oversight_status = "FAIL"
+
+        if oversight_status == "FAIL":
+            tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
+            notes["findings"] = findings
+            iteration_dir = bundle.iter_dir(
+                _evidence_base_path(
+                    slice_root=ctx.slice_root,
+                    workspace_root=ctx.workspace_root,
                 )
-            if status == "FAIL":
-                tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
-                notes["findings"] = findings
-                iteration_dir = bundle.iter_dir(
-                    _evidence_base_path(
-                        slice_root=ctx.slice_root,
-                        workspace_root=ctx.workspace_root,
-                    )
-                )
-                iteration_dir.mkdir(parents=True, exist_ok=True)
-                notes_path = iteration_dir / "verify.notes.json"
-                notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
-                bundle.verification.path = notes_path.name
-                return StepResult(
-                    status="RETRY",
-                    emitted_tickets=tickets,
-                    notes_path=str(notes_path),
-                    error="VERIFY: governance FAIL",
-                )
+            )
+            iteration_dir.mkdir(parents=True, exist_ok=True)
+            notes_path = iteration_dir / "verify.notes.json"
+            notes_path.write_text(json.dumps(notes, indent=2), encoding="utf-8")
+            bundle.verification.path = notes_path.name
+            return StepResult(
+                status="RETRY",
+                emitted_tickets=tickets,
+                notes_path=str(notes_path),
+                error="VERIFY: governance FAIL",
+            )
 
         # 1) Layer-specific verification
         if ctx.layer == "l1":
+            l1_evidence = self._build_l1_verification_payload(
+                ctx,
+                bundle,
+                verification_root=verification_root,
+                workspace=workspace,
+            )
             prompt = (
                 "## TASK\n"
                 "Verify L1 post-integration correctness:\n"
@@ -3494,6 +3718,10 @@ class VerifyStep:
                 "dependencies.\n"
                 "2) Lineage (P7): architecture-facing surfaces trace back to spec/atoms; flag "
                 "orphans.\n"
+                "Use only the evidence payload below. If evidence is missing for a required check, "
+                "emit a finding that identifies the missing artifact.\n\n"
+                "## EVIDENCE_PAYLOAD\n"
+                f"{json.dumps(l1_evidence, indent=2)}\n\n"
                 'Return JSON: {"findings": [...]} with required_change_type in {'
                 "refactor_only, wiring_only, behavior_change}.\n\n"
                 "Provide file locations when possible.\n"
@@ -3503,7 +3731,12 @@ class VerifyStep:
                 emit_finding(**f)
 
         elif ctx.layer == "l2":
-            l2_evidence = self._build_l2_verification_payload(ctx, bundle, workspace)
+            l2_evidence = self._build_l2_verification_payload(
+                ctx,
+                bundle,
+                verification_root=verification_root,
+                workspace=workspace,
+            )
             prompt = (
                 "## TASK\n"
                 "Verify L2 architecture post-integration:\n"
@@ -3567,6 +3800,135 @@ class VerifyStep:
         return StepResult(status="OK", notes_path=str(notes_path))
 
     @staticmethod
+    def _resolve_verification_root(ctx: SliceContext, workspace: Path) -> Path:
+        """Prefer clean sibling for verification; fallback to dirty parent/workspace."""
+        candidates = [ctx.clean_sibling_root, ctx.dirty_parent_root, str(workspace)]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            root = Path(candidate)
+            if root.exists():
+                return root
+        return workspace
+
+    def _build_l1_verification_payload(
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        *,
+        verification_root: Path,
+        workspace: Path,
+    ) -> dict[str, Any]:
+        """Build concrete P6/P7 evidence for L1 verification."""
+        p6_payload: dict[str, Any]
+        try:
+            from spec_manager.analysis.adjacency.runner import (
+                AdjacencyAnalysisConfig,
+                run_adjacency_analysis,
+            )
+
+            adjacency_report = run_adjacency_analysis(
+                AdjacencyAnalysisConfig(
+                    source_dirs=[verification_root],
+                    spec_dirs=[verification_root],
+                )
+            )
+            p6_payload = {
+                "status": "OK",
+                "total_nodes": adjacency_report.total_nodes,
+                "total_edges": adjacency_report.total_edges,
+                "num_components": adjacency_report.num_components,
+                "disconnected_warnings": list(adjacency_report.disconnected_warnings),
+                "signal_type_counts": dict(adjacency_report.signal_type_counts),
+            }
+        except Exception as exc:
+            logger.warning("P6 adjacency verification payload failed: %s", exc, exc_info=True)
+            p6_payload = {
+                "status": "ERROR",
+                "error": str(exc),
+            }
+
+        p7_payload: dict[str, Any]
+        try:
+            from spec_manager.projection.lineage.builder import (
+                AtomDefinition,
+                LineageBuilder,
+                scan_imports_from_directory,
+            )
+
+            import_records = scan_imports_from_directory(verification_root)
+
+            atom_defs: list[AtomDefinition] = []
+            branch_manager = ctx.branch_manager
+            if branch_manager is not None:
+                list_atoms = getattr(branch_manager, "list_atoms", None)
+                if callable(list_atoms):
+                    for atom in list_atoms():
+                        atom_defs.append(
+                            AtomDefinition(
+                                atom_id=getattr(atom, "atom_id", ""),
+                                function_name=getattr(atom, "function_name", ""),
+                                file_path=getattr(atom, "file_path", ""),
+                                module_path="",
+                                signature_hash=(
+                                    getattr(atom, "signature_hash", "")
+                                    or getattr(atom, "content_hash", "")
+                                ),
+                            )
+                        )
+
+            if atom_defs:
+                lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
+                lineage_table = lineage_builder.build_lineage()
+                known_atom_ids = {a.atom_id for a in atom_defs}
+                orphan_atoms = lineage_table.find_orphan_atoms(known_atom_ids)
+                p7_payload = {
+                    "status": "OK",
+                    "import_edges": len(import_records),
+                    "lineage_edges": len(lineage_table.edges),
+                    "known_atoms": len(known_atom_ids),
+                    "orphan_atoms": len(orphan_atoms),
+                    "orphan_atom_ids": sorted(orphan_atoms)[:50],
+                }
+            else:
+                p7_payload = {
+                    "status": "MISSING_ATOMS",
+                    "import_edges": len(import_records),
+                    "lineage_edges": 0,
+                    "known_atoms": 0,
+                    "orphan_atoms": 0,
+                    "note": "No branch-manager atoms available for lineage tracing",
+                }
+        except Exception as exc:
+            logger.warning("P7 lineage verification payload failed: %s", exc, exc_info=True)
+            p7_payload = {
+                "status": "ERROR",
+                "error": str(exc),
+            }
+
+        return {
+            "slice": {
+                "run_id": bundle.run_id,
+                "slice_id": bundle.slice_id,
+                "iteration": bundle.iteration,
+                "layer": ctx.layer,
+            },
+            "roots": {
+                "verification_root": str(verification_root),
+                "workspace_root": str(workspace),
+                "clean_sibling_root": ctx.clean_sibling_root,
+                "dirty_parent_root": ctx.dirty_parent_root,
+            },
+            "p6_cross_library": p6_payload,
+            "p7_lineage": p7_payload,
+            "integration": {
+                "integration_report_path": bundle.integration.path,
+                "tests_slice_path": bundle.tests.slice_path,
+                "tests_full_path": bundle.tests.full_path,
+            },
+        }
+
+    @staticmethod
     def _is_l2_architecture_artifact(rel_path: str) -> bool:
         """Return True when a manifest path is likely an L2 architecture artifact."""
         lowered = rel_path.lower()
@@ -3582,7 +3944,12 @@ class VerifyStep:
         return any(token in lowered for token in tokens)
 
     def _build_l2_verification_payload(
-        self, ctx: SliceContext, bundle: EvidenceBundle, workspace: Path
+        self,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        *,
+        verification_root: Path,
+        workspace: Path,
     ) -> dict[str, Any]:
         """Build concrete L2 verification evidence from the current bundle."""
         manifest_entries = [m for m in bundle.manifest.files if isinstance(m, dict)]
@@ -3593,12 +3960,9 @@ class VerifyStep:
             and self._is_l2_architecture_artifact(str(entry.get("path", "")).strip())
         ]
 
-        search_roots: list[Path] = []
-        if ctx.slice_root:
-            slice_root = Path(ctx.slice_root)
-            if slice_root.exists():
-                search_roots.append(slice_root)
-        search_roots.append(workspace)
+        search_roots: list[Path] = [verification_root]
+        if workspace != verification_root:
+            search_roots.append(workspace)
 
         architecture_artifacts: list[dict[str, str]] = []
         for rel_path in arch_manifest_paths[:12]:
