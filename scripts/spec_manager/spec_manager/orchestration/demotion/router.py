@@ -14,10 +14,40 @@ from spec_manager.orchestration.demotion import DemotionTicket
 from spec_manager.orchestration.demotion.triage import (
     DemotionContext,
     DemotionRouting,
+    infer_gate_source_layer,
     triage,
 )
 
 logger = logging.getLogger(__name__)
+_SOURCE_LAYER_KEYS = ("source_layer", "failure_layer", "layer", "origin_layer")
+
+
+def _normalize_layer(layer: Any) -> str | None:
+    normalized = str(layer or "").strip().upper()
+    if normalized in {"L1", "L2", "L3"}:
+        return normalized
+    return None
+
+
+def _infer_source_layer(
+    evidence: dict[str, Any],
+    *,
+    fallback: str,
+    gate_id: str | None = None,
+) -> str:
+    for key in _SOURCE_LAYER_KEYS:
+        inferred = _normalize_layer(evidence.get(key))
+        if inferred:
+            return inferred
+
+    inferred_gate_layer = infer_gate_source_layer(gate_id)
+    if inferred_gate_layer:
+        return inferred_gate_layer
+
+    normalized_fallback = _normalize_layer(fallback)
+    if normalized_fallback:
+        return normalized_fallback
+    return "L1"
 
 
 @dataclass
@@ -61,6 +91,9 @@ class DemotionRouter:
         ticket_severity = (
             "BLOCKER" if (routing.action == "block" or routing.confidence >= 0.8) else "MAJOR"
         )
+        origin_layer = (
+            _normalize_layer(ctx.active_layer) or _normalize_layer(self._active_layer) or "L1"
+        )
         ticket = DemotionTicket(
             run_id=self._run_id,
             source=ctx.source or "GATE_FAILURE",
@@ -68,6 +101,8 @@ class DemotionRouter:
             gate=ctx.gate,
             target_layer=routing.target_layer,
             severity=ticket_severity,
+            origin_layer=origin_layer,
+            hop_trace=[origin_layer, routing.target_layer],
             failing_pins=list(ctx.failing_pins),
             failing_files=list(ctx.failing_files),
             diagnosis=routing.reason,
@@ -99,6 +134,11 @@ class DemotionRouter:
 
             gate_id = gr.get("gate_id", "")
             findings = gr.get("findings", [])
+            source_layer = _infer_source_layer(
+                gr,
+                fallback=self._active_layer,
+                gate_id=gate_id,
+            )
 
             # Extract failing files and pins from findings
             failing_files = set()
@@ -111,7 +151,7 @@ class DemotionRouter:
 
             ctx = DemotionContext(
                 active_layer=self._active_layer,
-                source_layer=self._active_layer,
+                source_layer=source_layer,
                 source="GATE_FAILURE",
                 gate=gate_id,
                 failing_files=list(failing_files),
@@ -143,9 +183,13 @@ class DemotionRouter:
         batch = RoutingBatch()
 
         for failure in test_failures:
+            source_layer = _infer_source_layer(
+                failure,
+                fallback=self._active_layer,
+            )
             ctx = DemotionContext(
                 active_layer=self._active_layer,
-                source_layer=self._active_layer,
+                source_layer=source_layer,
                 source="TEST_FAILURE",
                 failing_files=[failure.get("file", "")],
                 evidence_paths=[failure.get("raw_excerpt_path", "")],
@@ -181,10 +225,14 @@ class DemotionRouter:
 
         for finding in findings:
             category = finding.get("category", "")
+            source_layer = _infer_source_layer(
+                finding,
+                fallback=self._active_layer,
+            )
 
             ctx = DemotionContext(
                 active_layer=self._active_layer,
-                source_layer=self._active_layer,
+                source_layer=source_layer,
                 source="REVIEW",
                 category=category,
                 dimension=finding.get("dimension", ""),
