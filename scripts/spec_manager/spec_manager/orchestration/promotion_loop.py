@@ -3789,7 +3789,7 @@ class VerifyStep:
         has_blocker = any(f.get("severity") == "BLOCKER" for f in findings)
         has_major = any(f.get("severity") == "MAJOR" for f in findings)
 
-        if has_blocker or (tickets and has_major):
+        if has_blocker or has_major:
             return StepResult(
                 status="RETRY",
                 emitted_tickets=tickets,
@@ -4551,6 +4551,45 @@ class PromotionLoop:
                 },
             )
 
+    @staticmethod
+    def _register_gap_queue_stagnation_under_spec(
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+    ) -> str | None:
+        """Convert GapQueue stagnation into an under-spec event."""
+        stagnation = bundle.gaps.stagnation
+        if not isinstance(stagnation, dict) or not bool(stagnation.get("is_stagnant")):
+            return None
+
+        open_gap_count = len(bundle.gaps.open_gaps or [])
+        stagnation_count_raw = stagnation.get("stagnation_count", 0)
+        try:
+            stagnation_count = int(stagnation_count_raw)
+        except (TypeError, ValueError):
+            stagnation_count = 0
+
+        question = (
+            f"Cannot progress on slice '{ctx.slice_id}': GapQueue stagnated "
+            f"for {stagnation_count} consecutive updates with {open_gap_count} open gaps. "
+            "Additional constraints or clarifications are required."
+        )
+        event = {
+            "kind": "MISSING_CONSTRAINT",
+            "file": "",
+            "question": question,
+            "context": bundle.gaps.path or "gaps.json",
+            "stagnation_count": stagnation_count,
+            "open_gaps": open_gap_count,
+        }
+
+        existing_events = [
+            e for e in (bundle.implementation.under_spec_events or []) if isinstance(e, dict)
+        ]
+        if not any(str(e.get("question", "")) == question for e in existing_events):
+            existing_events.append(event)
+        bundle.implementation.under_spec_events = existing_events
+        return question
+
     def run_slice(
         self,
         slice_ref: SliceRef,
@@ -4603,13 +4642,6 @@ class PromotionLoop:
         iteration = 0
         waiting_iterations = 0
 
-        # Stagnation detection: track gap counts over iterations.
-        # Uses a sliding window — if min gap count over the last N iterations
-        # hasn't improved compared to the N iterations before that, it's stagnated.
-        # WAITING iterations are excluded from stagnation detection.
-        gap_history: list[int] = []
-        stagnation_window = 3
-
         # Per-ticket retry budget: track (failing_files_key, gate) → count
         retry_tracker: dict[tuple[str, str], int] = {}
         retry_budget = 3
@@ -4643,6 +4675,14 @@ class PromotionLoop:
             for step in self._steps:
                 logger.debug("Running step: %s", step.name)
                 result = step.run(ctx, bundle)
+                if step.name == "GAP_EXPLORATION" and result.status == "OK":
+                    question = self._register_gap_queue_stagnation_under_spec(ctx, bundle)
+                    if question:
+                        logger.warning(
+                            "Slice '%s': GapQueue stagnation detected; treating as under-spec",
+                            ctx.slice_id,
+                        )
+                        result = StepResult(status="BLOCKED", error=question)
 
                 if result.emitted_tickets:
                     all_tickets.extend(result.emitted_tickets)
@@ -4769,42 +4809,11 @@ class PromotionLoop:
                     wake_count=waiting_iterations,
                 )
 
-            # Stagnation detection runs on EVERY non-WAITING iteration (including retries).
-            # Uses sliding window: compare min(recent window) vs min(previous window).
-            # If the recent window minimum hasn't improved, the slice is stagnated.
-            remaining = len(bundle.gaps.open_gaps)
-            gap_history.append(remaining)
-
-            if len(gap_history) >= 2 * stagnation_window:
-                prev_window = gap_history[-(2 * stagnation_window) : -stagnation_window]
-                recent_window = gap_history[-stagnation_window:]
-                if min(recent_window) >= min(prev_window):
-                    logger.warning(
-                        "Slice '%s': stagnation detected — min gaps not improving "
-                        "(recent=%d, previous=%d, window=%d)",
-                        ctx.slice_id,
-                        min(recent_window),
-                        min(prev_window),
-                        stagnation_window,
-                    )
-                    bundle.status = "FAILED"
-                    self._persist_iteration_artifacts(ctx, bundle)
-                    bundle.save(evidence_root)
-                    return SliceResult(
-                        slice_id=ctx.slice_id,
-                        status="STAGNATED",
-                        iterations=iteration,
-                        remaining_gaps=remaining,
-                        demotion_tickets=all_tickets,
-                        error=(
-                            f"Stagnation: min gaps not improving for {stagnation_window} iterations"
-                        ),
-                    )
-
             if retry:
                 continue
 
             # Check termination
+            remaining = len(bundle.gaps.open_gaps)
             if remaining == 0:
                 bundle.status = "COMPLETE"
                 self._persist_iteration_artifacts(ctx, bundle)

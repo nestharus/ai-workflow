@@ -125,7 +125,7 @@ class PddLifecycle:
         max_approval_iterations: int = 3,
         max_demotions_per_layer: int = 50,
         max_pipeline_passes: int = 2,
-        max_parallel: int = 4,
+        max_parallel: int = 1,
         model_profile: Any = None,
         planner_override_provider: Any = None,
     ) -> None:
@@ -847,7 +847,8 @@ class PddLifecycle:
             monitor_executor=monitor_executor,
             wake_queue=wake_queue,
         )
-        sched_result = scheduler.run(slice_refs, run_context)
+        gap_counts = self._load_gap_priority_counts(layer, slice_refs)
+        sched_result = scheduler.run(slice_refs, run_context, gap_counts=gap_counts)
         slice_results = sched_result.slice_results
 
         # Per-layer demotion budget check (budget #3)
@@ -958,6 +959,33 @@ class PddLifecycle:
         )
 
         return monitor_executor, wake_queue
+
+    def _load_gap_priority_counts(self, layer: Layer, slice_refs: list[Any]) -> dict[str, int]:
+        """Load per-slice open-gap counts for scheduler priority ordering."""
+        if not slice_refs:
+            return {}
+
+        target_ids = {
+            str(getattr(ref, "slice_id", "")).strip()
+            for ref in slice_refs
+            if getattr(ref, "slice_id", "")
+        }
+        if not target_ids:
+            return {}
+
+        counts = {slice_id: 0 for slice_id in target_ids}
+        for row in self._gather_latest_evidence():
+            if row.get("layer") != layer:
+                continue
+            slice_id = str(row.get("slice_id", "")).strip()
+            if slice_id not in counts:
+                continue
+            raw_count = row.get("open_gap_count", 0)
+            try:
+                counts[slice_id] = int(raw_count)
+            except (TypeError, ValueError):
+                counts[slice_id] = 0
+        return counts
 
     def _discover_slices(self, layer: Layer) -> list[Any]:
         """Discover work slices for a given layer.
