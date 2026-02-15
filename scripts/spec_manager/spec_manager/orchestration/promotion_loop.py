@@ -320,6 +320,217 @@ def _path_matches_focus(path: str, focus_files: set[str]) -> bool:
     )
 
 
+def _canonical_signal(value: Any) -> str:
+    """Normalize relationship signal labels into canonical categories."""
+    if not isinstance(value, str):
+        return "REFERENCE"
+    signal = value.strip().upper()
+    if signal in {"CALL", "CALLS"}:
+        return "CALL"
+    if signal in {"STORE_TOUCH", "AGGREGATION"}:
+        return "STORE_TOUCH"
+    if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
+        return "EVENT"
+    return "REFERENCE"
+
+
+def _append_unique_record(records: list[dict[str, Any]], candidate: dict[str, Any]) -> None:
+    """Append candidate record when no structurally-equal record exists."""
+    fingerprint = json.dumps(candidate, sort_keys=True)
+    for existing in records:
+        if json.dumps(existing, sort_keys=True) == fingerprint:
+            return
+    records.append(candidate)
+
+
+def _build_l1_source_entry(
+    *,
+    relative_path: str,
+    content_hash: str,
+    source_analysis: Any,
+    file_facts_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Build source-index entry from canonical file facts."""
+    analysis_functions = [asdict(fn) for fn in getattr(source_analysis, "functions", [])]
+    analysis_comments = [asdict(comment) for comment in getattr(source_analysis, "comments", [])]
+    analysis_facets = getattr(source_analysis, "facets", {})
+    return {
+        "path": relative_path,
+        "content_hash": content_hash,
+        "analysis": {
+            "functions": analysis_functions,
+            "comments": analysis_comments,
+            "facets": analysis_facets if isinstance(analysis_facets, dict) else {},
+            "file_facts": file_facts_payload,
+        },
+    }
+
+
+def _extract_file_facts_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """Load canonical file-facts payload from a source-index entry."""
+    analysis = entry.get("analysis")
+    if not isinstance(analysis, dict):
+        return {}
+    payload = analysis.get("file_facts")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _merge_file_facts_payload(bundle: EvidenceBundle, payload: dict[str, Any]) -> None:
+    """Merge canonical file-facts projection into bundle-level facts."""
+    functions = payload.get("functions", {})
+    if isinstance(functions, dict) and functions:
+        bundle.facts.functions.update(functions)
+
+    for key in ("stub_nodes", "remaining_gap_pins", "call_graph_edges"):
+        records = payload.get(key, [])
+        if not isinstance(records, list):
+            continue
+        target = getattr(bundle.facts, key)
+        for record in records:
+            if isinstance(record, dict):
+                _append_unique_record(target, record)
+
+    call_graph_nodes = payload.get("call_graph_nodes", [])
+    if isinstance(call_graph_nodes, list):
+        merged_nodes = {
+            str(node).strip() for node in bundle.facts.call_graph_nodes if str(node).strip()
+        }
+        merged_nodes.update(str(node).strip() for node in call_graph_nodes if str(node).strip())
+        bundle.facts.call_graph_nodes = sorted(merged_nodes)
+
+    stores = payload.get("stores", {})
+    if isinstance(stores, dict):
+        for store_id, store_data in stores.items():
+            store_key = str(store_id).strip()
+            if not store_key:
+                continue
+            existing = bundle.facts.stores.get(store_key, {})
+            if not isinstance(existing, dict):
+                existing = {}
+            incoming = store_data if isinstance(store_data, dict) else {}
+            owners = sorted(set(existing.get("owner_atoms", []) + incoming.get("owner_atoms", [])))
+            bundle.facts.stores[store_key] = {
+                "owner_atoms": owners,
+                "schema": incoming.get("schema", existing.get("schema", {})),
+            }
+
+    store_owners = payload.get("store_owners", {})
+    if isinstance(store_owners, dict):
+        for store_id, owners in store_owners.items():
+            store_key = str(store_id).strip()
+            if not store_key or not isinstance(owners, list):
+                continue
+            merged = set(bundle.facts.store_owners.get(store_key, []))
+            merged.update(str(owner).strip() for owner in owners if str(owner).strip())
+            if merged:
+                bundle.facts.store_owners[store_key] = sorted(merged)
+
+    test_hints = payload.get("test_identity_hints", [])
+    if isinstance(test_hints, list):
+        for hint in test_hints:
+            if isinstance(hint, dict):
+                claim = {
+                    "claim": f"test_identity_hint:{hint.get('kind', 'hint')}",
+                    "evidence_refs": [hint.get("file", "")] if hint.get("file") else [],
+                    "confidence": 0.8,
+                    "produced_by_step": "ANALYZE",
+                    "details": hint,
+                }
+                _append_unique_record(bundle.facts.llm_claims, claim)
+
+    if (
+        bundle.facts.functions
+        or bundle.facts.stores
+        or bundle.facts.remaining_gap_pins
+        or bundle.facts.stub_nodes
+        or bundle.facts.call_graph_nodes
+        or bundle.facts.call_graph_edges
+        or bundle.facts.store_owners
+        or bundle.facts.llm_claims
+    ):
+        bundle.facts.path = "facts.json"
+
+
+def _reverse_pseudocode_payload_from_analysis(
+    *,
+    relative_path: str,
+    functions: list[dict[str, Any]],
+    comments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project comment-to-function groupings without invoking parse_file adapters."""
+    by_qualified: dict[str, dict[str, Any]] = {}
+    by_simple: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for fn in functions:
+        if not isinstance(fn, dict):
+            continue
+        qn = str(fn.get("qualified_name") or fn.get("name") or "").strip()
+        if not qn:
+            continue
+        by_qualified[qn] = fn
+        by_simple[str(fn.get("name") or "").strip()].append(fn)
+
+    grouped_comments: dict[str, list[str]] = defaultdict(list)
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        text = str(comment.get("text", "")).strip()
+        if not text:
+            continue
+        enclosing = str(comment.get("enclosing_function") or "").strip()
+        if not enclosing:
+            continue
+        grouped_comments[enclosing].append(text)
+
+    payload: list[dict[str, Any]] = []
+    for enclosing, comment_texts in grouped_comments.items():
+        fn = by_qualified.get(enclosing)
+        if fn is None:
+            candidates = by_simple.get(enclosing, [])
+            fn = candidates[0] if candidates else None
+        if fn is None:
+            continue
+        qualified = str(fn.get("qualified_name") or fn.get("name") or "").strip()
+        class_name = ""
+        if "." in qualified:
+            class_name = ".".join(qualified.split(".")[:-1]).strip()
+        payload.append(
+            {
+                "file": relative_path,
+                "function": str(fn.get("name", "")),
+                "class_name": class_name,
+                "start_line": fn.get("start_line"),
+                "end_line": fn.get("end_line"),
+                "comments": comment_texts,
+            }
+        )
+    return payload
+
+
+def _gaps_from_file_facts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project canonical gap pins to L1 gap-exploration records."""
+    gaps: list[dict[str, Any]] = []
+    for pin in payload.get("remaining_gap_pins", []):
+        if not isinstance(pin, dict):
+            continue
+        span = _location_span(
+            start_line=(pin.get("span") or {}).get("start_line"),
+            end_line=(pin.get("span") or {}).get("end_line"),
+            start_col=(pin.get("span") or {}).get("start_col"),
+            end_col=(pin.get("span") or {}).get("end_col"),
+        )
+        file_path = str(pin.get("file", "")).strip()
+        gaps.append(
+            {
+                "file": file_path,
+                "description": str(pin.get("description", "")).strip(),
+                "kind": str(pin.get("kind", "gap")).strip() or "gap",
+                "span": span,
+                "location": {"file": file_path, **span},
+            }
+        )
+    return gaps
+
+
 def _run_git_in_worktree(
     worktree: Path,
     args: list[str],
@@ -1599,38 +1810,78 @@ class GapExplorationStep:
             return StepResult(status="OK")
 
         try:
-            from spec_manager.compliance.detection.orchestrator import (
-                ScanConfig,
-                scan_executable_gaps,
-            )
+            from spec_manager.core.code_analysis import analyze_file_facts
 
-            report = scan_executable_gaps(
-                filepaths=py_files,
-                project_root=slice_root,
-                config=ScanConfig(enable_comments=True, enable_stubs=True),
-            )
+            workspace = Path(ctx.workspace_root) if ctx.workspace_root else slice_root
+            existing_entries: dict[str, dict[str, Any]] = {
+                str(entry.get("path", "")).strip(): entry
+                for entry in (bundle.source_index.entries or [])
+                if isinstance(entry, dict) and str(entry.get("path", "")).strip()
+            }
 
+            entries: list[dict[str, Any]] = []
             gaps: list[dict[str, Any]] = []
-            for ev in report.all_evidence:
-                span = _location_span(
-                    start_line=getattr(ev, "line_start", None) or getattr(ev, "start_line", None),
-                    end_line=getattr(ev, "line_end", None) or getattr(ev, "end_line", None),
-                    start_col=getattr(ev, "col_start", None) or getattr(ev, "start_col", None),
-                    end_col=getattr(ev, "col_end", None) or getattr(ev, "end_col", None),
-                )
-                location_file = getattr(ev, "location", "") or ""
-                gaps.append(
-                    {
-                        "file": location_file,
-                        "description": getattr(ev, "description", ""),
-                        "kind": getattr(ev, "invariant_family", "gap"),
-                        "span": span,
-                        "location": {"file": location_file, **span},
-                    }
-                )
 
-            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=gaps)
-            self._merge_gap_queue(report, bundle)
+            for py_file in py_files:
+                if not py_file.exists() or not py_file.is_file():
+                    continue
+                try:
+                    content = py_file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.debug("Skipping L1 gap target %s: %s", py_file, exc)
+                    continue
+
+                relative_path = str(py_file.relative_to(slice_root))
+                content_hash = _hash_text(content)
+                cached_entry = existing_entries.get(relative_path)
+                cached_payload = (
+                    _extract_file_facts_payload(cached_entry)
+                    if isinstance(cached_entry, dict)
+                    else {}
+                )
+                if (
+                    isinstance(cached_entry, dict)
+                    and cached_entry.get("content_hash") == content_hash
+                    and cached_payload
+                ):
+                    source_entry = cached_entry
+                    payload = cached_payload
+                else:
+                    file_facts = analyze_file_facts(
+                        content,
+                        relative_path,
+                        workspace=workspace,
+                        run_id=ctx.run_id,
+                    )
+                    payload = {
+                        "structure_hints": dict(file_facts.structure_hints),
+                        "remaining_gap_pins": list(file_facts.gap_pins),
+                        "relationship_edges": list(file_facts.relationship_edges),
+                        "test_identity_hints": list(file_facts.test_identity_hints),
+                        "functions": dict(file_facts.functions),
+                        "stub_nodes": list(file_facts.stub_nodes),
+                        "call_graph_nodes": list(file_facts.call_graph_nodes),
+                        "call_graph_edges": list(file_facts.call_graph_edges),
+                        "stores": dict(file_facts.stores),
+                        "store_owners": dict(file_facts.store_owners),
+                    }
+                    source_entry = _build_l1_source_entry(
+                        relative_path=relative_path,
+                        content_hash=content_hash,
+                        source_analysis=file_facts.source_analysis,
+                        file_facts_payload=payload,
+                    )
+
+                entries.append(source_entry)
+                _merge_file_facts_payload(bundle, payload)
+                for gap in _gaps_from_file_facts(payload):
+                    _append_unique_record(gaps, gap)
+
+            normalized = [self._normalize_gap(g) for g in gaps]
+            bundle.source_index.entries = entries
+            bundle.source_index.path = "source_analysis.index.json"
+            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=normalized)
+            self._merge_gap_queue(self._report_from_gap_records(normalized), bundle)
         except Exception as exc:
             logger.warning("L1 gap exploration failed: %s", exc, exc_info=True)
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
@@ -3372,7 +3623,7 @@ class CoordinateStep:
 class AnalyzeStep:
     """Analyze slice after implementation — layer-aware.
 
-    - L1: P1 + P2 (parse_file adapters + analyze_source cache)
+    - L1: P1 + P2 via canonical file facts projection
     - L2: Build architecture graph cache (components/entrypoints/pins + wiring edges)
     - L3: Compute diff summary + structural metrics (size, duplication
       hotspots, refactor impact candidates)
@@ -3402,18 +3653,14 @@ class AnalyzeStep:
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         try:
-            from spec_manager.comment_planning.models import parse_file
-            from spec_manager.orchestration.source_analysis_cache import (
-                SourceAnalysisCache,
-            )
+            from spec_manager.core.code_analysis import analyze_file_facts
 
-            cache = SourceAnalysisCache(
-                workspace_root=workspace,
-                run_id=ctx.run_id,
-            )
-
+            existing_entries: dict[str, dict[str, Any]] = {
+                str(entry.get("path", "")).strip(): entry
+                for entry in (bundle.source_index.entries or [])
+                if isinstance(entry, dict) and str(entry.get("path", "")).strip()
+            }
             entries: list[dict[str, Any]] = []
-            normalized_functions: dict[str, Any] = {}
             reverse_payload: list[dict[str, Any]] = []
 
             targets = self._analysis_targets(bundle, slice_root)
@@ -3430,70 +3677,82 @@ class AnalyzeStep:
                     continue
 
                 relative_path = str(py_file.relative_to(slice_root))
-                analysis = cache.analyze_with_cache(content, relative_path)
-                analysis_functions = [asdict(fn) for fn in analysis.functions]
-                analysis_comments = [asdict(comment) for comment in analysis.comments]
-
-                parsed_functions: list[dict[str, Any]] = []
-                try:
-                    parsed_file = parse_file(str(py_file))
-                    for func in parsed_file.functions:
-                        comment_texts = [c.text for c in func.comments if c.text]
-                        parsed_functions.append(
-                            {
-                                "name": func.name,
-                                "class_name": func.class_name,
-                                "start_line": func.start_line,
-                                "end_line": func.end_line,
-                                "comment_count": len(comment_texts),
-                            }
-                        )
-                        if comment_texts:
-                            reverse_payload.append(
-                                {
-                                    "file": relative_path,
-                                    "function": func.name,
-                                    "class_name": func.class_name,
-                                    "start_line": func.start_line,
-                                    "end_line": func.end_line,
-                                    "comments": comment_texts,
-                                }
-                            )
-                except Exception as exc:
-                    logger.debug("parse_file failed for %s: %s", py_file, exc)
-
-                entries.append(
-                    {
-                        "path": relative_path,
-                        "content_hash": _hash_text(content),
-                        "analysis": {
-                            "functions": analysis_functions,
-                            "comments": analysis_comments,
-                            "parse_file": {"functions": parsed_functions},
-                        },
-                    }
+                content_hash = _hash_text(content)
+                cached_entry = existing_entries.get(relative_path)
+                cached_payload = (
+                    _extract_file_facts_payload(cached_entry)
+                    if isinstance(cached_entry, dict)
+                    else {}
+                )
+                cached_analysis = (
+                    cached_entry.get("analysis")
+                    if isinstance(cached_entry, dict)
+                    and isinstance(cached_entry.get("analysis"), dict)
+                    else {}
+                )
+                analysis_functions = (
+                    cached_analysis.get("functions")
+                    if isinstance(cached_analysis.get("functions"), list)
+                    else []
+                )
+                analysis_comments = (
+                    cached_analysis.get("comments")
+                    if isinstance(cached_analysis.get("comments"), list)
+                    else []
                 )
 
-                for fn in analysis_functions:
-                    qualified_name = fn.get("qualified_name") or fn.get("name") or ""
-                    if not qualified_name:
-                        continue
-                    normalized_functions[qualified_name] = {
-                        "signature": {
-                            "name": fn.get("name", ""),
-                            "args": fn.get("args", []),
-                            "return_annotation": fn.get("return_annotation"),
-                            "is_async": fn.get("is_async", False),
-                        },
-                        "doc": fn.get("docstring", ""),
-                        "file": relative_path,
-                        "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
+                if (
+                    isinstance(cached_entry, dict)
+                    and cached_entry.get("content_hash") == content_hash
+                    and cached_payload
+                    and isinstance(cached_analysis.get("functions"), list)
+                    and isinstance(cached_analysis.get("comments"), list)
+                ):
+                    source_entry = cached_entry
+                    payload = cached_payload
+                else:
+                    file_facts = analyze_file_facts(
+                        content,
+                        relative_path,
+                        requested_relationship_facets={"CALL", "STORE_TOUCH", "EVENT"},
+                        workspace=workspace,
+                        run_id=ctx.run_id,
+                    )
+                    payload = {
+                        "structure_hints": dict(file_facts.structure_hints),
+                        "remaining_gap_pins": list(file_facts.gap_pins),
+                        "relationship_edges": list(file_facts.relationship_edges),
+                        "test_identity_hints": list(file_facts.test_identity_hints),
+                        "functions": dict(file_facts.functions),
+                        "stub_nodes": list(file_facts.stub_nodes),
+                        "call_graph_nodes": list(file_facts.call_graph_nodes),
+                        "call_graph_edges": list(file_facts.call_graph_edges),
+                        "stores": dict(file_facts.stores),
+                        "store_owners": dict(file_facts.store_owners),
                     }
+                    source_entry = _build_l1_source_entry(
+                        relative_path=relative_path,
+                        content_hash=content_hash,
+                        source_analysis=file_facts.source_analysis,
+                        file_facts_payload=payload,
+                    )
+                    analysis_functions = source_entry.get("analysis", {}).get("functions", [])
+                    analysis_comments = source_entry.get("analysis", {}).get("comments", [])
+
+                entries.append(source_entry)
+                _merge_file_facts_payload(bundle, payload)
+                reverse_payload.extend(
+                    _reverse_pseudocode_payload_from_analysis(
+                        relative_path=relative_path,
+                        functions=[fn for fn in analysis_functions if isinstance(fn, dict)],
+                        comments=[
+                            comment for comment in analysis_comments if isinstance(comment, dict)
+                        ],
+                    )
+                )
 
             bundle.source_index.entries = entries
             bundle.source_index.path = "source_analysis.index.json"
-            if normalized_functions:
-                bundle.facts.functions.update(normalized_functions)
 
             if reverse_payload:
                 evidence_root = _evidence_base_path(
@@ -3508,9 +3767,8 @@ class AnalyzeStep:
                 )
 
             logger.info(
-                "Analyzed %d files (cache stats: %s)",
+                "Analyzed %d files with canonical file facts",
                 len(entries),
-                cache.stats,
             )
 
         except Exception as exc:
@@ -6497,110 +6755,92 @@ class VerifyStep:
         workspace: Path,
     ) -> dict[str, Any]:
         """Build concrete P6/P7 evidence for L1 verification."""
-        p6_payload: dict[str, Any]
-        try:
-            from spec_manager.analysis.adjacency.runner import (
-                AdjacencyAnalysisConfig,
-                run_adjacency_analysis,
-            )
+        relationship_edges: list[dict[str, Any]] = []
+        for entry in bundle.source_index.entries or []:
+            if not isinstance(entry, dict):
+                continue
+            payload = _extract_file_facts_payload(entry)
+            raw_edges = payload.get("relationship_edges", [])
+            if not isinstance(raw_edges, list):
+                continue
+            for edge in raw_edges:
+                if isinstance(edge, dict):
+                    relationship_edges.append(edge)
 
-            adjacency_report = run_adjacency_analysis(
-                AdjacencyAnalysisConfig(
-                    source_dirs=[verification_root],
-                    spec_dirs=[verification_root],
+        if not relationship_edges:
+            for edge in bundle.facts.call_graph_edges or []:
+                if not isinstance(edge, dict):
+                    continue
+                relationship_edges.append(
+                    {
+                        "signal_type": "CALL",
+                        "src_id": str(edge.get("src", "")),
+                        "dst_id": str(edge.get("dst", "")),
+                        "confidence": edge.get("confidence", 1.0),
+                    }
                 )
-            )
-            p6_payload = {
-                "status": "OK",
-                "total_nodes": adjacency_report.total_nodes,
-                "total_edges": adjacency_report.total_edges,
-                "num_components": adjacency_report.num_components,
-                "disconnected_warnings": list(adjacency_report.disconnected_warnings),
-                "signal_type_counts": dict(adjacency_report.signal_type_counts),
-            }
-        except Exception as exc:
-            logger.warning("P6 adjacency verification payload failed: %s", exc, exc_info=True)
-            p6_payload = {
-                "status": "ERROR",
-                "error": str(exc),
-            }
 
-        p7_payload: dict[str, Any]
-        try:
-            from spec_manager.projection.lineage.builder import (
-                AtomDefinition,
-                LineageBuilder,
-                import_records_from_pin_registry,
-            )
-            from spec_manager.schemas.pin_functions import PinFunctionRegistry
+        signal_type_counts: dict[str, int] = {}
+        relation_nodes: set[str] = set()
+        adjacency_edges: list[tuple[str, str, str]] = []
+        for edge in relationship_edges:
+            signal = _canonical_signal(edge.get("signal_type"))
+            src = str(edge.get("src_id") or edge.get("src") or "").strip()
+            dst = str(edge.get("dst_id") or edge.get("dst") or "").strip()
+            if not src or not dst:
+                continue
+            signal_type_counts[signal] = signal_type_counts.get(signal, 0) + 1
+            relation_nodes.update({src, dst})
+            adjacency_edges.append((src, dst, signal))
 
-            registry_path = verification_root / ".spec" / "pin_registry.json"
-            import_records = []
-            record_source = "pin_registry"
-            if registry_path.exists():
-                try:
-                    pin_registry = PinFunctionRegistry.model_validate_json(
-                        registry_path.read_text(encoding="utf-8")
-                    )
-                    import_records = import_records_from_pin_registry(pin_registry)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to load pin registry for P7 verification payload: %s",
-                        exc,
-                        exc_info=True,
-                    )
-            if not import_records:
-                record_source = "missing_registry_edges"
+        atoms = {
+            str(atom_id).strip() for atom_id in (bundle.facts.atoms or {}) if str(atom_id).strip()
+        }
+        relation_nodes.update(atoms)
+        relation_nodes.update(
+            str(node).strip() for node in (bundle.facts.call_graph_nodes or []) if str(node).strip()
+        )
+        relation_nodes.update(
+            str(fn_name).strip()
+            for fn_name in (bundle.facts.functions or {})
+            if str(fn_name).strip()
+        )
 
-            atom_defs: list[AtomDefinition] = []
-            branch_manager = ctx.branch_manager
-            if branch_manager is not None:
-                list_atoms = getattr(branch_manager, "list_atoms", None)
-                if callable(list_atoms):
-                    for atom in list_atoms():
-                        atom_defs.append(
-                            AtomDefinition(
-                                atom_id=getattr(atom, "atom_id", ""),
-                                function_name=getattr(atom, "function_name", ""),
-                                file_path=getattr(atom, "file_path", ""),
-                                module_path="",
-                                signature_hash=(
-                                    getattr(atom, "signature_hash", "")
-                                    or getattr(atom, "content_hash", "")
-                                ),
-                            )
-                        )
+        inbound: dict[str, int] = defaultdict(int)
+        outbound: dict[str, int] = defaultdict(int)
+        for src, dst, _ in adjacency_edges:
+            outbound[src] += 1
+            inbound[dst] += 1
 
-            if atom_defs:
-                lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
-                lineage_table = lineage_builder.build_lineage()
-                known_atom_ids = {a.atom_id for a in atom_defs}
-                orphan_atoms = lineage_table.find_orphan_atoms(known_atom_ids)
-                p7_payload = {
-                    "status": "OK",
-                    "import_edges": len(import_records),
-                    "lineage_edges": len(lineage_table.edges),
-                    "known_atoms": len(known_atom_ids),
-                    "orphan_atoms": len(orphan_atoms),
-                    "orphan_atom_ids": sorted(orphan_atoms)[:50],
-                    "edge_source": record_source,
-                }
-            else:
-                p7_payload = {
-                    "status": "MISSING_ATOMS",
-                    "import_edges": len(import_records),
-                    "lineage_edges": 0,
-                    "known_atoms": 0,
-                    "orphan_atoms": 0,
-                    "note": "No branch-manager atoms available for lineage tracing",
-                    "edge_source": record_source,
-                }
-        except Exception as exc:
-            logger.warning("P7 lineage verification payload failed: %s", exc, exc_info=True)
-            p7_payload = {
-                "status": "ERROR",
-                "error": str(exc),
-            }
+        disconnected_nodes = sorted(
+            node
+            for node in relation_nodes
+            if inbound.get(node, 0) == 0 and outbound.get(node, 0) == 0
+        )
+        p6_payload = {
+            "status": "OK" if adjacency_edges or relation_nodes else "MISSING_EVIDENCE",
+            "total_nodes": len(relation_nodes),
+            "total_edges": len(adjacency_edges),
+            "num_components": len(relation_nodes),
+            "disconnected_warnings": disconnected_nodes[:50],
+            "signal_type_counts": signal_type_counts,
+            "edge_source": "bundle_facts",
+        }
+
+        known_atom_ids = sorted(atoms)
+        lineage_edges = [edge for edge in adjacency_edges if edge[0] in atoms or edge[1] in atoms]
+        referenced_atoms = {edge[0] for edge in lineage_edges if edge[0] in atoms}
+        referenced_atoms.update(edge[1] for edge in lineage_edges if edge[1] in atoms)
+        orphan_atoms = sorted(atom for atom in atoms if atom not in referenced_atoms)
+        p7_payload = {
+            "status": "OK" if known_atom_ids else "MISSING_ATOMS",
+            "import_edges": len([edge for edge in adjacency_edges if edge[2] == "REFERENCE"]),
+            "lineage_edges": len(lineage_edges),
+            "known_atoms": len(known_atom_ids),
+            "orphan_atoms": len(orphan_atoms),
+            "orphan_atom_ids": orphan_atoms[:50],
+            "edge_source": "bundle_facts",
+        }
 
         return {
             "slice": {
@@ -6617,6 +6857,12 @@ class VerifyStep:
             },
             "p6_cross_library": p6_payload,
             "p7_lineage": p7_payload,
+            "facts_summary": {
+                "functions": len(bundle.facts.functions or {}),
+                "atoms": len(bundle.facts.atoms or {}),
+                "remaining_gap_pins": len(bundle.facts.remaining_gap_pins or []),
+                "stub_nodes": len(bundle.facts.stub_nodes or []),
+            },
             "integration": {
                 "integration_report_path": bundle.integration.path,
                 "tests_slice_path": bundle.tests.slice_path,
@@ -7040,7 +7286,7 @@ class PromotionLoop:
 
     @staticmethod
     def _refresh_facts(bundle: EvidenceBundle) -> None:
-        """Refresh normalized facts using current source index + implementation outputs."""
+        """Merge iteration deltas into canonical facts already produced upstream."""
         functions = dict(bundle.facts.functions or {})
         stores = dict(bundle.facts.stores or {})
         atoms = dict(bundle.facts.atoms or {})
@@ -7060,60 +7306,6 @@ class PromotionLoop:
             if str(store_id).strip() and isinstance(owners, list)
         }
         llm_claims = list(bundle.facts.llm_claims or [])
-
-        def _canonical_signal(value: Any) -> str:
-            if not isinstance(value, str):
-                return "REFERENCE"
-            signal = value.strip().upper()
-            if signal in {"CALL", "CALLS"}:
-                return "CALL"
-            if signal in {"STORE_TOUCH", "AGGREGATION"}:
-                return "STORE_TOUCH"
-            if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
-                return "EVENT"
-            return "REFERENCE"
-
-        def _append_unique(records: list[dict[str, Any]], candidate: dict[str, Any]) -> None:
-            fingerprint = json.dumps(candidate, sort_keys=True)
-            for existing in records:
-                if json.dumps(existing, sort_keys=True) == fingerprint:
-                    return
-            records.append(candidate)
-
-        for entry in bundle.source_index.entries or []:
-            if not isinstance(entry, dict):
-                continue
-            analysis = entry.get("analysis") or {}
-            if not isinstance(analysis, dict):
-                continue
-            file_path = entry.get("path", "")
-            for fn in analysis.get("functions", []) or []:
-                if not isinstance(fn, dict):
-                    continue
-                qualified_name = fn.get("qualified_name") or fn.get("name") or ""
-                if not qualified_name:
-                    continue
-                functions[qualified_name] = {
-                    "signature": {
-                        "name": fn.get("name", ""),
-                        "args": fn.get("args", []),
-                        "return_annotation": fn.get("return_annotation"),
-                        "is_async": fn.get("is_async", False),
-                    },
-                    "doc": fn.get("docstring", ""),
-                    "file": file_path,
-                    "lines": [fn.get("start_line", 0), fn.get("end_line", 0)],
-                }
-                if bool(fn.get("is_stub")):
-                    _append_unique(
-                        stub_nodes,
-                        {
-                            "node_id": qualified_name,
-                            "file_path": file_path,
-                            "line": fn.get("start_line"),
-                            "stub_type": fn.get("stub_reason") or "analysis_stub",
-                        },
-                    )
 
         for pin in bundle.implementation.pin_proposals or []:
             pin_id = pin.get("pin_id") or pin.get("id") or pin.get("fqn") or ""
@@ -7143,7 +7335,7 @@ class PromotionLoop:
 
             if signal_type == "CALL" and src and dst:
                 call_graph_nodes.update({src, dst})
-                _append_unique(
+                _append_unique_record(
                     call_graph_edges,
                     {
                         "src": src,
@@ -7190,7 +7382,7 @@ class PromotionLoop:
                     str(gap.get("pin_id") or gap.get("atom_id") or gap.get("anchor") or "").strip()
                     or str(gap.get("file") or "").strip()
                 )
-                _append_unique(
+                _append_unique_record(
                     stub_nodes,
                     {
                         "node_id": node_id,
@@ -7203,7 +7395,7 @@ class PromotionLoop:
                 )
             if "comment" not in kind_lower and kind_lower not in comment_gap_kinds:
                 continue
-            _append_unique(
+            _append_unique_record(
                 remaining_gap_pins,
                 {
                     "pin_id": str(

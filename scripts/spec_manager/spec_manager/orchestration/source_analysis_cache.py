@@ -52,6 +52,8 @@ class SourceAnalysisCache:
         run_id: str = "",
         analyzer_version: str = ANALYZER_VERSION,
     ) -> None:
+        self._workspace_root = workspace_root
+        self._run_id = run_id
         if run_id:
             self._cache_dir = workspace_root / ".pdd_runs" / run_id / "source_analysis_cache"
         else:
@@ -135,7 +137,12 @@ class SourceAnalysisCache:
         if cached is not None:
             return cached
 
-        result = analyze_source(content, filepath)
+        result = analyze_source(
+            content,
+            filepath,
+            workspace=self._workspace_root,
+            run_id=self._run_id or None,
+        )
         self.put(ch, result)
         return result
 
