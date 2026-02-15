@@ -2,6 +2,7 @@
 
 This module provides:
 - ``analyze_source()`` for stable structural analysis (functions/comments).
+- ``build_candidate_spans()`` for routing-oriented span payloads.
 - ``infer_code_signals()`` for on-demand semantic facets (edges/signals).
 
 Both paths use content-aware caching to avoid repeated LLM calls.
@@ -280,6 +281,75 @@ def analyze_source(
     return result
 
 
+def build_candidate_spans(
+    analysis: SourceAnalysis,
+    *,
+    file_path: str,
+) -> list[dict[str, Any]]:
+    """Build routing-oriented span payload from source analysis.
+
+    Function spans are always included. If analysis facets provide
+    ``logical_blocks`` entries, they are appended as additional candidate spans.
+    """
+    spans: list[dict[str, Any]] = []
+
+    for func in analysis.functions:
+        qualified_name = (func.qualified_name or func.name).strip()
+        if not qualified_name:
+            continue
+        line_start = _coerce_span_line(func.start_line)
+        if line_start <= 0:
+            line_start = 1
+        line_end = max(_coerce_span_line(func.end_line), line_start)
+        spans.append(
+            {
+                "id": f"{file_path}:{qualified_name}",
+                "file_path": file_path,
+                "qualified_name": qualified_name,
+                "kind": "function",
+                "line_start": line_start,
+                "line_end": line_end,
+                "is_async": bool(func.is_async),
+                "args": list(func.args),
+                "return_annotation": func.return_annotation,
+            }
+        )
+
+    raw_blocks = analysis.facets.get("logical_blocks")
+    if isinstance(raw_blocks, list):
+        for idx, block in enumerate(raw_blocks):
+            if not isinstance(block, dict):
+                continue
+
+            line_start = _coerce_span_line(
+                block.get("line_start") or block.get("start_line") or block.get("start")
+            )
+            line_end = _coerce_span_line(
+                block.get("line_end") or block.get("end_line") or block.get("end")
+            )
+            if line_start <= 0:
+                continue
+            if line_end < line_start:
+                line_end = line_start
+
+            block_id = str(block.get("id") or block.get("block_id") or f"block_{idx + 1}").strip()
+            if not block_id:
+                continue
+
+            spans.append(
+                {
+                    "id": f"{file_path}:{block_id}",
+                    "file_path": file_path,
+                    "kind": str(block.get("kind") or "logical_block"),
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "label": block.get("label"),
+                }
+            )
+
+    return spans
+
+
 def infer_code_signals(
     *,
     file_path: str,
@@ -311,6 +381,14 @@ def infer_code_signals(
 
     _signal_cache[cache_key] = copy.deepcopy(result)
     return result
+
+
+def _coerce_span_line(value: Any) -> int:
+    """Best-effort integer conversion for span lines."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def infer_adjacency_signals(

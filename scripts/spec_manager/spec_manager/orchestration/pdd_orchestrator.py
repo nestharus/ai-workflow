@@ -590,27 +590,23 @@ class PddOrchestrator:
         }
 
     def _run_library_discovery(self) -> dict[str, Any]:
-        """Phase 4: Branch initialization, atom registry, slice navigation.
+        """Phase 4: Branch initialization and brownfield span routing.
 
         1. Initializes the branch directory structure via
            ``BranchManager.initialize()``.
-        2. Runs the ``CollapseEngine`` against the spec snapshot to extract
-           atoms (algorithms, stores, shapes) from Python files and
-           register them in the atom registry.
+        2. Runs the ``CollapseEngine`` against the spec snapshot to route
+           spans into pin/slice/store/event/adjacency artifacts and
+           register routed atom candidates in the atom registry.
         """
         branch_mgr = self.manager.branches
         issues = branch_mgr.initialize() if not branch_mgr.is_initialized() else []
 
-        # Collapse the codebase into Layer 1 atoms
+        # Route the codebase into initial PDD graph artifacts
         source_dir = self.manager.structure.spec_snapshot_dir
         collapse_result = branch_mgr.collapse_codebase(source_dir)
 
-        # Register all extracted atoms and persist
-        all_descriptors = (
-            collapse_result.extracted_atoms
-            + collapse_result.extracted_stores
-            + collapse_result.extracted_shapes
-        )
+        # Register all routed atom candidates and persist
+        all_descriptors = list(collapse_result.atom_candidates)
         for descriptor in all_descriptors:
             branch_mgr.register_atom(descriptor)
         branch_mgr.atom_registry.save()
@@ -618,10 +614,14 @@ class PddOrchestrator:
         return {
             "branch_initialized": True,
             "init_issues": issues,
-            "atoms_extracted": len(collapse_result.extracted_atoms),
-            "stores_extracted": len(collapse_result.extracted_stores),
-            "shapes_extracted": len(collapse_result.extracted_shapes),
-            "architectural_remnants": len(collapse_result.architectural_remnants),
+            "atom_candidates": len(collapse_result.atom_candidates),
+            "pin_spans": len(collapse_result.pin_spans),
+            "slice_entrypoints": len(collapse_result.slice_entrypoints),
+            "store_touches": len(collapse_result.store_touches),
+            "event_routes": len(collapse_result.event_routes),
+            "architecture_promotions": len(collapse_result.architecture_promotions),
+            "adjacency_edges": len(collapse_result.adjacency_edges),
+            "collapse_ambiguities": len(collapse_result.ambiguities),
             "collapse_warnings": collapse_result.warnings,
         }
 

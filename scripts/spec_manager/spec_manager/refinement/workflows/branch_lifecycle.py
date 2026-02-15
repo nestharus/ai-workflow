@@ -68,22 +68,24 @@ def run_branch_init(
         if source_dir is not None and source_dir.exists():
             collapse_result = manager.branches.collapse_codebase(source_dir)
 
-            # Register all extracted atoms
-            all_atoms = (
-                collapse_result.extracted_atoms
-                + collapse_result.extracted_stores
-                + collapse_result.extracted_shapes
-            )
+            # Register all routed atom candidates
+            all_atoms = list(collapse_result.atom_candidates)
             for atom in all_atoms:
                 manager.branches.register_atom(atom)
 
             outputs["atom_count"] = len(all_atoms)
-            outputs["atom_count_by_kind"] = {
-                "algorithm": len(collapse_result.extracted_atoms),
-                "store": len(collapse_result.extracted_stores),
-                "shape": len(collapse_result.extracted_shapes),
-            }
-            outputs["architectural_remnants"] = len(collapse_result.architectural_remnants)
+            kind_counts: dict[str, int] = {}
+            for atom in all_atoms:
+                kind_name = atom.kind.value
+                kind_counts[kind_name] = kind_counts.get(kind_name, 0) + 1
+            outputs["atom_count_by_kind"] = kind_counts
+            outputs["pin_spans"] = len(collapse_result.pin_spans)
+            outputs["slice_entrypoints"] = len(collapse_result.slice_entrypoints)
+            outputs["store_touches"] = len(collapse_result.store_touches)
+            outputs["event_routes"] = len(collapse_result.event_routes)
+            outputs["architecture_promotions"] = len(collapse_result.architecture_promotions)
+            outputs["adjacency_edges"] = len(collapse_result.adjacency_edges)
+            outputs["collapse_ambiguities"] = len(collapse_result.ambiguities)
             outputs["collapse_warnings"] = collapse_result.warnings
 
         # Persist registries

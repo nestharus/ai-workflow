@@ -210,13 +210,13 @@ class BranchManager:
     # ---- Collapse ----
 
     def collapse_codebase(self, source_dir: Path) -> CollapseResult:
-        """Collapse an existing codebase to Layer 1.
+        """Route an existing codebase to initial brownfield artifacts.
 
         Args:
             source_dir: Root directory of the source codebase.
 
         Returns:
-            CollapseResult with classified functions.
+            CollapseResult with routing decisions.
         """
         return self._collapse_engine.collapse(source_dir)
 
