@@ -19,9 +19,9 @@ Module CLIs (standalone PDD modules):
     eval *              Evaluation framework
 
 Legacy:
-    refine              Run spec refinement (interactive or auto mode)
+    refine              Emit refinement questions and run the intent adapter loop
     ambiguities list    List detected ambiguities
-    intent              Intent-agent queue and answer adapters
+    intent              Intent-agent queue adapters
     evidence-store *    Evidence store management
     phase-02            Run Phase 2 clean/compose/compliance workflow
 """
@@ -72,22 +72,13 @@ def _parse_model_profile(raw_profile: str) -> Any:
 def _build_intent_agent(workspace: Path, run_id: str) -> Any:
     """Build a detached Intent Agent for question queue and answer handling."""
 
-    from spec_manager.orchestration.intent_agent.agent import IntentAgentOrchestrator
-    from spec_manager.planner.api import Planner
-
     run_dir = workspace / ".pdd_runs" / run_id
-    planner_cell: dict[str, Planner] = {}
+    from spec_manager.orchestration.intent_agent.agent import build_intent_agent_with_planner
 
-    def _on_translation_saved(translation: Any) -> Any:
-        if "planner" not in planner_cell:
-            planner_cell["planner"] = Planner(workspace_root=workspace)
-        planner = planner_cell["planner"]
-        return planner.ingest_user_answer(translation)
-
-    return IntentAgentOrchestrator(
+    return build_intent_agent_with_planner(
         run_dir=run_dir,
+        workspace_root=workspace,
         mode="interactive",
-        on_translation_saved=_on_translation_saved,
     )
 
 
@@ -119,11 +110,14 @@ def _intent_open_questions(workspace: Path, run_id: str) -> list[Any]:
         return []
 
 
-def _build_intent_session(workspace: Path, run_id: str) -> Any:
+def _build_intent_session(workspace: Path, run_id: str, *, create_if_missing: bool = False) -> Any:
     """Build and refresh an Intent Agent session for CLI ingress."""
     run_dir = _intent_run_dir(workspace, run_id)
     if not run_dir.exists():
-        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+        if create_if_missing:
+            run_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raise FileNotFoundError(f"Run directory not found: {run_dir}")
 
     intent_agent = _build_intent_agent(workspace, run_id)
     intent_agent.resume()
@@ -151,6 +145,238 @@ def _intent_question_payload(item: object) -> dict[str, Any]:
         "blocked_slices": item.blockers.blocked_slices,
         "blocked_layers": item.blockers.blocked_layers,
     }
+
+
+def _taxonomy_hint_for_ambiguity(ambiguity_type: str) -> str:
+    kind = str(ambiguity_type).strip().lower()
+    if kind == "missing_condition":
+        return "CONSTRAINT"
+    if kind == "undefined_boundary":
+        return "SCOPE"
+    if kind == "vague_integration":
+        return "IMPLEMENTATION"
+    return "UNKNOWN"
+
+
+def _slugify(raw: str) -> str:
+    chars = [ch.lower() if ch.isalnum() else "_" for ch in str(raw)]
+    slug = "".join(chars).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "unknown"
+
+
+def _resolve_refine_spec_path(workspace: Path, run_id: str) -> Path:
+    candidates = [
+        workspace / "spec.md",
+        workspace / "runs" / run_id / "spec.md",
+        workspace / ".pdd_runs" / run_id / "spec.md",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    searched = ", ".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Spec not found. Looked for: {searched}")
+
+
+def _emit_refine_signals(
+    *,
+    run_dir: Path,
+    run_id: str,
+    ambiguities: list[Any],
+    spec_path: Path,
+) -> tuple[int, int]:
+    from spec_manager.orchestration.intent_agent.signals import (
+        SignalBlocking,
+        SignalContext,
+        SignalQuestion,
+        SignalSource,
+        SpecRefItem,
+        UserQuestionSignal,
+        UserQuestionSignalStore,
+    )
+
+    store = UserQuestionSignalStore(run_dir)
+    existing = store.read_all().signals
+    known_signal_ids = {
+        str(signal.source.signal_id).strip()
+        for signal in existing
+        if str(signal.source.signal_id).strip()
+    }
+
+    emitted = 0
+    skipped = 0
+    for ambiguity in ambiguities:
+        ambiguity_id = _slugify(getattr(ambiguity, "ambiguity_id", ""))
+        signal_id = f"refine:{run_id}:{ambiguity_id}"
+        if signal_id in known_signal_ids:
+            skipped += 1
+            continue
+
+        question_text = str(getattr(ambiguity, "suggested_question", "")).strip()
+        if not question_text:
+            question_text = str(getattr(ambiguity, "source_text", "")).strip()
+        if not question_text:
+            question_text = "Please clarify this ambiguous requirement."
+
+        signal = UserQuestionSignal(
+            run_id=run_id,
+            source=SignalSource(
+                kind="SLICE_AGENT",
+                trace_id=str(getattr(ambiguity, "ambiguity_id", "")).strip(),
+                slice_id="__system__",
+                layer="l1",
+                signal_id=signal_id,
+            ),
+            question=SignalQuestion(
+                text=question_text,
+                taxonomy_hint=_taxonomy_hint_for_ambiguity(
+                    str(getattr(ambiguity, "ambiguity_type", ""))
+                ),
+                canonical_key_hint=f"refine.ambiguity.{ambiguity_id}",
+                answer_spec_hint={
+                    "preferred_kind": "choice_or_text",
+                    "choices": [
+                        {"id": "resolved_as_written", "label": "Requirement is already clear"},
+                        {"id": "needs_clarification", "label": "Requirement needs clarification"},
+                    ],
+                },
+            ),
+            context=SignalContext(
+                blocking=SignalBlocking(severity="BLOCKING", blocked_slices=["__system__"]),
+                spec_refs=[
+                    SpecRefItem(
+                        spec_text=str(getattr(ambiguity, "source_text", "")).strip(),
+                        source_file=str(spec_path),
+                        source_line_hint=0,
+                    )
+                ],
+            ),
+            payload={
+                "ambiguity_id": str(getattr(ambiguity, "ambiguity_id", "")).strip(),
+                "ambiguity_type": str(getattr(ambiguity, "ambiguity_type", "")).strip(),
+                "confidence": float(getattr(ambiguity, "confidence", 0.0)),
+                "source_location": str(getattr(ambiguity, "source_location", "")).strip(),
+                "source_text": str(getattr(ambiguity, "source_text", "")).strip(),
+                "spec_path": str(spec_path),
+            },
+        )
+        store.write(signal)
+        known_signal_ids.add(signal_id)
+        emitted += 1
+
+    return emitted, skipped
+
+
+def _print_intent_question(item: Any, *, turn: int, max_turns: int) -> None:
+    payload = _intent_question_payload(item)
+    print(
+        f"\n[{turn}/{max_turns}] [{payload['severity']}] "
+        f"{payload['question_id']} [{payload['taxonomy_type']}]"
+    )
+    print(f"  Text: {payload['text']}")
+    if payload["scenario"]:
+        print(f"  Scenario: {payload['scenario']}")
+    if payload["answer_choices"]:
+        print("  Choices:")
+        for choice in payload["answer_choices"]:
+            print(f"    {choice.get('id', '')}: {choice.get('label', '')}")
+
+
+def _read_intent_answer(item: Any) -> tuple[str, str] | None:
+    payload = _intent_question_payload(item)
+    raw_choices = payload.get("answer_choices", [])
+    choice_labels: dict[str, str] = {}
+    for choice in raw_choices:
+        choice_id = str(choice.get("id", "")).strip()
+        label = str(choice.get("label", "")).strip()
+        if not choice_id:
+            continue
+        choice_labels[choice_id] = label
+
+    while True:
+        try:
+            raw = input("Answer (/quit to stop): ").strip()
+        except EOFError:
+            return None
+        except KeyboardInterrupt:
+            print()
+            return None
+
+        lowered = raw.lower()
+        if lowered in {"/quit", "quit", "exit"}:
+            return None
+        if not raw:
+            print("Answer text is required.")
+            continue
+
+        if raw in choice_labels:
+            label = choice_labels.get(raw, "")
+            return label or raw, raw
+
+        matched_choice = ""
+        for choice_id, label in choice_labels.items():
+            if label and lowered == label.lower():
+                matched_choice = choice_id
+                break
+        return raw, matched_choice
+
+
+def _run_intent_loop(
+    *,
+    workspace: Path,
+    run_id: str,
+    max_turns: int,
+    create_if_missing: bool = False,
+) -> int:
+    if max_turns <= 0:
+        print("max_turns must be greater than 0.", file=sys.stderr)
+        return 2
+
+    try:
+        intent_agent = _build_intent_session(
+            workspace,
+            run_id,
+            create_if_missing=create_if_missing,
+        )
+    except Exception as exc:  # pragma: no cover - defensive CLI boundary
+        print(f"Failed to refresh intent state: {exc}", file=sys.stderr)
+        return 1
+    turn = 0
+
+    while turn < max_turns:
+        question = intent_agent.next_question()
+        if question is None:
+            print(f"No open intent questions for run_id={run_id}.")
+            intent_agent.save_state()
+            return 0
+
+        turn += 1
+        _print_intent_question(question, turn=turn, max_turns=max_turns)
+        answer = _read_intent_answer(question)
+        if answer is None:
+            print("Intent loop paused by user.")
+            intent_agent.save_state()
+            return 0
+
+        raw_text, choice_id = answer
+        try:
+            translation = intent_agent.handle_answer(
+                question_id=question.question_id,
+                raw_text=raw_text,
+                selected_choice_id=choice_id,
+            )
+            intent_agent.save_state()
+        except Exception as exc:  # pragma: no cover - defensive CLI boundary
+            print(f"Failed to submit intent answer: {exc}", file=sys.stderr)
+            return 1
+
+        answer_id = getattr(translation, "answer_id", "")
+        print(f"  Saved translation: {answer_id}")
+
+    print(f"Stopped after {max_turns} answers. Re-run to continue.")
+    intent_agent.save_state()
+    return 2
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -424,61 +650,48 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 
 def cmd_refine(args: argparse.Namespace) -> int:
-    """Run spec refinement (interactive or auto mode)."""
-    from spec_manager.refinement.interactive.signal_resolver import create_resolver
-    from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
+    """Emit refinement ambiguity signals and run the intent adapter loop."""
+    from spec_manager.refinement.interactive.ambiguity_detector import AmbiguityDetector
 
-    workspace = Path(args.workspace) if args.workspace else Path.cwd() / "runs" / args.run_id
-    if not workspace.exists():
-        print(f"Workspace not found: {workspace}")
+    workspace = _resolve_workspace(args.workspace)
+    run_id = args.run_id
+
+    try:
+        spec_path = _resolve_refine_spec_path(workspace, run_id)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
 
-    spec_path = workspace / "spec.md"
-    if not spec_path.exists():
-        print(f"Spec not found: {spec_path}")
-        return 1
+    run_dir = _intent_run_dir(workspace, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     spec_text = spec_path.read_text(encoding="utf-8")
+    detector = AmbiguityDetector()
+    ambiguities = detector.detect(spec_text, spec_path.parent)
+    emitted, skipped = _emit_refine_signals(
+        run_dir=run_dir,
+        run_id=run_id,
+        ambiguities=ambiguities,
+        spec_path=spec_path,
+    )
 
-    steering_path = Path(args.steering) if args.steering else None
-    file_signals = getattr(args, "file_signals", False)
-
-    # Determine resolver mode
-    if file_signals:
-        mode_str = "file"
-    elif args.auto:
-        mode_str = "auto"
-    else:
-        mode_str = "interactive"
-
-    print(f"Running {mode_str} refinement: run_id={args.run_id}")
+    print(f"Refinement ingest: run_id={run_id}")
     print(f"  Workspace: {workspace}")
-    if args.auto or file_signals:
-        print(f"  Steering: {steering_path or 'none'}")
-        print(f"  Research: {args.research}")
-        print(f"  Evidence store: {args.evidence_store}")
-    print(f"  Max iterations: {args.max_iterations}")
+    print(f"  Spec: {spec_path}")
+    print(f"  Ambiguities detected: {len(ambiguities)}")
+    print(f"  Signals emitted: {emitted}")
+    if skipped:
+        print(f"  Signals skipped (already emitted): {skipped}")
 
-    resolver = create_resolver(
-        mode=mode_str,
+    if args.emit_only:
+        return 0
+
+    return _run_intent_loop(
         workspace=workspace,
-        steering_path=steering_path,
-        use_research=args.research,
-        use_evidence_store=args.evidence_store,
+        run_id=run_id,
+        max_turns=args.max_turns,
+        create_if_missing=True,
     )
-
-    workflow = InteractiveWorkflow(
-        workspace=workspace,
-        max_iterations=args.max_iterations,
-        signal_resolver=resolver,
-    )
-
-    refined = workflow.run(spec_text)
-
-    output_path = workspace / "refined_spec.md"
-    output_path.write_text(refined, encoding="utf-8")
-    print(f"Refined spec saved: {output_path}")
-    return 0
 
 
 def cmd_intent(args: argparse.Namespace) -> int:
@@ -488,6 +701,8 @@ def cmd_intent(args: argparse.Namespace) -> int:
         return cmd_intent_questions(args)
     if command == "answer":
         return cmd_intent_answer(args)
+    if command == "run":
+        return cmd_intent_run(args)
     print(f"Unknown intent command: {command}", file=sys.stderr)
     return 1
 
@@ -579,6 +794,19 @@ def cmd_intent_answer(args: argparse.Namespace) -> int:
     print(f"  Translation: {getattr(translation, 'answer_id', '')}")
     print(f"  Open question count: {open_count}")
     return 0
+
+
+def cmd_intent_run(args: argparse.Namespace) -> int:
+    """Run the terminal adapter loop for queued intent questions."""
+    workspace = _resolve_workspace(args.workspace)
+    run_id = args.run_id
+    run_dir = _intent_run_dir(workspace, run_id)
+
+    if not run_dir.exists():
+        print(f"Run directory not found: {run_dir}", file=sys.stderr)
+        return 1
+
+    return _run_intent_loop(workspace=workspace, run_id=run_id, max_turns=args.max_turns)
 
 
 def cmd_ambiguities_list(args: argparse.Namespace) -> int:
@@ -1324,27 +1552,20 @@ def main() -> int:
     )
     p_phase_02.add_argument("run_id", help="Run identifier")
 
-    # refine (unified command)
-    p_refine = subparsers.add_parser("refine", help="Run spec refinement")
+    # refine (intent-backed ambiguity ingestion + terminal loop)
+    p_refine = subparsers.add_parser("refine", help="Emit refinement questions and run intent loop")
     p_refine.add_argument("run_id", help="Run identifier")
-    p_refine.add_argument("--workspace", help="Workspace directory")
+    p_refine.add_argument("--workspace", help="Workspace root")
     p_refine.add_argument(
-        "--auto", action="store_true", help="Use automated mode (default: interactive)"
-    )
-    p_refine.add_argument("--steering", help="Path to steering script JSON (auto mode)")
-    p_refine.add_argument(
-        "--research", action="store_true", help="Use research-based resolution (auto mode)"
-    )
-    p_refine.add_argument(
-        "--evidence-store", action="store_true", help="Use evidence store search (auto mode)"
+        "--max-turns",
+        type=int,
+        default=50,
+        help="Maximum questions to answer in one run (default: 50)",
     )
     p_refine.add_argument(
-        "--max-iterations", type=int, default=5, help="Max iterations (default: 5)"
-    )
-    p_refine.add_argument(
-        "--file-signals",
+        "--emit-only",
         action="store_true",
-        help="Use file-based signal exchange (write signals to disk, read responses)",
+        help="Emit refinement signals only (do not start interactive intent loop)",
     )
 
     # ambiguities (sub-group with "list" subcommand)
@@ -1390,6 +1611,19 @@ def main() -> int:
         "--json",
         action="store_true",
         help="Print JSON payload",
+    )
+
+    p_intent_run = intent_sub.add_parser(
+        "run",
+        help="Run interactive queue loop (ask next question, submit answer, repeat)",
+    )
+    p_intent_run.add_argument("run_id", help="Run identifier")
+    p_intent_run.add_argument("--workspace", help="Workspace directory")
+    p_intent_run.add_argument(
+        "--max-turns",
+        type=int,
+        default=50,
+        help="Maximum questions to answer in one run (default: 50)",
     )
 
     # evidence-store

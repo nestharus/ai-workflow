@@ -115,6 +115,33 @@ _CANONICAL_KEY_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _AUTO_RESOLUTION_MIN_CONFIDENCE = 0.8
 
 
+def build_intent_agent_with_planner(
+    *,
+    run_dir: Path,
+    workspace_root: Path,
+    mode: str = "interactive",
+    run_agent: Any = None,
+) -> IntentAgentOrchestrator:
+    """Build an Intent Agent with Planner ingestion wired at orchestration layer."""
+
+    from spec_manager.planner.api import Planner
+
+    planner_cell: dict[str, Planner] = {}
+
+    def _on_translation_saved(translation: AnswerTranslation) -> Any:
+        if "planner" not in planner_cell:
+            planner_cell["planner"] = Planner(workspace_root=workspace_root)
+        planner = planner_cell["planner"]
+        return planner.ingest_user_answer(translation)
+
+    return IntentAgentOrchestrator(
+        run_dir=run_dir,
+        mode=mode,
+        run_agent=run_agent,
+        on_translation_saved=_on_translation_saved,
+    )
+
+
 # ---------------------------------------------------------------------------
 # LLM Strategy protocols (pluggable)
 # ---------------------------------------------------------------------------
