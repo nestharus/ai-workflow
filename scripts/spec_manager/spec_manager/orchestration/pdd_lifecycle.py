@@ -1553,19 +1553,6 @@ class PddLifecycle:
 
         try:
             import_records = []
-            registry_path = effective_root / ".spec" / "pin_registry.json"
-            if registry_path.exists():
-                try:
-                    pin_registry = PinFunctionRegistry.model_validate_json(
-                        registry_path.read_text(encoding="utf-8")
-                    )
-                    import_records = import_records_from_pin_registry(pin_registry)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to load pin registry for global lineage check: %s",
-                        exc,
-                        exc_info=True,
-                    )
             atom_defs: list[AtomDefinition] = []
             branch_manager = getattr(self.manager, "branches", None)
             if branch_manager is not None:
@@ -1584,6 +1571,34 @@ class PddLifecycle:
                                 ),
                             )
                         )
+            registry_status = "missing"
+            registry_path = effective_root / ".spec" / "pin_registry.json"
+            if registry_path.exists():
+                stale, reason = self._pin_registry_is_stale(
+                    registry_path=registry_path,
+                    root=effective_root,
+                    file_hints=[atom.file_path for atom in atom_defs if atom.file_path],
+                )
+                if stale:
+                    registry_status = "stale"
+                    logger.info(
+                        "Skipping stale pin registry during global lineage check: %s",
+                        reason or "source changed",
+                    )
+                else:
+                    try:
+                        pin_registry = PinFunctionRegistry.model_validate_json(
+                            registry_path.read_text(encoding="utf-8")
+                        )
+                        import_records = import_records_from_pin_registry(pin_registry)
+                        registry_status = "fresh"
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to load pin registry for global lineage check: %s",
+                            exc,
+                            exc_info=True,
+                        )
+                        registry_status = "invalid"
             if not atom_defs:
                 return {
                     "passed": False,
@@ -1601,11 +1616,48 @@ class PddLifecycle:
                 "known_atoms": len(known_atom_ids),
                 "orphan_atoms": len(orphan_atoms),
                 "orphan_atom_ids": sorted(orphan_atoms)[:50],
+                "pin_registry_status": registry_status,
                 "source_root": str(effective_root),
             }
         except Exception as exc:
             logger.warning("Global lineage check failed: %s", exc, exc_info=True)
             return {"passed": False, "error": str(exc), "source_root": str(effective_root)}
+
+    def _pin_registry_is_stale(
+        self,
+        *,
+        registry_path: Path,
+        root: Path,
+        file_hints: list[str],
+    ) -> tuple[bool, str]:
+        """Determine whether registry-derived lineage edges are stale."""
+        try:
+            registry_mtime = registry_path.stat().st_mtime
+        except OSError as exc:
+            return True, f"registry_unreadable:{exc}"
+
+        for hint in file_hints:
+            rel = str(hint).strip()
+            if not rel:
+                continue
+            candidate = Path(rel)
+            if not candidate.is_absolute():
+                root_candidate = root / candidate
+                workspace_candidate = self.manager.workspace_path / candidate
+                if root_candidate.exists():
+                    candidate = root_candidate
+                elif workspace_candidate.exists():
+                    candidate = workspace_candidate
+                else:
+                    return True, f"missing_source:{rel}"
+            if not candidate.exists():
+                return True, f"missing_source:{rel}"
+            try:
+                if candidate.stat().st_mtime > registry_mtime:
+                    return True, f"newer_source:{rel}"
+            except OSError as exc:
+                return True, f"source_unreadable:{rel}:{exc}"
+        return False, ""
 
     def _run_clean_root_full_tests(self, *, source_root: Path | None = None) -> dict[str, Any]:
         """Run clean-root full test suite as a global termination gate."""
@@ -2397,6 +2449,99 @@ class PddLifecycle:
             / "demotions"
             / "tickets"
         )
+
+    def _record_pending_demotion_ticket(
+        self,
+        ticket: Any,
+        *,
+        note: str,
+    ) -> dict[str, Any]:
+        """Persist a DemotionTicket artifact without applying edits in-place."""
+        tickets_dir = self._demotion_tickets_dir()
+        tickets_dir.mkdir(parents=True, exist_ok=True)
+        ticket.apply_status = "PENDING"
+        ticket_payload = ticket.to_dict()
+        ticket_path = tickets_dir / f"{ticket.ticket_id}.json"
+        ticket_record = {
+            "ticket": ticket_payload,
+            "result": {
+                "applied": False,
+                "patches": [],
+                "gap_evidence_added": 0,
+                "note": note,
+            },
+        }
+        ticket_path.write_text(
+            json.dumps(ticket_record, indent=2),
+            encoding="utf-8",
+        )
+
+        ledger_dir = tickets_dir.parent
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        ledger_path = ledger_dir / "ledger.jsonl"
+        hop_trace = ticket.hop_trace or [ticket.origin_layer, ticket.target_layer]
+        ledger_entry = {
+            "ticket_id": ticket.ticket_id,
+            "run_id": self.manager.run_id,
+            "slice_id": ticket.slice_id,
+            "created_at": ticket.created_at,
+            "source": ticket.source,
+            "category": ticket.category,
+            "gate": ticket.gate,
+            "origin_layer": ticket.origin_layer,
+            "target_layer": ticket.target_layer,
+            "hop_trace": hop_trace,
+            "severity": ticket.severity,
+            "diagnosis": str(ticket.diagnosis)[:500],
+            "evidence_refs": ticket.evidence_refs,
+            "investigator_report_ref": ticket.investigator_report_ref,
+            "failing_files": ticket.failing_files,
+            "failing_pins": ticket.failing_pins,
+            "failing_atoms": ticket.failing_atoms,
+            "component_id": ticket.component_id,
+            "symbol_span_anchors": ticket.symbol_span_anchors,
+            "apply_status": ticket.apply_status,
+            "resolution_status": ticket.apply_status,
+            "applied": False,
+            "applied_patch_paths": [],
+            "ticket_artifact_path": str(ticket_path),
+        }
+        with ledger_path.open("a", encoding="utf-8") as ledger:
+            ledger.write(json.dumps(ledger_entry) + "\n")
+
+        return {
+            "ticket": ticket_payload,
+            "apply_result": {"applied": False, "queued": True},
+            "ticket_path": str(ticket_path),
+        }
+
+    def _load_pending_routing_tickets(self) -> list[Any]:
+        """Load unresolved demotion tickets that explicitly request routing."""
+        from spec_manager.orchestration.demotion import DemotionTicket
+
+        tickets_dir = self._demotion_tickets_dir()
+        if not tickets_dir.exists():
+            return []
+        tickets: list[DemotionTicket] = []
+        seen_ids: set[str] = set()
+        for ticket_path in sorted(tickets_dir.glob("*.json")):
+            try:
+                payload = json.loads(ticket_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            ticket_raw = payload.get("ticket", payload) if isinstance(payload, dict) else None
+            if not isinstance(ticket_raw, dict):
+                continue
+            ticket = DemotionTicket.from_dict(ticket_raw)
+            if not ticket.routing_required:
+                continue
+            if str(ticket.apply_status).strip().upper() == "APPLIED":
+                continue
+            if ticket.ticket_id in seen_ids:
+                continue
+            seen_ids.add(ticket.ticket_id)
+            tickets.append(ticket)
+        return tickets
 
     def _snapshot_demotion_ticket_paths(self) -> set[str]:
         """Capture current demotion ticket artifact paths."""
@@ -4040,9 +4185,10 @@ class PddLifecycle:
     def _run_intake(self) -> dict[str, Any]:
         """Run Phase 0 intake conditionally with bounded rework.
 
-        Intake runs only when input appears to be raw prose and no structured
-        libraries already exist. If intake quality indicates unresolved
-        coverage/overlap issues, intake re-runs up to 2 passes.
+        Intake runs only when authoritative routing triggers are present
+        (intake queue items or pending routing-required demotion tickets).
+        If intake quality indicates unresolved coverage/overlap issues,
+        intake re-runs up to 2 passes.
 
         Returns:
             Intake summary with ``ran`` flag and final pass details.
@@ -4090,50 +4236,18 @@ class PddLifecycle:
 
     def _should_run_intake(self) -> tuple[bool, str]:
         """Return whether Phase 0 intake should run for this lifecycle."""
-        libraries_dir = self.manager.structure.libraries_dir
-        if libraries_dir.exists() and any(path.is_dir() for path in libraries_dir.iterdir()):
-            return False, "workspace already contains libraries"
+        from spec_manager.orchestration.intake_queue import IntakeQueue
 
-        raw_input_root = getattr(self.manager, "input_folder", None)
-        if isinstance(raw_input_root, Path):
-            input_root = raw_input_root
-        elif isinstance(raw_input_root, str):
-            input_root = Path(raw_input_root)
-        else:
-            input_root = self.manager.workspace_path / "spec_snapshot"
-        if not input_root.exists():
-            return True, "input folder does not exist locally; attempting intake"
-
-        if self._input_appears_structured(input_root):
-            return False, "input already structured"
-
-        prose_suffixes = {".md", ".markdown", ".txt", ".rst", ".adoc"}
-        candidate_files = [
-            path
-            for path in input_root.rglob("*")
-            if path.is_file() and not any(part.startswith(".") for part in path.parts)
-        ]
-        if not candidate_files:
-            return False, "input folder contains no files"
-
-        has_non_prose = any(path.suffix.lower() not in prose_suffixes for path in candidate_files)
-        if has_non_prose:
-            return False, "input contains non-prose files"
-
-        return True, "raw prose input detected"
-
-    @staticmethod
-    def _input_appears_structured(input_root: Path) -> bool:
-        """Heuristic: detect pre-structured intake input layout."""
-        if (input_root / "libraries.yaml").exists():
-            return True
-        if (input_root / "route_table.jsonl").exists():
-            return True
-        if (input_root / "coverage_ledger.jsonl").exists():
-            return True
-
-        libraries_dir = input_root / "libraries"
-        return libraries_dir.exists() and any(path.is_dir() for path in libraries_dir.iterdir())
+        intake_queue = IntakeQueue(self.manager.workspace_path)
+        pending_routing_tickets = self._load_pending_routing_tickets()
+        if intake_queue.needs_phase0(pending_tickets=pending_routing_tickets):
+            queue_count = intake_queue.count()
+            ticket_count = len(pending_routing_tickets)
+            return (
+                True,
+                f"queue_items={queue_count}, routing_tickets={ticket_count}",
+            )
+        return False, "no intake queue items or routing-required demotion tickets"
 
     def _run_intake_once(self) -> dict[str, Any]:
         """Run one Phase 0 intake pass.
@@ -4255,7 +4369,7 @@ class PddLifecycle:
         logger.info("=== Architectural Refinement ===")
 
         from spec_manager.core.agent_utils import run_agent
-        from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
+        from spec_manager.orchestration.demotion import DemotionTicket
         from spec_manager.refinement.formats import (
             _extract_json_payload,
             _strip_code_fences,
@@ -4374,11 +4488,7 @@ class PddLifecycle:
             manifest_payload = {"components": normalized_components}
             self._write_run_report("component_manifest.json", manifest_payload)
 
-            # Emit and route DemotionTickets via the authoritative demotion ledger.
-            demotion_manager = DemotionManager(
-                workspace_root=self.manager.workspace_path,
-                run_id=self.manager.run_id,
-            )
+            # Emit DemotionTickets only. Application is owned by PromotionLoop.
             tickets: list[dict[str, Any]] = []
             for issue in issues if isinstance(issues, list) else []:
                 if not isinstance(issue, dict):
@@ -4405,11 +4515,12 @@ class PddLifecycle:
                     failing_files=[issue_file] if issue_file else [],
                     evidence_refs=evidence_refs,
                 )
-                apply_result = demotion_manager.apply(
-                    ticket,
-                    slice_root=self._resolve_demotion_slice_root(issue_file),
+                tickets.append(
+                    self._record_pending_demotion_ticket(
+                        ticket,
+                        note="architecture refinement reviewer-only emission",
+                    )
                 )
-                tickets.append({"ticket": ticket.to_dict(), "apply_result": apply_result})
 
             if tickets:
                 self._write_run_report("architecture_demotion_tickets.json", tickets)
@@ -4418,11 +4529,7 @@ class PddLifecycle:
                 "component_count": len(normalized_components),
                 "component_manifest_path": self._run_report_relpath("component_manifest.json"),
                 "demotion_tickets": len(tickets),
-                "demotion_tickets_applied": sum(
-                    1
-                    for row in tickets
-                    if bool((row.get("apply_result") or {}).get("applied", False))
-                ),
+                "demotion_tickets_applied": 0,
             }
         except Exception as exc:
             logger.warning("Architectural refinement failed: %s", exc)
@@ -4441,7 +4548,7 @@ class PddLifecycle:
         logger.info("=== Code Quality Refinement ===")
 
         from spec_manager.core.agent_utils import run_agent
-        from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
+        from spec_manager.orchestration.demotion import DemotionTicket
         from spec_manager.orchestration.pattern_library import PatternLibrary
         from spec_manager.orchestration.promotion_loop import L3_REVIEW_PACK
         from spec_manager.refinement.formats import (
@@ -4534,11 +4641,7 @@ class PddLifecycle:
         # Write quality report
         self._write_run_report("code_quality_report.json", {"findings": all_findings})
 
-        # Emit and route DemotionTickets for findings that touch logic or architecture.
-        demotion_manager = DemotionManager(
-            workspace_root=self.manager.workspace_path,
-            run_id=self.manager.run_id,
-        )
+        # Emit DemotionTickets only. Application is handled by lower-layer PromotionLoop.
         tickets: list[dict[str, Any]] = []
         for finding in all_findings:
             category = finding.get("category", "style")
@@ -4577,12 +4680,12 @@ class PddLifecycle:
                     ticket.evidence_refs.extend(
                         str(ref) for ref in finding_refs if str(ref).strip()
                     )
-                file_hint = str(finding.get("file", "")).strip()
-                apply_result = demotion_manager.apply(
-                    ticket,
-                    slice_root=self._resolve_demotion_slice_root(file_hint),
+                tickets.append(
+                    self._record_pending_demotion_ticket(
+                        ticket,
+                        note="code quality refinement reviewer-only emission",
+                    )
                 )
-                tickets.append({"ticket": ticket.to_dict(), "apply_result": apply_result})
 
         if tickets:
             self._write_run_report("code_quality_demotion_tickets.json", tickets)
@@ -4592,9 +4695,7 @@ class PddLifecycle:
             "total_findings": len(all_findings),
             "report_path": self._run_report_relpath("code_quality_report.json"),
             "demotion_tickets": len(tickets),
-            "demotion_tickets_applied": sum(
-                1 for row in tickets if bool((row.get("apply_result") or {}).get("applied", False))
-            ),
+            "demotion_tickets_applied": 0,
         }
 
     # ------------------------------------------------------------------

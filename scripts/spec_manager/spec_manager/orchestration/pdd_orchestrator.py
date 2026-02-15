@@ -7,7 +7,7 @@ execution model defined in EXPECTED_STATE.md.
 Each phase delegates to the corresponding PDD module entry point:
 
     Phase 0  (EXTRACTION)         - intake/ (routing-based restructuring)
-    Phase 1  (STRUCTURE_DISCOVERY) - planning.models.parse_file + core.edit_in_place
+    Phase 1  (STRUCTURE_DISCOVERY) - dynamic source facts + core.edit_in_place
     Phase 2  (DECOMPOSITION)       - planning.reverser (reverse translation)
     Phase 3  (COMPLIANCE_CLEAN)    - compliance.detection.orchestrator + gap queue
     Phase 4  (LIBRARY_DISCOVERY)   - branches.manager (collapse + atom registry)
@@ -25,6 +25,7 @@ the PDD members.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -246,7 +247,7 @@ class PddOrchestrator:
         self,
         *,
         max_iterations: int = 20,
-        run_extraction: bool = True,
+        run_extraction: bool = False,
     ) -> dict[str, Any]:
         """Run the per-slice iterative PromotionLoop.
 
@@ -254,16 +255,17 @@ class PddOrchestrator:
         P0-P10 pipeline with a convergence loop per slice.
 
         Steps:
-        1. Conditionally run Phase 0 if IntakeQueue is non-empty or
-           ``run_extraction=True`` (first run).
+        1. Conditionally run Phase 0 routing when IntakeQueue is non-empty or
+           when pending DemotionTickets require routing.
         2. Discover slices (libraries) from workspace.
         3. Run PromotionLoop on each slice until convergence.
         4. Run global verification (P6/P7) after all slices complete.
 
         Args:
             max_iterations: Max convergence iterations per slice.
-            run_extraction: Whether to run Phase 0 on first invocation.
-                Subsequent invocations check IntakeQueue instead.
+            run_extraction: Optional heavyweight full-Phase-0 flag.
+                This does not trigger Phase 0 by itself; it only allows
+                running ``Phase.EXTRACTION`` after trigger-based routing.
 
         Returns:
             Summary dict with slice results.
@@ -276,27 +278,54 @@ class PddOrchestrator:
 
         results: dict[str, Any] = {"mode": "loop"}
 
-        # 1. Run Phase 0 conditionally
+        # 1. Run Phase 0 conditionally from authoritative triggers only.
         intake_queue = IntakeQueue(self.manager.workspace_path)
-        needs_extraction = run_extraction or intake_queue.needs_phase0()
+        pending_routing_tickets = self._load_pending_routing_tickets()
+        needs_phase0 = intake_queue.needs_phase0(pending_tickets=pending_routing_tickets)
+        results["phase0_trigger"] = {
+            "queue_items": intake_queue.count(),
+            "routing_tickets": len(pending_routing_tickets),
+        }
 
-        if needs_extraction:
-            # Drain intake queue items first
+        if needs_phase0:
+            from spec_manager.orchestration.demotion import RoutingItem
+            from spec_manager.orchestration.intake_queue import route_items
+
             queued_items = intake_queue.drain()
-            if queued_items:
-                from spec_manager.orchestration.intake_queue import route_items
-
-                patches = route_items(queued_items, self.manager.workspace_path)
+            routed_ticket_items: list[RoutingItem] = []
+            for ticket in pending_routing_tickets:
+                payload = ticket.routing_payload or {}
+                routed_ticket_items.append(
+                    RoutingItem(
+                        item_id=ticket.ticket_id,
+                        text=str(payload.get("text") or ticket.diagnosis).strip(),
+                        source_path=payload.get("source_path"),
+                        desired_slice_hint=(
+                            str(payload.get("desired_slice_hint", "")).strip() or ticket.slice_id
+                        ),
+                        tags=[
+                            str(tag)
+                            for tag in payload.get("tags", [ticket.source])
+                            if str(tag).strip()
+                        ],
+                    )
+                )
+            routing_items = [*queued_items, *routed_ticket_items]
+            if routing_items:
+                patches = route_items(routing_items, self.manager.workspace_path)
                 results["intake_routed"] = len(patches)
-
-            try:
-                extraction_result = self.run_phase(Phase.EXTRACTION)
-                results["extraction"] = extraction_result
-            except Exception as exc:
-                logger.warning("Phase 0 extraction failed: %s", exc)
-                results["extraction"] = {"error": str(exc)}
+                results["extraction"] = "skipped (route-items mode)"
+            elif run_extraction:
+                try:
+                    extraction_result = self.run_phase(Phase.EXTRACTION)
+                    results["extraction"] = extraction_result
+                except Exception as exc:
+                    logger.warning("Phase 0 extraction failed: %s", exc)
+                    results["extraction"] = {"error": str(exc)}
+            else:
+                results["extraction"] = "skipped (no routing payloads)"
         else:
-            results["extraction"] = "skipped (intake queue empty)"
+            results["extraction"] = "skipped (no intake queue items or routing tickets)"
 
         # 2. Discover slices from workspace
         libraries_dir = self.manager.structure.libraries_dir
@@ -458,19 +487,16 @@ class PddOrchestrator:
             shutil.copy2(route_table, dest)
 
     def _run_structure_discovery(self) -> dict[str, Any]:
-        """Phase 1: AST structure + edit-in-place gap analysis.
+        """Phase 1: dynamic source facts + edit-in-place gap analysis.
 
-        Two-part discovery:
-        1. ``planning.models.parse_file()`` — AST structure (functions,
-           classes, imports) for each Python file.
-        2. ``core.edit_in_place.analyze_project()`` — translation state
-           (which functions are implemented, which have gaps).
+        This phase avoids hard-coding language constructs (e.g., function/class/import
+        categories) into required output. We keep file-level facts dynamic while the
+        promotion machinery remains typed around system invariants (gaps, pins, gates).
         """
-        from spec_manager.comment_planning.models import parse_file
         from spec_manager.core.edit_in_place import analyze_project, find_gaps
 
         all_files = self.manager.get_all_files()
-        parsed_count = 0
+        profiled_count = 0
         errors: list[str] = []
         per_file_results: list[dict[str, Any]] = []
 
@@ -479,18 +505,26 @@ class PddOrchestrator:
                 errors.append(f"File not found: {file_path}")
                 continue
             try:
-                code_file = parse_file(str(file_path))
+                line_count = 0
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                    line_count = text.count("\n") + (1 if text else 0)
+                except UnicodeDecodeError:
+                    line_count = 0
                 per_file_results.append(
                     {
                         "file_id": file_id,
-                        "functions": len(code_file.functions),
-                        "classes": len(code_file.classes),
-                        "imports": len(code_file.imports),
-                    },
+                        "path": str(file_path),
+                        "facts": {
+                            "suffix": file_path.suffix.lower(),
+                            "size_bytes": file_path.stat().st_size,
+                            "line_count": line_count,
+                        },
+                    }
                 )
-                parsed_count += 1
+                profiled_count += 1
             except Exception as exc:
-                errors.append(f"Failed to parse {file_path}: {exc}")
+                errors.append(f"Failed to profile {file_path}: {exc}")
 
         # Edit-in-place analysis: classify comments as gaps, track translation state
         project_root = str(self.manager.structure.root)
@@ -504,7 +538,7 @@ class PddOrchestrator:
         )
 
         return {
-            "files_parsed": parsed_count,
+            "files_profiled": profiled_count,
             "total_files": len(all_files),
             "files_with_translation_state": len(project_state.files),
             "gaps_detected": len(gaps),
@@ -739,29 +773,7 @@ class PddOrchestrator:
         root = self.manager.structure.root
         outputs: dict[str, Any] = {}
 
-        # 1. Consume registry-declared edges as the authoritative source.
-        import_records = []
-        registry_path = root / ".spec" / "pin_registry.json"
-        if registry_path.exists():
-            try:
-                pin_registry = PinFunctionRegistry.model_validate_json(
-                    registry_path.read_text(encoding="utf-8")
-                )
-                import_records = import_records_from_pin_registry(pin_registry)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to load pin registry for projection sync lineage build: %s",
-                    exc,
-                    exc_info=True,
-                )
-                import_records = []
-        if not import_records:
-            outputs["lineage_input_warning"] = (
-                "No pin-registry relationship edges found for lineage build."
-            )
-        outputs["import_edges"] = len(import_records)
-
-        # 2. Build atom definitions from branch manager for lineage tracking
+        # 1. Build atom definitions from branch manager for lineage tracking.
         branch_mgr = self.manager.branches
         atom_defs: list[AtomDefinition] = []
         if branch_mgr.is_initialized():
@@ -775,6 +787,44 @@ class PddOrchestrator:
                         signature_hash=getattr(atom, "signature_hash", ""),
                     )
                 )
+
+        # 2. Consume registry-declared edges as a derived cache only when fresh.
+        import_records = []
+        registry_path = root / ".spec" / "pin_registry.json"
+        if registry_path.exists():
+            stale, reason = self._pin_registry_is_stale(
+                registry_path=registry_path,
+                root=root,
+                file_hints=[atom.file_path for atom in atom_defs if atom.file_path],
+            )
+            if stale:
+                outputs["lineage_input_warning"] = (
+                    "Skipped pin-registry import edges because registry is stale: "
+                    f"{reason or 'source changed'}"
+                )
+                outputs["pin_registry_status"] = "stale"
+            else:
+                outputs["pin_registry_status"] = "fresh"
+                try:
+                    pin_registry = PinFunctionRegistry.model_validate_json(
+                        registry_path.read_text(encoding="utf-8")
+                    )
+                    import_records = import_records_from_pin_registry(pin_registry)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to load pin registry for projection sync lineage build: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    import_records = []
+                    outputs["pin_registry_status"] = "invalid"
+        else:
+            outputs["pin_registry_status"] = "missing"
+        if not import_records and "lineage_input_warning" not in outputs:
+            outputs["lineage_input_warning"] = (
+                "No usable pin-registry relationship edges found for lineage build."
+            )
+        outputs["import_edges"] = len(import_records)
 
         # 3. Build lineage table (atom → architecture projection)
         if atom_defs:
@@ -873,6 +923,79 @@ class PddOrchestrator:
             outputs["pins_generated"] = len(artifact.pins)
 
         return outputs
+
+    def _pending_demotion_ticket_paths(self) -> Path:
+        return (
+            self.manager.workspace_path
+            / ".pdd_runs"
+            / self.manager.run_id
+            / "demotions"
+            / "tickets"
+        )
+
+    def _load_pending_routing_tickets(self) -> list[Any]:
+        """Load unresolved demotion tickets that explicitly require routing."""
+        from spec_manager.orchestration.demotion import DemotionTicket
+
+        tickets_dir = self._pending_demotion_ticket_paths()
+        if not tickets_dir.exists():
+            return []
+        tickets: list[DemotionTicket] = []
+        seen_ids: set[str] = set()
+        for ticket_path in sorted(tickets_dir.glob("*.json")):
+            try:
+                payload = json.loads(ticket_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            ticket_raw = payload.get("ticket", payload) if isinstance(payload, dict) else None
+            if not isinstance(ticket_raw, dict):
+                continue
+            ticket = DemotionTicket.from_dict(ticket_raw)
+            if not ticket.routing_required:
+                continue
+            if str(ticket.apply_status).strip().upper() == "APPLIED":
+                continue
+            if ticket.ticket_id in seen_ids:
+                continue
+            seen_ids.add(ticket.ticket_id)
+            tickets.append(ticket)
+        return tickets
+
+    def _pin_registry_is_stale(
+        self,
+        *,
+        registry_path: Path,
+        root: Path,
+        file_hints: list[str],
+    ) -> tuple[bool, str]:
+        """Determine whether a registry-derived lineage view is stale."""
+        try:
+            registry_mtime = registry_path.stat().st_mtime
+        except OSError as exc:
+            return True, f"registry_unreadable:{exc}"
+
+        for hint in file_hints:
+            rel = str(hint).strip()
+            if not rel:
+                continue
+            candidate = Path(rel)
+            if not candidate.is_absolute():
+                root_candidate = root / candidate
+                workspace_candidate = self.manager.workspace_path / candidate
+                if root_candidate.exists():
+                    candidate = root_candidate
+                elif workspace_candidate.exists():
+                    candidate = workspace_candidate
+                else:
+                    return True, f"missing_source:{rel}"
+            if not candidate.exists():
+                return True, f"missing_source:{rel}"
+            try:
+                if candidate.stat().st_mtime > registry_mtime:
+                    return True, f"newer_source:{rel}"
+            except OSError as exc:
+                return True, f"source_unreadable:{rel}:{exc}"
+        return False, ""
 
     def _run_task_planning(self) -> dict[str, Any]:
         """Phase 8: Planning integration and gap bridge.

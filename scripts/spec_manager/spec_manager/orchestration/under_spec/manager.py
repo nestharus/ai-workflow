@@ -65,20 +65,24 @@ _NON_SOFTWARE_TRIGGER_DECISION_TYPES = {
 }
 
 
-def _normalize_dimension(value: Any, *, fallback: str = "software") -> str:
+def _normalize_dimension(value: Any, *, fallback: str = "") -> tuple[str, bool]:
     text = str(value).strip().lower()
     if text in _VALID_DIMENSIONS:
-        return text
-    return fallback
+        return text, False
+    if fallback in _VALID_DIMENSIONS:
+        return fallback, True
+    return "software", True
 
 
-def _normalize_authority_required(value: Any, *, fallback: str = "planner_ok") -> str:
+def _normalize_authority_required(value: Any, *, fallback: str = "") -> tuple[str, bool]:
     text = str(value).strip().lower()
     if text == "user_required":
-        return "human_required"
+        return "human_required", False
     if text in {"planner_ok", "human_required"}:
-        return text
-    return fallback
+        return text, False
+    if fallback in {"planner_ok", "human_required"}:
+        return fallback, True
+    return "human_required", True
 
 
 def _infer_decision_type(
@@ -131,9 +135,28 @@ def _infer_decision_type(
     if any(token in text for token in ("architecture", "coupling", "boundary", "design")):
         return "architecture", False
 
-    if raw_text:
-        return "architecture", True
-    return "performance", False
+    return "architecture", True
+
+
+def _classification_question(
+    *,
+    kind: str,
+    dimension_unknown: bool,
+    authority_unknown: bool,
+    decision_type_unknown: bool,
+) -> str:
+    unknown_fields: list[str] = []
+    if dimension_unknown:
+        unknown_fields.append("dimension")
+    if authority_unknown:
+        unknown_fields.append("authority requirement")
+    if decision_type_unknown:
+        unknown_fields.append("decision type")
+    fields = ", ".join(unknown_fields) if unknown_fields else "classification"
+    return (
+        f"Clarify under-spec {fields} for event kind '{kind}' so planning can continue "
+        "without guessing defaults."
+    )
 
 
 # ------------------------------------------------------------------
@@ -199,23 +222,45 @@ class UnderSpecEvent:
 
         kind = str(d.get("kind", "MISSING_CONSTRAINT")).strip() or "MISSING_CONSTRAINT"
         question = str(d.get("question", "")).strip()
-        dimension = _normalize_dimension(
+        dimension, dimension_unknown = _normalize_dimension(
             d.get("dimension", "software"),
-            fallback="software",
+            fallback="",
         )
-        authority_required = _normalize_authority_required(
+        authority_required, authority_unknown = _normalize_authority_required(
             d.get(
                 "authority_required",
                 d.get("authority", "planner_ok"),
             ),
-            fallback="human_required" if dimension in _NON_SOFTWARE_DIMENSIONS else "planner_ok",
+            fallback="",
         )
-        decision_type, _ = _infer_decision_type(
+        decision_type, decision_type_unknown = _infer_decision_type(
             d.get("decision_type", ""),
             kind=kind,
             question=question,
             context=context,
         )
+        if authority_unknown:
+            authority_required = "human_required"
+        if dimension in _NON_SOFTWARE_DIMENSIONS:
+            authority_required = "human_required"
+        has_classification_ambiguity = (
+            dimension_unknown or authority_unknown or decision_type_unknown
+        )
+        if has_classification_ambiguity:
+            context = dict(context)
+            context["classification_ambiguity"] = {
+                "dimension_unknown": dimension_unknown,
+                "authority_unknown": authority_unknown,
+                "decision_type_unknown": decision_type_unknown,
+            }
+            authority_required = "human_required"
+            if not question:
+                question = _classification_question(
+                    kind=kind,
+                    dimension_unknown=dimension_unknown,
+                    authority_unknown=authority_unknown,
+                    decision_type_unknown=decision_type_unknown,
+                )
 
         return cls(
             event_id=event_id,
@@ -539,19 +584,25 @@ class UnderSpecManager:
             resolution = _ResolutionPayload(constraints=constraints, blocked=blocked)
         else:
             resolution = self._resolve_auto(slice_id, resolution_targets, layer=layer)
-            if resolution.needs_interactive_review:
+            escalation_candidates = self._dedupe_events(
+                [
+                    *resolution.needs_interactive_review,
+                    *resolution.blocked,
+                ]
+            )
+            if escalation_candidates:
                 logger.info(
-                    "Escalating %d under-spec expansion candidate(s) to interactive "
-                    "review for slice '%s'",
-                    len(resolution.needs_interactive_review),
+                    "Escalating %d blocked under-spec event(s) to interactive questions "
+                    "for slice '%s'",
+                    len(escalation_candidates),
                     slice_id,
                 )
                 _, escalated_blocked = self._resolve_interactive(
                     slice_id,
-                    resolution.needs_interactive_review,
+                    escalation_candidates,
                     layer=layer,
                 )
-                resolution.blocked.extend(escalated_blocked)
+                resolution.blocked = self._dedupe_events([*resolution.blocked, *escalated_blocked])
 
         new_constraints = resolution.constraints
         still_blocked = [
@@ -717,10 +768,8 @@ class UnderSpecManager:
         where the Intent Agent will pick them up, rewrite them into
         user-facing language, and present them through its quality gate.
         """
-        emission_candidates = [
-            event for event in events if self._should_emit_interactive_question(event)
-        ]
-        deferred_without_question = len(events) - len(emission_candidates)
+        emission_candidates = list(events)
+        deferred_without_question = 0
         self._interactive_questions_emitted = self._interactive_questions_emitted or bool(
             emission_candidates
         )
@@ -757,7 +806,7 @@ class UnderSpecManager:
             event_key = self._interactive_event_key(event)
             question_text = str(refined_questions.get(event_key, event.question)).strip()
             if not question_text:
-                question_text = event.question
+                question_text = self._fallback_question_for_event(event)
             signal = UserQuestionSignal(
                 run_id=self._run_id,
                 source=SignalSource(
@@ -810,6 +859,18 @@ class UnderSpecManager:
         if event_id:
             return event_id
         return str(event.question).strip()
+
+    @staticmethod
+    def _fallback_question_for_event(event: UnderSpecEvent) -> str:
+        question = str(event.question).strip()
+        if question:
+            return question
+        return _classification_question(
+            kind=str(event.kind).strip() or "MISSING_CONSTRAINT",
+            dimension_unknown=True,
+            authority_unknown=True,
+            decision_type_unknown=True,
+        )
 
     def _refine_interactive_questions(
         self,
@@ -962,10 +1023,12 @@ class UnderSpecManager:
                 answer = ""
                 confidence = 0.7
                 trace: list[str] = []
-                authority_required = "planner_ok"
+                authority_required = "human_required"
+                authority_unknown = False
                 dimension = "software"
-                decision_type = "performance"
-                decision_type_unknown = False
+                dimension_unknown = False
+                decision_type = "architecture"
+                decision_type_unknown = True
                 constraint_id = ""
                 question = ""
                 status = "ACTIVE"
@@ -985,13 +1048,13 @@ class UnderSpecManager:
                     raw_trace = value.get("trace")
                     if isinstance(raw_trace, list):
                         trace = [str(item) for item in raw_trace]
-                    authority_required = _normalize_authority_required(
+                    authority_required, authority_unknown = _normalize_authority_required(
                         value.get("authority_required", "planner_ok"),
-                        fallback="planner_ok",
+                        fallback="",
                     )
-                    dimension = _normalize_dimension(
+                    dimension, dimension_unknown = _normalize_dimension(
                         value.get("dimension", "software"),
-                        fallback="software",
+                        fallback="",
                     )
                     decision_type, decision_type_unknown = _infer_decision_type(
                         value.get("decision_type", ""),
@@ -1020,30 +1083,71 @@ class UnderSpecManager:
                     for event in matching:
                         resolved_event_id = event.event_id
                         effective_constraint_id = constraint_id or resolved_event_id
-                        question_text = question or event.question
-                        resolved_dimension = _normalize_dimension(
-                            event.dimension if dimension == "software" else dimension,
-                            fallback="software",
+                        question_text = question or self._fallback_question_for_event(event)
+                        context_ambiguity = (
+                            event.context.get("classification_ambiguity", {})
+                            if isinstance(event.context, dict)
+                            else {}
+                        )
+                        event_dimension_unknown = bool(
+                            isinstance(context_ambiguity, dict)
+                            and context_ambiguity.get("dimension_unknown", False)
+                        )
+                        event_authority_unknown = bool(
+                            isinstance(context_ambiguity, dict)
+                            and context_ambiguity.get("authority_unknown", False)
+                        )
+                        event_decision_type_unknown = bool(
+                            isinstance(context_ambiguity, dict)
+                            and context_ambiguity.get("decision_type_unknown", False)
+                        )
+
+                        resolved_dimension_input = (
+                            dimension if not dimension_unknown else event.dimension
+                        )
+                        resolved_dimension, resolved_dimension_unknown = _normalize_dimension(
+                            resolved_dimension_input,
+                            fallback="",
+                        )
+                        resolved_dimension_unknown_effective = (
+                            resolved_dimension_unknown
+                            or dimension_unknown
+                            or event_dimension_unknown
                         )
                         resolved_decision_type = decision_type
+                        resolved_decision_type_unknown = (
+                            decision_type_unknown or event_decision_type_unknown
+                        )
                         raw_decision_type = (
                             str(value.get("decision_type", "")).strip()
                             if isinstance(value, dict)
                             else ""
                         )
                         if not raw_decision_type:
-                            resolved_decision_type, _ = _infer_decision_type(
+                            resolved_decision_type, inferred_unknown = _infer_decision_type(
                                 "",
                                 kind=event.kind,
                                 question=question_text,
                                 context=event.context,
                             )
-                        authority_from_event = _normalize_authority_required(
-                            event.authority_required,
-                            fallback=authority_required,
+                            resolved_decision_type_unknown = (
+                                resolved_decision_type_unknown or inferred_unknown
+                            )
+                        authority_from_event, authority_from_event_unknown = (
+                            _normalize_authority_required(
+                                event.authority_required,
+                                fallback="",
+                            )
+                        )
+                        authority_unknown_effective = (
+                            authority_unknown
+                            or authority_from_event_unknown
+                            or event_authority_unknown
                         )
                         effective_authority_required = authority_required
                         if authority_from_event == "human_required":
+                            effective_authority_required = "human_required"
+                        if authority_unknown_effective:
                             effective_authority_required = "human_required"
                         requires_policy = resolved_dimension in _NON_SOFTWARE_DIMENSIONS
                         policy_covered = (not requires_policy) or (
@@ -1052,10 +1156,14 @@ class UnderSpecManager:
                         if requires_policy and not policy_covered:
                             effective_authority_required = "human_required"
                         gate_reason = ""
-                        if effective_authority_required != "planner_ok":
-                            gate_reason = "human_authority_required"
-                        elif decision_type_unknown:
+                        if resolved_dimension_unknown_effective:
+                            gate_reason = "unknown_dimension"
+                        elif authority_unknown_effective:
+                            gate_reason = "unknown_authority_requirement"
+                        elif resolved_decision_type_unknown:
                             gate_reason = "unknown_decision_type"
+                        elif effective_authority_required != "planner_ok":
+                            gate_reason = "human_authority_required"
                         elif confidence < self._MIN_CONSTRAINT_CONFIDENCE:
                             gate_reason = "confidence_below_threshold"
                         if gate_reason:
@@ -1068,7 +1176,7 @@ class UnderSpecManager:
                                 "dimension": resolved_dimension,
                                 "policy_dimension_covered": policy_covered,
                                 "decision_type": resolved_decision_type,
-                                "decision_type_unknown": decision_type_unknown,
+                                "decision_type_unknown": resolved_decision_type_unknown,
                                 "confidence": confidence,
                             }
                             blocked_event.context = gate_ctx
@@ -1622,7 +1730,7 @@ class UnderSpecManager:
         for constraint in self._load_merged_constraints(slice_id):
             if str(constraint.status).strip().upper() != "ACTIVE":
                 continue
-            dimension = _normalize_dimension(constraint.dimension, fallback="")
+            dimension, _ = _normalize_dimension(constraint.dimension, fallback="")
             if dimension not in _NON_SOFTWARE_DIMENSIONS:
                 continue
             source = str(constraint.source).strip().lower()
@@ -1689,30 +1797,8 @@ class UnderSpecManager:
         }
 
     def _should_emit_interactive_question(self, event: UnderSpecEvent) -> bool:
-        context = event.context if isinstance(event.context, dict) else {}
-        impact = self._normalize_event_impact(context)
-        has_trigger = self._is_non_software_trigger(event)
-        low_impact = impact in _LOW_IMPACT_LEVELS
-        reversible = self._context_flag(
-            context,
-            keys=("reversible", "is_reversible", "easy_to_reverse"),
-        )
-        stdlib_or_internal = self._context_flag(
-            context,
-            keys=(
-                "is_stdlib",
-                "stdlib",
-                "approved_internal",
-                "approved_internal_module",
-                "is_internal_module",
-            ),
-        )
-
-        if impact in _IMPACT_TRIGGER_LEVELS and has_trigger:
-            return True
-        if has_trigger and event.dimension in _NON_SOFTWARE_DIMENSIONS:
-            return True
-        return not (low_impact and reversible and (stdlib_or_internal or not has_trigger))
+        del event
+        return True
 
     @staticmethod
     def _normalize_event_impact(context: dict[str, Any]) -> str:
