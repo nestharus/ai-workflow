@@ -6,11 +6,10 @@ providing a unified interface for the planner.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +57,12 @@ class ConstraintsTool:
         if not self._workspace:
             return ConstraintsSnapshot(slice_id=slice_id)
 
-        path = self._workspace / "analysis" / "constraints" / f"{slice_id}.yaml"
+        path = self._workspace / "analysis" / "constraints" / f"{slice_id}.json"
         if not path.exists():
             return ConstraintsSnapshot(slice_id=slice_id)
 
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
             if data is None:
                 return ConstraintsSnapshot(slice_id=slice_id)
             constraints_list = data if isinstance(data, list) else data.get("constraints", [])

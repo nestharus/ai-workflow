@@ -503,6 +503,129 @@ class L2Planner:
             )
         return normalized
 
+    @staticmethod
+    def _normalize_decision_requirements_for_output(
+        requirements: list[Any],
+    ) -> list[dict[str, Any]]:
+        """Normalize decision requirements into a stable intention-embedded shape."""
+        normalized: list[dict[str, Any]] = []
+        for requirement in requirements:
+            if isinstance(requirement, dict):
+                payload = dict(requirement)
+            elif hasattr(requirement, "to_dict") and callable(requirement.to_dict):
+                raw_payload = requirement.to_dict()
+                if not isinstance(raw_payload, dict):
+                    continue
+                payload = dict(raw_payload)
+            else:
+                continue
+
+            decision_id = str(payload.get("decision_id", "")).strip()
+            if not decision_id:
+                continue
+            payload["decision_id"] = decision_id
+            payload["question"] = str(payload.get("question", "")).strip()
+            payload["kind"] = str(payload.get("kind", "")).strip()
+            payload["dimension"] = str(payload.get("dimension", "software")).strip() or "software"
+            payload["impact"] = str(payload.get("impact", "")).strip()
+
+            scope_hint = str(payload.get("scope_hint", "")).strip()
+            if not scope_hint:
+                scope_hint = str(payload.get("scope", "")).strip()
+            if scope_hint:
+                payload["scope_hint"] = scope_hint
+
+            options = payload.get("options", [])
+            payload["options"] = (
+                [str(option).strip() for option in options if str(option).strip()]
+                if isinstance(options, list)
+                else []
+            )
+
+            needed_for_raw = payload.get("needed_for", [])
+            if isinstance(needed_for_raw, list):
+                needed_for = [
+                    str(target).strip() for target in needed_for_raw if str(target).strip()
+                ]
+            elif str(needed_for_raw).strip():
+                needed_for = [str(needed_for_raw).strip()]
+            else:
+                needed_for = []
+            payload["needed_for"] = needed_for
+            normalized.append(payload)
+        return normalized
+
+    @staticmethod
+    def _find_requirement_intention_index(
+        intentions: list[dict[str, Any]],
+        requirement: dict[str, Any],
+    ) -> int | None:
+        needed_for = requirement.get("needed_for", [])
+        needed_tokens = {
+            str(target).strip().lower() for target in needed_for if str(target).strip()
+        }
+        if not needed_tokens:
+            return None
+
+        for index, intention in enumerate(intentions):
+            component_id = str(intention.get("component_id", "")).strip().lower()
+            if component_id and component_id in needed_tokens:
+                return index
+
+            target_files = intention.get("target_files", [])
+            if not isinstance(target_files, list):
+                target_files = []
+            normalized_targets = [
+                str(path).strip().lower() for path in target_files if str(path).strip()
+            ]
+            if any(
+                any(token in target for target in normalized_targets) for token in needed_tokens
+            ):
+                return index
+
+            target_file = str(intention.get("target_file", "")).strip().lower()
+            if target_file and any(token in target_file for token in needed_tokens):
+                return index
+
+        return None
+
+    @classmethod
+    def _attach_decision_requirements_to_intentions(
+        cls,
+        intentions: list[dict[str, Any]],
+        decision_requirements: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not decision_requirements:
+            return intentions
+
+        if not intentions:
+            return [
+                {
+                    "component_id": "",
+                    "target_files": [],
+                    "approach": "Resolve planning decision requirements before implementation.",
+                    "decision_requirements": [dict(item) for item in decision_requirements],
+                }
+            ]
+
+        enriched_intentions = [dict(intention) for intention in intentions]
+        for intention in enriched_intentions:
+            decision_reqs = intention.get("decision_requirements", [])
+            if isinstance(decision_reqs, list):
+                intention["decision_requirements"] = [
+                    dict(item) for item in decision_reqs if isinstance(item, dict)
+                ]
+            else:
+                intention["decision_requirements"] = []
+
+        for requirement in decision_requirements:
+            target_index = cls._find_requirement_intention_index(enriched_intentions, requirement)
+            if target_index is None:
+                target_index = 0
+            enriched_intentions[target_index]["decision_requirements"].append(dict(requirement))
+
+        return enriched_intentions
+
     def _build_plan_via_strategies(
         self,
         ctx: Any,
@@ -589,12 +712,23 @@ class L2Planner:
         intentions = self._normalize_intentions_for_output(session.intentions, gaps)
         if not intentions and gaps:
             intentions = self._build_gap_intentions(gaps)
+        decision_requirements = self._normalize_decision_requirements_for_output(
+            session.decision_requirements
+        )
+        intentions = self._attach_decision_requirements_to_intentions(
+            intentions=intentions,
+            decision_requirements=decision_requirements,
+        )
 
         result: dict[str, Any] = {"intentions": intentions}
-        if session.decision_requirements:
-            result["decision_requirements"] = [dr.to_dict() for dr in session.decision_requirements]
         if session.new_constraints:
-            result["new_constraints"] = [c.to_dict() for c in session.new_constraints]
+            constraints_to_write = [
+                constraint.to_dict()
+                for constraint in session.new_constraints
+                if str(getattr(constraint, "dimension", "")).strip().lower() == "software"
+            ]
+            if constraints_to_write:
+                result["new_constraints_to_write"] = constraints_to_write
         if session.under_spec_events:
             result["under_spec_events"] = session.under_spec_events
         if session.decision_outcomes:

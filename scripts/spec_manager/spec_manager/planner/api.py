@@ -406,6 +406,31 @@ class Planner:
         return deduped
 
     @staticmethod
+    def _extract_decision_requirements(outputs: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract decision requirements from top-level and intention payloads."""
+        requirements: list[dict[str, Any]] = []
+
+        top_level = outputs.get("decision_requirements")
+        if isinstance(top_level, list):
+            for requirement in top_level:
+                if isinstance(requirement, dict):
+                    requirements.append(requirement)
+
+        intentions = outputs.get("intentions")
+        if isinstance(intentions, list):
+            for intention in intentions:
+                if not isinstance(intention, dict):
+                    continue
+                embedded_requirements = intention.get("decision_requirements", [])
+                if not isinstance(embedded_requirements, list):
+                    continue
+                for requirement in embedded_requirements:
+                    if isinstance(requirement, dict):
+                        requirements.append(requirement)
+
+        return requirements
+
+    @staticmethod
     def _extract_update_identifiers(
         outputs: dict[str, Any],
     ) -> tuple[list[str], list[str], list[str]]:
@@ -428,15 +453,11 @@ class Planner:
                 canonical_keys.extend(Planner._coerce_id_list(event.get("canonical_key")))
                 canonical_keys.extend(Planner._coerce_id_list(event.get("canonical_keys")))
 
-        decision_requirements = outputs.get("decision_requirements")
-        if isinstance(decision_requirements, list):
-            for requirement in decision_requirements:
-                if not isinstance(requirement, dict):
-                    continue
-                decision_ids.extend(Planner._coerce_id_list(requirement.get("decision_id")))
-                decision_ids.extend(Planner._coerce_id_list(requirement.get("decision_ids")))
-                canonical_keys.extend(Planner._coerce_id_list(requirement.get("canonical_key")))
-                canonical_keys.extend(Planner._coerce_id_list(requirement.get("canonical_keys")))
+        for requirement in Planner._extract_decision_requirements(outputs):
+            decision_ids.extend(Planner._coerce_id_list(requirement.get("decision_id")))
+            decision_ids.extend(Planner._coerce_id_list(requirement.get("decision_ids")))
+            canonical_keys.extend(Planner._coerce_id_list(requirement.get("canonical_key")))
+            canonical_keys.extend(Planner._coerce_id_list(requirement.get("canonical_keys")))
 
         return (
             Planner._dedupe_preserve(decision_ids),
@@ -448,64 +469,54 @@ class Planner:
     def _extract_review_questions(outputs: dict[str, Any]) -> list[dict[str, Any]]:
         review_questions: list[dict[str, Any]] = []
 
-        decision_requirements = outputs.get("decision_requirements")
-        if isinstance(decision_requirements, list):
-            for requirement in decision_requirements:
-                if not isinstance(requirement, dict):
-                    continue
-                requirement_authority = (
-                    str(requirement.get("authority_required", "")).strip().lower()
-                )
-                if requirement_authority not in {"human_required", "user_required"}:
-                    continue
-                question_text = (
-                    str(
-                        requirement.get("question")
-                        or requirement.get("user_question")
-                        or requirement.get("question_text")
-                        or "",
-                    ).strip()
-                    or "Planner requires user authority for a decision."
-                )
-                reason = (
-                    str(requirement.get("reason", "")).strip()
-                    or f"authority_required={requirement_authority}"
-                )
-                payload: dict[str, Any] = {}
-                requirement_ids = Planner._coerce_id_list(
-                    requirement.get("decision_requirement_id")
-                )
-                requirement_ids.extend(
-                    Planner._coerce_id_list(requirement.get("decision_requirement_ids"))
-                )
-                requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_id")))
-                requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_ids")))
-                requirement_ids = Planner._dedupe_preserve(requirement_ids)
-                if requirement_ids:
-                    payload["decision_requirement_ids"] = requirement_ids
-                requirement_decision_ids = Planner._coerce_id_list(requirement.get("decision_id"))
-                requirement_decision_ids.extend(
-                    Planner._coerce_id_list(requirement.get("decision_ids"))
-                )
-                requirement_decision_ids = Planner._dedupe_preserve(requirement_decision_ids)
-                if requirement_decision_ids:
-                    payload["decision_ids"] = requirement_decision_ids
-                requirement_canonical_keys = Planner._coerce_id_list(
-                    requirement.get("canonical_key")
-                )
-                requirement_canonical_keys.extend(
-                    Planner._coerce_id_list(requirement.get("canonical_keys"))
-                )
-                requirement_canonical_keys = Planner._dedupe_preserve(requirement_canonical_keys)
-                if requirement_canonical_keys:
-                    payload["canonical_keys"] = requirement_canonical_keys
-                review_questions.append(
-                    {
-                        "question_text": question_text,
-                        "reason": reason,
-                        "payload": payload,
-                    }
-                )
+        for requirement in Planner._extract_decision_requirements(outputs):
+            requirement_authority = str(requirement.get("authority_required", "")).strip().lower()
+            if requirement_authority not in {"human_required", "user_required"}:
+                continue
+            question_text = (
+                str(
+                    requirement.get("question")
+                    or requirement.get("user_question")
+                    or requirement.get("question_text")
+                    or "",
+                ).strip()
+                or "Planner requires user authority for a decision."
+            )
+            reason = (
+                str(requirement.get("reason", "")).strip()
+                or f"authority_required={requirement_authority}"
+            )
+            payload: dict[str, Any] = {}
+            requirement_ids = Planner._coerce_id_list(requirement.get("decision_requirement_id"))
+            requirement_ids.extend(
+                Planner._coerce_id_list(requirement.get("decision_requirement_ids"))
+            )
+            requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_id")))
+            requirement_ids.extend(Planner._coerce_id_list(requirement.get("requirement_ids")))
+            requirement_ids = Planner._dedupe_preserve(requirement_ids)
+            if requirement_ids:
+                payload["decision_requirement_ids"] = requirement_ids
+            requirement_decision_ids = Planner._coerce_id_list(requirement.get("decision_id"))
+            requirement_decision_ids.extend(
+                Planner._coerce_id_list(requirement.get("decision_ids"))
+            )
+            requirement_decision_ids = Planner._dedupe_preserve(requirement_decision_ids)
+            if requirement_decision_ids:
+                payload["decision_ids"] = requirement_decision_ids
+            requirement_canonical_keys = Planner._coerce_id_list(requirement.get("canonical_key"))
+            requirement_canonical_keys.extend(
+                Planner._coerce_id_list(requirement.get("canonical_keys"))
+            )
+            requirement_canonical_keys = Planner._dedupe_preserve(requirement_canonical_keys)
+            if requirement_canonical_keys:
+                payload["canonical_keys"] = requirement_canonical_keys
+            review_questions.append(
+                {
+                    "question_text": question_text,
+                    "reason": reason,
+                    "payload": payload,
+                }
+            )
 
         under_spec_events = outputs.get("under_spec_events")
         if isinstance(under_spec_events, list):

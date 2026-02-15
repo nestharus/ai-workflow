@@ -159,6 +159,7 @@ class CapabilityRouter:
             for key in (
                 "decision_requirements",
                 "new_constraints",
+                "new_constraints_to_write",
                 "under_spec_events",
                 "decision_outcomes",
             ):

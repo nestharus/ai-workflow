@@ -2583,16 +2583,23 @@ class PlanStep:
 
         # Route through planner if available (L2/L3 only)
         if self._planner is not None:
-            intentions = self._plan_via_planner(ctx, bundle)
+            plan_outputs = self._plan_via_planner(ctx, bundle)
+            intentions = plan_outputs.get("intentions", [])
+            if not isinstance(intentions, list):
+                intentions = []
         elif ctx.layer == "l2":
             intentions = self._plan_l2(bundle.gaps.open_gaps)
+            plan_outputs = {"intentions": intentions}
         elif ctx.layer == "l3":
             intentions = self._plan_l3(bundle.gaps.open_gaps)
+            plan_outputs = {"intentions": intentions}
         else:
             intentions = []
+            plan_outputs = {"intentions": intentions}
 
         focus_targets = self._focus_targets(ctx)
         intentions = self._apply_focus_targets(intentions, focus_targets)
+        plan_outputs["intentions"] = intentions
         bundle.plan = PlanRef(path="plan.json", intentions=intentions)
 
         # Run planning gate: check decision requirements against constraints
@@ -2611,6 +2618,7 @@ class PlanStep:
                     constraints_store=store,
                     slice_id=ctx.slice_id,
                     intentions=intentions,
+                    plan_outputs=plan_outputs,
                 )
 
                 if not gate_result.all_covered:
@@ -2624,8 +2632,11 @@ class PlanStep:
 
         return StepResult(status="OK")
 
-    def _plan_via_planner(self, ctx: SliceContext, bundle: EvidenceBundle) -> list[dict[str, Any]]:
-        """Route plan generation through the planner module."""
+    def _plan_via_planner(self, ctx: SliceContext, bundle: EvidenceBundle) -> dict[str, Any]:
+        """Route plan generation through the planner module.
+
+        Returns the full planner output payload with normalized intentions.
+        """
         from spec_manager.planner.api import PlanningContext
 
         planning_ctx = PlanningContext(
@@ -2639,12 +2650,15 @@ class PlanStep:
             metadata={"focus_targets": self._focus_targets(ctx)},
         )
         plan_outputs = self._planner.plan_from_gaps(planning_ctx, bundle.gaps.open_gaps)
-        intentions_raw = (
-            plan_outputs.get("intentions", []) if isinstance(plan_outputs, dict) else []
-        )
+        if not isinstance(plan_outputs, dict):
+            return {"intentions": []}
+
+        intentions_raw = plan_outputs.get("intentions", [])
         if not isinstance(intentions_raw, list):
-            return []
-        return [row for row in intentions_raw if isinstance(row, dict)]
+            intentions_raw = []
+        normalized_outputs = dict(plan_outputs)
+        normalized_outputs["intentions"] = [row for row in intentions_raw if isinstance(row, dict)]
+        return normalized_outputs
 
     @staticmethod
     def _plan_l2(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4089,7 +4103,7 @@ class CoordinateStep:
         # Record new constraint refs
         if outcome.constraints:
             constraint_path = outcome.resume_hint.get("constraints_path") or str(
-                workspace / "analysis" / "constraints" / f"{ctx.slice_id}.yaml"
+                workspace / "analysis" / "constraints" / f"{ctx.slice_id}.json"
             )
             if constraint_path not in bundle.facts.constraints_refs:
                 bundle.facts.constraints_refs.append(constraint_path)

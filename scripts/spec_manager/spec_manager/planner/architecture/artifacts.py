@@ -1,6 +1,6 @@
 """Architecture decision artifact persistence and retrieval.
 
-Persists candidates, assessments, and outcomes under
+Persists candidates, selected outcomes, and evaluations under
 ``reports/pdd/<run_id>/architecture/decisions/<decision_id>/``.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +31,10 @@ def persist_decision_artifacts(
 ) -> Path:
     """Persist architecture decision artifacts to disk.
 
-    Creates the directory structure and writes three JSON files:
-    - ``candidates.json`` — all proposed candidates
-    - ``assessments.json`` — evaluation results
-    - ``outcome.json`` — the final decision outcome
+    Creates the directory structure and writes:
+    - ``candidates/*.json`` — one file per proposed candidate
+    - ``selected.json`` — the final decision outcome
+    - ``evaluation.json`` — candidate assessments and decision summary
 
     Parameters
     ----------
@@ -59,18 +60,28 @@ def persist_decision_artifacts(
         workspace_root / "reports" / "pdd" / run_id / "architecture" / "decisions" / decision_id
     )
     decision_dir.mkdir(parents=True, exist_ok=True)
+    candidates_dir = decision_dir / "candidates"
+    candidates_dir.mkdir(parents=True, exist_ok=True)
 
+    for index, candidate in enumerate(candidates, start=1):
+        candidate_id = (
+            str(getattr(candidate, "candidate_id", "")).strip() or f"candidate_{index:03d}"
+        )
+        normalized_id = re.sub(r"[^a-zA-Z0-9._-]+", "_", candidate_id).strip("._")
+        if not normalized_id:
+            normalized_id = f"candidate_{index:03d}"
+        _write_json(candidates_dir / f"{normalized_id}.json", candidate.to_dict())
+
+    _write_json(decision_dir / "selected.json", outcome.to_dict())
     _write_json(
-        decision_dir / "candidates.json",
-        [c.to_dict() for c in candidates],
-    )
-    _write_json(
-        decision_dir / "assessments.json",
-        [a.to_dict() for a in assessments],
-    )
-    _write_json(
-        decision_dir / "outcome.json",
-        outcome.to_dict(),
+        decision_dir / "evaluation.json",
+        {
+            "assessments": [assessment.to_dict() for assessment in assessments],
+            "selected_candidate_id": outcome.selected_candidate_id,
+            "committed": outcome.committed,
+            "decision_requirements": list(outcome.decision_requirements),
+            "under_spec_events": list(outcome.under_spec_events),
+        },
     )
 
     logger.debug("Persisted decision artifacts for %s at %s", decision_id, decision_dir)
@@ -83,7 +94,7 @@ def load_committed_decisions(
 ) -> list[DecisionOutcome]:
     """Load all committed decision outcomes for a run.
 
-    Scans ``reports/pdd/<run_id>/architecture/decisions/*/outcome.json``
+    Scans ``reports/pdd/<run_id>/architecture/decisions/*/selected.json``
     and returns only outcomes where ``committed`` is ``True``.
 
     Parameters
@@ -103,14 +114,14 @@ def load_committed_decisions(
         return []
 
     outcomes: list[DecisionOutcome] = []
-    for outcome_path in sorted(decisions_dir.glob("*/outcome.json")):
+    for outcome_path in sorted(decisions_dir.glob("*/selected.json")):
         try:
             data = json.loads(outcome_path.read_text(encoding="utf-8"))
             outcome = DecisionOutcome.from_dict(data)
             if outcome.committed:
                 outcomes.append(outcome)
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load outcome from %s: %s", outcome_path, exc)
+            logger.warning("Failed to load selected decision from %s: %s", outcome_path, exc)
 
     return outcomes
 

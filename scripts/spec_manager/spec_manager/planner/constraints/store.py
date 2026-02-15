@@ -6,12 +6,11 @@ constraint types under planner.constraints.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-
-import yaml
 
 if TYPE_CHECKING:
     from spec_manager.orchestration.under_spec.manager import UnderSpecEvent
@@ -96,7 +95,7 @@ class Constraint:
 class ConstraintsStore:
     """File-based constraint persistence.
 
-    Constraints live in ``<workspace>/analysis/constraints/<slice_id>.yaml``.
+    Constraints live in ``<workspace>/analysis/constraints/<slice_id>.json``.
     """
 
     def __init__(self, workspace_root: Path) -> None:
@@ -108,16 +107,21 @@ class ConstraintsStore:
         Accepts both list format ``[{...}, ...]`` and dict format
         ``{"constraints": [{...}, ...]}``.
         """
-        path = self._root / f"{slice_id}.yaml"
+        path = self._root / f"{slice_id}.json"
         if not path.exists():
             return []
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
             if raw is None:
                 return []
-            data = raw if isinstance(raw, list) else raw.get("constraints", [])
+            if isinstance(raw, list):
+                data = raw
+            elif isinstance(raw, dict):
+                data = raw.get("constraints", [])
+            else:
+                data = []
             return [Constraint.from_dict(c) for c in data]
-        except (yaml.YAMLError, KeyError, AttributeError, TypeError) as exc:
+        except (json.JSONDecodeError, OSError, KeyError, AttributeError, TypeError) as exc:
             logger.warning("Failed to load constraints for %s: %s", slice_id, exc)
             return []
 
@@ -177,9 +181,9 @@ class ConstraintsStore:
                 latest_index_by_id[incoming_id] = len(merged) - 1
 
         self._root.mkdir(parents=True, exist_ok=True)
-        path = self._root / f"{slice_id}.yaml"
+        path = self._root / f"{slice_id}.json"
         path.write_text(
-            yaml.safe_dump([c.to_dict() for c in merged], sort_keys=False),
+            json.dumps([c.to_dict() for c in merged], indent=2),
             encoding="utf-8",
         )
         return path

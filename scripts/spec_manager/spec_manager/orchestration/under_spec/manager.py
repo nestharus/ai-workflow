@@ -599,8 +599,17 @@ class UnderSpecManager:
 
         run_dir = self._workspace / ".pdd_runs" / self._run_id
         store = UserQuestionSignalStore(run_dir)
+        refined_questions = self._refine_interactive_questions(
+            slice_id=slice_id,
+            events=emission_candidates,
+            layer=layer,
+        )
 
         for event in emission_candidates:
+            event_key = self._interactive_event_key(event)
+            question_text = str(refined_questions.get(event_key, event.question)).strip()
+            if not question_text:
+                question_text = event.question
             signal = UserQuestionSignal(
                 run_id=self._run_id,
                 source=SignalSource(
@@ -611,7 +620,7 @@ class UnderSpecManager:
                     signal_id=f"underspec:{slice_id}:{event.event_id}",
                 ),
                 question=SignalQuestion(
-                    text=event.question,
+                    text=question_text,
                     taxonomy_hint=self._question_taxonomy_hint(event),
                     canonical_key_hint=f"underspec.{event.event_id}",
                     answer_spec_hint=self._answer_spec_hint_for_event(event),
@@ -646,6 +655,87 @@ class UnderSpecManager:
         # All events remain blocked until Planner writes constraints
         # after user answers via the Intent Agent.
         return [], list(events)
+
+    @staticmethod
+    def _interactive_event_key(event: UnderSpecEvent) -> str:
+        event_id = str(event.event_id).strip()
+        if event_id:
+            return event_id
+        return str(event.question).strip()
+
+    def _refine_interactive_questions(
+        self,
+        *,
+        slice_id: str,
+        events: list[UnderSpecEvent],
+        layer: str,
+    ) -> dict[str, str]:
+        """Optionally refine interactive under-spec questions through planner strategy."""
+        if self._planner is None or not events:
+            return {}
+
+        try:
+            from spec_manager.planner.api import PlanningContext
+
+            constraints_snapshot = [
+                {
+                    "constraint_id": constraint.constraint_id,
+                    "question": constraint.question,
+                    "answer": constraint.answer,
+                    "dimension": constraint.dimension,
+                    "authority_required": constraint.authority_required,
+                    "scope": constraint.scope,
+                }
+                for constraint in self._store.load_merged(slice_id)
+            ]
+            local_context = [
+                {
+                    "event_id": event.event_id,
+                    "kind": event.kind,
+                    "source_file": event.source_file,
+                    "source_line": event.source_line,
+                    "context": dict(event.context or {}),
+                }
+                for event in events
+            ]
+            context = PlanningContext(
+                run_id=self._run_id,
+                slice_id=slice_id,
+                layer=layer,
+                mode="interactive",
+                workspace_root=str(self._workspace),
+                metadata={
+                    "under_spec_question_refinement": {
+                        "constraints_snapshot": constraints_snapshot,
+                        "local_context": local_context,
+                    }
+                },
+            )
+            outputs = self._planner.resolve_under_spec(
+                context,
+                [event.to_dict() for event in events],
+            )
+        except Exception:
+            logger.debug(
+                "Interactive question refinement failed for slice '%s'",
+                slice_id,
+                exc_info=True,
+            )
+            return {}
+
+        questions = outputs.get("questions", []) if isinstance(outputs, dict) else []
+        if not isinstance(questions, list):
+            return {}
+
+        refined: dict[str, str] = {}
+        for index, raw_question in enumerate(questions):
+            if index >= len(events):
+                break
+            question_text = str(raw_question).strip()
+            if not question_text:
+                continue
+            refined[self._interactive_event_key(events[index])] = question_text
+        return refined
 
     def _resolve_auto(
         self,
@@ -1182,7 +1272,7 @@ class UnderSpecManager:
         return ""
 
     def _constraint_path(self, slice_id: str) -> Path:
-        return self._workspace / "analysis" / "constraints" / f"{slice_id}.yaml"
+        return self._workspace / "analysis" / "constraints" / f"{slice_id}.json"
 
     def _under_spec_dir(self, slice_id: str) -> Path:
         path = self._workspace / "analysis" / "under_spec" / slice_id
@@ -1208,8 +1298,8 @@ class UnderSpecManager:
             "Status: BLOCKED",
             f"Generated: {datetime.now(UTC).isoformat()}",
             "",
-            "Decision-gap answers must be written as constraints in YAML at:",
-            f"- `analysis/constraints/{slice_id}.yaml`",
+            "Decision-gap answers must be written as constraints in JSON at:",
+            f"- `analysis/constraints/{slice_id}.json`",
             "",
             "Code/spec expansion gaps must be routed as expansion work-items.",
             "Accepted expansion forms:",
@@ -1249,15 +1339,6 @@ class UnderSpecManager:
                 "",
                 "Use this format only for decision constraints. Code/spec expansion",
                 "changes should be represented as routed work-items, not inline answers.",
-                "",
-                "YAML:",
-                "```yaml",
-                "constraints:",
-                "  - constraint_id: <event_id>",
-                "    question: <question>",
-                "    answer: <concrete testable answer>",
-                "    source: user",
-                "```",
                 "",
                 "JSON:",
                 "```json",

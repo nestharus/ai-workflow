@@ -46,8 +46,8 @@ def check_decision_coverage(
 ) -> CoverageResult:
     """Check if a single decision requirement is covered by constraints.
 
-    A decision is covered if the constraints store contains a constraint
-    whose question matches (by ID or substring) the decision's question.
+    A decision is covered only when ``decision_id`` matches a persisted
+    ``constraint_id``.
 
     Args:
         constraints_store: The file-based constraints store.
@@ -59,24 +59,19 @@ def check_decision_coverage(
     """
     constraints = constraints_store.load_merged(slice_id)
     decision_id = decision.get("decision_id", "")
-    decision_question = decision.get("question", "").lower().strip()
+    decision_question = str(decision.get("question", "")).strip()
+
+    if not decision_id:
+        return CoverageResult(
+            covered=False,
+            rationale="Decision requirement missing decision_id",
+        )
 
     covering: list[str] = []
 
     for constraint in constraints:
-        # Match by ID
         if constraint.constraint_id and constraint.constraint_id == decision_id:
             covering.append(constraint.constraint_id)
-            continue
-
-        # Match by question substring similarity
-        constraint_q = constraint.question.lower().strip()
-        if (
-            constraint_q
-            and decision_question
-            and (constraint_q in decision_question or decision_question in constraint_q)
-        ):
-            covering.append(constraint.constraint_id or constraint.question[:50])
 
     if covering:
         return CoverageResult(
@@ -95,7 +90,8 @@ def run_planning_gate(
     *,
     constraints_store: ConstraintsStore,
     slice_id: str,
-    intentions: list[dict[str, Any]],
+    intentions: list[dict[str, Any]] | None = None,
+    plan_outputs: dict[str, Any] | None = None,
 ) -> PlanningGateResult:
     """Run the planning gate on all plan intentions.
 
@@ -106,6 +102,7 @@ def run_planning_gate(
         constraints_store: Constraint persistence layer.
         slice_id: Current slice identifier.
         intentions: Plan intentions from the planning agent.
+        plan_outputs: Optional full planner PLAN output payload.
 
     Returns:
         PlanningGateResult with covered/uncovered partitions.
@@ -120,7 +117,17 @@ def run_planning_gate(
                 return normalized
         return intention.get("target_file", "")
 
-    for intention in intentions:
+    plan_intentions = (
+        plan_outputs.get("intentions", [])
+        if isinstance(plan_outputs, dict)
+        else (intentions if isinstance(intentions, list) else [])
+    )
+    if not isinstance(plan_intentions, list):
+        plan_intentions = []
+
+    for intention in plan_intentions:
+        if not isinstance(intention, dict):
+            continue
         decision_reqs = intention.get("decision_requirements", [])
         if not decision_reqs:
             continue
