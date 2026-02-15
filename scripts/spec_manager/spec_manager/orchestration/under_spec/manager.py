@@ -546,9 +546,13 @@ class UnderSpecManager:
                 confidence = 0.7
                 trace: list[str] = []
                 authority_required = "planner_ok"
+                dimension = "software"
+                decision_type = ""
                 constraint_id = ""
                 question = ""
                 status = "ACTIVE"
+                scope = "intra:LIB"
+                applies_to_layers = self._default_applies_to_layers(layer)
                 supersedes: list[str] = []
 
                 if isinstance(value, str):
@@ -566,6 +570,22 @@ class UnderSpecManager:
                     authority_required = str(value.get("authority_required", "planner_ok")).strip()
                     if not authority_required:
                         authority_required = "planner_ok"
+                    dimension_raw = str(value.get("dimension", "software")).strip().lower()
+                    if dimension_raw in {
+                        "software",
+                        "legal",
+                        "economic",
+                        "organizational",
+                        "temporal",
+                        "operational",
+                    }:
+                        dimension = dimension_raw
+                    decision_type = str(value.get("decision_type", "")).strip()
+                    scope = str(value.get("scope", scope)).strip() or scope
+                    applies_to_layers = self._normalize_applies_to_layers(
+                        value.get("applies_to_layers", applies_to_layers),
+                        fallback=applies_to_layers,
+                    )
                     status = str(value.get("status", "ACTIVE")).strip().upper() or "ACTIVE"
                     if status not in {"ACTIVE", "SUPERSEDED"}:
                         status = "ACTIVE"
@@ -628,7 +648,11 @@ class UnderSpecManager:
                                 source="planner",
                                 confidence=confidence,
                                 validated=False,
+                                dimension=dimension,
                                 authority_required=authority_required,
+                                decision_type=decision_type,
+                                scope=scope,
+                                applies_to_layers=applies_to_layers,
                                 status=status,
                                 supersedes=supersedes,
                                 trace=event_trace,
@@ -1135,6 +1159,40 @@ class UnderSpecManager:
         return path
 
     @staticmethod
+    def _default_applies_to_layers(layer: str) -> list[str]:
+        normalized = str(layer or "").strip().upper()
+        return [normalized] if normalized in {"L1", "L2", "L3"} else []
+
+    @classmethod
+    def _normalize_applies_to_layers(
+        cls,
+        raw_value: Any,
+        *,
+        fallback: list[str],
+    ) -> list[str]:
+        values: list[str] = []
+        if isinstance(raw_value, str):
+            values = [raw_value]
+        elif isinstance(raw_value, list):
+            values = [str(item) for item in raw_value]
+
+        normalized: list[str] = []
+        for value in values:
+            for token in value.replace("|", ",").split(","):
+                layer = token.strip().upper()
+                if layer in {"L1", "L2", "L3"} and layer not in normalized:
+                    normalized.append(layer)
+
+        if normalized:
+            return normalized
+        deduped_fallback: list[str] = []
+        for layer in fallback:
+            upper = str(layer).strip().upper()
+            if upper in {"L1", "L2", "L3"} and upper not in deduped_fallback:
+                deduped_fallback.append(upper)
+        return deduped_fallback
+
+    @staticmethod
     def _question_taxonomy_hint(event: UnderSpecEvent) -> str:
         kind = str(event.kind).strip().upper()
         if kind == "AMBIGUOUS_REQUIREMENT":
@@ -1166,7 +1224,11 @@ class UnderSpecManager:
                     "constraint_id": event.event_id,
                     "slice_id": slice_id,
                     "mode": "hybrid",
-                    "event_triggers": ["SLICE_MERGED", "GIT_DIRTY_ADVANCED"],
+                    "event_triggers": [
+                        "CONSTRAINT_SAVED",
+                        "SLICE_MERGED",
+                        "GIT_DIRTY_ADVANCED",
+                    ],
                     "poll_interval_sec": 20,
                     "timeout_seconds": 3600,
                 }

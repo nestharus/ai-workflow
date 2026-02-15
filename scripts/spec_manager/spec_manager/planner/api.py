@@ -1487,6 +1487,7 @@ class Planner:
         constraint_ids: list[str] = []
         target_slice = str(slice_id or "__system__").strip() or "__system__"
         layer_token = str(layer or "any").strip().lower()
+        default_layers = [layer_token.upper()] if layer_token in {"l1", "l2", "l3"} else []
         run_token = str(run_id or "").strip()
         authoritative_facts = self._constraints_adapter.load_merged(target_slice)
 
@@ -1557,6 +1558,10 @@ class Planner:
             supersedes = self._dedupe_preserve(supersedes)
 
             source = self._coerce_under_spec_constraint_source(row.get("source", "research"))
+            applies_to_layers = self._normalize_constraint_layers(
+                row.get("applies_to_layers", default_layers),
+                fallback=default_layers,
+            )
             fact = ConstraintFact(
                 constraint_id=constraint_id,
                 question=question,
@@ -1567,6 +1572,7 @@ class Planner:
                 dimension="software",
                 authority_required="planner_ok",
                 scope=str(row.get("scope", "intra:LIB") or "intra:LIB"),
+                applies_to_layers=applies_to_layers,
                 status=status,
                 supersedes=supersedes,
                 trace=[
@@ -1685,6 +1691,32 @@ class Planner:
         if source in {"user", "steering", "existing"}:
             return source
         return "research"
+
+    @staticmethod
+    def _normalize_constraint_layers(value: Any, *, fallback: list[str]) -> list[str]:
+        raw_values: list[str]
+        if isinstance(value, str):
+            raw_values = [value]
+        elif isinstance(value, list):
+            raw_values = [str(item) for item in value]
+        else:
+            raw_values = []
+
+        normalized: list[str] = []
+        for raw in raw_values:
+            for token in raw.replace("|", ",").split(","):
+                layer = token.strip().upper()
+                if layer in {"L1", "L2", "L3"} and layer not in normalized:
+                    normalized.append(layer)
+        if normalized:
+            return normalized
+
+        fallback_layers: list[str] = []
+        for raw in fallback:
+            layer = str(raw).strip().upper()
+            if layer in {"L1", "L2", "L3"} and layer not in fallback_layers:
+                fallback_layers.append(layer)
+        return fallback_layers
 
     def _expand_under_spec_via_triage(
         self,

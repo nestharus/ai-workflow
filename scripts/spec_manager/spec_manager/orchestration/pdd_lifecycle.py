@@ -187,8 +187,14 @@ class PddLifecycle:
     # Planner construction
     # ------------------------------------------------------------------
 
-    def _build_planner(self) -> Any:
-        """Build a Planner instance with tools wired from lifecycle config."""
+    def _build_planner(
+        self,
+        *,
+        work_item_store: Any = None,
+        wait_graph: Any = None,
+        on_constraint_saved: Callable[[str, str, str], None] | None = None,
+    ) -> Any:
+        """Build a Planner instance with lifecycle tools and coordination wiring."""
         from spec_manager.orchestration.source_analysis_cache import SourceAnalysisCache
         from spec_manager.planner.api import Planner
         from spec_manager.planner.tools.constraints_tool import ConstraintsTool
@@ -270,6 +276,9 @@ class PddLifecycle:
             constraints_tool=constraints_tool,
             override_provider=self._planner_override_provider,
             model_id=self._resolve_model_id_for_role("planner"),
+            work_item_store=work_item_store,
+            wait_graph=wait_graph,
+            on_constraint_saved=on_constraint_saved,
         )
 
     def _resolve_model_id_for_role(self, role: str) -> str:
@@ -3013,7 +3022,20 @@ class PddLifecycle:
             config=run_context_config,
         )
 
-        planner = self._build_planner()
+        # Build coordination infrastructure
+        (
+            monitor_executor,
+            wake_queue,
+            work_item_store,
+            wait_graph,
+            on_constraint_saved,
+        ) = self._build_coordination(layer, run_context)
+
+        planner = self._build_planner(
+            work_item_store=work_item_store,
+            wait_graph=wait_graph,
+            on_constraint_saved=on_constraint_saved,
+        )
 
         loop = PromotionLoop(
             worktree_manager=self.worktree_manager,
@@ -3022,9 +3044,6 @@ class PddLifecycle:
             workspace_root=self.manager.workspace_path,
             planner=planner,
         )
-
-        # Build coordination infrastructure
-        monitor_executor, wake_queue = self._build_coordination(layer, run_context, planner=planner)
 
         ci_ticks: list[dict[str, Any]] = []
         ci_tick_slices: set[str] = set()
@@ -3285,27 +3304,30 @@ class PddLifecycle:
         self,
         layer: Layer,
         run_context: Any,
-        planner: Any | None = None,
-    ) -> tuple[Any, Any]:
+    ) -> tuple[Any, Any, Any, Any, Callable[[str, str, str], None]]:
         """Build coordination infrastructure for a layer run.
 
-        Creates WorkItemStore, WakeQueue, MonitorRegistry, ConditionChecker,
-        and MonitorExecutor.  Returns (monitor_executor, wake_queue).
+        Creates WorkItemStore, WakeQueue, MonitorRegistry, WaitGraph,
+        ConditionChecker, and MonitorExecutor, plus a constraint-save callback
+        that emits direct wake events.
 
         Args:
             layer: Layer being run.
             run_context: Run-scoped context.
 
         Returns:
-            Tuple of (MonitorExecutor, WakeQueue).
+            Tuple of
+            ``(monitor_executor, wake_queue, work_item_store, wait_graph, on_constraint_saved)``.
         """
         from spec_manager.orchestration.coordination.monitor_executor import (
             ConditionChecker,
             MonitorExecutor,
         )
         from spec_manager.orchestration.coordination.monitors import MonitorRegistry
-        from spec_manager.orchestration.coordination.wake_queue import WakeQueue
+        from spec_manager.orchestration.coordination.wait_graph import WaitGraph
+        from spec_manager.orchestration.coordination.wake_queue import WakeEvent, WakeQueue
         from spec_manager.orchestration.coordination.work_items import WorkItemStore
+        from spec_manager.planner.constraints.store import ConstraintsStore
 
         workspace = self.manager.workspace_path
         run_id = run_context.run_id if hasattr(run_context, "run_id") else self.manager.run_id
@@ -3315,8 +3337,9 @@ class PddLifecycle:
         work_item_store = WorkItemStore(coordination_dir)
         wake_queue = WakeQueue(coordination_dir)
         monitor_registry = MonitorRegistry(coordination_dir)
+        wait_graph = WaitGraph()
 
-        constraints_store = getattr(planner, "_constraints_adapter", None)
+        constraints_store = ConstraintsStore(workspace)
 
         checker = ConditionChecker(
             workspace_root=workspace,
@@ -3324,13 +3347,52 @@ class PddLifecycle:
             constraints_store=constraints_store,
         )
 
+        monitor_executor: Any | None = None
+
+        def on_constraint_saved(slice_id: str, constraint_id: str, canonical_key: str) -> None:
+            normalized_constraint_id = str(constraint_id or "").strip()
+            if not normalized_constraint_id:
+                return
+
+            artifact_key = f"constraint:{normalized_constraint_id}"
+            wake_payload = {
+                "constraint_id": normalized_constraint_id,
+                "canonical_key": str(canonical_key or "").strip(),
+                "source_slice_id": str(slice_id or "").strip(),
+            }
+
+            waiting_edges = list(wait_graph.get_providers_for(normalized_constraint_id))
+            for edge in waiting_edges:
+                wake_queue.enqueue(
+                    WakeEvent(
+                        signal_id=edge.signal_id,
+                        slice_id=edge.waiting_slice,
+                        layer=str(layer),
+                        reason="constraint_saved",
+                        artifact_key=artifact_key,
+                        wake_payload=wake_payload,
+                    )
+                )
+                if edge.signal_id:
+                    wait_graph.remove_edge(edge.signal_id)
+
+            if monitor_executor is not None:
+                try:
+                    monitor_executor.on_event("CONSTRAINT_SAVED")
+                except Exception:
+                    logger.warning(
+                        "Failed to emit coordination event CONSTRAINT_SAVED for constraint %s",
+                        normalized_constraint_id,
+                        exc_info=True,
+                    )
+
         monitor_executor = MonitorExecutor(
             registry=monitor_registry,
             checker=checker,
             wake_queue=wake_queue,
         )
 
-        return monitor_executor, wake_queue
+        return monitor_executor, wake_queue, work_item_store, wait_graph, on_constraint_saved
 
     def _load_gap_priority_counts(self, layer: Layer, slice_refs: list[Any]) -> dict[str, int]:
         """Load per-slice open-gap counts for scheduler priority ordering."""

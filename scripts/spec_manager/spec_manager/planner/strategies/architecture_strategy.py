@@ -467,6 +467,15 @@ class ArchitecturePlannerStrategy:
         if not answer:
             answer = f"Constraint committed by {decision_id}/{candidate_id}"
 
+        resolved_scope = scope or "system"
+        applies_to_layers = ArchitecturePlannerStrategy._resolve_applies_to_layers(
+            payload=payload,
+            dimension=resolved_dimension,
+            scope=resolved_scope,
+            question=question,
+            answer=answer,
+        )
+
         return ConstraintFact(
             constraint_id=constraint_id,
             question=question,
@@ -477,14 +486,101 @@ class ArchitecturePlannerStrategy:
             dimension=resolved_dimension,  # type: ignore[arg-type]
             authority_required=resolved_authority,  # type: ignore[arg-type]
             decision_type="architecture_decision",
-            scope=scope or "system",
-            applies_to_layers=["L2"],
+            scope=resolved_scope,
+            applies_to_layers=applies_to_layers,
             status="ACTIVE",
             trace=[
                 f"decision_id={decision_id}",
                 f"candidate_id={candidate_id}",
                 "origin=architecture_planner",
             ],
+        )
+
+    @staticmethod
+    def _resolve_applies_to_layers(
+        *,
+        payload: Any,
+        dimension: str,
+        scope: str,
+        question: str,
+        answer: str,
+    ) -> list[str]:
+        explicit = ArchitecturePlannerStrategy._extract_layer_targets(payload)
+        if explicit:
+            return explicit
+        if dimension != "software":
+            return ["L2"]
+        if ArchitecturePlannerStrategy._is_l1_obligation(
+            payload=payload,
+            scope=scope,
+            question=question,
+            answer=answer,
+        ):
+            return ["L1", "L2"]
+        return ["L2"]
+
+    @staticmethod
+    def _extract_layer_targets(payload: Any) -> list[str]:
+        if not isinstance(payload, dict):
+            return []
+        raw_layers = payload.get("applies_to_layers", [])
+        if isinstance(raw_layers, str):
+            candidate_values = [raw_layers]
+        elif isinstance(raw_layers, list):
+            candidate_values = [str(item) for item in raw_layers]
+        else:
+            return []
+
+        normalized: list[str] = []
+        for value in candidate_values:
+            for token in value.replace("|", ",").split(","):
+                layer = token.strip().upper()
+                if layer in {"L1", "L2", "L3"} and layer not in normalized:
+                    normalized.append(layer)
+        return normalized
+
+    @staticmethod
+    def _is_l1_obligation(
+        *,
+        payload: Any,
+        scope: str,
+        question: str,
+        answer: str,
+    ) -> bool:
+        if isinstance(payload, dict):
+            for key in ("requires_l1_implementation", "implementation_required_for_l1"):
+                if bool(payload.get(key, False)):
+                    return True
+
+            for key in (
+                "kind",
+                "constraint_kind",
+                "obligation_type",
+                "requirement_type",
+            ):
+                token = str(payload.get(key, "")).strip().lower()
+                if any(marker in token for marker in ("contract", "ordering", "idempot")):
+                    return True
+
+        text_blob = " ".join(
+            part
+            for part in (
+                str(scope or ""),
+                str(question or ""),
+                str(answer or ""),
+                json.dumps(payload, sort_keys=True) if isinstance(payload, dict) else "",
+            )
+            if part
+        ).lower()
+        return any(
+            marker in text_blob
+            for marker in (
+                "contract",
+                "ordering",
+                "idempot",
+                "must implement",
+                "implementation requirement",
+            )
         )
 
     def _load_intra_artifacts(self, lib_name: str, *, sub_scope: str = "") -> dict[str, Any]:
@@ -694,21 +790,46 @@ class ArchitecturePlannerStrategy:
         if self._wait_graph is not None and not outcome.committed and outcome.decision_requirements:
             from spec_manager.orchestration.coordination.wait_graph import WaitEdge
 
-            for req_id in outcome.decision_requirements:
+            existing_edges = {
+                (edge.waiting_slice, edge.provider_slice)
+                for edge in self._wait_graph.get_waiting_on(slice_id)
+            }
+
+            for requirement in outcome.decision_requirements:
+                constraint_id = self._normalize_constraint_dependency_id(requirement)
+                if not constraint_id:
+                    continue
+                if (slice_id, constraint_id) in existing_edges:
+                    continue
                 try:
                     self._wait_graph.add_edge(
                         WaitEdge(
                             waiting_slice=slice_id,
-                            provider_slice=req_id,
-                            artifact_key=f"arch_decision:{dp.decision_id}",
-                            signal_id=dp.decision_id,
+                            provider_slice=constraint_id,
+                            artifact_key=f"constraint:{constraint_id}",
+                            signal_id=f"constraint_wait:{slice_id}:{constraint_id}:{dp.decision_id}",
                         )
                     )
+                    existing_edges.add((slice_id, constraint_id))
                 except Exception:
                     # CyclicDependencyError or other — log and continue
                     logger.debug(
                         "Could not add wait edge %s -> %s",
                         slice_id,
-                        req_id,
+                        constraint_id,
                         exc_info=True,
                     )
+
+    @staticmethod
+    def _normalize_constraint_dependency_id(requirement: Any) -> str:
+        if isinstance(requirement, dict):
+            for key in ("constraint_id", "constraint_key", "id"):
+                candidate = str(requirement.get(key, "")).strip()
+                if candidate:
+                    return candidate
+            return ""
+
+        candidate = str(requirement or "").strip()
+        if not candidate or any(char.isspace() for char in candidate):
+            return ""
+        return candidate
