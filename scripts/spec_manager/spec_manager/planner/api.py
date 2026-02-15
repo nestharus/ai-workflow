@@ -25,6 +25,12 @@ from spec_manager.planner.router import CapabilityRouter, LayerRouter
 logger = logging.getLogger(__name__)
 PLANNER_VERSION = "1"
 _VALID_INGEST_TAXONOMY = frozenset({"INTENT", "CONSTRAINT", "TRADEOFF", "SCOPE", "VALIDATION"})
+_VALID_UNDER_SPEC_DIMENSIONS = frozenset(
+    {"software", "legal", "economic", "organizational", "temporal", "operational"}
+)
+_VALID_UNDER_SPEC_DECISION_TYPES = frozenset(
+    {"dependency", "infrastructure", "data_policy", "security", "performance", "architecture"}
+)
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -1529,9 +1535,19 @@ class Planner:
             canonical_key_norm = self._normalize_for_compare(canonical_key)
             question_norm = self._normalize_for_compare(question)
             confidence = self._clamp_confidence(row.get("confidence", 0.7))
-            authority_required = str(row.get("authority_required", "planner_ok")).strip()
+            authority_required = str(row.get("authority_required", "planner_ok")).strip().lower()
+            if authority_required == "user_required":
+                authority_required = "human_required"
+            if authority_required not in {"planner_ok", "human_required"}:
+                authority_required = "planner_ok"
             if authority_required != "planner_ok":
                 continue
+            dimension = str(row.get("dimension", "software")).strip().lower()
+            if dimension not in _VALID_UNDER_SPEC_DIMENSIONS:
+                dimension = "software"
+            decision_type = str(row.get("decision_type", "performance")).strip().lower()
+            if decision_type not in _VALID_UNDER_SPEC_DECISION_TYPES:
+                decision_type = "performance"
             status = str(row.get("status", "ACTIVE")).strip().upper() or "ACTIVE"
             if status not in {"ACTIVE", "SUPERSEDED"}:
                 status = "ACTIVE"
@@ -1569,8 +1585,9 @@ class Planner:
                 source=source,
                 confidence=confidence,
                 validated=bool(row.get("validated", True)),
-                dimension="software",
-                authority_required="planner_ok",
+                dimension=dimension,
+                authority_required=authority_required,
+                decision_type=decision_type,
                 scope=str(row.get("scope", "intra:LIB") or "intra:LIB"),
                 applies_to_layers=applies_to_layers,
                 status=status,

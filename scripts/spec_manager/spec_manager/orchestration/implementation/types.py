@@ -20,6 +20,53 @@ _REQUIRED_FIELDS: dict[str, list[str]] = {
     "ImplementorOutput": [],
 }
 
+_VALID_DIMENSIONS = {
+    "software",
+    "legal",
+    "economic",
+    "organizational",
+    "temporal",
+    "operational",
+}
+_VALID_DECISION_TYPES = {
+    "dependency",
+    "infrastructure",
+    "data_policy",
+    "security",
+    "performance",
+    "architecture",
+}
+
+
+def _normalize_dimension(value: Any) -> str:
+    text = str(value).strip().lower()
+    if text in _VALID_DIMENSIONS:
+        return text
+    return "software"
+
+
+def _normalize_authority_required(value: Any, *, dimension: str) -> str:
+    text = str(value).strip().lower()
+    if text == "user_required":
+        return "human_required"
+    if text in {"planner_ok", "human_required"}:
+        return text
+    if dimension != "software":
+        return "human_required"
+    return "planner_ok"
+
+
+def _normalize_decision_type(value: Any, *, kind: str) -> str:
+    text = str(value).strip().lower()
+    if text in _VALID_DECISION_TYPES:
+        return text
+    kind_upper = str(kind).strip().upper()
+    if kind_upper in {"EXTERNAL_DEP_UNKNOWN", "EXTERNAL_DEPENDENCY_UNKNOWN"}:
+        return "dependency"
+    if kind_upper in {"NEEDS_API_DECISION", "CONFLICTING_CONSTRAINTS"}:
+        return "architecture"
+    return "performance"
+
 
 def _check_required(cls_name: str, d: dict[str, Any]) -> None:
     """Log warnings for missing required fields in LLM output (C00/C01)."""
@@ -150,15 +197,45 @@ class UnderSpecEvent:
         "NEEDS_API_DECISION",
     ] = "MISSING_CONSTRAINT"
     question: str = ""
+    dimension: Literal[
+        "software",
+        "legal",
+        "economic",
+        "organizational",
+        "temporal",
+        "operational",
+    ] = "software"
+    authority_required: Literal["planner_ok", "human_required"] = "planner_ok"
+    decision_type: Literal[
+        "dependency",
+        "infrastructure",
+        "data_policy",
+        "security",
+        "performance",
+        "architecture",
+    ] = "performance"
     options: list[str] = field(default_factory=list)
     needed_for: str | None = None
     evidence_paths: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> UnderSpecEvent:
+        kind = str(d.get("kind", "MISSING_CONSTRAINT")).strip() or "MISSING_CONSTRAINT"
+        dimension = _normalize_dimension(d.get("dimension", "software"))
+        authority_required = _normalize_authority_required(
+            d.get("authority_required", d.get("authority", "planner_ok")),
+            dimension=dimension,
+        )
+        decision_type = _normalize_decision_type(
+            d.get("decision_type", ""),
+            kind=kind,
+        )
         return cls(
-            kind=d.get("kind", "MISSING_CONSTRAINT"),
+            kind=kind,
             question=d.get("question", ""),
+            dimension=dimension,  # type: ignore[arg-type]
+            authority_required=authority_required,  # type: ignore[arg-type]
+            decision_type=decision_type,  # type: ignore[arg-type]
             options=d.get("options", []),
             needed_for=d.get("needed_for"),
             evidence_paths=d.get("evidence_paths", []),
@@ -168,6 +245,9 @@ class UnderSpecEvent:
         return {
             "kind": self.kind,
             "question": self.question,
+            "dimension": self.dimension,
+            "authority_required": self.authority_required,
+            "decision_type": self.decision_type,
             "options": self.options,
             "needed_for": self.needed_for,
             "evidence_paths": self.evidence_paths,

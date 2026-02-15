@@ -26,6 +26,114 @@ from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
 
 logger = logging.getLogger(__name__)
 
+_VALID_DIMENSIONS = {
+    "software",
+    "legal",
+    "economic",
+    "organizational",
+    "temporal",
+    "operational",
+}
+_NON_SOFTWARE_DIMENSIONS = _VALID_DIMENSIONS - {"software"}
+_VALID_DECISION_TYPES = {
+    "dependency",
+    "infrastructure",
+    "data_policy",
+    "security",
+    "performance",
+    "architecture",
+}
+_DECISION_TYPE_ALIASES = {
+    "architecture_decision": "architecture",
+    "dep": "dependency",
+    "dependency_decision": "dependency",
+    "infra": "infrastructure",
+    "data": "data_policy",
+    "privacy": "data_policy",
+    "compliance": "security",
+    "perf": "performance",
+}
+_IMPACT_TRIGGER_LEVELS = {"MEDIUM", "HIGH"}
+_LOW_IMPACT_LEVELS = {"LOW"}
+_NON_SOFTWARE_TRIGGER_DECISION_TYPES = {
+    "dependency",
+    "infrastructure",
+    "data_policy",
+    "security",
+    "architecture",
+}
+
+
+def _normalize_dimension(value: Any, *, fallback: str = "software") -> str:
+    text = str(value).strip().lower()
+    if text in _VALID_DIMENSIONS:
+        return text
+    return fallback
+
+
+def _normalize_authority_required(value: Any, *, fallback: str = "planner_ok") -> str:
+    text = str(value).strip().lower()
+    if text == "user_required":
+        return "human_required"
+    if text in {"planner_ok", "human_required"}:
+        return text
+    return fallback
+
+
+def _infer_decision_type(
+    raw_value: Any,
+    *,
+    kind: str = "",
+    question: str = "",
+    context: dict[str, Any] | None = None,
+) -> tuple[str, bool]:
+    raw_text = str(raw_value).strip().lower()
+    if raw_text in _VALID_DECISION_TYPES:
+        return raw_text, False
+    if raw_text in _DECISION_TYPE_ALIASES:
+        return _DECISION_TYPE_ALIASES[raw_text], False
+
+    fragments = [raw_text, str(kind).strip().lower(), str(question).strip().lower()]
+    if context:
+        for key in (
+            "decision_type",
+            "kind",
+            "subtype",
+            "impact",
+            "reason",
+            "question",
+            "needed_for",
+            "target",
+            "dependency",
+            "provider",
+            "vendor",
+        ):
+            value = context.get(key)
+            if isinstance(value, str):
+                fragments.append(value.strip().lower())
+    text = " ".join(fragment for fragment in fragments if fragment)
+
+    if any(token in text for token in ("dependency", "package", "library", "module", "vendor")):
+        return "dependency", False
+    if any(
+        token in text for token in ("infrastructure", "infra", "provider", "runtime", "platform")
+    ):
+        return "infrastructure", False
+    if any(
+        token in text for token in ("data policy", "retention", "privacy", "pii", "gdpr", "ccpa")
+    ):
+        return "data_policy", False
+    if any(token in text for token in ("security", "auth", "encryption", "vulnerability", "soc2")):
+        return "security", False
+    if any(token in text for token in ("performance", "latency", "throughput", "slow", "speed")):
+        return "performance", False
+    if any(token in text for token in ("architecture", "coupling", "boundary", "design")):
+        return "architecture", False
+
+    if raw_text:
+        return "architecture", True
+    return "performance", False
+
 
 # ------------------------------------------------------------------
 # Data types
@@ -50,9 +158,28 @@ class UnderSpecEvent:
         "MISSING_CONSTRAINT",
         "CONFLICTING_CONSTRAINTS",
         "EXTERNAL_DEPENDENCY_UNKNOWN",
+        "EXTERNAL_DEP_UNKNOWN",
         "AMBIGUOUS_REQUIREMENT",
+        "REVIEW_UNDER_SPEC",
     ] = "MISSING_CONSTRAINT"
     question: str = ""
+    dimension: Literal[
+        "software",
+        "legal",
+        "economic",
+        "organizational",
+        "temporal",
+        "operational",
+    ] = "software"
+    authority_required: Literal["planner_ok", "human_required"] = "planner_ok"
+    decision_type: Literal[
+        "dependency",
+        "infrastructure",
+        "data_policy",
+        "security",
+        "performance",
+        "architecture",
+    ] = "performance"
     context: dict[str, Any] = field(default_factory=dict)
     source_file: str = ""
     source_line: int = 0
@@ -61,17 +188,42 @@ class UnderSpecEvent:
     def from_dict(cls, d: dict[str, Any]) -> UnderSpecEvent:
         import hashlib
 
+        raw_context = d.get("context", {})
+        context = raw_context if isinstance(raw_context, dict) else {}
         event_id = d.get("event_id", "")
         if not event_id:
             # Generate deterministic ID from question content
             question = d.get("question", "")
             event_id = hashlib.sha256(question.encode()).hexdigest()[:12] if question else ""
 
+        kind = str(d.get("kind", "MISSING_CONSTRAINT")).strip() or "MISSING_CONSTRAINT"
+        question = str(d.get("question", "")).strip()
+        dimension = _normalize_dimension(
+            d.get("dimension", "software"),
+            fallback="software",
+        )
+        authority_required = _normalize_authority_required(
+            d.get(
+                "authority_required",
+                d.get("authority", "planner_ok"),
+            ),
+            fallback="human_required" if dimension in _NON_SOFTWARE_DIMENSIONS else "planner_ok",
+        )
+        decision_type, _ = _infer_decision_type(
+            d.get("decision_type", ""),
+            kind=kind,
+            question=question,
+            context=context,
+        )
+
         return cls(
             event_id=event_id,
-            kind=d.get("kind", "MISSING_CONSTRAINT"),
-            question=d.get("question", ""),
-            context=d.get("context", {}),
+            kind=kind,
+            question=question,
+            dimension=dimension,  # type: ignore[arg-type]
+            authority_required=authority_required,  # type: ignore[arg-type]
+            decision_type=decision_type,  # type: ignore[arg-type]
+            context=context,
             source_file=d.get("source_file", d.get("file", "")),
             source_line=d.get("source_line", 0),
         )
@@ -81,6 +233,9 @@ class UnderSpecEvent:
             "event_id": self.event_id,
             "kind": self.kind,
             "question": self.question,
+            "dimension": self.dimension,
+            "authority_required": self.authority_required,
+            "decision_type": self.decision_type,
             "context": self.context,
             "source_file": self.source_file,
             "source_line": self.source_line,
@@ -414,6 +569,23 @@ class UnderSpecManager:
         where the Intent Agent will pick them up, rewrite them into
         user-facing language, and present them through its quality gate.
         """
+        emission_candidates = [
+            event for event in events if self._should_emit_interactive_question(event)
+        ]
+        deferred_without_question = len(events) - len(emission_candidates)
+        self._interactive_questions_emitted = self._interactive_questions_emitted or bool(
+            emission_candidates
+        )
+        if not emission_candidates:
+            logger.info(
+                "Deferred %d under-spec event(s) without interactive question emission for "
+                "slice '%s' (run_id=%s)",
+                len(events),
+                slice_id,
+                self._run_id,
+            )
+            return [], list(events)
+
         # Lazy import to avoid circular dependency
         from spec_manager.orchestration.intent_agent.signals import (
             CodeRefItem,
@@ -427,9 +599,8 @@ class UnderSpecManager:
 
         run_dir = self._workspace / ".pdd_runs" / self._run_id
         store = UserQuestionSignalStore(run_dir)
-        self._interactive_questions_emitted = self._interactive_questions_emitted or bool(events)
 
-        for event in events:
+        for event in emission_candidates:
             signal = UserQuestionSignal(
                 run_id=self._run_id,
                 source=SignalSource(
@@ -443,17 +614,7 @@ class UnderSpecManager:
                     text=event.question,
                     taxonomy_hint=self._question_taxonomy_hint(event),
                     canonical_key_hint=f"underspec.{event.event_id}",
-                    answer_spec_hint={
-                        "preferred_kind": "free_text",
-                        "constraints": {
-                            "must_be_concrete": True,
-                            "max_choices": 3,
-                        },
-                        "choices": [
-                            {"id": option, "label": option}
-                            for option in self._extract_options(event.context)
-                        ],
-                    },
+                    answer_spec_hint=self._answer_spec_hint_for_event(event),
                 ),
                 context=SignalContext(
                     blocking=SignalBlocking(
@@ -474,10 +635,11 @@ class UnderSpecManager:
             store.write(signal)
 
         logger.info(
-            "Emitted %d UserQuestionSignals for slice '%s' (run_id=%s)",
-            len(events),
+            "Emitted %d UserQuestionSignals for slice '%s' (run_id=%s, deferred=%d)",
+            len(emission_candidates),
             slice_id,
             self._run_id,
+            deferred_without_question,
         )
 
         # No constraints resolved — Planner is the only writer.
@@ -539,6 +701,7 @@ class UnderSpecManager:
             result = self._planner.resolve_under_spec(ctx, event_dicts)
 
             resolved_ids: set[str] = set()
+            policy_dimensions = self._policy_dimensions_for_slice(slice_id)
 
             # Extract constraints from planner result
             for key, value in result.get("constraints", {}).items():
@@ -547,7 +710,8 @@ class UnderSpecManager:
                 trace: list[str] = []
                 authority_required = "planner_ok"
                 dimension = "software"
-                decision_type = ""
+                decision_type = "performance"
+                decision_type_unknown = False
                 constraint_id = ""
                 question = ""
                 status = "ACTIVE"
@@ -567,20 +731,20 @@ class UnderSpecManager:
                     raw_trace = value.get("trace")
                     if isinstance(raw_trace, list):
                         trace = [str(item) for item in raw_trace]
-                    authority_required = str(value.get("authority_required", "planner_ok")).strip()
-                    if not authority_required:
-                        authority_required = "planner_ok"
-                    dimension_raw = str(value.get("dimension", "software")).strip().lower()
-                    if dimension_raw in {
-                        "software",
-                        "legal",
-                        "economic",
-                        "organizational",
-                        "temporal",
-                        "operational",
-                    }:
-                        dimension = dimension_raw
-                    decision_type = str(value.get("decision_type", "")).strip()
+                    authority_required = _normalize_authority_required(
+                        value.get("authority_required", "planner_ok"),
+                        fallback="planner_ok",
+                    )
+                    dimension = _normalize_dimension(
+                        value.get("dimension", "software"),
+                        fallback="software",
+                    )
+                    decision_type, decision_type_unknown = _infer_decision_type(
+                        value.get("decision_type", ""),
+                        kind="",
+                        question=question,
+                        context=value,
+                    )
                     scope = str(value.get("scope", scope)).strip() or scope
                     applies_to_layers = self._normalize_applies_to_layers(
                         value.get("applies_to_layers", applies_to_layers),
@@ -603,9 +767,41 @@ class UnderSpecManager:
                         resolved_event_id = event.event_id
                         effective_constraint_id = constraint_id or resolved_event_id
                         question_text = question or event.question
+                        resolved_dimension = _normalize_dimension(
+                            event.dimension if dimension == "software" else dimension,
+                            fallback="software",
+                        )
+                        resolved_decision_type = decision_type
+                        raw_decision_type = (
+                            str(value.get("decision_type", "")).strip()
+                            if isinstance(value, dict)
+                            else ""
+                        )
+                        if not raw_decision_type:
+                            resolved_decision_type, _ = _infer_decision_type(
+                                "",
+                                kind=event.kind,
+                                question=question_text,
+                                context=event.context,
+                            )
+                        authority_from_event = _normalize_authority_required(
+                            event.authority_required,
+                            fallback=authority_required,
+                        )
+                        effective_authority_required = authority_required
+                        if authority_from_event == "human_required":
+                            effective_authority_required = "human_required"
+                        requires_policy = resolved_dimension in _NON_SOFTWARE_DIMENSIONS
+                        policy_covered = (not requires_policy) or (
+                            resolved_dimension in policy_dimensions
+                        )
+                        if requires_policy and not policy_covered:
+                            effective_authority_required = "human_required"
                         gate_reason = ""
-                        if authority_required != "planner_ok":
+                        if effective_authority_required != "planner_ok":
                             gate_reason = "human_authority_required"
+                        elif decision_type_unknown:
+                            gate_reason = "unknown_decision_type"
                         elif confidence < self._MIN_CONSTRAINT_CONFIDENCE:
                             gate_reason = "confidence_below_threshold"
                         if gate_reason:
@@ -614,7 +810,11 @@ class UnderSpecManager:
                             gate_ctx["auto_resolve_gate"] = {
                                 "decision": "blocked",
                                 "reason": gate_reason,
-                                "authority_required": authority_required,
+                                "authority_required": effective_authority_required,
+                                "dimension": resolved_dimension,
+                                "policy_dimension_covered": policy_covered,
+                                "decision_type": resolved_decision_type,
+                                "decision_type_unknown": decision_type_unknown,
                                 "confidence": confidence,
                             }
                             blocked_event.context = gate_ctx
@@ -639,6 +839,11 @@ class UnderSpecManager:
                             event_trace.append("resolution_kind=decision_constraint")
                         if resolved_event_id:
                             event_trace.append(f"resolves_event_id={resolved_event_id}")
+                        event_trace.append(f"dimension={resolved_dimension}")
+                        event_trace.append(f"decision_type={resolved_decision_type}")
+                        event_trace.append(
+                            f"policy_dimension_covered={str(policy_covered).lower()}"
+                        )
                         event_trace.append("auto_resolve_gate=passed")
                         constraints.append(
                             Constraint(
@@ -648,9 +853,9 @@ class UnderSpecManager:
                                 source="planner",
                                 confidence=confidence,
                                 validated=False,
-                                dimension=dimension,
-                                authority_required=authority_required,
-                                decision_type=decision_type,
+                                dimension=resolved_dimension,
+                                authority_required=effective_authority_required,
+                                decision_type=resolved_decision_type,
                                 scope=scope,
                                 applies_to_layers=applies_to_layers,
                                 status=status,
@@ -1191,6 +1396,178 @@ class UnderSpecManager:
             if upper in {"L1", "L2", "L3"} and upper not in deduped_fallback:
                 deduped_fallback.append(upper)
         return deduped_fallback
+
+    def _policy_dimensions_for_slice(self, slice_id: str) -> set[str]:
+        """Return non-software dimensions covered by explicit human policy."""
+        policy_dimensions: set[str] = set()
+        for constraint in self._store.load_merged(slice_id):
+            if str(constraint.status).strip().upper() != "ACTIVE":
+                continue
+            dimension = _normalize_dimension(constraint.dimension, fallback="")
+            if dimension not in _NON_SOFTWARE_DIMENSIONS:
+                continue
+            source = str(constraint.source).strip().lower()
+            trace_tokens = {
+                str(token).strip().lower() for token in constraint.trace if str(token).strip()
+            }
+            if source in {"user", "steering"}:
+                policy_dimensions.add(dimension)
+                continue
+            if any(
+                marker in trace_token
+                for trace_token in trace_tokens
+                for marker in (
+                    "authority_input=user_answer",
+                    "human_policy",
+                    "policy_constraint",
+                    "source=user",
+                    "source=steering",
+                )
+            ):
+                policy_dimensions.add(dimension)
+        return policy_dimensions
+
+    def _answer_spec_hint_for_event(self, event: UnderSpecEvent) -> dict[str, Any]:
+        choices = [
+            {"id": option, "label": option} for option in self._extract_options(event.context)
+        ]
+        if event.decision_type == "dependency":
+            return {
+                "preferred_kind": "structured_object",
+                "constraints": {
+                    "must_be_concrete": True,
+                    "max_choices": 3,
+                },
+                "fields": [
+                    "allowed_licenses",
+                    "budget_constraints_cost_sensitivity",
+                    "allowed_vendors_providers",
+                    "operational_constraints",
+                    "team_constraints",
+                    "delivery_timeline_constraints",
+                    "risk_posture",
+                ],
+                "field_prompts": {
+                    "allowed_licenses": "Allowed licenses",
+                    "budget_constraints_cost_sensitivity": "Budget constraints / cost sensitivity",
+                    "allowed_vendors_providers": "Allowed vendors/providers",
+                    "operational_constraints": (
+                        "Operational constraints (oncall, managed vs self-hosted)"
+                    ),
+                    "team_constraints": "Team constraints (language/runtime, expertise)",
+                    "delivery_timeline_constraints": "Delivery timeline constraints",
+                    "risk_posture": "Risk posture (security/compliance baseline)",
+                },
+                "choices": choices,
+            }
+        return {
+            "preferred_kind": "free_text",
+            "constraints": {
+                "must_be_concrete": True,
+                "max_choices": 3,
+            },
+            "choices": choices,
+        }
+
+    def _should_emit_interactive_question(self, event: UnderSpecEvent) -> bool:
+        context = event.context if isinstance(event.context, dict) else {}
+        impact = self._normalize_event_impact(context)
+        has_trigger = self._is_non_software_trigger(event)
+        low_impact = impact in _LOW_IMPACT_LEVELS
+        reversible = self._context_flag(
+            context,
+            keys=("reversible", "is_reversible", "easy_to_reverse"),
+        )
+        stdlib_or_internal = self._context_flag(
+            context,
+            keys=(
+                "is_stdlib",
+                "stdlib",
+                "approved_internal",
+                "approved_internal_module",
+                "is_internal_module",
+            ),
+        )
+
+        if impact in _IMPACT_TRIGGER_LEVELS and has_trigger:
+            return True
+        if has_trigger and event.dimension in _NON_SOFTWARE_DIMENSIONS:
+            return True
+        return not (low_impact and reversible and (stdlib_or_internal or not has_trigger))
+
+    @staticmethod
+    def _normalize_event_impact(context: dict[str, Any]) -> str:
+        for key in ("impact", "impact_level", "blast_radius"):
+            value = context.get(key)
+            text = str(value).strip().upper()
+            if text in {"LOW", "MEDIUM", "HIGH"}:
+                return text
+        return ""
+
+    @staticmethod
+    def _context_flag(context: dict[str, Any], *, keys: tuple[str, ...]) -> bool:
+        truthy = {"1", "true", "yes", "y", "on"}
+        for key in keys:
+            value = context.get(key)
+            if isinstance(value, bool):
+                if value:
+                    return True
+                continue
+            if isinstance(value, (int, float)) and value != 0:
+                return True
+            if isinstance(value, str) and value.strip().lower() in truthy:
+                return True
+        return False
+
+    def _is_non_software_trigger(self, event: UnderSpecEvent) -> bool:
+        if event.dimension in _NON_SOFTWARE_DIMENSIONS:
+            return True
+        if event.decision_type in _NON_SOFTWARE_TRIGGER_DECISION_TYPES:
+            return True
+        kind = str(event.kind).strip().upper()
+        if kind in {"EXTERNAL_DEPENDENCY_UNKNOWN", "EXTERNAL_DEP_UNKNOWN"}:
+            return True
+        context = event.context if isinstance(event.context, dict) else {}
+        if self._context_flag(
+            context,
+            keys=(
+                "changes_external_dependency",
+                "changes_infrastructure",
+                "changes_provider",
+                "changes_data_policy",
+                "changes_security_posture",
+                "adds_operational_burden",
+                "irreversible_coupling",
+            ),
+        ):
+            return True
+        searchable_context = " ".join(
+            str(context.get(key, "")).strip().lower()
+            for key in (
+                "reason",
+                "question",
+                "needed_for",
+                "target",
+                "risk",
+                "note",
+            )
+        )
+        return any(
+            token in searchable_context
+            for token in (
+                "dependency",
+                "provider",
+                "vendor",
+                "license",
+                "budget",
+                "cost",
+                "retention",
+                "privacy",
+                "security",
+                "oncall",
+                "coupling",
+            )
+        )
 
     @staticmethod
     def _question_taxonomy_hint(event: UnderSpecEvent) -> str:
