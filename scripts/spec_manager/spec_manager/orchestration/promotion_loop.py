@@ -5935,7 +5935,12 @@ class PromoteStep:
                 GroupingUnit(unit_id="slice", name="slice", entity_ids=set(graph.nodes()))
             ]
 
-        issues = detect_all(graph, grouping_units)
+        dropped_entities: list = []
+        issues = detect_all(
+            graph,
+            grouping_units,
+            dropped_entities=dropped_entities,
+        )
         bundle.refinement.path = _write_iteration_json(
             bundle,
             evidence_root,
@@ -5945,6 +5950,8 @@ class PromoteStep:
                 "layer": ctx.layer,
                 "issue_count": len(issues),
                 "issues": [asdict(issue) for issue in issues],
+                "dropped_entity_count": len(dropped_entities),
+                "dropped_entities": [asdict(item) for item in dropped_entities],
             },
         )
 

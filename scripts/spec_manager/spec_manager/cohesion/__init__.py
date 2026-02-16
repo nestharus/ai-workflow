@@ -11,6 +11,7 @@ AST/graph-based detection using the adjacency graph from
 
 from spec_manager.cohesion.detector import (
     CouplingIssue,
+    DroppedEntity,
     detect_all,
     detect_divergence,
     detect_overlap,
@@ -25,6 +26,7 @@ from spec_manager.cohesion.operations import (
 
 __all__ = [
     "CouplingIssue",
+    "DroppedEntity",
     "RefinementExecutor",
     "RefinementOperation",
     "detect_all",

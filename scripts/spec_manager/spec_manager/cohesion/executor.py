@@ -44,7 +44,7 @@ class RefinementExecutor:
     """Executes refinement operations atomically against BranchManager.
 
     Each ``execute()`` call captures pre-state, applies the operation,
-    and supports ``rollback()`` if anything fails.
+    and automatically rolls back if anything fails.
 
     Usage::
 
@@ -52,7 +52,7 @@ class RefinementExecutor:
         for op in operations:
             result = executor.execute(op)
             if not result.success:
-                executor.rollback(op)
+                print(result.error)
     """
 
     def __init__(self, branch_manager: BranchManager) -> None:
@@ -63,7 +63,8 @@ class RefinementExecutor:
         """Execute a refinement operation.
 
         Captures a pre-state snapshot, applies the operation, and returns
-        the result.  On failure, the snapshot is preserved for rollback.
+        the result. On failure, rollback is executed before the failure
+        result is returned.
 
         Args:
             operation: The operation to execute.
@@ -91,6 +92,7 @@ class RefinementExecutor:
             elif operation.op_type == "modify":
                 changes = self._execute_modify(operation)
             else:
+                self._snapshots.pop(op_key, None)
                 return ExecutionResult(
                     operation=operation,
                     success=False,
@@ -102,6 +104,7 @@ class RefinementExecutor:
                 operation.op_type,
                 len(changes),
             )
+            self._snapshots.pop(op_key, None)
             return ExecutionResult(
                 operation=operation,
                 success=True,
@@ -113,16 +116,28 @@ class RefinementExecutor:
                 "Failed to execute %s operation",
                 operation.op_type,
             )
+            rollback_error = ""
+            try:
+                self.rollback(operation)
+            except Exception as rollback_exc:
+                logger.exception(
+                    "Failed to rollback %s operation after execution error.",
+                    operation.op_type,
+                )
+                rollback_error = str(rollback_exc)
+            error_message = str(exc)
+            if rollback_error:
+                error_message = f"{error_message}. Rollback failed with: {rollback_error}"
             return ExecutionResult(
                 operation=operation,
                 success=False,
-                error=str(exc),
+                error=error_message,
             )
 
     def rollback(self, operation: RefinementOperation) -> None:
         """Rollback a previously executed operation using its snapshot.
 
-        Restores entity-to-slice assignments captured before execution.
+        Restores both slice topology state and entity-to-slice assignments.
 
         Args:
             operation: The operation to rollback.
@@ -137,6 +152,11 @@ class RefinementExecutor:
                 "No snapshot found for this operation.  "
                 "Either it was never executed or already rolled back."
             )
+
+        # Restore slice topology first to ensure referenced slice IDs exist.
+        slice_state = snapshot.get("slice_state")
+        if isinstance(slice_state, dict):
+            self.branch_manager.restore_slice_state(slice_state)
 
         # Restore entity-to-slice assignments from snapshot
         atom_slices = snapshot.get("atom_slices", {})
@@ -176,28 +196,33 @@ class RefinementExecutor:
         """Split a grouping unit by creating a new slice for divergent entities."""
         changes: list[str] = []
         targets = op.target if isinstance(op.target, list) else [op.target]
+        if not targets:
+            raise ValueError("SPLIT operation requires at least one target slice name.")
+        if len(targets) != 1:
+            raise ValueError(
+                "SPLIT execution requires exactly one target per operation. "
+                "Emit one SPLIT operation for each target cluster."
+            )
 
-        if targets:
-            new_slice_name = targets[0]
-            try:
-                new_slice = self.branch_manager.create_slice(new_slice_name)
-                changes.append(f"Created new slice '{new_slice.slice_id}'.")
+        new_slice_name = targets[0]
+        try:
+            new_slice = self.branch_manager.create_slice(new_slice_name)
+            changes.append(f"Created new slice '{new_slice.slice_id}'.")
 
-                # Move divergent entities to the new slice
-                for entity_id in op.entities:
-                    atom = self.branch_manager.get_atom(entity_id)
-                    if atom is None:
-                        continue
+            # Move divergent entities to the new slice
+            for entity_id in op.entities:
+                atom = self.branch_manager.get_atom(entity_id)
+                if atom is None:
+                    logger.warning("Entity '%s' not found, skipping split move.", entity_id)
+                    continue
 
-                    from dataclasses import replace
+                from dataclasses import replace
 
-                    updated = replace(atom, vertical_slice=new_slice.slice_id)
-                    self.branch_manager.register_atom(updated)
-                    changes.append(f"Moved '{entity_id}' to new slice '{new_slice.slice_id}'.")
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to create split slice '{new_slice_name}': {exc}"
-                ) from exc
+                updated = replace(atom, vertical_slice=new_slice.slice_id)
+                self.branch_manager.register_atom(updated)
+                changes.append(f"Moved '{entity_id}' to new slice '{new_slice.slice_id}'.")
+        except Exception as exc:
+            raise RuntimeError(f"Failed to create split slice '{new_slice_name}': {exc}") from exc
 
         return changes
 
@@ -236,44 +261,36 @@ class RefinementExecutor:
         return changes
 
     def _execute_remove(self, op: RefinementOperation) -> list[str]:
-        """Remove a grouping unit after redistributing its entities.
-
-        Entities are NOT deleted -- they become unassigned (vertical_slice=None).
-        The caller should MOVE them first if needed.
-        """
+        """Remove grouping unit(s) after unassigning their entities."""
         changes: list[str] = []
-        source = op.source if isinstance(op.source, str) else op.source[0]
+        sources = op.source if isinstance(op.source, list) else [op.source]
 
-        # Unassign all atoms from this slice
-        all_atoms = self.branch_manager.list_atoms()
-        for atom in all_atoms:
-            if atom.vertical_slice == source:
-                from dataclasses import replace
+        for source in sources:
+            # Unassign all atoms from this slice
+            all_atoms = self.branch_manager.list_atoms()
+            for atom in all_atoms:
+                if atom.vertical_slice == source:
+                    from dataclasses import replace
 
-                updated = replace(atom, vertical_slice=None)
-                self.branch_manager.register_atom(updated)
-                changes.append(f"Unassigned '{atom.atom_id}' from removed slice '{source}'.")
+                    updated = replace(atom, vertical_slice=None)
+                    self.branch_manager.register_atom(updated)
+                    changes.append(f"Unassigned '{atom.atom_id}' from removed slice '{source}'.")
+            self.branch_manager.remove_slice(source)
+            changes.append(f"Removed slice '{source}'.")
 
         return changes
 
     def _execute_modify(self, op: RefinementOperation) -> list[str]:
-        """Modify entity metadata (currently a no-op placeholder)."""
-        changes: list[str] = []
-
-        for entity_id in op.entities:
-            atom = self.branch_manager.get_atom(entity_id)
-            if atom is None:
-                logger.warning("Entity '%s' not found, skipping modify.", entity_id)
-                continue
-            # Modifications would be applied here based on op details
-            changes.append(f"Modified metadata for '{entity_id}'.")
-
-        return changes
+        """Modify entity metadata."""
+        raise NotImplementedError(
+            "MODIFY operations are not supported because RefinementOperation "
+            "does not define metadata patch payloads."
+        )
 
     # --- Private helpers ---
 
     def _capture_snapshot(self, op: RefinementOperation) -> dict:
-        """Capture pre-state for the entities affected by an operation."""
+        """Capture pre-state for all state mutated by an operation."""
         atom_slices: dict[str, str | None] = {}
 
         for entity_id in op.entities:
@@ -289,4 +306,7 @@ class RefinementExecutor:
                 if atom.vertical_slice in sources:
                     atom_slices[atom.atom_id] = atom.vertical_slice
 
-        return {"atom_slices": atom_slices}
+        return {
+            "atom_slices": atom_slices,
+            "slice_state": self.branch_manager.snapshot_slice_state(),
+        }

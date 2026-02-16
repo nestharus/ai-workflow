@@ -124,6 +124,52 @@ class SliceNavigator:
         """Get a vertical slice by ID."""
         return self._slices.get(slice_id)
 
+    def remove_slice(self, slice_id: str) -> None:
+        """Remove a vertical slice.
+
+        Args:
+            slice_id: The slice ID to remove.
+
+        Raises:
+            KeyError: If the slice does not exist.
+            ValueError: If the slice has child slices.
+        """
+        vs = self._slices.get(slice_id)
+        if vs is None:
+            raise KeyError(f"Slice not found: {slice_id}")
+        if vs.children:
+            raise ValueError(
+                f"Cannot remove slice '{slice_id}' while it has children: {', '.join(vs.children)}"
+            )
+
+        if vs.parent_slice_id is not None:
+            parent = self._slices.get(vs.parent_slice_id)
+            if parent is not None:
+                parent.children = [cid for cid in parent.children if cid != slice_id]
+
+        del self._slices[slice_id]
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Capture complete slice navigator state for rollback/replay."""
+        return {
+            "next_slice_number": self._next_slice_number,
+            "slices": [vs.to_dict() for vs in self._slices.values()],
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore slice navigator state from a prior snapshot."""
+        raw_slices = state.get("slices", [])
+        restored: dict[str, VerticalSlice] = {}
+        for raw_slice in raw_slices:
+            vs = VerticalSlice.from_dict(raw_slice)
+            restored[vs.slice_id] = vs
+        self._slices = restored
+        next_number = state.get("next_slice_number")
+        if isinstance(next_number, int) and next_number > 0:
+            self._next_slice_number = next_number
+        else:
+            self._next_slice_number = len(self._slices) + 1
+
     def list_root_slices(self) -> list[VerticalSlice]:
         """List all root-level vertical slices (no parent)."""
         return [vs for vs in self._slices.values() if vs.parent_slice_id is None]

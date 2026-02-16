@@ -1895,8 +1895,13 @@ class PddOrchestrator:
         for atom in all_atoms:
             adjacency_graph.add_node(atom.atom_id)
 
-        # Detect coupling/cohesion issues
-        issues = detect_all(adjacency_graph, grouping_units)
+        # Detect coupling/cohesion issues and account for graph-missing entities.
+        dropped_entities: list = []
+        issues = detect_all(
+            adjacency_graph,
+            grouping_units,
+            dropped_entities=dropped_entities,
+        )
 
         # Propose operations (analysis only — not executed)
         operations = propose_operations(issues)
@@ -1905,7 +1910,11 @@ class PddOrchestrator:
         valid_ops: list = []
         invalid_ops: list = []
         for op in operations:
-            errors = validate_operation(op, adjacency_graph)
+            errors = validate_operation(
+                op,
+                adjacency_graph,
+                source_memberships=slice_entities,
+            )
             if errors:
                 invalid_ops.append({"op": op.op_type, "errors": errors})
             else:
@@ -1921,6 +1930,8 @@ class PddOrchestrator:
             "operations_proposed": len(operations),
             "operations_valid": len(valid_ops),
             "operations_invalid": len(invalid_ops),
+            "dropped_entities": [de.__dict__ for de in dropped_entities],
+            "dropped_entity_count": len(dropped_entities),
         }
 
     def _post_phase_refinement_hook(self, pdd_phase: Phase) -> dict[str, Any] | None:

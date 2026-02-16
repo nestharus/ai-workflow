@@ -44,8 +44,7 @@ def propose_operations(issues: list[CouplingIssue]) -> list[RefinementOperation]
     """Propose restructuring operations from detected issues.
 
     Mapping rules:
-    - ``overlap`` with 2 units -> MOVE (move entity to the unit with more
-      internal edges to it); with 3+ units -> MERGE those units.
+    - ``overlap`` -> MOVE/MERGE using detector-provided edge evidence.
     - ``divergence`` -> SPLIT (one per disconnected cluster).
     - ``overload`` -> SPLIT (decompose the overloaded entity).
 
@@ -65,7 +64,9 @@ def propose_operations(issues: list[CouplingIssue]) -> list[RefinementOperation]
         elif issue.issue_type == "overload":
             ops = _propose_for_overload(issue)
         else:
-            continue
+            raise ValueError(
+                f"Unhandled issue_type '{issue.issue_type}' for unit '{issue.grouping_unit}'."
+            )
         operations.extend(ops)
 
     return operations
@@ -74,6 +75,7 @@ def propose_operations(issues: list[CouplingIssue]) -> list[RefinementOperation]
 def validate_operation(
     op: RefinementOperation,
     adjacency_graph: AdjacencyGraph,
+    source_memberships: dict[str, set[str]] | None = None,
 ) -> list[str]:
     """Validate that an operation won't break graph consistency.
 
@@ -86,6 +88,8 @@ def validate_operation(
     Args:
         op: The operation to validate.
         adjacency_graph: The current entity graph.
+        source_memberships: Optional projection of source unit -> member
+            entities. Required for full REMOVE blast-radius validation.
 
     Returns:
         List of validation error strings.  Empty means valid.
@@ -102,21 +106,57 @@ def validate_operation(
             )
 
     if op.op_type == "remove":
-        # Check that removing these entities won't orphan their neighbors
-        for entity_id in op.entities:
+        # REMOVE affects all entities in the source slice(s), not only op.entities.
+        sources = op.source if isinstance(op.source, list) else [op.source]
+        affected_entities = set(op.entities)
+        if source_memberships is None:
+            errors.append(
+                "REMOVE validation requires source_memberships to assess full "
+                "source-slice blast radius."
+            )
+        else:
+            for source in sources:
+                members = source_memberships.get(source)
+                if members is None:
+                    errors.append(f"REMOVE source '{source}' missing from source_memberships.")
+                    continue
+                affected_entities.update(members)
+
+        # Ensure all affected entities are known to the graph.
+        for entity_id in sorted(affected_entities):
+            if entity_id in graph_nodes:
+                continue
+            if entity_id in op.entities:
+                # Already reported by the generic entity existence check.
+                continue
+            errors.append(
+                f"Entity '{entity_id}' affected by remove operation is not "
+                "present in the adjacency graph."
+            )
+
+        # Check that removing affected entities won't orphan neighbors.
+        seen_orphans: set[tuple[str, str]] = set()
+        for entity_id in sorted(affected_entities):
             if entity_id not in graph_nodes:
                 continue
             neighbors = adjacency_graph.all_neighbors(entity_id)
             for neighbor_id, _edge in neighbors:
-                # If the neighbor is ONLY connected to the entity being
-                # removed, it will become orphaned
+                if neighbor_id in affected_entities:
+                    continue
                 neighbor_connections = adjacency_graph.all_neighbors(neighbor_id)
-                other_connections = [n for n, _ in neighbor_connections if n != entity_id]
-                if not other_connections and neighbor_id not in op.entities:
-                    errors.append(
-                        f"Removing '{entity_id}' would orphan '{neighbor_id}' "
-                        f"(its only connection)."
-                    )
+                remaining_connections = [
+                    n for n, _ in neighbor_connections if n not in affected_entities
+                ]
+                if remaining_connections:
+                    continue
+                key = (entity_id, neighbor_id)
+                if key in seen_orphans:
+                    continue
+                seen_orphans.add(key)
+                errors.append(
+                    f"Removing '{entity_id}' would orphan '{neighbor_id}' "
+                    "(its only remaining connections are removed)."
+                )
 
     if op.op_type == "move":
         # Source and target must be specified
@@ -144,19 +184,25 @@ def validate_operation(
 def _propose_for_overlap(issue: CouplingIssue) -> list[RefinementOperation]:
     """Propose operations for an overlap issue."""
     all_units = [issue.grouping_unit, *issue.related_units]
+    if len(all_units) < 2:
+        raise ValueError(
+            f"Overlap issue for '{issue.grouping_unit}' must include at least two units."
+        )
+    target_unit = _pick_overlap_target(issue, all_units)
+    entity_list = ", ".join(issue.entities)
 
     if len(all_units) == 2:
-        # Two units sharing an entity -> MOVE to the primary unit
+        source_unit = all_units[0] if target_unit == all_units[1] else all_units[1]
         return [
             RefinementOperation(
                 op_type="move",
-                source=all_units[1],
-                target=all_units[0],
+                source=source_unit,
+                target=target_unit,
                 entities=issue.entities,
                 rationale=(
-                    f"Entity {''.join(issue.entities)} is duplicated across "
+                    f"Entity {entity_list} is duplicated across "
                     f"{all_units[0]} and {all_units[1]}.  Move to "
-                    f"{all_units[0]} as the single source of truth."
+                    f"{target_unit} based on higher internal edge score."
                 ),
             )
         ]
@@ -166,12 +212,12 @@ def _propose_for_overlap(issue: CouplingIssue) -> list[RefinementOperation]:
             RefinementOperation(
                 op_type="merge",
                 source=all_units,
-                target=all_units[0],
+                target=target_unit,
                 entities=issue.entities,
                 rationale=(
-                    f"Entity {''.join(issue.entities)} is shared across "
+                    f"Entity {entity_list} is shared across "
                     f"{len(all_units)} units ({', '.join(all_units)}).  "
-                    f"Merge into {all_units[0]}."
+                    f"Merge into {target_unit} based on overlap edge evidence."
                 ),
             )
         ]
@@ -179,33 +225,71 @@ def _propose_for_overlap(issue: CouplingIssue) -> list[RefinementOperation]:
 
 def _propose_for_divergence(issue: CouplingIssue) -> list[RefinementOperation]:
     """Propose operations for a divergence issue."""
-    return [
-        RefinementOperation(
-            op_type="split",
-            source=issue.grouping_unit,
-            target=[f"{issue.grouping_unit}_split_{i}" for i in range(len(issue.entities))],
-            entities=issue.entities,
-            rationale=(
-                f"Unit '{issue.grouping_unit}' has disconnected clusters.  "
-                f"Split the {len(issue.entities)} divergent entities into "
-                f"separate cohesive units."
-            ),
+    if not issue.entity_clusters:
+        raise ValueError(
+            f"Divergence issue for '{issue.grouping_unit}' missing cluster "
+            "structure (entity_clusters)."
         )
-    ]
+
+    operations: list[RefinementOperation] = []
+    for idx, cluster in enumerate(issue.entity_clusters, start=1):
+        if not cluster:
+            raise ValueError(
+                f"Divergence issue for '{issue.grouping_unit}' contains an empty cluster."
+            )
+        operations.append(
+            RefinementOperation(
+                op_type="split",
+                source=issue.grouping_unit,
+                target=f"{issue.grouping_unit}_split_{idx}",
+                entities=cluster,
+                rationale=(
+                    f"Unit '{issue.grouping_unit}' has disconnected clusters.  "
+                    f"Split cluster {idx} ({', '.join(cluster)}) into its own "
+                    "cohesive unit."
+                ),
+            )
+        )
+    return operations
 
 
 def _propose_for_overload(issue: CouplingIssue) -> list[RefinementOperation]:
     """Propose operations for an overload issue."""
+    if not issue.entities:
+        raise ValueError(f"Overload issue for '{issue.grouping_unit}' is missing entities.")
+    overloaded_entity = issue.entities[0]
     return [
         RefinementOperation(
             op_type="split",
             source=issue.grouping_unit,
-            target=[issue.grouping_unit],
+            target=f"{issue.grouping_unit}_overload_{overloaded_entity}",
             entities=issue.entities,
             rationale=(
-                f"Entity '{issue.entities[0]}' in unit "
+                f"Entity '{overloaded_entity}' in unit "
                 f"'{issue.grouping_unit}' has excessive responsibilities.  "
                 f"Decompose into sub-entities."
             ),
         )
     ]
+
+
+def _pick_overlap_target(issue: CouplingIssue, all_units: list[str]) -> str:
+    """Choose overlap target unit using detector-provided edge scores."""
+    if not issue.unit_edge_scores:
+        raise ValueError(f"Overlap issue for '{issue.grouping_unit}' missing unit_edge_scores.")
+
+    missing_units = [unit for unit in all_units if unit not in issue.unit_edge_scores]
+    if missing_units:
+        raise ValueError(
+            f"Overlap issue for '{issue.grouping_unit}' missing scores for units: "
+            f"{', '.join(missing_units)}."
+        )
+
+    top_score = max(issue.unit_edge_scores[unit] for unit in all_units)
+    top_units = [unit for unit in all_units if issue.unit_edge_scores[unit] == top_score]
+    if len(top_units) != 1:
+        raise ValueError(
+            "Ambiguous overlap target: tie on internal edge scores for units "
+            f"{', '.join(sorted(top_units))}."
+        )
+    return top_units[0]

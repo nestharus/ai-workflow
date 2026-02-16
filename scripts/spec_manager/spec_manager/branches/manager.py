@@ -320,6 +320,22 @@ class BranchManager:
         """
         return self._slice_navigator.create_slice(name, parent)
 
+    def get_slice(self, slice_id: str) -> VerticalSlice | None:
+        """Get a vertical slice by ID."""
+        return self._slice_navigator.get_slice(slice_id)
+
+    def remove_slice(self, slice_id: str) -> None:
+        """Remove a vertical slice."""
+        self._slice_navigator.remove_slice(slice_id)
+
+    def snapshot_slice_state(self) -> dict[str, Any]:
+        """Capture complete slice state for atomic rollback."""
+        return self._slice_navigator.snapshot_state()
+
+    def restore_slice_state(self, state: dict[str, Any]) -> None:
+        """Restore complete slice state from a prior snapshot."""
+        self._slice_navigator.restore_state(state)
+
     def validate_store_monogamy(self) -> list[str]:
         """Validate that each store is in exactly one vertical slice.
 

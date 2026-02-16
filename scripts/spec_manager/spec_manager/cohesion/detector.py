@@ -14,10 +14,13 @@ confidence thresholds, no fuzzy matching.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
 from spec_manager.analysis.adjacency.graph import AdjacencyGraph
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -48,6 +51,8 @@ class CouplingIssue:
             metrics, not from heuristic confidence scores.
         description: Human-readable explanation of the issue.
         related_units: Other grouping unit IDs involved (for overlap).
+        entity_clusters: Disconnected entity clusters (for divergence).
+        unit_edge_scores: Per-unit neighbor counts for overlap evidence.
     """
 
     issue_type: Literal["overlap", "divergence", "overload"]
@@ -56,11 +61,24 @@ class CouplingIssue:
     severity: float
     description: str
     related_units: list[str] = field(default_factory=list)
+    entity_clusters: list[list[str]] = field(default_factory=list)
+    unit_edge_scores: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DroppedEntity:
+    """Entity excluded from detection because it was absent from the graph."""
+
+    unit_id: str
+    entity_id: str
+    detector: Literal["overlap", "divergence", "overload"]
 
 
 def detect_overlap(
     adjacency_graph: AdjacencyGraph,
     grouping_units: list[GroupingUnit],
+    *,
+    dropped_entities: list[DroppedEntity] | None = None,
 ) -> list[CouplingIssue]:
     """Detect entities that exist in multiple grouping units.
 
@@ -74,12 +92,14 @@ def detect_overlap(
     Args:
         adjacency_graph: The entity graph (used to verify node existence).
         grouping_units: The grouping units to check.
+        dropped_entities: Optional collector for entities missing from graph.
 
     Returns:
         List of CouplingIssue with issue_type="overlap".
     """
     issues: list[CouplingIssue] = []
     graph_nodes = set(adjacency_graph.nodes())
+    unit_entity_map = {unit.unit_id: set(unit.entity_ids) for unit in grouping_units}
 
     # Build entity -> [unit_id, ...] membership map
     entity_to_units: dict[str, list[str]] = {}
@@ -88,6 +108,14 @@ def detect_overlap(
             # Only consider entities that actually exist in the graph
             if entity_id in graph_nodes:
                 entity_to_units.setdefault(entity_id, []).append(unit.unit_id)
+            elif dropped_entities is not None:
+                dropped_entities.append(
+                    DroppedEntity(
+                        unit_id=unit.unit_id,
+                        entity_id=entity_id,
+                        detector="overlap",
+                    )
+                )
 
     total_units = len(grouping_units) if grouping_units else 1
 
@@ -95,6 +123,13 @@ def detect_overlap(
         if len(unit_ids) > 1:
             # Severity: fraction of units sharing this entity
             severity = min(1.0, len(unit_ids) / total_units)
+            neighbor_ids = {
+                neighbor_id for neighbor_id, _edge in adjacency_graph.all_neighbors(entity_id)
+            }
+            unit_edge_scores = {
+                unit_id: len((unit_entity_map.get(unit_id, set()) - {entity_id}) & neighbor_ids)
+                for unit_id in unit_ids
+            }
             issues.append(
                 CouplingIssue(
                     issue_type="overlap",
@@ -107,6 +142,7 @@ def detect_overlap(
                         f"Deduplicate to a single source of truth."
                     ),
                     related_units=unit_ids[1:],
+                    unit_edge_scores=unit_edge_scores,
                 )
             )
 
@@ -116,6 +152,8 @@ def detect_overlap(
 def detect_divergence(
     adjacency_graph: AdjacencyGraph,
     grouping_units: list[GroupingUnit],
+    *,
+    dropped_entities: list[DroppedEntity] | None = None,
 ) -> list[CouplingIssue]:
     """Detect grouping units whose entities have low internal connectivity.
 
@@ -131,6 +169,7 @@ def detect_divergence(
     Args:
         adjacency_graph: The entity graph.
         grouping_units: The grouping units to check.
+        dropped_entities: Optional collector for entities missing from graph.
 
     Returns:
         List of CouplingIssue with issue_type="divergence".
@@ -139,8 +178,20 @@ def detect_divergence(
     graph_nodes = set(adjacency_graph.nodes())
 
     for unit in grouping_units:
-        # Filter to entities that exist in the graph
-        valid_entities = unit.entity_ids & graph_nodes
+        # Filter to entities that exist in the graph while accounting for dropped input.
+        missing_entities = sorted(unit.entity_ids - graph_nodes)
+        if dropped_entities is not None:
+            dropped_entities.extend(
+                [
+                    DroppedEntity(
+                        unit_id=unit.unit_id,
+                        entity_id=entity_id,
+                        detector="divergence",
+                    )
+                    for entity_id in missing_entities
+                ]
+            )
+        valid_entities = unit.entity_ids - set(missing_entities)
         if len(valid_entities) < 2:
             # A unit with 0 or 1 entities cannot be divergent
             continue
@@ -153,9 +204,10 @@ def detect_divergence(
             # Report the entities in the smaller (non-primary) components
             # as the divergent set.  The largest component is the "core".
             components_sorted = sorted(components, key=len, reverse=True)
+            divergent_clusters = [sorted(comp) for comp in components_sorted[1:]]
             divergent_entities: list[str] = []
-            for comp in components_sorted[1:]:
-                divergent_entities.extend(sorted(comp))
+            for cluster in divergent_clusters:
+                divergent_entities.extend(cluster)
 
             issues.append(
                 CouplingIssue(
@@ -168,6 +220,7 @@ def detect_divergence(
                         f"disconnected clusters among its {len(valid_entities)} "
                         f"entities.  Consider splitting into cohesive units."
                     ),
+                    entity_clusters=divergent_clusters,
                 )
             )
 
@@ -177,6 +230,8 @@ def detect_divergence(
 def detect_overload(
     adjacency_graph: AdjacencyGraph,
     grouping_units: list[GroupingUnit],
+    *,
+    dropped_entities: list[DroppedEntity] | None = None,
 ) -> list[CouplingIssue]:
     """Detect entities with too many responsibilities (excessive edges).
 
@@ -191,6 +246,7 @@ def detect_overload(
     Args:
         adjacency_graph: The entity graph.
         grouping_units: The grouping units to check.
+        dropped_entities: Optional collector for entities missing from graph.
 
     Returns:
         List of CouplingIssue with issue_type="overload".
@@ -199,7 +255,19 @@ def detect_overload(
     graph_nodes = set(adjacency_graph.nodes())
 
     for unit in grouping_units:
-        valid_entities = unit.entity_ids & graph_nodes
+        missing_entities = sorted(unit.entity_ids - graph_nodes)
+        if dropped_entities is not None:
+            dropped_entities.extend(
+                [
+                    DroppedEntity(
+                        unit_id=unit.unit_id,
+                        entity_id=entity_id,
+                        detector="overload",
+                    )
+                    for entity_id in missing_entities
+                ]
+            )
+        valid_entities = unit.entity_ids - set(missing_entities)
         if len(valid_entities) < 3:
             # Need at least 3 entities to compute meaningful statistics
             continue
@@ -253,6 +321,8 @@ def detect_overload(
 def detect_all(
     adjacency_graph: AdjacencyGraph,
     grouping_units: list[GroupingUnit],
+    *,
+    dropped_entities: list[DroppedEntity] | None = None,
 ) -> list[CouplingIssue]:
     """Run all three detectors and return combined results.
 
@@ -261,14 +331,51 @@ def detect_all(
     Args:
         adjacency_graph: The entity graph.
         grouping_units: The grouping units to check.
+        dropped_entities: Optional collector for entities missing from graph.
 
     Returns:
         Combined list of all detected CouplingIssues, sorted by severity
         descending.
     """
     issues: list[CouplingIssue] = []
-    issues.extend(detect_overlap(adjacency_graph, grouping_units))
-    issues.extend(detect_divergence(adjacency_graph, grouping_units))
-    issues.extend(detect_overload(adjacency_graph, grouping_units))
+    dropped: list[DroppedEntity] = []
+    issues.extend(
+        detect_overlap(
+            adjacency_graph,
+            grouping_units,
+            dropped_entities=dropped,
+        )
+    )
+    issues.extend(
+        detect_divergence(
+            adjacency_graph,
+            grouping_units,
+            dropped_entities=dropped,
+        )
+    )
+    issues.extend(
+        detect_overload(
+            adjacency_graph,
+            grouping_units,
+            dropped_entities=dropped,
+        )
+    )
     issues.sort(key=lambda i: i.severity, reverse=True)
+    if dropped_entities is not None:
+        seen: set[tuple[str, str, str]] = set()
+        for dropped_entity in dropped:
+            key = (
+                dropped_entity.unit_id,
+                dropped_entity.entity_id,
+                dropped_entity.detector,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            dropped_entities.append(dropped_entity)
+    if dropped:
+        logger.warning(
+            "Skipped %d unit-entity assignments missing from adjacency graph.",
+            len(dropped),
+        )
     return issues
