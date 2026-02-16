@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.json_extraction import _extract_json_payload
+from spec_manager.core.language import is_test_path, is_test_symbol
 from spec_manager.refinement.formats import _strip_code_fences
 
 logger = logging.getLogger(__name__)
@@ -779,15 +780,14 @@ def _build_gap_pins(
 
 def _build_test_identity_hints(*, file_path: str, analysis: SourceAnalysis) -> list[dict[str, Any]]:
     hints: list[dict[str, Any]] = []
-    normalized_path = file_path.replace("\\", "/").lower()
-    file_looks_like_test = "/tests/" in normalized_path or normalized_path.endswith("_test.py")
+    file_looks_like_test = is_test_path(file_path)
     if file_looks_like_test:
         hints.append({"kind": "test_file", "file": file_path})
 
     for fn in analysis.functions:
         name = (fn.name or "").strip()
         qualified = (fn.qualified_name or fn.name or "").strip()
-        if name.startswith("test_") or qualified.startswith("Test"):
+        if is_test_symbol(name, qualified):
             hints.append(
                 {
                     "kind": "test_function",

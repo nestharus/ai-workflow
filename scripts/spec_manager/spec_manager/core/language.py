@@ -74,6 +74,15 @@ DECORATOR_PREFIX: str = "@"
 #: Test file naming patterns (basename globs).
 TEST_FILE_PATTERNS: list[str] = ["test_*.py", "*_test.py"]
 
+#: Path segments that indicate test code.
+TEST_PATH_SEGMENTS: frozenset[str] = frozenset({"test", "tests"})
+
+#: Function name prefixes that identify test functions.
+TEST_FUNCTION_PREFIXES: list[str] = ["test_"]
+
+#: Qualified-name prefixes that identify test classes or suites.
+TEST_QUALIFIED_PREFIXES: list[str] = ["Test"]
+
 #: Test configuration files that indicate a test framework.
 TEST_CONFIG_FILES: list[str] = ["pytest.ini", "pyproject.toml", "setup.cfg", "conftest.py"]
 
@@ -130,6 +139,28 @@ def is_test_file(filename: str) -> bool:
     import fnmatch
 
     return any(fnmatch.fnmatch(filename, pat) for pat in TEST_FILE_PATTERNS)
+
+
+def is_test_path(path: str) -> bool:
+    """Check if a path indicates test code via path segments or filename patterns."""
+    normalized = str(path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    parts = [segment.lower() for segment in normalized.split("/") if segment]
+    if any(segment in TEST_PATH_SEGMENTS for segment in parts):
+        return True
+    return is_test_file(parts[-1])
+
+
+def is_test_symbol(name: str, qualified_name: str = "") -> bool:
+    """Check if function/class naming indicates a test symbol."""
+    normalized_name = str(name or "").strip().lower()
+    normalized_qualified = str(qualified_name or "").strip().lower()
+    if any(normalized_name.startswith(prefix.lower()) for prefix in TEST_FUNCTION_PREFIXES):
+        return True
+    return any(
+        normalized_qualified.startswith(prefix.lower()) for prefix in TEST_QUALIFIED_PREFIXES
+    )
 
 
 def is_private_name(name: str) -> bool:

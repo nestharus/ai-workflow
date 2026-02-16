@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any
 
 from spec_manager.core.gap import Gap
@@ -42,16 +44,129 @@ class GapQueue:
         canonical = "|".join(sorted(open_sources))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
+    @staticmethod
+    def _gap_identity(gap: Gap) -> str:
+        """Build a stable identity key for gap reconciliation."""
+        normalized_sources = sorted({str(src).strip() for src in gap.source if str(src).strip()})
+        if normalized_sources:
+            source_key = "|".join(normalized_sources)
+        elif str(gap.derived_artifact_target).strip():
+            source_key = f"target:{str(gap.derived_artifact_target).strip()}"
+        else:
+            source_key = f"id:{gap.id}"
+        return f"{gap.gap_type.value}:{source_key}"
+
+    @staticmethod
+    def _severity_rank(gap: Gap) -> int:
+        value = str(gap.severity.value).lower()
+        if value == "error":
+            return 3
+        if value == "warning":
+            return 2
+        return 1
+
+    @classmethod
+    def _merge_gap_records(cls, baseline: Gap, incoming: Gap) -> Gap:
+        """Merge latest observation into existing gap while preserving stable identity metadata."""
+        merged = replace(
+            incoming,
+            id=baseline.id,
+            created_at=baseline.created_at or incoming.created_at,
+            source=sorted(set(baseline.source) | set(incoming.source)),
+            evidence=list(incoming.evidence),
+        )
+
+        # Preserve strongest severity seen so far.
+        if cls._severity_rank(baseline) > cls._severity_rank(merged):
+            merged.severity = baseline.severity
+
+        # Union evidence while keeping deterministic content-based uniqueness.
+        evidence_seen = {json.dumps(item.to_dict(), sort_keys=True) for item in merged.evidence}
+        for item in baseline.evidence:
+            key = json.dumps(item.to_dict(), sort_keys=True)
+            if key not in evidence_seen:
+                merged.evidence.append(item)
+                evidence_seen.add(key)
+
+        if not merged.resolution_pointer and baseline.resolution_pointer:
+            merged.resolution_pointer = baseline.resolution_pointer
+        if not merged.resolution_notes and baseline.resolution_notes:
+            merged.resolution_notes = baseline.resolution_notes
+
+        if merged.status == "open":
+            merged.resolved_at = None
+        else:
+            merged.resolved_at = (
+                merged.resolved_at or baseline.resolved_at or datetime.now().isoformat()
+            )
+        return merged
+
+    @staticmethod
+    def _retire_gap(gap: Gap) -> Gap:
+        """Retire an open gap that no longer appears in the latest observed set."""
+        retired = replace(gap)
+        if retired.status == "open":
+            retired.status = "integrated"
+            retired.resolved_at = retired.resolved_at or datetime.now().isoformat()
+            if not retired.resolution_notes:
+                retired.resolution_notes = (
+                    "Automatically retired by queue reconciliation; "
+                    "not observed in latest gap snapshot."
+                )
+        return retired
+
+    def _reconcile(self, current_gaps: list[Gap]) -> list[Gap]:
+        """Reconcile latest observed gaps with existing queue state."""
+        existing_by_identity: dict[str, Gap] = {}
+        for gap in self.gaps:
+            identity = self._gap_identity(gap)
+            gap_copy = replace(gap, source=list(gap.source), evidence=list(gap.evidence))
+            if identity in existing_by_identity:
+                existing_by_identity[identity] = self._merge_gap_records(
+                    existing_by_identity[identity], gap_copy
+                )
+            else:
+                existing_by_identity[identity] = gap_copy
+
+        incoming_by_identity: dict[str, Gap] = {}
+        for gap in current_gaps:
+            identity = self._gap_identity(gap)
+            gap_copy = replace(gap, source=list(gap.source), evidence=list(gap.evidence))
+            if identity in incoming_by_identity:
+                incoming_by_identity[identity] = self._merge_gap_records(
+                    incoming_by_identity[identity], gap_copy
+                )
+            else:
+                incoming_by_identity[identity] = gap_copy
+
+        reconciled: list[Gap] = []
+        seen: set[str] = set()
+        for identity, incoming in incoming_by_identity.items():
+            existing = existing_by_identity.get(identity)
+            if existing is not None:
+                reconciled.append(self._merge_gap_records(existing, incoming))
+                seen.add(identity)
+                continue
+            reconciled.append(incoming)
+
+        for identity, existing in existing_by_identity.items():
+            if identity in seen:
+                continue
+            reconciled.append(self._retire_gap(existing))
+
+        return reconciled
+
     def update(self, current_gaps: list[Gap]) -> None:
-        """Update queue with current gaps and check for stagnation."""
-        current_hash = self._compute_content_hash(current_gaps)
+        """Reconcile latest gaps into queue state and update stagnation markers."""
+        reconciled = self._reconcile(current_gaps)
+        current_hash = self._compute_content_hash(reconciled)
 
         if current_hash == self.last_content_hash and self.last_content_hash:
             self.stagnation_count += 1
         else:
             self.stagnation_count = 0
 
-        self.gaps = current_gaps
+        self.gaps = reconciled
         self.last_content_hash = current_hash
         self.is_stagnant = self.stagnation_count >= self.stagnation_threshold
 
