@@ -216,6 +216,26 @@ class LibsRegistry:
             return True
         return False
 
+    def move_entry(self, id_value: str, new_primary: str) -> bool:
+        """Move an existing ID declaration to a different primary library."""
+        entry = self.entries.get(id_value)
+        if entry is None:
+            return False
+
+        old_primary = entry.primary
+        if old_primary == new_primary:
+            self._library_ids.setdefault(new_primary, set()).add(id_value)
+            return True
+
+        if old_primary in self._library_ids:
+            self._library_ids[old_primary].discard(id_value)
+            if not self._library_ids[old_primary]:
+                del self._library_ids[old_primary]
+
+        entry.primary = new_primary
+        self._library_ids.setdefault(new_primary, set()).add(id_value)
+        return True
+
     def save(self, path: Path | None = None) -> None:
         """No-op: registry is derived from library files, not stored."""
         pass

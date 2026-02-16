@@ -69,11 +69,34 @@ class ReferencePattern:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
+        truncated_ids = self.referenced_ids[:10]
         return {
             "source_library": self.source_library,
             "target_library": self.target_library,
             "reference_count": self.reference_count,
-            "referenced_ids": self.referenced_ids[:10],  # Limit output
+            "referenced_ids": truncated_ids,
+            "referenced_ids_omitted": max(len(self.referenced_ids) - len(truncated_ids), 0),
+        }
+
+
+@dataclass
+class InvalidReference:
+    """Reference annotation that could not be resolved safely."""
+
+    source_library: str
+    referenced_id: str
+    line_number: int
+    raw_text: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "source_library": self.source_library,
+            "referenced_id": self.referenced_id,
+            "line_number": self.line_number,
+            "raw_text": self.raw_text,
+            "reason": self.reason,
         }
 
 
@@ -82,7 +105,9 @@ class RestructuringSuggestion:
     """A suggested restructuring action."""
 
     action: str  # "split", "merge", "move_ids"
-    libraries: list[str]
+    source_library: str | None
+    target_library: str | None
+    new_library: str | None
     ids: list[str]
     description: str
     priority: int  # Lower = higher priority
@@ -92,7 +117,9 @@ class RestructuringSuggestion:
         """Convert to dictionary representation."""
         return {
             "action": self.action,
-            "libraries": self.libraries,
+            "source_library": self.source_library,
+            "target_library": self.target_library,
+            "new_library": self.new_library,
             "ids": self.ids,
             "description": self.description,
             "priority": self.priority,
@@ -107,6 +134,7 @@ class AnalysisResult:
     divergence_candidates: list[DivergenceCandidate] = field(default_factory=list)
     convergence_candidates: list[ConvergenceCandidate] = field(default_factory=list)
     reference_patterns: list[ReferencePattern] = field(default_factory=list)
+    invalid_references: list[InvalidReference] = field(default_factory=list)
     suggestions: list[RestructuringSuggestion] = field(default_factory=list)
     adjacency_report: Any = None  # Optional AdjacencyReport from adjacency analysis
 
@@ -116,6 +144,7 @@ class AnalysisResult:
             "divergence_candidates": [d.to_dict() for d in self.divergence_candidates],
             "convergence_candidates": [c.to_dict() for c in self.convergence_candidates],
             "reference_patterns": [r.to_dict() for r in self.reference_patterns],
+            "invalid_references": [i.to_dict() for i in self.invalid_references],
             "suggestions": [s.to_dict() for s in self.suggestions],
         }
         if self.adjacency_report is not None:
@@ -261,7 +290,7 @@ def detect_convergence(
 def analyze_references(
     libraries_dir: Path,
     registry: LibsRegistry,
-) -> list[ReferencePattern]:
+) -> tuple[list[ReferencePattern], list[InvalidReference]]:
     """Analyze cross-library reference patterns.
 
     Examines (@[+ID]) and (@[=ID]) references to find patterns
@@ -272,9 +301,12 @@ def analyze_references(
         registry: The libs.md registry
 
     Returns:
-        List of ReferencePattern showing cross-library references
+        Tuple of:
+        - List of ReferencePattern showing cross-library references
+        - List of invalid or unresolved references found during analysis
     """
     patterns: list[ReferencePattern] = []
+    invalid_references: list[InvalidReference] = []
     parser = AnnotationParser()
     validator = IdValidator()
 
@@ -289,10 +321,30 @@ def analyze_references(
         for annotation in parser.parse_references(content):
             id_value = annotation.id_value
             if not validator.is_valid(id_value):
+                invalid_references.append(
+                    InvalidReference(
+                        source_library=lib_name,
+                        referenced_id=id_value,
+                        line_number=annotation.line_number,
+                        raw_text=annotation.raw_text,
+                        reason="invalid_reference_id_format",
+                    )
+                )
                 continue
 
             # Find target library
             target_lib = registry.get_primary(id_value)
+            if target_lib is None:
+                invalid_references.append(
+                    InvalidReference(
+                        source_library=lib_name,
+                        referenced_id=id_value,
+                        line_number=annotation.line_number,
+                        raw_text=annotation.raw_text,
+                        reason="unknown_reference_id",
+                    )
+                )
+                continue
             if target_lib and target_lib != lib_name:
                 cross_refs[lib_name][target_lib].append(id_value)
 
@@ -304,14 +356,14 @@ def analyze_references(
                     source_library=source_lib,
                     target_library=target_lib,
                     reference_count=len(ids),
-                    referenced_ids=list(set(ids)),  # Dedupe
+                    referenced_ids=list(ids),
                 )
             )
 
     # Sort by reference count
     patterns.sort(key=lambda p: -p.reference_count)
 
-    return patterns
+    return patterns, invalid_references
 
 
 def suggest_restructuring(
@@ -340,7 +392,9 @@ def suggest_restructuring(
             suggestions.append(
                 RestructuringSuggestion(
                     action="split",
-                    libraries=[d.library],
+                    source_library=d.library,
+                    target_library=None,
+                    new_library=d.suggested_split,
                     ids=d.ids_to_move,
                     description=(
                         f"Split {len(d.ids_to_move)} IDs from {d.library} into {d.suggested_split}"
@@ -356,7 +410,9 @@ def suggest_restructuring(
             suggestions.append(
                 RestructuringSuggestion(
                     action="merge",
-                    libraries=[c.library1, c.library2],
+                    source_library=c.library1,
+                    target_library=c.library2,
+                    new_library=None,
                     ids=c.shared_context_ids,
                     description=(
                         f"Merge {c.library1} and {c.library2} ({len(c.shared_context_ids)} shared)"
@@ -372,7 +428,9 @@ def suggest_restructuring(
             suggestions.append(
                 RestructuringSuggestion(
                     action="move_ids",
-                    libraries=[p.source_library, p.target_library],
+                    source_library=p.target_library,
+                    target_library=p.source_library,
+                    new_library=None,
                     ids=p.referenced_ids[:5],
                     description=(
                         f"Consider moving frequently-referenced IDs from "
@@ -406,7 +464,10 @@ def run_analysis(
 
     result.divergence_candidates = detect_divergence(registry, libraries_dir)
     result.convergence_candidates = detect_convergence(registry, libraries_dir)
-    result.reference_patterns = analyze_references(libraries_dir, registry)
+    (
+        result.reference_patterns,
+        result.invalid_references,
+    ) = analyze_references(libraries_dir, registry)
     result.suggestions = suggest_restructuring(
         result.divergence_candidates,
         result.convergence_candidates,

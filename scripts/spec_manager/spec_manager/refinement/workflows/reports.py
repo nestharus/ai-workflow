@@ -1047,6 +1047,7 @@ def generate_analysis_report(manager: WorkspaceManager) -> str:
         Markdown content string. Also writes to reports/analysis.md.
     """
     from spec_manager.analysis.generator import (
+        AnalysisGenerationUnavailableError,
         generate_analysis_file,
         read_analysis_json,
         write_analysis_json,
@@ -1068,11 +1069,17 @@ def generate_analysis_report(manager: WorkspaceManager) -> str:
         # Generate on the fly.
         algorithmic_dir = manager.structure.spec_snapshot_dir
         architectural_dir = manager.structure.libraries_dir
-        analysis = generate_analysis_file(
-            algorithmic_dir=algorithmic_dir,
-            architectural_dir=architectural_dir,
-            run_id=manager.run_id,
-        )
+        try:
+            analysis = generate_analysis_file(
+                algorithmic_dir=algorithmic_dir,
+                architectural_dir=architectural_dir,
+                run_id=manager.run_id,
+            )
+        except AnalysisGenerationUnavailableError as exc:
+            raise RuntimeError(
+                "Analysis report generation requires a pre-generated analysis JSON artifact "
+                "because on-demand analysis generation is unavailable."
+            ) from exc
         manager.structure.analysis_dir.mkdir(parents=True, exist_ok=True)
         write_analysis_json(analysis, analysis_json_path)
         logger.info("Generated analysis JSON: %s", analysis_json_path)

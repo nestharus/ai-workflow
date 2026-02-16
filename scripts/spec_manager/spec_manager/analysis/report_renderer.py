@@ -7,6 +7,17 @@ from spec_manager.schemas.lineage import (
     AtomAnalysisEntry,
 )
 
+REQUIRED_SUMMARY_KEYS = (
+    "total_atoms",
+    "implemented_atoms",
+    "unimplemented_atoms",
+    "orphaned_architecture",
+    "pass_through_imports",
+    "wrap_imports",
+    "smear_imports",
+    "total_lineage_edges",
+)
+
 
 def render_analysis_markdown(analysis: AnalysisFileSchema) -> str:
     """Render a complete analysis artifact as Markdown.
@@ -189,16 +200,19 @@ def render_summary_table(analysis: AnalysisFileSchema) -> str:
         Markdown table string.
     """
     summary = analysis.summary
+    missing_keys = [key for key in REQUIRED_SUMMARY_KEYS if key not in summary]
+    if missing_keys:
+        raise ValueError(f"Analysis summary is missing required metrics: {', '.join(missing_keys)}")
 
     rows: list[tuple[str, str]] = [
-        ("Total atoms", str(summary.get("total_atoms", 0))),
-        ("Implemented atoms", str(summary.get("implemented_atoms", 0))),
-        ("Unimplemented atoms", str(summary.get("unimplemented_atoms", 0))),
-        ("Orphaned architecture", str(summary.get("orphaned_architecture", 0))),
-        ("Pass-through imports", str(summary.get("pass_through_imports", 0))),
-        ("Wrap imports", str(summary.get("wrap_imports", 0))),
-        ("Smear imports", str(summary.get("smear_imports", 0))),
-        ("Total lineage edges", str(summary.get("total_lineage_edges", 0))),
+        ("Total atoms", str(summary["total_atoms"])),
+        ("Implemented atoms", str(summary["implemented_atoms"])),
+        ("Unimplemented atoms", str(summary["unimplemented_atoms"])),
+        ("Orphaned architecture", str(summary["orphaned_architecture"])),
+        ("Pass-through imports", str(summary["pass_through_imports"])),
+        ("Wrap imports", str(summary["wrap_imports"])),
+        ("Smear imports", str(summary["smear_imports"])),
+        ("Total lineage edges", str(summary["total_lineage_edges"])),
     ]
 
     lines: list[str] = []

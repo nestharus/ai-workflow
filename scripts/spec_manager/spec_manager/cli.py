@@ -1105,6 +1105,7 @@ def cmd_phase_02(args: argparse.Namespace) -> int:
 def cmd_generate_analysis(args: argparse.Namespace) -> int:
     """Generate the analysis file (computed artifact)."""
     from spec_manager.analysis.generator import (
+        AnalysisGenerationUnavailableError,
         generate_analysis_file,
         write_analysis_json,
     )
@@ -1117,11 +1118,15 @@ def cmd_generate_analysis(args: argparse.Namespace) -> int:
     print(f"  Algorithmic dir: {spec_folder}")
     print(f"  Architectural dir: {libraries_dir}")
 
-    analysis = generate_analysis_file(
-        algorithmic_dir=spec_folder,
-        architectural_dir=libraries_dir,
-        run_id="",
-    )
+    try:
+        analysis = generate_analysis_file(
+            algorithmic_dir=spec_folder,
+            architectural_dir=libraries_dir,
+            run_id="",
+        )
+    except AnalysisGenerationUnavailableError as exc:
+        print(f"Analysis generation unavailable: {exc}", file=sys.stderr)
+        return 1
 
     output_format = args.format if hasattr(args, "format") else "both"
 

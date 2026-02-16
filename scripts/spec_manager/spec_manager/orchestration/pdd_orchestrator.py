@@ -1158,7 +1158,11 @@ class PddOrchestrator:
         """
         import json
 
-        from spec_manager.analysis.generator import generate_analysis_file, write_analysis_json
+        from spec_manager.analysis.generator import (
+            AnalysisGenerationUnavailableError,
+            generate_analysis_file,
+            write_analysis_json,
+        )
         from spec_manager.projection.generator import ProjectionGenerator
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
@@ -1248,15 +1252,20 @@ class PddOrchestrator:
         # 4. Generate analysis file (atom registry, imports, adjacency, data flow)
         spec_snapshot = self.manager.structure.spec_snapshot_dir
         if spec_snapshot.exists():
-            analysis = generate_analysis_file(
-                algorithmic_dir=spec_snapshot,
-                architectural_dir=root,
-                run_id=self.manager.run_id,
-            )
-            analysis_path = root / "analysis.json"
-            write_analysis_json(analysis, analysis_path)
-            outputs["analysis_path"] = str(analysis_path)
-            outputs["analysis_atoms"] = len(analysis.atoms)
+            try:
+                analysis = generate_analysis_file(
+                    algorithmic_dir=spec_snapshot,
+                    architectural_dir=root,
+                    run_id=self.manager.run_id,
+                )
+            except AnalysisGenerationUnavailableError as exc:
+                outputs["analysis_generation_error"] = str(exc)
+                logger.warning("Analysis generation unavailable: %s", exc)
+            else:
+                analysis_path = root / "analysis.json"
+                write_analysis_json(analysis, analysis_path)
+                outputs["analysis_path"] = str(analysis_path)
+                outputs["analysis_atoms"] = len(analysis.atoms)
 
         # 5. Load libraries + elements for projection plan
         libraries: list[Library] = []

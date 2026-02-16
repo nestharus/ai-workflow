@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 from spec_manager.schemas.lineage import AnalysisFileSchema
 
 logger = logging.getLogger(__name__)
+
+
+class AnalysisGenerationUnavailableError(RuntimeError):
+    """Raised when full analysis generation is requested but unavailable."""
 
 
 def generate_analysis_file(
@@ -24,40 +27,30 @@ def generate_analysis_file(
     store_definitions: dict[str, list[str]] | None = None,
     run_id: str = "",
 ) -> AnalysisFileSchema:
-    """Generate a minimal analysis file artifact.
+    """Generate a full analysis artifact.
 
-    The full analysis pipeline (import scanning, projection classification,
-    data-flow extraction) has been removed.  This stub returns a valid but
-    empty schema so that callers continue to work.
+    The underlying generation pipeline was removed. Callers must not treat
+    this as a successful no-op because that silently loses requirements.
 
     Args:
-        algorithmic_dir: Root of algorithmic layer source files (unused).
-        architectural_dir: Root of architectural layer source files (unused).
-        atom_to_section: Optional pre-built atom-to-section index (unused).
-        store_definitions: Optional store-to-atoms mapping (unused).
+        algorithmic_dir: Root of algorithmic layer source files.
+        architectural_dir: Root of architectural layer source files.
+        atom_to_section: Optional pre-built atom-to-section index.
+        store_definitions: Optional store-to-atoms mapping.
         run_id: Run identifier for the artifact.
 
-    Returns:
-        Minimal AnalysisFileSchema artifact.
+    Raises:
+        AnalysisGenerationUnavailableError: Always, until the generation
+            pipeline is reintroduced.
     """
-    generated_at = datetime.now(UTC).isoformat()
-
-    return AnalysisFileSchema(
-        run_id=run_id,
-        generated_at=generated_at,
-        atoms=[],
-        orphaned_architecture=[],
-        summary={
-            "total_atoms": 0,
-            "implemented_atoms": 0,
-            "unimplemented_atoms": 0,
-            "orphaned_architecture": 0,
-            "pass_through_imports": 0,
-            "wrap_imports": 0,
-            "smear_imports": 0,
-            "total_lineage_edges": 0,
-        },
+    message = (
+        "Analysis generation is unavailable: the import-scanning/data-flow pipeline "
+        "was removed and this API can no longer produce a faithful artifact. "
+        "algorithmic_dir="
+        f"{algorithmic_dir}, architectural_dir={architectural_dir}, run_id={run_id!r}."
     )
+    logger.error(message)
+    raise AnalysisGenerationUnavailableError(message)
 
 
 def write_analysis_json(

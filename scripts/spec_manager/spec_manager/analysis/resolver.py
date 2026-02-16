@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,38 +22,30 @@ from spec_manager.core.sections import Section, SectionExtractor
 
 
 def _cleanup_stale_references(content: str, deleted_lib: str) -> str:
-    """Remove references to a deleted library from content.
+    """Clean explicit markdown links to a deleted library.
 
-    Cleans up patterns like:
-    - "reference algorithms.md" -> remove line or rephrase
-    - "heavily reference algorithms.md" -> remove sentence
-    - "Additional algorithms that..." -> remove if about deleted lib
+    This only transforms machine-readable markdown links and leaves natural
+    language mentions untouched to avoid accidental data loss.
     """
-    lines = content.split("\n")
-    cleaned_lines = []
+    escaped_lib = re.escape(deleted_lib)
+    link_pattern = re.compile(rf"\[([^\]]+)\]\((?:[^)]+/)?{escaped_lib}\.md(?:#[^)]+)?\)")
+    return link_pattern.sub(r"\1", content)
 
-    for line in lines:
-        # Skip lines that are primarily about the deleted library
-        if re.search(
-            rf"\b{deleted_lib}(\.md)?\b", line, re.IGNORECASE
-        ) and not line.strip().startswith("###"):
-            # Skip lines like "Additional algorithms that heavily reference algorithms.md"
-            # or "Merged from algorithms"
-            lower_line = line.lower()
-            if any(
-                phrase in lower_line
-                for phrase in [
-                    "merged from",
-                    "reference " + deleted_lib.lower(),
-                    "references " + deleted_lib.lower(),
-                    "heavily reference",
-                    "additional " + deleted_lib.lower(),
-                ]
-            ):
-                continue
-        cleaned_lines.append(line)
 
-    return "\n".join(cleaned_lines)
+def _create_backup(path: Path) -> Path:
+    """Create an additive backup copy before mutating or deleting a file."""
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = path.parent / ".restructure_backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    backup_path = backup_dir / f"{path.name}.{timestamp}.bak"
+    counter = 1
+    while backup_path.exists():
+        backup_path = backup_dir / f"{path.name}.{timestamp}.{counter}.bak"
+        counter += 1
+
+    backup_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    return backup_path
 
 
 @dataclass
@@ -86,6 +79,7 @@ class ResolutionResult:
     actions: list[ResolutionAction] = field(default_factory=list)
     total_applied: int = 0
     total_failed: int = 0
+    total_skipped: int = 0
     registry_updated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +87,7 @@ class ResolutionResult:
             "actions": [a.to_dict() for a in self.actions],
             "total_applied": self.total_applied,
             "total_failed": self.total_failed,
+            "total_skipped": self.total_skipped,
             "registry_updated": self.registry_updated,
         }
 
@@ -182,6 +177,9 @@ def resolve_merge(
     # Clean up any references to the deleted source library
     target_content = _cleanup_stale_references(target_content, source_lib)
 
+    target_backup = _create_backup(target_path)
+    source_backup = _create_backup(source_path)
+
     # Write merged content
     target_path.write_text(target_content, encoding="utf-8")
 
@@ -189,7 +187,7 @@ def resolve_merge(
     ids_moved = []
     for entry in registry.iter_entries():
         if entry.primary == source_lib:
-            entry.primary = target_lib
+            registry.move_entry(entry.id_value, target_lib)
             ids_moved.append(entry.id_value)
 
     # Delete source file
@@ -202,6 +200,7 @@ def resolve_merge(
             f"Merged {source_lib} ({len(source_result.sections)} sections) into {target_lib}"
         ),
         files_modified=[str(target_path)],
+        files_created=[str(target_backup), str(source_backup)],
         files_deleted=[str(source_path)],
     )
 
@@ -299,22 +298,20 @@ def resolve_split(
             kept_content.append(line)
 
     # Write files
+    source_backup = _create_backup(source_path)
     new_path.write_text(new_content.rstrip() + "\n", encoding="utf-8")
     source_path.write_text("\n".join(kept_content).rstrip() + "\n", encoding="utf-8")
 
     # Update registry
     for id_value in sections_to_move:
-        for entry in registry.iter_entries():
-            if entry.id_value == id_value:
-                entry.primary = new_library
-                break
+        registry.move_entry(id_value, new_library)
 
     return ResolutionAction(
         action="split",
         success=True,
         description=f"Split {len(sections_to_move)} sections from {library} into {new_library}",
         files_modified=[str(source_path)],
-        files_created=[str(new_path)],
+        files_created=[str(new_path), str(source_backup)],
     )
 
 
@@ -404,21 +401,37 @@ def resolve_move_ids(
             kept_content.append(line)
 
     # Write files
+    source_backup = _create_backup(source_path)
+    target_backup = _create_backup(target_path)
     target_path.write_text(target_content.rstrip() + "\n", encoding="utf-8")
     source_path.write_text("\n".join(kept_content).rstrip() + "\n", encoding="utf-8")
 
     # Update registry
     for id_value in sections_to_move:
-        for entry in registry.iter_entries():
-            if entry.id_value == id_value:
-                entry.primary = target_lib
-                break
+        registry.move_entry(id_value, target_lib)
 
     return ResolutionAction(
         action="move_ids",
         success=True,
         description=f"Moved {len(sections_to_move)} IDs from {source_lib} to {target_lib}",
         files_modified=[str(source_path), str(target_path)],
+        files_created=[str(source_backup), str(target_backup)],
+    )
+
+
+def _build_skipped_action(
+    suggestion: RestructuringSuggestion,
+    reason: str,
+    *,
+    dry_run: bool = False,
+) -> ResolutionAction:
+    """Build a structured skipped action for diagnosability."""
+    mode_prefix = "[DRY RUN] " if dry_run else ""
+    return ResolutionAction(
+        action=suggestion.action,
+        success=False,
+        description=f"{mode_prefix}Skipped {suggestion.description}",
+        error=reason,
     )
 
 
@@ -445,12 +458,22 @@ def resolve_suggestions(
     """
     result = ResolutionResult()
 
-    # Filter by confidence
-    high_confidence = [s for s in suggestions if s.confidence >= min_confidence]
-
     if dry_run:
-        # Just report what would be done
-        for suggestion in high_confidence:
+        for suggestion in suggestions:
+            if suggestion.confidence < min_confidence:
+                result.actions.append(
+                    _build_skipped_action(
+                        suggestion,
+                        (
+                            f"confidence {suggestion.confidence:.2f} is below "
+                            f"minimum {min_confidence:.2f}"
+                        ),
+                        dry_run=True,
+                    )
+                )
+                result.total_skipped += 1
+                continue
+
             result.actions.append(
                 ResolutionAction(
                     action=suggestion.action,
@@ -458,15 +481,28 @@ def resolve_suggestions(
                     description=f"[DRY RUN] Would {suggestion.description}",
                 )
             )
-        result.total_applied = len(high_confidence)
+            result.total_applied += 1
         return result
 
     # Apply each suggestion
-    for suggestion in high_confidence:
-        if suggestion.action == "merge" and len(suggestion.libraries) >= 2:
+    for suggestion in suggestions:
+        if suggestion.confidence < min_confidence:
+            result.actions.append(
+                _build_skipped_action(
+                    suggestion,
+                    (
+                        f"confidence {suggestion.confidence:.2f} is below "
+                        f"minimum {min_confidence:.2f}"
+                    ),
+                )
+            )
+            result.total_skipped += 1
+            continue
+
+        if suggestion.action == "merge" and suggestion.source_library and suggestion.target_library:
             action = resolve_merge(
-                suggestion.libraries[0],
-                suggestion.libraries[1],
+                suggestion.source_library,
+                suggestion.target_library,
                 libraries_dir,
                 registry,
             )
@@ -476,13 +512,15 @@ def resolve_suggestions(
             else:
                 result.total_failed += 1
 
-        elif suggestion.action == "split" and len(suggestion.libraries) >= 1 and suggestion.ids:
-            # Generate split name from first library + category hint
-            source_lib = suggestion.libraries[0]
-            new_lib = f"{source_lib}_split"
+        elif (
+            suggestion.action == "split"
+            and suggestion.source_library
+            and suggestion.new_library
+            and suggestion.ids
+        ):
             action = resolve_split(
-                source_lib,
-                new_lib,
+                suggestion.source_library,
+                suggestion.new_library,
                 suggestion.ids,
                 libraries_dir,
                 registry,
@@ -493,10 +531,15 @@ def resolve_suggestions(
             else:
                 result.total_failed += 1
 
-        elif suggestion.action == "move_ids" and len(suggestion.libraries) >= 2 and suggestion.ids:
+        elif (
+            suggestion.action == "move_ids"
+            and suggestion.source_library
+            and suggestion.target_library
+            and suggestion.ids
+        ):
             action = resolve_move_ids(
-                suggestion.libraries[1],  # From target
-                suggestion.libraries[0],  # To source
+                suggestion.source_library,
+                suggestion.target_library,
                 suggestion.ids,
                 libraries_dir,
                 registry,
@@ -506,6 +549,14 @@ def resolve_suggestions(
                 result.total_applied += 1
             else:
                 result.total_failed += 1
+        else:
+            result.actions.append(
+                _build_skipped_action(
+                    suggestion,
+                    "unsupported action or missing required library fields",
+                )
+            )
+            result.total_skipped += 1
 
     # Save updated registry if any changes were made
     if result.total_applied > 0:
