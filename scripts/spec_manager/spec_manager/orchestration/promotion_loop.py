@@ -1837,6 +1837,144 @@ class GapExplorationStep:
             "pin_registry": pin_registry_payload,
         }
 
+    def _infer_promoted_evidence(
+        self,
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        slice_root: Path,
+        arch_artifacts: list[dict[str, str]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Infer promoted pin/edge evidence via LLM code signals when stored evidence is missing."""
+        from spec_manager.core.code_analysis import infer_code_signals
+        from spec_manager.core.language import source_rglob
+
+        workspace = Path(ctx.workspace_root) if ctx.workspace_root else slice_root
+        candidate_files: list[tuple[str, str]] = []
+
+        for artifact in arch_artifacts:
+            rel_path = str(artifact.get("path", "")).strip()
+            if not rel_path:
+                continue
+            content = str(artifact.get("content", ""))
+            if not content:
+                candidate = slice_root / rel_path
+                if candidate.exists() and candidate.is_file():
+                    try:
+                        content = candidate.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        content = ""
+            if content:
+                candidate_files.append((rel_path, content))
+
+        if not candidate_files:
+            for candidate in source_rglob(slice_root):
+                try:
+                    rel_path = str(candidate.relative_to(slice_root))
+                    content = candidate.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError, ValueError):
+                    continue
+                candidate_files.append((rel_path, content))
+
+        inferred_edges: list[dict[str, Any]] = []
+        seen_edges: set[str] = set()
+        pin_ids: set[str] = set()
+        for rel_path, content in candidate_files:
+            try:
+                signals = infer_code_signals(
+                    file_path=rel_path,
+                    source_text=content,
+                    spans=[],
+                    requested={"import_edges", "relationship_edges"},
+                    workspace=workspace,
+                    run_id=ctx.run_id or bundle.run_id,
+                )
+            except Exception as exc:
+                logger.debug("L2 promoted-evidence inference failed for %s: %s", rel_path, exc)
+                continue
+
+            raw_edges = []
+            for key in ("import_edges", "relationship_edges", "edges"):
+                value = signals.get(key)
+                if isinstance(value, list):
+                    raw_edges.extend(item for item in value if isinstance(item, dict))
+
+            for edge in raw_edges:
+                src = str(
+                    edge.get("pin_func_id")
+                    or edge.get("src")
+                    or edge.get("src_id")
+                    or edge.get("imported_name")
+                    or ""
+                ).strip()
+                dst = str(
+                    edge.get("arch_location")
+                    or edge.get("dst")
+                    or edge.get("dst_id")
+                    or edge.get("importer_location")
+                    or ""
+                ).strip()
+                if not src or not dst:
+                    continue
+                signal = _canonical_signal(edge.get("signal_type"))
+                projection_type = str(edge.get("projection_type") or "").strip().lower()
+                if not projection_type:
+                    if signal == "EVENT":
+                        projection_type = "event_bridge"
+                    elif signal == "STORE_TOUCH":
+                        projection_type = "aggregation"
+                    else:
+                        projection_type = "pass_through"
+                arch_file_path = str(edge.get("arch_file_path") or rel_path).strip()
+                edge_fingerprint = f"{src}|{dst}|{projection_type}|{arch_file_path}"
+                if edge_fingerprint in seen_edges:
+                    continue
+                seen_edges.add(edge_fingerprint)
+                line_raw = edge.get("line_no") or edge.get("line") or 0
+                try:
+                    arch_line = int(line_raw)
+                except (TypeError, ValueError):
+                    arch_line = 0
+                confidence_raw = edge.get("confidence", 0.6)
+                try:
+                    confidence = float(confidence_raw)
+                except (TypeError, ValueError):
+                    confidence = 0.6
+                inferred_edges.append(
+                    {
+                        "pin_func_id": src,
+                        "src": src,
+                        "arch_location": dst,
+                        "dst": dst,
+                        "arch_file_path": arch_file_path,
+                        "arch_line": arch_line,
+                        "projection_type": projection_type,
+                        "signal_type": signal,
+                        "confidence": confidence,
+                        "is_direct_import": bool(edge.get("is_direct_import", False)),
+                    }
+                )
+                pin_ids.add(src)
+
+        inferred_pins = [
+            {
+                "pin_func_id": pin_id,
+                "function_name": pin_id.rsplit(".", 1)[-1],
+                "module_path": pin_id.rsplit(".", 1)[0] if "." in pin_id else "",
+                "file_path": "",
+                "line_start": 0,
+                "line_end": 0,
+                "signature": "",
+                "docstring": "",
+                "content_hash": "",
+                "is_shape": False,
+                "store_touches": [],
+                "evidence_atom_ids": [],
+            }
+            for pin_id in sorted(pin_ids)
+        ]
+        return {"pins": inferred_pins, "edges": inferred_edges}
+
     @classmethod
     def _entrypoint_present(
         cls,
@@ -2068,19 +2206,45 @@ class GapExplorationStep:
                 )
             )
         if not promoted_pins and not promoted_edges:
-            gaps.append(
-                self._l2_gap(
-                    kind="l2_promoted_evidence_missing",
-                    component_id="",
-                    file_path=str(slice_root / ".spec" / "pin_registry.json"),
-                    anchor="promoted_pin_edge_evidence",
-                    description="No promoted pins/edges were available in scope for this slice.",
-                    expected=(
-                        "Promoted pins and edges should be loaded before L2 continuity analysis."
-                    ),
-                    severity="BLOCKER",
-                )
+            inferred = self._infer_promoted_evidence(
+                ctx=ctx,
+                bundle=bundle,
+                slice_root=slice_root,
+                arch_artifacts=arch_artifacts,
             )
+            promoted_pins = [item for item in inferred.get("pins", []) if isinstance(item, dict)]
+            promoted_edges = [item for item in inferred.get("edges", []) if isinstance(item, dict)]
+            if promoted_pins or promoted_edges:
+                claims = [
+                    item for item in (bundle.facts.llm_claims or []) if isinstance(item, dict)
+                ]
+                claims.append(
+                    {
+                        "claim": "Inferred promoted pin/edge evidence via code-analysis signals.",
+                        "evidence_refs": [bundle.gaps.path] if bundle.gaps.path else [],
+                        "confidence": 0.6,
+                        "produced_by_step": "GAP_EXPLORATION",
+                    }
+                )
+                bundle.facts.llm_claims = claims
+            else:
+                gaps.append(
+                    self._l2_gap(
+                        kind="l2_promoted_evidence_inference_failed",
+                        component_id="",
+                        file_path=str(slice_root / ".spec" / "pin_registry.json"),
+                        anchor="promoted_pin_edge_evidence",
+                        description=(
+                            "Promoted pin/edge evidence was missing and inference returned "
+                            "no usable relationship edges."
+                        ),
+                        expected=(
+                            "Inference fallback should produce promotable adjacency evidence "
+                            "when stored pin/edge artifacts are missing."
+                        ),
+                        severity="MAJOR",
+                    )
+                )
 
         for issue in discovery_issues:
             gaps.append(
@@ -9107,7 +9271,22 @@ class PromotionLoop:
         retry_tracker: dict[tuple[str, str], int] = {}
         retry_budget = 3
 
-        bundle: EvidenceBundle | None = None
+        bundle = EvidenceBundle(
+            run_id=run_context.run_id,
+            slice_id=slice_ref.slice_id,
+            iteration=0,
+            created_at=_now_iso(),
+            mode=run_context.mode,
+            workspace_root=run_context.workspace_root,
+            slice_root=slice_ref.worktree_path,
+        )
+        if seed_gap_set and seed_gap_set.open_gaps:
+            bundle.gaps.open_gaps = [
+                _normalize_gap_record(gap)
+                for gap in seed_gap_set.open_gaps
+                if isinstance(gap, dict)
+            ]
+            bundle.gaps.path = "gaps.json"
         periodic_tick_due_at: float | None = None
         if ctx.ci_periodic_tick_callback is not None:
             interval = max(float(ctx.ci_periodic_tick_interval_sec), 1.0)
@@ -9133,23 +9312,10 @@ class PromotionLoop:
             iteration += 1
             logger.info("=== Slice '%s' iteration %d/%d ===", ctx.slice_id, iteration, max_iters)
             maybe_emit_periodic_ci_tick()
-
-            bundle = EvidenceBundle(
-                run_id=run_context.run_id,
-                slice_id=slice_ref.slice_id,
-                iteration=iteration,
-                created_at=_now_iso(),
-                mode=run_context.mode,
-                workspace_root=run_context.workspace_root,
-                slice_root=slice_ref.worktree_path,
-            )
-            if iteration == 1 and seed_gap_set and seed_gap_set.open_gaps:
-                bundle.gaps.open_gaps = [
-                    _normalize_gap_record(gap)
-                    for gap in seed_gap_set.open_gaps
-                    if isinstance(gap, dict)
-                ]
-                bundle.gaps.path = "gaps.json"
+            bundle.iteration = iteration
+            bundle.demotions.emitted = []
+            bundle.demotions.applied = []
+            bundle.demotions.pending = []
 
             retry = False
             waiting = False
@@ -9451,15 +9617,14 @@ class PromotionLoop:
             )
 
         # Max iterations reached
-        if bundle:
-            bundle.status = "FAILED"
-            self._persist_iteration_artifacts(ctx, bundle)
-            bundle.save(evidence_root)
+        bundle.status = "FAILED"
+        self._persist_iteration_artifacts(ctx, bundle)
+        bundle.save(evidence_root)
         return SliceResult(
             slice_id=ctx.slice_id,
             status="MAX_ITERATIONS",
             iterations=iteration,
-            remaining_gaps=len(bundle.gaps.open_gaps) if bundle else 0,
+            remaining_gaps=len(bundle.gaps.open_gaps),
             demotion_tickets=all_tickets,
         )
 

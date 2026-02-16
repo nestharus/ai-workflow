@@ -259,11 +259,10 @@ class PddOrchestrator:
         P0-P10 pipeline with a convergence loop per slice.
 
         Steps:
-        1. Conditionally run Phase 0 routing when IntakeQueue is non-empty or
-           when pending DemotionTickets require routing.
+        1. Conditionally run Phase 0 routing when external IntakeQueue is non-empty.
         2. Discover slices (libraries) from workspace.
         3. Run PromotionLoop on each slice until convergence.
-        4. Run global verification (P6/P7) after all slices complete.
+        4. Use per-slice VERIFY outputs from the PromotionLoop.
 
         Args:
             max_iterations: Max convergence iterations per slice.
@@ -282,13 +281,12 @@ class PddOrchestrator:
 
         results: dict[str, Any] = {"mode": "loop"}
 
-        # 1. Run Phase 0 conditionally from authoritative triggers only.
+        # 1. Run Phase 0 only when external intake contains queued items.
         intake_queue = IntakeQueue(self.manager.workspace_path)
-        pending_routing_tickets = self._load_pending_routing_tickets()
-        needs_phase0 = intake_queue.needs_phase0(pending_tickets=pending_routing_tickets)
+        needs_phase0 = intake_queue.needs_phase0()
         results["phase0_trigger"] = {
             "queue_items": intake_queue.count(),
-            "routing_tickets": len(pending_routing_tickets),
+            "source": "external_intake_queue",
         }
 
         if needs_phase0:
@@ -296,25 +294,7 @@ class PddOrchestrator:
             from spec_manager.orchestration.intake_queue import route_items
 
             queued_items = intake_queue.drain()
-            routed_ticket_items: list[RoutingItem] = []
-            for ticket in pending_routing_tickets:
-                payload = ticket.routing_payload or {}
-                routed_ticket_items.append(
-                    RoutingItem(
-                        item_id=ticket.ticket_id,
-                        text=str(payload.get("text") or ticket.diagnosis).strip(),
-                        source_path=payload.get("source_path"),
-                        desired_slice_hint=(
-                            str(payload.get("desired_slice_hint", "")).strip() or ticket.slice_id
-                        ),
-                        tags=[
-                            str(tag)
-                            for tag in payload.get("tags", [ticket.source])
-                            if str(tag).strip()
-                        ],
-                    )
-                )
-            routing_items = [*queued_items, *routed_ticket_items]
+            routing_items: list[RoutingItem] = list(queued_items)
             if routing_items:
                 patches = route_items(routing_items, self.manager.workspace_path)
                 results["intake_routed"] = len(patches)
@@ -333,7 +313,7 @@ class PddOrchestrator:
             else:
                 results["extraction"] = "skipped (no routing payloads)"
         else:
-            results["extraction"] = "skipped (no intake queue items or routing tickets)"
+            results["extraction"] = "skipped (no external intake queue items)"
 
         # 2. Discover slices from workspace
         libraries_dir = self.manager.structure.libraries_dir
@@ -379,22 +359,9 @@ class PddOrchestrator:
         ]
         results["waiting_slices"] = runner_result["waiting_slices"]
 
-        # 4. Global verification (P6 + P7)
+        # 4. Verification is executed in-slice during loop VERIFY step.
         all_complete = all(r.status in {"COMPLETE", "SKIPPED"} for r in slice_results)
-        if all_complete:
-            try:
-                p6_result = self.run_phase(Phase.CROSS_LIBRARY)
-                results["cross_library"] = p6_result
-            except Exception as exc:
-                logger.warning("P6 cross-library failed: %s", exc)
-                results["cross_library"] = {"error": str(exc)}
-
-            try:
-                p7_result = self.run_phase(Phase.PROJECTION_SYNC)
-                results["projection_sync"] = p7_result
-            except Exception as exc:
-                logger.warning("P7 projection sync failed: %s", exc)
-                results["projection_sync"] = {"error": str(exc)}
+        results["verification"] = "handled_per_slice_in_promotion_loop"
 
         results["all_complete"] = all_complete
         return results
@@ -748,81 +715,141 @@ class PddOrchestrator:
         }
 
     def _run_decomposition(self) -> dict[str, Any]:
-        """Phase 2: Reverse translation of functions to pseudocode.
-
-        Calls ``planning.reverser.reverse_translate()`` for each function
-        in each file to produce pseudocode annotations describing the
-        implementation.
-
-        Note: ``plan_insertions()`` is a directed operation requiring a
-        user-provided intention string, so it is not called in batch mode.
-        """
-        from spec_manager.comment_planning.models import parse_file
-        from spec_manager.comment_planning.reverser import reverse_translate
+        """Phase 2: Build decomposition from canonical code-analysis facts."""
+        from spec_manager.core.code_analysis import analyze_file_facts
 
         all_files = self.manager.get_all_files()
-        reversal_count = 0
         functions_processed = 0
+        decomposition_units: list[dict[str, Any]] = []
         errors: list[str] = []
 
         for _file_id, file_path in all_files.items():
             if not file_path.exists():
                 continue
             try:
-                code_file = parse_file(str(file_path))
+                source = file_path.read_text(encoding="utf-8")
+                try:
+                    rel_path = str(file_path.relative_to(self.manager.structure.root))
+                except ValueError:
+                    rel_path = str(file_path)
+                facts = analyze_file_facts(
+                    source,
+                    rel_path,
+                    workspace=self.manager.structure.root,
+                    run_id=self.manager.run_id,
+                )
             except Exception as exc:
-                errors.append(f"Parse failed for {file_path}: {exc}")
+                errors.append(f"Analysis failed for {file_path}: {exc}")
                 continue
 
-            for func in code_file.functions:
-                try:
-                    reverse_plan = reverse_translate(code_file, func.name)
-                    functions_processed += 1
-                    if reverse_plan.generated_comments:
-                        reversal_count += 1
-                except Exception as exc:
-                    errors.append(
-                        f"Reverse translation failed for {func.name} in {file_path}: {exc}"
-                    )
+            for qualified_name, fn_meta in facts.functions.items():
+                if not isinstance(fn_meta, dict):
+                    continue
+                signature = fn_meta.get("signature", {})
+                if not isinstance(signature, dict):
+                    signature = {}
+                decomposition_units.append(
+                    {
+                        "file": rel_path,
+                        "qualified_name": qualified_name,
+                        "signature": signature,
+                        "doc": str(fn_meta.get("doc", "")),
+                        "lines": fn_meta.get("lines", []),
+                    }
+                )
+                functions_processed += 1
+
+        self.manager.write_agent_output(
+            Phase.DECOMPOSITION,
+            {"units": decomposition_units},
+        )
 
         return {
             "functions_processed": functions_processed,
-            "functions_with_comments": reversal_count,
+            "decomposition_units": len(decomposition_units),
             "errors": errors,
         }
 
     def _run_compliance_clean(self) -> dict[str, Any]:
-        """Phase 3: Executable gap detection + gap queue integration.
-
-        1. Scans all workspace Python files for executable gaps (comments,
-           stubs) via ``compliance.detection.orchestrator``.
-        2. Feeds gap evidence into the gap queue for downstream consumption.
-        """
-        from spec_manager.compliance.detection.orchestrator import (
-            integrate_with_gap_queue,
-            scan_executable_gaps,
-        )
-        from spec_manager.core.gap import GapSynthesizer
+        """Phase 3: Executable gap detection from canonical code-analysis facts."""
+        from spec_manager.core.code_analysis import analyze_file_facts
+        from spec_manager.core.gap import GapEvidence, GapSynthesizer
         from spec_manager.core.gap_queue import GapQueue
+        from spec_manager.core.gaps import Severity
 
         all_files = self.manager.get_all_files()
         filepaths = [fp for fp in all_files.values() if fp.exists()]
-        project_root = self.manager.structure.root
-
-        report = scan_executable_gaps(filepaths, project_root)
-
-        # Feed evidence into gap queue
         gap_queue = GapQueue()
         synthesizer = GapSynthesizer()
-        integrate_with_gap_queue(report, gap_queue, synthesizer)
+        evidence_items: list[GapEvidence] = []
+        comment_gaps = 0
+        stub_gaps = 0
+        scan_errors: list[str] = []
+
+        for file_path in filepaths:
+            try:
+                source = file_path.read_text(encoding="utf-8")
+                try:
+                    rel_path = str(file_path.relative_to(self.manager.structure.root))
+                except ValueError:
+                    rel_path = str(file_path)
+                facts = analyze_file_facts(
+                    source,
+                    rel_path,
+                    workspace=self.manager.structure.root,
+                    run_id=self.manager.run_id,
+                )
+            except Exception as exc:
+                scan_errors.append(f"{file_path}: {exc}")
+                continue
+
+            for gap in facts.gap_pins:
+                if not isinstance(gap, dict):
+                    continue
+                kind = str(gap.get("kind", "")).strip()
+                if kind == "comment_gap":
+                    comment_gaps += 1
+                    invariant_family = "executable_comment"
+                    gap_type = "unimplemented_comment"
+                    severity = Severity.WARNING
+                elif "stub" in kind:
+                    stub_gaps += 1
+                    invariant_family = "executable_stub"
+                    gap_type = "stub_function"
+                    severity = Severity.ERROR
+                else:
+                    continue
+
+                location = str(gap.get("file", "")).strip()
+                line = (gap.get("span") or {}).get("start_line")
+                source_ref = f"{location}:{line}" if line else location
+                evidence_items.append(
+                    GapEvidence(
+                        invariant_family=invariant_family,
+                        description=str(gap.get("description", kind)),
+                        details={
+                            "derived_artifact_target": location or "unknown",
+                            "source": [source_ref] if source_ref else [],
+                            "gap_type": gap_type,
+                            "severity": severity,
+                            "kind": kind,
+                        },
+                        confidence=0.95,
+                        location=source_ref or None,
+                        detector="code_analysis",
+                    )
+                )
+
+        synthesized_gaps = synthesizer.cluster_evidence(evidence_items)
+        gap_queue.update(synthesized_gaps)
 
         return {
-            "gaps_found": len(report.all_evidence),
-            "comment_gaps": len(report.comment_gaps),
-            "stub_gaps": len(report.stub_gaps),
+            "gaps_found": len(evidence_items),
+            "comment_gaps": comment_gaps,
+            "stub_gaps": stub_gaps,
             "files_scanned": len(filepaths),
-            "scan_duration_ms": report.scan_duration_ms,
-            "gaps_queued": len(gap_queue.gaps),
+            "scan_errors": scan_errors,
+            "gaps_queued": len(gap_queue.get_open_gaps()),
         }
 
     def _run_library_discovery(self) -> dict[str, Any]:
@@ -862,91 +889,228 @@ class PddOrchestrator:
         }
 
     def _run_spec_build(self) -> dict[str, Any]:
-        """Phase 5: Pin-function extraction + promotion workflow.
-
-        1. Scans the workspace for pin functions via
-           ``PinFunctionOrchestrator.scan()``.
-        2. Persists the ``PinFunctionRegistry`` to disk.
-        3. Runs the ``PromotionEngine`` to promote atoms from algorithmic
-           to architectural branch (with compliance gating).
-        """
+        """Phase 5: Build pin/edge registry from LLM outputs and run demotion-aware promotion."""
         import json
+        from datetime import UTC, datetime
 
-        from spec_manager.pin_functions.orchestrator import PinFunctionOrchestrator
+        from spec_manager.core.gap_queue import GapQueue
+        from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
+        from spec_manager.schemas.pin_functions import (
+            ImportEdge,
+            PinFunction,
+            PinFunctionRegistry,
+            ProjectionType,
+        )
 
         project_root = self.manager.structure.root
-        pin_orchestrator = PinFunctionOrchestrator(project_root)
+        bundle_paths = self._latest_slice_bundle_paths()
+        pin_rows, edge_rows = self._collect_pin_edge_snapshot_rows(bundle_paths)
 
-        registry = pin_orchestrator.scan(mode="scan")
+        pin_models: list[PinFunction] = []
+        pin_by_id: dict[str, PinFunction] = {}
+        for row in pin_rows:
+            try:
+                pin = PinFunction.model_validate(row)
+            except Exception as exc:
+                logger.warning("Skipping invalid pin snapshot row: %s", exc)
+                continue
+            if pin.pin_func_id in pin_by_id:
+                continue
+            pin_by_id[pin.pin_func_id] = pin
+            pin_models.append(pin)
 
-        # Persist the registry to disk
-        registry_path = pin_orchestrator.registry_path
+        edge_models: list[ImportEdge] = []
+        seen_edge_ids: set[str] = set()
+        fallback_seq = 1
+        for row in edge_rows:
+            row_pin = str(row.get("pin_func_id") or row.get("src") or "").strip()
+            if not row_pin or row_pin not in pin_by_id:
+                continue
+
+            projection_raw = str(row.get("projection_type") or "").strip().lower()
+            signal_raw = str(row.get("signal_type") or "").strip().upper()
+            if not projection_raw:
+                projection_raw = self._projection_type_from_signal(signal_raw).value
+
+            try:
+                projection_type = ProjectionType(projection_raw)
+            except Exception:
+                projection_type = self._projection_type_from_signal(signal_raw)
+
+            edge_id = str(row.get("edge_id") or "").strip()
+            if not edge_id:
+                edge_id = f"IMEDGE-SNAPSHOT-{fallback_seq:04d}"
+                fallback_seq += 1
+            if edge_id in seen_edge_ids:
+                continue
+
+            arch_location = str(row.get("arch_location") or row.get("dst") or "").strip()
+            arch_file_path = str(row.get("arch_file_path") or "").strip()
+            if not arch_location:
+                arch_location = arch_file_path
+            if not arch_file_path and ":" in arch_location:
+                arch_file_path = arch_location.split(":", 1)[0]
+            if not arch_file_path:
+                continue
+
+            arch_line_raw = row.get("arch_line", 0)
+            try:
+                arch_line = int(arch_line_raw)
+            except (TypeError, ValueError):
+                arch_line = 0
+
+            confidence_raw = row.get("confidence", row.get("weight", 0.8))
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.8
+            confidence = max(0.0, min(1.0, confidence))
+
+            try:
+                edge = ImportEdge(
+                    edge_id=edge_id,
+                    pin_func_id=row_pin,
+                    arch_location=arch_location,
+                    arch_file_path=arch_file_path,
+                    arch_line=max(arch_line, 0),
+                    projection_type=projection_type,
+                    confidence=confidence,
+                    is_direct_import=bool(row.get("is_direct_import", True)),
+                )
+            except Exception as exc:
+                logger.warning("Skipping invalid edge snapshot row: %s", exc)
+                continue
+
+            seen_edge_ids.add(edge_id)
+            edge_models.append(edge)
+
+        registry = PinFunctionRegistry(
+            schema_version="1.0",
+            pin_functions=pin_models,
+            import_edges=edge_models,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        registry_path = project_root / ".spec" / "pin_registry.json"
         registry_path.parent.mkdir(parents=True, exist_ok=True)
         registry_path.write_text(
             json.dumps(registry.model_dump(), indent=2),
             encoding="utf-8",
         )
 
-        # Run promotion workflow if branch manager has atoms
-        # TODO: Wire demotion on compliance gate failure. Currently
-        #   promote() returns skipped_atoms but nothing acts on them.
-        #   If gates fail: DownwardFlowEngine should trace pins back
-        #   to atoms, fix at L1 (code-as-spec), then re-promote.
-        #   Full chain: L3→L2→L1 demotion until issue is resolved.
         branch_mgr = self.manager.branches
         promotion_result = None
+        demotion_rows: list[dict[str, Any]] = []
         if branch_mgr.is_initialized() and branch_mgr.list_atoms():
             promotion_result = branch_mgr.promote()
-
-        # TODO: Add architectural implementation agent after promotion.
-        #   After atoms are promoted via pins, the architectural layer
-        #   (services/events/middleware) needs to be BUILT from them.
-        #   Pin projections define HOW atoms map to architecture
-        #   (PASS_THROUGH, EVENT_BRIDGE, MIDDLEWARE_WRAP, etc.) but
-        #   nothing currently generates the actual architectural code.
-        #   This agent should:
-        #     1. Read promoted pins and their projection types
-        #     2. Generate service/event/middleware code that uses pin-functions
-        #     3. Enforce NO_INLINED_ATOM_LOGIC gate (all logic via pins)
-        #   Separate from P9 (algorithmic implementation) — this is
-        #   architectural assembly.
+            if not promotion_result.success:
+                demotion_gap_queue = GapQueue()
+                demotion_manager = DemotionManager(
+                    workspace_root=self.manager.workspace_path,
+                    run_id=self.manager.run_id,
+                    gap_queue=demotion_gap_queue,
+                    branch_manager=branch_mgr,
+                )
+                reasons = promotion_result.errors or ["P5 promotion failed"]
+                for idx, reason in enumerate(reasons, start=1):
+                    ticket = DemotionTicket(
+                        run_id=self.manager.run_id,
+                        slice_id=f"spec-build-{idx:02d}",
+                        source="ALGORITHMIC_GATE",
+                        category="architecture",
+                        gate="P5_PROMOTION",
+                        target_layer="L1",
+                        severity="BLOCKER",
+                        origin_layer="L2",
+                        hop_trace=["L2", "L1"],
+                        failing_atoms=list(promotion_result.skipped_atoms),
+                        diagnosis=str(reason),
+                        evidence_refs=[str(registry_path)],
+                    )
+                    apply_result = demotion_manager.apply(
+                        ticket,
+                        self.manager.structure.root,
+                        gap_queue=demotion_gap_queue,
+                        branch_manager=branch_mgr,
+                    )
+                    demotion_rows.append(
+                        {
+                            "ticket": ticket.to_dict(),
+                            "apply_result": apply_result,
+                        }
+                    )
 
         outputs: dict[str, Any] = {
             "pins_found": len(registry.pin_functions),
             "import_edges": len(registry.import_edges),
             "registry_path": str(registry_path),
+            "source_bundles": len(bundle_paths),
+            "demotion_tickets": demotion_rows,
         }
         if promotion_result is not None:
             outputs["promoted"] = len(promotion_result.promoted_atoms)
             outputs["skipped"] = len(promotion_result.skipped_atoms)
             outputs["promotion_errors"] = promotion_result.errors
+            outputs["demotions_emitted"] = len(demotion_rows)
+            outputs["demotions_applied"] = sum(
+                1
+                for row in demotion_rows
+                if bool((row.get("apply_result") or {}).get("applied", False))
+            )
 
         return outputs
 
     def _run_cross_library(self) -> dict[str, Any]:
-        """Phase 6: Adjacency graph and disconnected component detection.
+        """Phase 6: Summarize cross-library topology from canonical bundle evidence."""
+        edge_rows: list[dict[str, Any]] = []
+        nodes: set[str] = set()
+        signal_type_counts: dict[str, int] = {}
 
-        Runs ``run_adjacency_analysis()`` against workspace roots to discover
-        relationship-fact artifacts, then builds a unified relationship graph
-        (calls/events/stores) and detects disconnected components.
-        """
-        from spec_manager.analysis.adjacency.runner import (
-            AdjacencyAnalysisConfig,
-            run_adjacency_analysis,
-        )
+        for bundle_path in self._latest_slice_bundle_paths():
+            bundle_payload = self._read_json_dict(bundle_path)
+            if not bundle_payload:
+                continue
+            iteration_dir = bundle_path.parent
+            graph_snapshot = self._bundle_snapshot(
+                bundle_payload,
+                iteration_dir=iteration_dir,
+                field_chain=("graph_snapshot", "path"),
+                list_key="edges",
+            )
+            if graph_snapshot:
+                for edge in graph_snapshot:
+                    src = str(edge.get("src") or edge.get("pin_func_id") or "").strip()
+                    dst = str(edge.get("dst") or edge.get("arch_location") or "").strip()
+                    if not src or not dst:
+                        continue
+                    signal = str(edge.get("signal_type") or "REFERENCE").upper()
+                    edge_rows.append({"src": src, "dst": dst, "signal_type": signal})
+                    nodes.update({src, dst})
+                    signal_type_counts[signal] = signal_type_counts.get(signal, 0) + 1
+                continue
 
-        root = self.manager.structure.root
-        config = AdjacencyAnalysisConfig(
-            source_dirs=[self.manager.structure.spec_snapshot_dir],
-            spec_dirs=[root],
-        )
-        report = run_adjacency_analysis(config)
+            facts = bundle_payload.get("facts", {})
+            if not isinstance(facts, dict):
+                continue
+            for edge in facts.get("call_graph_edges", []):
+                if not isinstance(edge, dict):
+                    continue
+                src = str(edge.get("src") or "").strip()
+                dst = str(edge.get("dst") or "").strip()
+                if not src or not dst:
+                    continue
+                edge_rows.append({"src": src, "dst": dst, "signal_type": "CALL"})
+                nodes.update({src, dst})
+                signal_type_counts["CALL"] = signal_type_counts.get("CALL", 0) + 1
+
+        components = self._connected_components(nodes, edge_rows)
+        disconnected_nodes = sorted(component[0] for component in components if len(component) == 1)
         return {
-            "total_nodes": report.total_nodes,
-            "total_edges": report.total_edges,
-            "num_components": report.num_components,
-            "disconnected_warnings": len(report.disconnected_warnings),
-            "signal_type_counts": report.signal_type_counts,
+            "total_nodes": len(nodes),
+            "total_edges": len(edge_rows),
+            "num_components": len(components),
+            "disconnected_warnings": disconnected_nodes[:50],
+            "signal_type_counts": signal_type_counts,
+            "edge_source": "evidence_bundle",
         }
 
     def _run_projection_sync(self) -> dict[str, Any]:
@@ -990,8 +1154,12 @@ class PddOrchestrator:
                     )
                 )
 
-        # 2. Consume registry-declared edges as a derived cache only when fresh.
+        # 2. Consume registry-declared edges first; infer via LLM when unavailable.
+        from spec_manager.projection.lineage.builder import scan_imports_from_directory
+
         import_records = []
+        registry_status = "missing"
+        stale_reason = ""
         registry_path = root / ".spec" / "pin_registry.json"
         if registry_path.exists():
             stale, reason = self._pin_registry_is_stale(
@@ -1000,13 +1168,10 @@ class PddOrchestrator:
                 file_hints=[atom.file_path for atom in atom_defs if atom.file_path],
             )
             if stale:
-                outputs["lineage_input_warning"] = (
-                    "Skipped pin-registry import edges because registry is stale: "
-                    f"{reason or 'source changed'}"
-                )
-                outputs["pin_registry_status"] = "stale"
+                registry_status = "stale"
+                stale_reason = reason or "source changed"
             else:
-                outputs["pin_registry_status"] = "fresh"
+                registry_status = "fresh"
                 try:
                     pin_registry = PinFunctionRegistry.model_validate_json(
                         registry_path.read_text(encoding="utf-8")
@@ -1019,13 +1184,25 @@ class PddOrchestrator:
                         exc_info=True,
                     )
                     import_records = []
-                    outputs["pin_registry_status"] = "invalid"
-        else:
-            outputs["pin_registry_status"] = "missing"
-        if not import_records and "lineage_input_warning" not in outputs:
-            outputs["lineage_input_warning"] = (
-                "No usable pin-registry relationship edges found for lineage build."
-            )
+                    registry_status = "invalid"
+
+        if not import_records:
+            try:
+                inferred_records = scan_imports_from_directory(root, verification_mode=False)
+            except Exception as exc:
+                logger.warning("Failed to infer lineage edges from source: %s", exc, exc_info=True)
+                inferred_records = []
+            if inferred_records:
+                import_records = inferred_records
+                outputs["lineage_input_inferred"] = True
+                outputs["lineage_input_source"] = "code_analysis_llm_inference"
+            else:
+                outputs["lineage_input_warning"] = (
+                    "No usable relationship edges from pin registry or inference fallback."
+                )
+                if stale_reason:
+                    outputs["lineage_input_warning"] += f" Registry stale reason: {stale_reason}"
+        outputs["pin_registry_status"] = registry_status
         outputs["import_edges"] = len(import_records)
 
         # 3. Build lineage table (atom → architecture projection)
@@ -1126,6 +1303,314 @@ class PddOrchestrator:
 
         return outputs
 
+    @staticmethod
+    def _read_json_dict(path: Path) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    def _latest_slice_bundle_paths(self) -> list[Path]:
+        bundles_root = self.manager.workspace_path / ".pdd_runs" / self.manager.run_id / "slices"
+        if not bundles_root.exists():
+            return []
+        latest: list[Path] = []
+        for slice_dir in sorted(path for path in bundles_root.iterdir() if path.is_dir()):
+            iter_dirs = sorted(
+                (
+                    path
+                    for path in slice_dir.glob("iter_*")
+                    if path.is_dir() and (path / "bundle.json").exists()
+                ),
+                key=lambda path: path.name,
+            )
+            if iter_dirs:
+                latest.append(iter_dirs[-1] / "bundle.json")
+        return latest
+
+    def _bundle_snapshot(
+        self,
+        bundle_payload: dict[str, Any],
+        *,
+        iteration_dir: Path,
+        field_chain: tuple[str, str],
+        list_key: str,
+    ) -> list[dict[str, Any]]:
+        ref = bundle_payload
+        for key in field_chain:
+            if not isinstance(ref, dict):
+                return []
+            ref = ref.get(key, {})
+        rel_path = str(ref).strip() if isinstance(ref, str) else ""
+        if not rel_path:
+            return []
+        payload = self._read_json_dict(iteration_dir / rel_path)
+        if not payload:
+            return []
+        rows = payload.get(list_key, [])
+        if not isinstance(rows, list):
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _collect_pin_edge_snapshot_rows(
+        self,
+        bundle_paths: list[Path],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        pin_rows: list[dict[str, Any]] = []
+        edge_rows: list[dict[str, Any]] = []
+        seen_pin_keys: set[tuple[str, str, int, int]] = set()
+        used_pin_ids: set[str] = set()
+        next_pin_id = 1
+        next_edge_id = 1
+
+        for bundle_path in bundle_paths:
+            bundle_payload = self._read_json_dict(bundle_path)
+            if not bundle_payload:
+                continue
+            iteration_dir = bundle_path.parent
+            snapshot_pins = self._bundle_snapshot(
+                bundle_payload,
+                iteration_dir=iteration_dir,
+                field_chain=("pins_snapshot", "path"),
+                list_key="pins",
+            )
+            snapshot_edges = self._bundle_snapshot(
+                bundle_payload,
+                iteration_dir=iteration_dir,
+                field_chain=("graph_snapshot", "path"),
+                list_key="edges",
+            )
+            implementation_payload = bundle_payload.get("implementation", {})
+            if not snapshot_pins and isinstance(implementation_payload, dict):
+                raw_pin_proposals = implementation_payload.get("pin_proposals", [])
+                if isinstance(raw_pin_proposals, list):
+                    for proposal in raw_pin_proposals:
+                        if not isinstance(proposal, dict):
+                            continue
+                        function_name = str(
+                            proposal.get("function_name")
+                            or proposal.get("pin_id")
+                            or proposal.get("id")
+                            or ""
+                        ).strip()
+                        file_path = str(
+                            proposal.get("file_path") or proposal.get("file") or ""
+                        ).strip()
+                        if not function_name or not file_path:
+                            continue
+                        module_path = str(proposal.get("module_path") or "").strip()
+                        if not module_path and "." in function_name:
+                            module_path = function_name.rsplit(".", 1)[0]
+                        line_start = proposal.get("line_start")
+                        if line_start is None:
+                            line_start = (proposal.get("span") or {}).get("start_line", 1)
+                        line_end = proposal.get("line_end")
+                        if line_end is None:
+                            line_end = (proposal.get("span") or {}).get("end_line", line_start or 1)
+                        snapshot_pins.append(
+                            {
+                                "pin_func_id": str(
+                                    proposal.get("pin_func_id")
+                                    or proposal.get("pin_id")
+                                    or proposal.get("id")
+                                    or ""
+                                ).strip(),
+                                "function_name": function_name.rsplit(".", 1)[-1],
+                                "module_path": module_path,
+                                "file_path": file_path,
+                                "line_start": line_start or 1,
+                                "line_end": line_end or line_start or 1,
+                                "signature": str(proposal.get("signature") or "").strip(),
+                                "docstring": str(proposal.get("docstring") or "").strip(),
+                                "content_hash": str(proposal.get("content_hash") or "").strip(),
+                                "is_shape": bool(proposal.get("is_shape", False)),
+                                "store_touches": proposal.get("store_touches", []),
+                                "evidence_atom_ids": proposal.get("evidence_atom_ids", []),
+                            }
+                        )
+            if not snapshot_edges and isinstance(implementation_payload, dict):
+                raw_edge_proposals = implementation_payload.get("edge_proposals", [])
+                if isinstance(raw_edge_proposals, list):
+                    for proposal in raw_edge_proposals:
+                        if not isinstance(proposal, dict):
+                            continue
+                        src = str(proposal.get("pin_func_id") or proposal.get("src") or "").strip()
+                        dst = str(
+                            proposal.get("arch_location") or proposal.get("dst") or ""
+                        ).strip()
+                        if not src or not dst:
+                            continue
+                        signal_type = str(
+                            proposal.get("signal_type") or proposal.get("projection_type") or ""
+                        ).strip()
+                        snapshot_edges.append(
+                            {
+                                "edge_id": str(proposal.get("edge_id") or "").strip(),
+                                "src": src,
+                                "dst": dst,
+                                "arch_file_path": str(
+                                    proposal.get("arch_file_path") or dst.split(":", 1)[0]
+                                ).strip(),
+                                "arch_line": proposal.get("arch_line", 0),
+                                "projection_type": str(
+                                    proposal.get("projection_type") or ""
+                                ).strip(),
+                                "signal_type": signal_type,
+                                "confidence": proposal.get(
+                                    "confidence",
+                                    proposal.get("weight", 0.8),
+                                ),
+                                "is_direct_import": bool(proposal.get("is_direct_import", True)),
+                            }
+                        )
+
+            local_pin_id_map: dict[str, str] = {}
+            for row in snapshot_pins:
+                function_name = str(row.get("function_name") or "").strip()
+                file_path = str(row.get("file_path") or "").strip().replace("\\", "/")
+                if not function_name or not file_path:
+                    continue
+                line_start_raw = row.get("line_start", 1)
+                line_end_raw = row.get("line_end", line_start_raw)
+                try:
+                    line_start = max(int(line_start_raw), 1)
+                except (TypeError, ValueError):
+                    line_start = 1
+                try:
+                    line_end = max(int(line_end_raw), line_start)
+                except (TypeError, ValueError):
+                    line_end = line_start
+
+                key = (function_name, file_path, line_start, line_end)
+                proposed_pin_id = str(row.get("pin_func_id") or "").strip()
+                if key in seen_pin_keys:
+                    if proposed_pin_id:
+                        for existing in pin_rows:
+                            if (
+                                str(existing.get("function_name", "")).strip() == function_name
+                                and str(existing.get("file_path", "")).strip().replace("\\", "/")
+                                == file_path
+                                and int(existing.get("line_start", 0)) == line_start
+                                and int(existing.get("line_end", 0)) == line_end
+                            ):
+                                local_pin_id_map[proposed_pin_id] = str(existing["pin_func_id"])
+                                break
+                    continue
+
+                canonical_pin_id = proposed_pin_id
+                if not canonical_pin_id or canonical_pin_id in used_pin_ids:
+                    canonical_pin_id = f"PFUNC-SNAPSHOT-{next_pin_id:04d}"
+                    next_pin_id += 1
+
+                local_pin_id_map[proposed_pin_id] = canonical_pin_id
+                used_pin_ids.add(canonical_pin_id)
+                seen_pin_keys.add(key)
+                pin_rows.append(
+                    {
+                        "pin_func_id": canonical_pin_id,
+                        "function_name": function_name,
+                        "module_path": str(row.get("module_path") or "").strip(),
+                        "file_path": file_path,
+                        "line_start": line_start,
+                        "line_end": line_end,
+                        "signature": str(row.get("signature") or "").strip(),
+                        "docstring": str(row.get("docstring") or "").strip(),
+                        "content_hash": str(row.get("content_hash") or "").strip(),
+                        "is_shape": bool(row.get("is_shape", False)),
+                        "store_touches": [
+                            str(item).strip()
+                            for item in row.get("store_touches", [])
+                            if str(item).strip()
+                        ],
+                        "evidence_atom_ids": [
+                            str(item).strip()
+                            for item in row.get("evidence_atom_ids", [])
+                            if str(item).strip()
+                        ],
+                    }
+                )
+
+            for edge in snapshot_edges:
+                src = str(edge.get("src") or edge.get("pin_func_id") or "").strip()
+                src = local_pin_id_map.get(src, src)
+                if not src:
+                    continue
+                dst = str(edge.get("dst") or edge.get("arch_location") or "").strip()
+                arch_file_path = str(edge.get("arch_file_path") or "").strip()
+                if not dst and arch_file_path:
+                    dst = arch_file_path
+                if not arch_file_path and ":" in dst:
+                    arch_file_path = dst.split(":", 1)[0]
+                if not dst or not arch_file_path:
+                    continue
+
+                edge_id = str(edge.get("edge_id") or "").strip()
+                if not edge_id:
+                    edge_id = f"IMEDGE-SNAPSHOT-{next_edge_id:04d}"
+                    next_edge_id += 1
+                edge_rows.append(
+                    {
+                        "edge_id": edge_id,
+                        "pin_func_id": src,
+                        "arch_location": dst,
+                        "arch_file_path": arch_file_path,
+                        "arch_line": edge.get("arch_line", 0),
+                        "projection_type": str(edge.get("projection_type") or "").strip().lower(),
+                        "signal_type": str(edge.get("signal_type") or "").strip().upper(),
+                        "confidence": edge.get("confidence", edge.get("weight", 0.8)),
+                        "is_direct_import": bool(edge.get("is_direct_import", True)),
+                    }
+                )
+
+        return pin_rows, edge_rows
+
+    @staticmethod
+    def _projection_type_from_signal(signal: str) -> Any:
+        from spec_manager.schemas.pin_functions import ProjectionType
+
+        normalized = signal.upper().strip()
+        if normalized == "EVENT":
+            return ProjectionType.EVENT_BRIDGE
+        if normalized == "STORE_TOUCH":
+            return ProjectionType.AGGREGATION
+        return ProjectionType.PASS_THROUGH
+
+    @staticmethod
+    def _connected_components(
+        nodes: set[str],
+        edges: list[dict[str, Any]],
+    ) -> list[list[str]]:
+        adjacency: dict[str, set[str]] = {node: set() for node in nodes}
+        for edge in edges:
+            src = str(edge.get("src") or "").strip()
+            dst = str(edge.get("dst") or "").strip()
+            if not src or not dst:
+                continue
+            adjacency.setdefault(src, set()).add(dst)
+            adjacency.setdefault(dst, set()).add(src)
+
+        seen: set[str] = set()
+        components: list[list[str]] = []
+        for node in sorted(adjacency):
+            if node in seen:
+                continue
+            stack = [node]
+            component: list[str] = []
+            while stack:
+                current = stack.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                component.append(current)
+                for neighbor in adjacency.get(current, set()):
+                    if neighbor not in seen:
+                        stack.append(neighbor)
+            components.append(sorted(component))
+        return components
+
     def _pending_demotion_ticket_paths(self) -> Path:
         return (
             self.manager.workspace_path
@@ -1200,13 +1685,8 @@ class PddOrchestrator:
         return False, ""
 
     def _run_task_planning(self) -> dict[str, Any]:
-        """Phase 8: Planning integration and gap bridge.
-
-        Gathers target Python files from the workspace snapshot and
-        compliance gap descriptions as intentions, then calls
-        ``run_planning_v2_phase()`` to produce insertion plans.
-        """
-        from spec_manager.comment_planning.workflow import run_planning_v2_phase
+        """Phase 8: Build a task plan from canonical gap evidence."""
+        from spec_manager.core.code_analysis import analyze_file_facts
 
         # Gather target files from workspace snapshot
         all_files = self.manager.get_all_files()
@@ -1222,34 +1702,65 @@ class PddOrchestrator:
                     f"Resolve {gap_count} executable gaps found during compliance scan"
                 )
 
-        # TODO: Wire under-specification → constraints → blocking flow.
-        #   When planning hits an under-specification:
-        #     1. Planning agent identifies potential solutions
-        #     2. Checks CONSTRAINTS against each solution
-        #     3. If constraints cover → decide, record in analysis docs
-        #     4. If constraints DON'T cover → BLOCK
-        #        - Interactive mode: generate research prompt for human
-        #        - Auto mode: source decision from research team
-        #     5. Human provides CONSTRAINTS (not solutions)
-        #   Currently just produces plans without blocking.
+        plan_items: list[dict[str, Any]] = []
+        for file_path in target_files:
+            path = Path(file_path)
+            try:
+                source = path.read_text(encoding="utf-8")
+                try:
+                    rel_path = str(path.relative_to(self.manager.structure.root))
+                except ValueError:
+                    rel_path = str(path)
+                facts = analyze_file_facts(
+                    source,
+                    rel_path,
+                    workspace=self.manager.structure.root,
+                    run_id=self.manager.run_id,
+                )
+            except Exception as exc:
+                plan_items.append(
+                    {
+                        "file": file_path,
+                        "action": "inspect",
+                        "priority": "high",
+                        "reason": f"Analysis failed: {exc}",
+                    }
+                )
+                continue
 
-        # TODO: Wire Layer 1 routing for incoming changes.
-        #   When a new requirement, decision, or demoted algorithm needs
-        #   to be added to code-as-spec, route it to the right library
-        #   and function using vertical slice summaries:
-        #     1. Load VerticalSlice summaries from branch manager
-        #     2. Match incoming change against slice summaries
-        #     3. Route to the right library by summary similarity
-        #     4. Within library, route to right function/atom
-        #   Same pattern as Phase 0 (summarize → discover → route).
-        #   Infrastructure: VerticalSlice with summary details exists
-        #   but isn't wired into the planning/routing flow.
-        result = run_planning_v2_phase(
-            run_id=self.manager.run_id,
-            target_files=target_files,
-            intentions=intentions,
-            evidence_dir=self.manager.structure.root,
-        )
+            for gap in facts.gap_pins:
+                if not isinstance(gap, dict):
+                    continue
+                kind = str(gap.get("kind", "")).strip()
+                if kind not in {"comment_gap", "stub_gap"}:
+                    continue
+                plan_items.append(
+                    {
+                        "file": rel_path,
+                        "action": "implement",
+                        "priority": "high" if kind == "stub_gap" else "medium",
+                        "kind": kind,
+                        "anchor": str(gap.get("pin_id", "")),
+                        "description": str(gap.get("description", "")),
+                    }
+                )
+
+        if not plan_items:
+            plan_items.append(
+                {
+                    "file": "",
+                    "action": "verify",
+                    "priority": "low",
+                    "reason": "No open executable gaps detected from canonical analysis.",
+                }
+            )
+
+        result = {
+            "run_id": self.manager.run_id,
+            "target_files": target_files,
+            "intentions": intentions,
+            "items": plan_items,
+        }
         return {"planning_result": result}
 
     def _run_implementation(self) -> dict[str, Any]:
