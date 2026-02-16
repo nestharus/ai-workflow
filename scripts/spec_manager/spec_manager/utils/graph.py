@@ -39,25 +39,14 @@ def build_dependency_graph(workspace: Path) -> dict[str, Any]:
         """Normalize relation sources into edge records."""
         out: list[dict[str, Any]] = []
         for src in sources:
-            rel_type = src.get("relation_type") or src.get("relationship") or "relates_to"
-            if src.get("from") and src.get("to"):
-                out.append(
-                    {"from": src.get("from"), "to": src.get("to"), "type": rel_type, "src": src}
-                )
+            if not isinstance(src, dict):
                 continue
-            if src.get("source") and src.get("target"):
-                out.append(
-                    {
-                        "from": src.get("source"),
-                        "to": src.get("target"),
-                        "type": rel_type,
-                        "src": src,
-                    }
-                )
+            source = src.get("source")
+            target = src.get("target")
+            if not source or not target:
                 continue
-            if src.get("source") and isinstance(src.get("targets"), list):
-                for t in src.get("targets", []):
-                    out.append({"from": src.get("source"), "to": t, "type": rel_type, "src": src})
+            rel_type = src.get("relation_type") or "relates_to"
+            out.append({"from": source, "to": target, "type": rel_type, "src": src})
         # Dedup
         seen = set()
         deduped = []

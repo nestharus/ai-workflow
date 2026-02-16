@@ -17,9 +17,12 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 from spec_manager.decomposition.id_generator import save_id_map
+
+SUPPORTED_SPEC_SUFFIXES = {".md"}
 
 
 def _spec_root(spec_path: Path) -> Path:
@@ -35,6 +38,15 @@ def _with_suffix_before_ext(path: Path, suffix: str) -> Path:
     if path.suffix:
         return path.with_name(f"{path.stem}{suffix}{path.suffix}")
     return path.with_name(f"{path.name}{suffix}")
+
+
+def _archive_existing_directory(path: Path, archive_root: Path) -> Path:
+    """Move an existing directory to a timestamped archive location."""
+    archive_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    archived_path = archive_root / stamp
+    shutil.move(str(path), str(archived_path))
+    return archived_path
 
 
 def save_file_index(workspace: Path, index: dict) -> None:
@@ -145,9 +157,11 @@ def init_workspace(workspace: Path, spec_path: Path) -> None:
         ├── state.json         # Workflow state
         └── id_map.json        # ID to source mapping
     """
-    # Clean existing workspace
+    # Preserve existing workspace instead of deleting it.
+    archived_workspace: str | None = None
     if workspace.exists():
-        shutil.rmtree(workspace)
+        archive_root = workspace.parent / f"{workspace.name}_history"
+        archived_workspace = str(_archive_existing_directory(workspace, archive_root))
 
     # Create directory structure
     (workspace / "staging" / "discovery").mkdir(parents=True)
@@ -166,10 +180,25 @@ def init_workspace(workspace: Path, spec_path: Path) -> None:
 
     files_to_stage: list[Path] = []
     if spec_path.is_file():
+        if spec_path.suffix.lower() not in SUPPORTED_SPEC_SUFFIXES:
+            raise ValueError(
+                f"Unsupported spec file type: {spec_path}. "
+                f"Supported extensions: {sorted(SUPPORTED_SPEC_SUFFIXES)}"
+            )
         files_to_stage.append(spec_path)
     else:
-        # Markdown is the only supported input type for now.
-        files_to_stage.extend(sorted(p.resolve() for p in spec_path.rglob("*.md") if p.is_file()))
+        files_to_stage.extend(
+            sorted(
+                p.resolve()
+                for p in spec_path.rglob("*")
+                if p.is_file() and p.suffix.lower() in SUPPORTED_SPEC_SUFFIXES
+            )
+        )
+        if not files_to_stage:
+            raise ValueError(
+                f"No supported spec files found under {spec_path}. "
+                f"Supported extensions: {sorted(SUPPORTED_SPEC_SUFFIXES)}"
+            )
 
     # Build file index (avoids basename collisions by preserving relative paths)
     file_index = {
@@ -211,6 +240,10 @@ def init_workspace(workspace: Path, spec_path: Path) -> None:
         "orphans_found": 0,
         "spec_path": str(spec_path),
         "spec_root": str(root),
+        "input_constraints": {
+            "supported_extensions": sorted(SUPPORTED_SPEC_SUFFIXES),
+        },
+        "supersedes_workspace": archived_workspace,
     }
     save_state(workspace, state)
 
@@ -242,8 +275,7 @@ def _store_original(source: Path, relative: Path, workspace: Path) -> Path:
     content = source.read_text()
     header = "\n".join(
         [
-            f"<!-- ORIGINAL FROM (relative): {relative} -->",
-            f"<!-- ORIGINAL FROM (absolute): {source} -->",
+            f"<!-- ORIGINAL FROM: {source} -->",
             "",
         ]
     )
@@ -261,8 +293,7 @@ def _stage_file(source: Path, relative: Path, workspace: Path) -> Path:
     content = source.read_text()
     header = "\n".join(
         [
-            f"<!-- STAGED FROM (relative): {relative} -->",
-            f"<!-- STAGED FROM (absolute): {source} -->",
+            f"<!-- STAGED FROM: {source} -->",
             "",
         ]
     )
@@ -285,7 +316,8 @@ def create_investigation_staging(workspace: Path, entity_name: str) -> Path:
     safe_name = entity_name.replace(" ", "_").replace("/", "_")
     entity_dir = investigation_root / safe_name
     if entity_dir.exists():
-        shutil.rmtree(entity_dir)
+        archive_root = investigation_root / "_history" / safe_name
+        _archive_existing_directory(entity_dir, archive_root)
     entity_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy from original (not from discovery staging)

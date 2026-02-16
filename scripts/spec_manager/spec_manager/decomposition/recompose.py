@@ -46,19 +46,12 @@ def _relation_edges(sources: list[dict[str, Any]]) -> list[tuple[str, str, str]]
         if not isinstance(src, dict):
             continue
 
-        label = str(src.get("relation_type") or src.get("relationship") or "related")
-
-        if src.get("from") and src.get("to"):
-            edges.append((str(src["from"]), str(src["to"]), label))
+        source = src.get("source")
+        target = src.get("target")
+        if not source or not target:
             continue
-
-        if src.get("source") and src.get("target"):
-            edges.append((str(src["source"]), str(src["target"]), label))
-            continue
-
-        if src.get("source") and isinstance(src.get("targets"), list):
-            for t in src.get("targets", []):
-                edges.append((str(src["source"]), str(t), label))
+        label = str(src.get("relation_type") or "related")
+        edges.append((str(source), str(target), label))
 
     # De-dup while preserving order
     seen = set()

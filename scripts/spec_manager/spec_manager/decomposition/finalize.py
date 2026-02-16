@@ -11,6 +11,7 @@ from spec_manager.decomposition.id_generator import (
     load_id_map,
 )
 from spec_manager.decomposition.staging import get_staged_from_path
+from spec_manager.decomposition.workspace import list_discovery_staging_files
 
 
 def _skip_header_lines(content_lines: list[str]) -> int:
@@ -26,24 +27,17 @@ def _skip_header_lines(content_lines: list[str]) -> int:
 
 
 def _relation_edges(sources: list[dict]) -> list[dict]:
-    """Normalize various relation encodings into a list of edges."""
+    """Return normalized relation edges from canonical relation records."""
     edges: list[dict] = []
     for src in sources:
-        rel_type = src.get("relation_type") or src.get("relationship") or "?"
-        if src.get("from") and src.get("to"):
-            edges.append({"from": src.get("from"), "to": src.get("to"), "type": rel_type})
+        if not isinstance(src, dict):
             continue
-
-        # Legacy shapes
-        if src.get("source") and src.get("target"):
-            edges.append({"from": src.get("source"), "to": src.get("target"), "type": rel_type})
+        source = src.get("source")
+        target = src.get("target")
+        if not source or not target:
             continue
-
-        # Rich relation shape
-        if src.get("source") and isinstance(src.get("targets"), list):
-            for t in src.get("targets", []):
-                edges.append({"from": src.get("source"), "to": t, "type": rel_type})
-            continue
+        rel_type = src.get("relation_type") or "?"
+        edges.append({"from": source, "to": target, "type": rel_type})
 
     # Deduplicate
     seen = set()
@@ -159,7 +153,6 @@ def _generate_relations_doc(workspace: Path, output_dir: Path, id_map: dict) -> 
 
 def _generate_annotated_source(workspace: Path, output_dir: Path) -> None:
     """Generate combined annotated source document."""
-    staging_dir = workspace / "staging" / "discovery"
     output_file = output_dir / "source_with_ids.md"
 
     lines = [
@@ -171,7 +164,7 @@ def _generate_annotated_source(workspace: Path, output_dir: Path) -> None:
         "",
     ]
 
-    for staging_file in sorted(staging_dir.glob("*_staged.md")):
+    for staging_file in list_discovery_staging_files(workspace):
         content = staging_file.read_text()
         content_lines = content.split("\n")
 

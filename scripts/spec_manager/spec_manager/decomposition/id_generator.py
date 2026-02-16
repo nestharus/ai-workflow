@@ -53,7 +53,13 @@ def load_id_map(workspace: Path) -> dict:
             {"file": "spec.md", "line": 89, "type": "entity"}
         ],
         "R-001": [
-            {"file": "spec.md", "line": 156, "type": "relation", "from": "E-001", "to": "E-002"}
+            {
+                "file": "spec.md",
+                "line": 156,
+                "type": "relation",
+                "source": "E-001",
+                "target": "E-002",
+            }
         ]
     }
     """

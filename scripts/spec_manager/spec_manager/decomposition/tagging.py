@@ -62,27 +62,27 @@ def _read_utf8_lines(path: Path) -> list[str] | None:
 def _read_source_line_from_original_copy(
     workspace: Path, source_file: str, line_number: int
 ) -> str:
-    """Read a 1-indexed source line from the workspace's original snapshot.
-
-    Falls back to reading from `source_file` directly if the snapshot is unavailable.
-    """
+    """Read a 1-indexed source line from the workspace's original snapshot."""
     if line_number <= 0:
         return ""
 
-    # Prefer the stored original copy (stable snapshot).
+    # Only the stored original copy is authoritative.
     original_copy = resolve_original_copy(workspace, source_file)
-    candidate_paths = [p for p in [original_copy, Path(source_file)] if p and Path(p).exists()]
+    if not original_copy or not original_copy.exists():
+        raise FileNotFoundError(
+            f"Missing workspace original copy for source '{source_file}'. "
+            "Re-run workspace initialization to restore authoritative snapshots."
+        )
 
-    for path in candidate_paths:
-        content_lines = _read_utf8_lines(Path(path))
-        if content_lines is None:
-            continue
+    content_lines = _read_utf8_lines(original_copy)
+    if content_lines is None:
+        raise OSError(f"Failed to read workspace original copy: {original_copy}")
 
-        start = _skip_header_lines(content_lines)
-        body = content_lines[start:]
-        idx = line_number - 1
-        if 0 <= idx < len(body):
-            return body[idx]
+    start = _skip_header_lines(content_lines)
+    body = content_lines[start:]
+    idx = line_number - 1
+    if 0 <= idx < len(body):
+        return body[idx]
 
     return ""
 
@@ -102,12 +102,12 @@ def tag_facts(workspace: Path) -> dict[str, Any]:
     if facts_path.exists():
         try:
             facts = json.loads(facts_path.read_text(encoding="utf-8"))
-        except Exception:
-            # C03: Surface errors — corrupted facts file needs diagnosis
-            logger.warning(
-                "Failed to parse facts.json at %s — starting fresh", facts_path, exc_info=True
-            )
-            facts = {}
+        except Exception as err:
+            logger.exception("Failed to parse facts.json at %s", facts_path)
+            raise ValueError(
+                f"facts.json is malformed at {facts_path}; "
+                "refusing to overwrite authoritative data."
+            ) from err
 
     # Reverse index by (file|line) for stability.
     by_source: dict[str, str] = {}
@@ -116,7 +116,13 @@ def tag_facts(workspace: Path) -> dict[str, Any]:
             continue
         file = record.get("file")
         line = record.get("line")
-        if isinstance(file, str) and isinstance(line, int):
+        if (
+            isinstance(file, str)
+            and isinstance(line, int)
+            and line > 0
+            and file.strip()
+            and file != "unknown"
+        ):
             by_source[f"{file}|{line}"] = fid
 
     sources_tagged = 0
@@ -132,7 +138,13 @@ def tag_facts(workspace: Path) -> dict[str, Any]:
 
             file = source.get("file")
             line = source.get("line")
-            if not isinstance(file, str) or not isinstance(line, int):
+            if (
+                not isinstance(file, str)
+                or not isinstance(line, int)
+                or line <= 0
+                or not file.strip()
+                or file == "unknown"
+            ):
                 continue
 
             key = f"{file}|{line}"
@@ -143,9 +155,6 @@ def tag_facts(workspace: Path) -> dict[str, Any]:
                 new_facts += 1
 
             text = _read_source_line_from_original_copy(workspace, file, line)
-            if not text:
-                # Fall back to any cached text on the source entry.
-                text = str(source.get("text", ""))
             if not text:
                 missing_text += 1
 

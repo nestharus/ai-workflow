@@ -213,10 +213,7 @@ def compute_spec_hashes(workspace: Path) -> dict[str, str]:
     if facts_file.exists():
         facts = json.loads(facts_file.read_text())
         for fact_id, fact_data in facts.items():
-            if isinstance(fact_data, dict):
-                content = fact_data.get("text", "")
-            else:
-                content = str(fact_data)
+            content = fact_data.get("text", "") if isinstance(fact_data, dict) else str(fact_data)
             hashes[fact_id] = compute_content_hash(content)
 
     return hashes
@@ -258,9 +255,11 @@ def get_runnable_ids(ledger: Ledger) -> list[str]:
 
     runnable = []
     for spec_id, entry in ledger.entries.items():
-        if entry.status in (SpecStatus.PENDING, SpecStatus.MODIFIED):
-            if spec_id not in blocked_by_gaps:
-                runnable.append(spec_id)
+        if (
+            entry.status in (SpecStatus.PENDING, SpecStatus.MODIFIED)
+            and spec_id not in blocked_by_gaps
+        ):
+            runnable.append(spec_id)
 
     return sorted(runnable)
 
@@ -414,22 +413,20 @@ def cleanup_old_archives(archive_dir: Path) -> None:
             mtime = datetime.fromtimestamp(archived_file.stat().st_mtime)
             if mtime < cutoff_time:
                 files_to_remove.append(archived_file)
-        except OSError as e:
+        except OSError:
             logger.warning(
-                "Failed to get file stats for %s during archive cleanup: %s",
+                "Failed to get file stats for %s during archive cleanup",
                 archived_file,
-                e,
             )
 
     # Remove duplicate entries and delete files
     for file_to_remove in set(files_to_remove):
         try:
             file_to_remove.unlink(missing_ok=True)
-        except OSError as e:
-            logger.error(
-                "Failed to delete archive file %s during cleanup: %s",
+        except OSError:
+            logger.exception(
+                "Failed to delete archive file %s during cleanup",
                 file_to_remove,
-                e,
             )
 
 
@@ -437,11 +434,17 @@ def ingest_evidence(workspace: Path, evidence_path: Path, ledger: Ledger) -> Led
     """Ingest implementation evidence and update ledger."""
     evidence = json.loads(evidence_path.read_text())
     run_id = evidence.get("run_id", "unknown")
+    valid_statuses = {"complete", "partial"}
 
     # Update entries from implementations
-    for impl in evidence.get("implementations", []):
+    for idx, impl in enumerate(evidence.get("implementations", []), start=1):
         spec_id = impl["spec_id"]
-        status_str = impl.get("status", "complete")
+        status_str = impl.get("status")
+        if status_str not in valid_statuses:
+            raise ValueError(
+                f"Invalid implementation status at index {idx} for {spec_id}: {status_str!r}. "
+                f"Expected one of {sorted(valid_statuses)}."
+            )
 
         if spec_id not in ledger.entries:
             ledger.entries[spec_id] = SpecEntry(spec_id=spec_id)

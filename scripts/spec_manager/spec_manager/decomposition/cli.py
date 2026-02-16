@@ -47,12 +47,50 @@ from spec_manager.decomposition.workspace import (
     list_discovery_staging_files,
     load_state,
     resolve_discovery_staging,
+    resolve_original_copy,
     save_state,
 )
 from spec_manager.utils.graph import (
     build_dependency_graph,
     save_dependency_graph,
 )
+
+
+def _canonical_relation_record(
+    *,
+    file: str,
+    line: int,
+    source: str,
+    target: str | None,
+    relation_type: str,
+    context: str = "",
+    snippet_id: str = "",
+    extra: dict | None = None,
+) -> dict:
+    """Build a canonical relation source record for id_map."""
+    normalized_type = str(relation_type or "related")
+    record = {
+        "file": str(file),
+        "line": int(line),
+        "type": "relation",
+        "source": str(source),
+        "target": str(target) if target else None,
+        "relation_type": normalized_type,
+        "context": str(context or ""),
+        "snippet_id": str(snippet_id or ""),
+    }
+    if extra:
+        record.update(extra)
+    return record
+
+
+def _as_positive_int(value: object) -> int | None:
+    """Parse a positive integer value, returning None when invalid."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -64,7 +102,11 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"Error: Spec path does not exist: {spec_path}", file=sys.stderr)
         return 1
 
-    init_workspace(workspace, spec_path)
+    try:
+        init_workspace(workspace, spec_path)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     print(f"Workspace initialized: {workspace}")
     print(f"Spec staged: {workspace}/staging/discovery/")
     return 0
@@ -284,10 +326,11 @@ def cmd_extract_orphan(args: argparse.Namespace) -> int:
     orphan_file.write_text("\n".join(lines))
 
     # Update ID map
+    orphan_line = _as_positive_int(ev.get("line")) or 0
     id_map[orphan_id] = [
         {
-            "file": ev.get("file", ""),
-            "line": ev.get("line", 0),
+            "file": str(ev.get("file") or "unknown"),
+            "line": orphan_line,
             "type": "orphan",
             "category": analysis,
             "possible_entities": possible_entities,
@@ -483,13 +526,34 @@ def cmd_create_discovered_entity(args: argparse.Namespace) -> int:
     }
     save_entity_index(workspace, index)
 
-    # Update ID map
-    id_map[entity_id] = [
-        {
-            "type": "entity",
-            "discovered_from": discovered_from,
-        }
-    ]
+    # Update ID map with provenance from the originating snippet when available.
+    snippet_sources = id_map.get(discovered_from, [])
+    entity_sources = []
+    for src in snippet_sources if isinstance(snippet_sources, list) else []:
+        if not isinstance(src, dict):
+            continue
+        source_file = src.get("file")
+        source_line = _as_positive_int(src.get("line"))
+        if not source_file or source_line is None:
+            continue
+        entity_sources.append(
+            {
+                "type": "entity",
+                "file": source_file,
+                "line": source_line,
+                "discovered_from": discovered_from,
+            }
+        )
+    if not entity_sources:
+        entity_sources = [
+            {
+                "type": "entity",
+                "file": "unknown",
+                "line": 0,
+                "discovered_from": discovered_from,
+            }
+        ]
+    id_map[entity_id] = entity_sources
 
     # Update state
     state.setdefault("extracted_entities", []).append(entity_id)
@@ -568,19 +632,37 @@ def cmd_create_rich_relation(args: argparse.Namespace) -> int:
         line=line,
     )
 
-    # Update ID map
-    id_map[relation_id] = [
-        {
-            "file": file,
-            "line": line,
-            "type": "relation",
-            "source": source_entity,
-            "targets": [t["id"] for t in target_list],
-            "relation_type": relationship_type,
-            "context": relationship_context,
-            "snippet_id": snippet_id,
-        }
-    ]
+    # Update ID map using canonical relation records (one source->target edge per record).
+    relation_records: list[dict] = []
+    for target in target_list:
+        relation_records.append(
+            _canonical_relation_record(
+                file=file,
+                line=line,
+                source=source_entity,
+                target=target["id"],
+                relation_type=relationship_type,
+                context=relationship_context,
+                snippet_id=snippet_id,
+                extra={
+                    "target_name": target["name"],
+                    "discovered_from_snippet": target.get("discovered_from_snippet", False),
+                },
+            )
+        )
+    if not relation_records:
+        relation_records.append(
+            _canonical_relation_record(
+                file=file,
+                line=line,
+                source=source_entity,
+                target=None,
+                relation_type=relationship_type,
+                context=relationship_context,
+                snippet_id=snippet_id,
+            )
+        )
+    id_map[relation_id] = relation_records
 
     # Update state
     state.setdefault("extracted_relations", []).append(relation_id)
@@ -636,14 +718,13 @@ def cmd_extract_relation(args: argparse.Namespace) -> int:
 
     # Update ID map
     id_map[relation_id] = [
-        {
-            "file": evidence["file"],
-            "line": evidence["line"],
-            "type": "relation",
-            "from": from_id,
-            "to": to_id,
-            "relation_type": relation_type,
-        }
+        _canonical_relation_record(
+            file=evidence["file"],
+            line=int(evidence["line"]),
+            source=from_id,
+            target=to_id,
+            relation_type=relation_type,
+        )
     ]
 
     # Update state
@@ -744,7 +825,11 @@ def cmd_finalize(args: argparse.Namespace) -> int:
 def cmd_tag_facts(args: argparse.Namespace) -> int:
     """Assign Fact IDs (F-###) to referenced source lines."""
     workspace = Path(args.workspace)
-    result = tag_facts(workspace)
+    try:
+        result = tag_facts(workspace)
+    except Exception as exc:
+        print(json.dumps({"status": "error", "message": str(exc)}), file=sys.stderr)
+        return 1
     print(json.dumps(result))
     return 0
 
@@ -764,7 +849,11 @@ def cmd_execute_spec(args: argparse.Namespace) -> int:
     repo = Path(args.repo) if getattr(args, "repo", None) else None
     ingest_path = Path(args.ingest) if getattr(args, "ingest", None) else None
 
-    result = execute_spec(workspace, repo=repo, ingest_path=ingest_path)
+    try:
+        result = execute_spec(workspace, repo=repo, ingest_path=ingest_path)
+    except Exception as exc:
+        print(json.dumps({"status": "error", "message": str(exc)}), file=sys.stderr)
+        return 1
     print(json.dumps(result, indent=2))
     return 0
 
@@ -783,10 +872,13 @@ def cmd_format_discovery(args: argparse.Namespace) -> int:
 
     # Collect formatted content from all discovery staging files
     all_content = []
-    for staging_file in sorted(discovery_dir.glob("*_staged.md")):
+    for staging_file in list_discovery_staging_files(workspace):
         remaining = get_remaining_lines(staging_file)
         if remaining:
-            all_content.append(f"# From: {staging_file.name}")
+            source_name = get_staged_from_path(staging_file) or str(
+                staging_file.relative_to(discovery_dir)
+            )
+            all_content.append(f"# From: {source_name}")
             for item in remaining:
                 all_content.append(f"{item['line']}: {item['text']}")
             all_content.append("")
@@ -1115,35 +1207,68 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
     entity_index = load_entity_index(workspace)
 
     created_relations = []
+    rejected_items = []
 
-    for item in analysis:
+    for idx, item in enumerate(analysis, start=1):
         entities_involved = item.get("entities_involved", [])
         if len(entities_involved) < 2:
+            rejected_items.append(
+                {
+                    "index": idx,
+                    "reason": "insufficient_entities",
+                    "entities_involved": entities_involved,
+                }
+            )
             continue
 
         # Find entity IDs for involved entities
         entity_ids = []
+        unresolved_entities = []
         for entity_name in entities_involved:
+            matched_id = None
             for eid, info in entity_index.items():
                 if info.get("name", "").lower() == entity_name.lower():
-                    entity_ids.append(eid)
+                    matched_id = eid
                     break
+            if matched_id:
+                entity_ids.append(matched_id)
+            else:
+                unresolved_entities.append(entity_name)
 
         if len(entity_ids) < 2:
+            rejected_items.append(
+                {
+                    "index": idx,
+                    "reason": "unresolved_entities",
+                    "entities_involved": entities_involved,
+                    "unresolved_entities": unresolved_entities,
+                }
+            )
+            continue
+
+        source_line = _as_positive_int(item.get("source_line"))
+        if source_line is None:
+            rejected_items.append(
+                {
+                    "index": idx,
+                    "reason": "invalid_source_line",
+                    "source_line": item.get("source_line"),
+                }
+            )
             continue
 
         # Create relation from first entity to others
         source_id = entity_ids[0]
+        source_file = item.get("source_file") or str(findings_file)
         for target_id in entity_ids[1:]:
             relation_id = generate_id(IDType.RELATION, id_map)
 
             source_name = entity_index.get(source_id, {}).get("name", source_id)
             target_name = entity_index.get(target_id, {}).get("name", target_id)
+            relationship_type = str(item.get("relationship") or "related")
+            relationship_context = str(item.get("context") or "")
 
             # Create relation document
-            source_file = item.get("source_file") or str(findings_file)
-            source_line = item.get("source_line") or 0
-
             create_rich_relation_document(
                 workspace=workspace,
                 relation_id=relation_id,
@@ -1151,8 +1276,8 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
                 source_entity=source_id,
                 source_entity_name=source_name,
                 targets=[{"id": target_id, "name": target_name}],
-                relationship_type=item.get("relationship", "related"),
-                relationship_context=item.get("context", ""),
+                relationship_type=relationship_type,
+                relationship_context=relationship_context,
                 original_text=item.get("snippet", ""),
                 file=source_file,
                 line=source_line,
@@ -1160,15 +1285,15 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
 
             # Update ID map
             id_map[relation_id] = [
-                {
-                    "type": "relation",
-                    "file": source_file,
-                    "line": source_line,
-                    "snippet_id": item.get("snippet_id", ""),
-                    "source": source_id,
-                    "target": target_id,
-                    "relationship": item.get("relationship", "related"),
-                }
+                _canonical_relation_record(
+                    file=source_file,
+                    line=source_line,
+                    source=source_id,
+                    target=target_id,
+                    relation_type=relationship_type,
+                    context=relationship_context,
+                    snippet_id=item.get("snippet_id", ""),
+                )
             ]
 
             state.setdefault("extracted_relations", []).append(relation_id)
@@ -1194,6 +1319,8 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
             new_entities.append(entity_name)
 
     # Save
+    if rejected_items:
+        state.setdefault("rejected_relations", []).extend(rejected_items)
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
@@ -1202,6 +1329,8 @@ def cmd_process_relations(args: argparse.Namespace) -> int:
             {
                 "relations_created": len(created_relations),
                 "relations": created_relations,
+                "relations_rejected": len(rejected_items),
+                "rejected": rejected_items,
                 "newly_discovered_entities": new_entities,
             }
         )
@@ -1276,33 +1405,65 @@ def cmd_process_context(args: argparse.Namespace) -> int:
     # Collect all combined line numbers for redaction and build relations.
     all_combined_lines: list[int] = []
     created_relations: list[str] = []
+    rejected_items: list[dict] = []
 
-    for item in context_items:
-        combined_lines = [int(ln) for ln in item.get("lines", []) if str(ln).isdigit()]
+    for idx, item in enumerate(context_items, start=1):
+        combined_lines = [_as_positive_int(ln) for ln in item.get("lines", [])]
+        combined_lines = [ln for ln in combined_lines if ln is not None]
         combined_lines = sorted(set(combined_lines))
         if not combined_lines:
+            rejected_items.append(
+                {
+                    "index": idx,
+                    "reason": "missing_or_invalid_lines",
+                    "lines": item.get("lines", []),
+                }
+            )
             continue
-
-        all_combined_lines.extend(combined_lines)
 
         # Map combined lines back to source text.
         mapped_evidence = []
         original_text_lines = []
+        missing_lines = []
         for cl in combined_lines:
             mapped = line_map.get(str(cl))
             if not mapped:
+                missing_lines.append(cl)
+                continue
+            mapped_line = _as_positive_int(mapped.get("line"))
+            mapped_file = mapped.get("file", "")
+            if mapped_line is None or not mapped_file:
+                missing_lines.append(cl)
                 continue
             mapped_evidence.append(
                 {
-                    "file": mapped.get("file", ""),
-                    "line": int(mapped.get("line", 0)),
+                    "file": mapped_file,
+                    "line": mapped_line,
                     "text": mapped.get("text", ""),
                     "combined_line": cl,
                 }
             )
             original_text_lines.append(mapped.get("text", ""))
 
+        if missing_lines:
+            rejected_items.append(
+                {
+                    "index": idx,
+                    "reason": "missing_line_mappings",
+                    "lines": combined_lines,
+                    "unmapped_lines": sorted(set(missing_lines)),
+                }
+            )
+            continue
+
         if not mapped_evidence:
+            rejected_items.append(
+                {
+                    "index": idx,
+                    "reason": "no_mapped_evidence",
+                    "lines": combined_lines,
+                }
+            )
             continue
 
         first = mapped_evidence[0]
@@ -1327,18 +1488,22 @@ def cmd_process_context(args: argparse.Namespace) -> int:
 
         # Store one source entry per mapped evidence line so facts can be tagged/deduped.
         id_map[relation_id] = [
-            {
-                "file": ev.get("file", ""),
-                "line": int(ev.get("line", 0)),
-                "type": "context_relation",
-                "source": entity_id,
-                "relationship": relationship_type,
-                "role": relationship_context,
-                "combined_line": int(ev.get("combined_line", 0)),
-            }
+            _canonical_relation_record(
+                file=ev["file"],
+                line=ev["line"],
+                source=entity_id,
+                target=None,
+                relation_type=relationship_type,
+                context=relationship_context,
+                snippet_id="",
+                extra={
+                    "combined_line": int(ev.get("combined_line", 0)),
+                },
+            )
             for ev in mapped_evidence
         ]
 
+        all_combined_lines.extend(combined_lines)
         state.setdefault("extracted_relations", []).append(relation_id)
         created_relations.append(relation_id)
 
@@ -1355,6 +1520,8 @@ def cmd_process_context(args: argparse.Namespace) -> int:
         )
 
     # Save
+    if rejected_items:
+        state.setdefault("rejected_context_items", []).extend(rejected_items)
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
@@ -1364,6 +1531,8 @@ def cmd_process_context(args: argparse.Namespace) -> int:
                 "entity": entity_name,
                 "context_found": True,
                 "relations_created": len(created_relations),
+                "relations_rejected": len(rejected_items),
+                "rejected": rejected_items,
                 "lines_redacted": len(set(all_combined_lines)),
                 "theories": findings.get("theories", []),
             }
@@ -1378,11 +1547,10 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
     level = args.level
 
     # Get remaining orphan lines from discovery staging with original file content
-    discovery_dir = workspace / "staging" / "discovery"
     orphan_lines = []
     file_contents: dict[str, str] = {}
 
-    for staging_file in sorted(discovery_dir.glob("*_staged.md")):
+    for staging_file in list_discovery_staging_files(workspace):
         remaining = get_remaining_lines(staging_file)
         original_source = get_staged_from_path(staging_file) or staging_file.name
         for item in remaining:
@@ -1395,24 +1563,14 @@ def cmd_investigate_orphans(args: argparse.Namespace) -> int:
             )
         # Load original file content for context
         if original_source not in file_contents:
-            source_path = Path(original_source)
-            if source_path.exists():
+            original_copy = resolve_original_copy(workspace, original_source)
+            if original_copy and original_copy.exists():
                 try:
-                    file_contents[original_source] = source_path.read_text(encoding="utf-8")
+                    file_contents[original_source] = original_copy.read_text(encoding="utf-8")
                 except (PermissionError, UnicodeDecodeError, OSError):
                     file_contents[original_source] = ""
             else:
-                # Try to find in staging directory
-                copy_path = (
-                    staging_file.parent / f"{staging_file.stem.replace('_staged', '_original')}.md"
-                )
-                if copy_path.exists():
-                    try:
-                        file_contents[original_source] = copy_path.read_text(encoding="utf-8")
-                    except (PermissionError, UnicodeDecodeError, OSError):
-                        file_contents[original_source] = ""
-                else:
-                    file_contents[original_source] = ""
+                file_contents[original_source] = ""
 
     if not orphan_lines:
         print(
@@ -1483,13 +1641,14 @@ def cmd_assess_orphan_value(args: argparse.Namespace) -> int:
         truly_orphaned = results.get("truly_orphaned", [])
     else:
         # Fall back to remaining discovery staging lines
-        discovery_dir = workspace / "staging" / "discovery"
         truly_orphaned = []
-        for staging_file in sorted(discovery_dir.glob("*_staged.md")):
+        for staging_file in list_discovery_staging_files(workspace):
             remaining = get_remaining_lines(staging_file)
+            original_source = get_staged_from_path(staging_file) or staging_file.name
             for item in remaining:
                 truly_orphaned.append(
                     {
+                        "file": original_source,
                         "line": item["line"],
                         "content": item["text"],
                     }
@@ -1531,14 +1690,23 @@ def cmd_format_other_files(args: argparse.Namespace) -> int:
     discovery_dir = workspace / "staging" / "discovery"
     all_content = []
 
-    for staging_file in sorted(discovery_dir.glob("*_staged.md")):
+    for staging_file in list_discovery_staging_files(workspace):
+        original_source = get_staged_from_path(staging_file) or str(
+            staging_file.relative_to(discovery_dir)
+        )
+
         # Skip the target file
-        if target_file in staging_file.name:
+        if target_file in {
+            staging_file.name,
+            str(staging_file.relative_to(discovery_dir)),
+            original_source,
+            Path(original_source).name,
+        }:
             continue
 
         remaining = get_remaining_lines(staging_file)
         if remaining:
-            all_content.append(f"# From: {staging_file.name}")
+            all_content.append(f"# From: {original_source}")
             for item in remaining:
                 all_content.append(f"{item['line']}: {item['text']}")
             all_content.append("")
@@ -1583,6 +1751,70 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
     id_map = load_id_map(workspace)
 
     created_orphans = []
+    rejected_orphans: list[dict] = []
+
+    def _orphan_records(
+        item: dict,
+        *,
+        line_key: str = "line",
+        lines_key: str = "lines",
+        metadata: dict | None = None,
+    ) -> list[dict]:
+        file_ref = str(item.get("file") or "unknown")
+        records: list[dict] = []
+        base = {
+            "file": file_ref,
+            "type": "orphan",
+        }
+        if metadata:
+            base.update(metadata)
+
+        evidence_list = item.get("evidence")
+        if isinstance(evidence_list, list):
+            for ev in evidence_list:
+                if not isinstance(ev, dict):
+                    continue
+                evidence_line = _as_positive_int(ev.get("line"))
+                if evidence_line is None:
+                    continue
+                evidence_file = str(ev.get("file") or file_ref)
+                record = dict(base)
+                record["file"] = evidence_file
+                record["line"] = evidence_line
+                records.append(record)
+            if records:
+                return records
+
+        single_line = _as_positive_int(item.get(line_key))
+        if single_line is not None:
+            record = dict(base)
+            record["line"] = single_line
+            records.append(record)
+
+        raw_lines = item.get(lines_key, [])
+        if isinstance(raw_lines, list):
+            for raw_line in raw_lines:
+                parsed_line = _as_positive_int(raw_line)
+                if parsed_line is None:
+                    continue
+                record = dict(base)
+                record["line"] = parsed_line
+                records.append(record)
+
+        if not records:
+            record = dict(base)
+            record["line"] = 0
+            records.append(record)
+
+        deduped = []
+        seen = set()
+        for record in records:
+            key = (record.get("file"), record.get("line"))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(record)
+        return deduped
 
     # Ensure orphans directory exists once before processing all loops
     (workspace / "orphans").mkdir(exist_ok=True)
@@ -1625,15 +1857,14 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
 
         orphan_file.write_text("\n".join(doc_lines))
 
-        id_map[orphan_id] = [
-            {
-                "file": inv.get("file", ""),
-                "line": orphan_line,
-                "type": "orphan",
+        id_map[orphan_id] = _orphan_records(
+            inv,
+            line_key="orphan_line",
+            metadata={
                 "context_lines": context_lines,
                 "entity_mentions": entity_mentions,
-            }
-        ]
+            },
+        )
 
         state["orphans_found"] = state.get("orphans_found", 0) + 1
         created_orphans.append(
@@ -1670,14 +1901,14 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
 
         orphan_file.write_text("\n".join(doc_lines))
 
-        id_map[orphan_id] = [
-            {
-                "lines": lines,
-                "type": "orphan",
+        id_map[orphan_id] = _orphan_records(
+            cc,
+            lines_key="lines",
+            metadata={
                 "cross_cutting": True,
                 "affects_entities": affects,
-            }
-        ]
+            },
+        )
 
         state["orphans_found"] = state.get("orphans_found", 0) + 1
         created_orphans.append(
@@ -1715,13 +1946,13 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
 
         orphan_file.write_text("\n".join(doc_lines))
 
-        id_map[orphan_id] = [
-            {
-                "line": line,
-                "type": "orphan",
+        id_map[orphan_id] = _orphan_records(
+            nc,
+            line_key="line",
+            metadata={
                 "no_context_found": True,
-            }
-        ]
+            },
+        )
 
         state["orphans_found"] = state.get("orphans_found", 0) + 1
         created_orphans.append(
@@ -1733,7 +1964,7 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
         )
 
     # Process orphan-analyzer output (analysis with text array and 'about' field)
-    for item in analysis:
+    for idx, item in enumerate(analysis, start=1):
         lines = item.get("lines", [])
         # Handle text as array (from orphan-analyzer) or string
         text_array = item.get("text", [])
@@ -1745,6 +1976,13 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
 
         # Skip if no valid content
         if not content:
+            rejected_orphans.append(
+                {
+                    "index": idx,
+                    "reason": "missing_content",
+                    "lines": lines,
+                }
+            )
             continue
 
         orphan_id = generate_id(IDType.ORPHAN, id_map)
@@ -1782,14 +2020,14 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
 
         orphan_file.write_text("\n".join(doc_lines))
 
-        id_map[orphan_id] = [
-            {
-                "lines": lines,
-                "type": "orphan",
+        id_map[orphan_id] = _orphan_records(
+            item,
+            lines_key="lines",
+            metadata={
                 "interpretation": interpretation,
                 "related_entities": related_entities,
-            }
-        ]
+            },
+        )
 
         state["orphans_found"] = state.get("orphans_found", 0) + 1
         created_orphans.append(
@@ -1801,6 +2039,8 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
         )
 
     # Save
+    if rejected_orphans:
+        state.setdefault("rejected_orphan_items", []).extend(rejected_orphans)
     save_id_map(workspace, id_map)
     save_state(workspace, state)
 
@@ -1808,6 +2048,8 @@ def cmd_process_orphans(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "orphans_created": len(created_orphans),
+                "orphans_rejected": len(rejected_orphans),
+                "rejected": rejected_orphans,
                 "orphans": created_orphans,
                 "summary": findings.get("summary", ""),
             }
