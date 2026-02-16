@@ -15,6 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
+from spec_manager.planner.layers.l2 import _is_relative_to
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,9 +33,9 @@ class L1DiscoveryRouter:
             logger.warning("L1 discover: slice_root missing or does not exist (%s)", ctx.slice_root)
             return {"nodes": [], "edges": [], "file_index": {}, "discovery_issues": []}
 
-        files = _collect_slice_files(slice_root)
+        files, file_issues = _collect_slice_files(slice_root)
         if not files:
-            return {"nodes": [], "edges": [], "file_index": {}, "discovery_issues": []}
+            return {"nodes": [], "edges": [], "file_index": {}, "discovery_issues": file_issues}
 
         raw_graph = _run_l1_discovery_tool(
             files=files,
@@ -45,6 +47,7 @@ class L1DiscoveryRouter:
                 discovery_tool=self._fallback_discovery_tool,
             )
         nodes, edges, discovery_issues = _normalize_l1_discovery_graph(raw_graph, files)
+        discovery_issues.extend(file_issues)
 
         file_index: dict[str, list[str]] = {}
         for rel_path in files:
@@ -95,6 +98,7 @@ class L1LayerResearchAdapter:
         resolved: list[dict[str, Any]] = []
         unresolved: list[dict[str, Any]] = []
         constraints: dict[str, str] = {}
+        resolution_failures: list[dict[str, str]] = []
 
         for event in events:
             target = str(event.get("target", "")).strip()
@@ -103,7 +107,8 @@ class L1LayerResearchAdapter:
                 question = f"Cannot resolve: {target or '?'}"
 
             # Strategy 1: constraints tool (authoritative source) first.
-            constrained_answer = self._resolve_from_constraints(ctx, question)
+            constrained_result = self._resolve_from_constraints_result(ctx, question)
+            constrained_answer = constrained_result["answer"]
             if constrained_answer:
                 constraints[question] = constrained_answer
                 resolved.append(
@@ -114,6 +119,14 @@ class L1LayerResearchAdapter:
                     }
                 )
                 continue
+            if constrained_result["error"]:
+                resolution_failures.append(
+                    {
+                        "stage": "constraints_tool",
+                        "question": question,
+                        "error": constrained_result["error"],
+                    }
+                )
 
             matched = _match_gap_to_node(target, func_nodes, node_lookup)
 
@@ -129,7 +142,10 @@ class L1LayerResearchAdapter:
                 continue
 
             # Strategy 3: unified research tool lookup.
-            research_answer = self._query_text(question or target, ctx=ctx, hint="under_spec")
+            research_result = self._query_text_result(
+                question or target, ctx=ctx, hint="under_spec"
+            )
+            research_answer = research_result["answer"]
             if research_answer:
                 resolved.append(
                     {
@@ -139,6 +155,14 @@ class L1LayerResearchAdapter:
                     }
                 )
                 continue
+            if research_result["error"]:
+                resolution_failures.append(
+                    {
+                        "stage": "research_tool",
+                        "question": question or target,
+                        "error": research_result["error"],
+                    }
+                )
 
             unresolved.append(event)
 
@@ -152,6 +176,7 @@ class L1LayerResearchAdapter:
             "questions": questions,
             "resolved": resolved,
             "constraints": constraints,
+            "resolution_failures": resolution_failures,
         }
 
     def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
@@ -167,8 +192,15 @@ class L1LayerResearchAdapter:
         if not target:
             return None
 
-        answer = self._query_text(target, ctx=ctx, hint="signal")
+        query_result = self._query_text_result(target, ctx=ctx, hint="signal")
+        answer = query_result["answer"]
         if not answer:
+            if query_result["error"]:
+                return {
+                    "resolution": "research_tool_error",
+                    "target": target,
+                    "error": query_result["error"],
+                }
             return None
         return {
             "resolution": "research_tool",
@@ -177,8 +209,11 @@ class L1LayerResearchAdapter:
         }
 
     def _resolve_from_constraints(self, ctx: Any, question: str) -> str:
+        return self._resolve_from_constraints_result(ctx, question)["answer"]
+
+    def _resolve_from_constraints_result(self, ctx: Any, question: str) -> dict[str, str]:
         if not question or self._constraints_tool is None:
-            return ""
+            return {"answer": "", "error": ""}
         slice_id = str(getattr(ctx, "slice_id", "") or "__system__")
         try:
             if hasattr(self._constraints_tool, "check_coverage"):
@@ -187,20 +222,30 @@ class L1LayerResearchAdapter:
                     record = coverage.get(question)
                     answer = str(getattr(record, "answer", "") or "").strip()
                     if answer:
-                        return answer
-        except Exception:
-            logger.debug("L1 constraints tool failed for question=%s", question, exc_info=True)
-        return ""
+                        return {"answer": answer, "error": ""}
+        except Exception as exc:
+            logger.warning("L1 constraints tool failed for question=%s", question, exc_info=True)
+            return {"answer": "", "error": str(exc).strip() or "constraints tool failure"}
+        return {"answer": "", "error": ""}
 
     def _query_text(self, question: str, *, ctx: Any | None = None, hint: str = "") -> str:
+        return self._query_text_result(question, ctx=ctx, hint=hint)["answer"]
+
+    def _query_text_result(
+        self,
+        question: str,
+        *,
+        ctx: Any | None = None,
+        hint: str = "",
+    ) -> dict[str, str]:
         prompt = str(question or "").strip()
         if not prompt or self._research_tool is None:
-            return ""
+            return {"answer": "", "error": ""}
 
         try:
             if callable(self._research_tool):
                 raw = self._research_tool(prompt)
-                return str(raw).strip()
+                return {"answer": str(raw).strip(), "error": ""}
 
             if hasattr(self._research_tool, "research"):
                 from spec_manager.planner.tools.research_tool import ResearchQuery
@@ -218,16 +263,17 @@ class L1LayerResearchAdapter:
                 )
                 synthesis = str(getattr(result, "synthesis", "") or "").strip()
                 if synthesis:
-                    return synthesis
+                    return {"answer": synthesis, "error": ""}
 
             if hasattr(self._research_tool, "search"):
                 search_result = self._research_tool.search(prompt, max_results=1)
                 best_hit = getattr(search_result, "best_hit", None)
                 if best_hit is not None:
-                    return str(getattr(best_hit, "text", "") or "").strip()
-        except Exception:
-            logger.debug("L1 research query failed", exc_info=True)
-        return ""
+                    return {"answer": str(getattr(best_hit, "text", "") or "").strip(), "error": ""}
+        except Exception as exc:
+            logger.warning("L1 research query failed", exc_info=True)
+            return {"answer": "", "error": str(exc).strip() or "research tool failure"}
+        return {"answer": "", "error": ""}
 
     @staticmethod
     def _slice_id_from_ctx(ctx: Any | None) -> str:
@@ -606,7 +652,17 @@ class L1Planner:
                     "secondary_matches": [m.to_dict() for m in secondary_matches],
                 }
 
-        spec_match = _search_spec_catalog(workspace_root, need, spec_refs)
+        spec_catalog_roots = _resolve_spec_catalog_roots(
+            ctx=ctx,
+            workspace_root=workspace_root,
+            search_hints=search_hints if isinstance(search_hints, dict) else {},
+        )
+        spec_match, spec_scan_issues = _search_spec_catalog(
+            workspace_root,
+            need,
+            spec_refs,
+            scope_roots=spec_catalog_roots,
+        )
         if spec_match:
             owner_slice_id = _resolve_owner_slice_id(
                 workspace_root=workspace_root,
@@ -639,6 +695,8 @@ class L1Planner:
                 "confidence": confidence,
                 "why": why or "spec_found_unrouted",
                 "missing_detail": "",
+                "spec_catalog_candidates": spec_match.get("candidate_matches", []),
+                "spec_catalog_scan_issues": spec_scan_issues,
             }
 
         expansion = _build_expansion(signal, need, ctx)
@@ -660,6 +718,14 @@ class L1Planner:
             ctx=ctx,
             monitor_kind="spec_expanded",
         )
+        scan_issue_summary = "; ".join(spec_scan_issues[:3]) if spec_scan_issues else ""
+        combined_missing_detail = (
+            missing_detail
+            or str(need.get("summary", "")).strip()
+            or "Missing spec-level behavior needed by blocked consumer."
+        )
+        if scan_issue_summary:
+            combined_missing_detail = f"{combined_missing_detail} Scan issues: {scan_issue_summary}"
         return {
             "action": "EXPAND_SPEC",
             "monitors": [monitor],
@@ -667,10 +733,14 @@ class L1Planner:
             "expansion": expansion,
             "coverage": "NO_COVERAGE",
             "confidence": confidence,
-            "why": why or "underspecified_no_spec_match",
-            "missing_detail": missing_detail
-            or str(need.get("summary", "")).strip()
-            or "Missing spec-level behavior needed by blocked consumer.",
+            "why": why
+            or (
+                "spec_catalog_scan_incomplete"
+                if spec_scan_issues
+                else "underspecified_no_spec_match"
+            ),
+            "missing_detail": combined_missing_detail,
+            "spec_catalog_scan_issues": spec_scan_issues,
         }
 
 
@@ -697,25 +767,31 @@ def _emit_trace_event(
 
 _L1_NODE_KINDS = frozenset({"function", "class", "spec_comment_block"})
 _L1_EDGE_KINDS = frozenset({"declares", "mentions", "calls"})
+_L1_DISCOVERY_CHUNK_SIZE = 12000
 
 
-def _collect_slice_files(root: Path) -> dict[str, str]:
-    """Return ``{relative_path: content}`` for readable text-like files under *root*."""
+def _collect_slice_files(root: Path) -> tuple[dict[str, str], list[str]]:
+    """Return readable UTF-8 text files plus surfaced read/decode issues."""
     files: dict[str, str] = {}
+    issues: list[str] = []
     if not root.is_dir():
-        return files
+        return files, issues
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         if not _is_text_like_file(path):
             continue
-        try:
-            content = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
         rel = str(path.relative_to(root))
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            issues.append(f"{rel}: utf-8 decode failed ({exc.reason})")
+            continue
+        except OSError as exc:
+            issues.append(f"{rel}: read failed ({exc})")
+            continue
         files[rel] = content
-    return files
+    return files, issues
 
 
 def _is_text_like_file(path: Path) -> bool:
@@ -724,24 +800,18 @@ def _is_text_like_file(path: Path) -> bool:
             sample = handle.read(4096)
     except OSError:
         return False
-    if b"\x00" in sample:
-        return False
-    try:
-        sample.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
+    return b"\x00" not in sample
 
 
 def _run_l1_discovery_tool(files: dict[str, str], discovery_tool: Any) -> dict[str, Any] | None:
     if discovery_tool is None:
         return None
 
-    file_payload = [
-        {"path": rel_path, "content": content[:12000]} for rel_path, content in files.items()
-    ]
+    file_payload, file_manifest = _build_l1_discovery_file_payload(files)
     prompt = (
         "Produce a strict JSON object with keys 'nodes' and 'edges' for an L1 skeleton graph. "
+        "Files may arrive as multiple chunks for the same path; merge by path/chunk order "
+        "before deriving graph structure. "
         "Nodes must have kind=function|class|spec_comment_block and include id/file. "
         "Edges must have kind=declares|mentions|calls and include source/target. "
         "Use best-effort pattern recognition only."
@@ -750,6 +820,7 @@ def _run_l1_discovery_tool(files: dict[str, str], discovery_tool: Any) -> dict[s
         "task": "l1_discovery",
         "layer": "l1",
         "files": file_payload,
+        "file_manifest": file_manifest,
     }
 
     raw: Any = None
@@ -793,6 +864,47 @@ def _run_l1_discovery_tool(files: dict[str, str], discovery_tool: Any) -> dict[s
         return None
 
     return _coerce_json_payload(raw)
+
+
+def _build_l1_discovery_file_payload(
+    files: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    payload: list[dict[str, Any]] = []
+    manifest: list[dict[str, Any]] = []
+    for rel_path, content in files.items():
+        chunks = _chunk_text_with_offsets(content, max_chars=_L1_DISCOVERY_CHUNK_SIZE)
+        manifest.append(
+            {
+                "path": rel_path,
+                "content_length": len(content),
+                "chunk_count": len(chunks),
+            }
+        )
+        for chunk_index, (offset_start, offset_end, chunk_text) in enumerate(chunks):
+            payload.append(
+                {
+                    "path": rel_path,
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "offset_start": offset_start,
+                    "offset_end": offset_end,
+                    "content_length": len(content),
+                    "content": chunk_text,
+                }
+            )
+    return payload, manifest
+
+
+def _chunk_text_with_offsets(text: str, *, max_chars: int) -> list[tuple[int, int, str]]:
+    if max_chars <= 0:
+        return [(0, len(text), text)]
+    if not text:
+        return [(0, 0, "")]
+    chunks: list[tuple[int, int, str]] = []
+    for offset_start in range(0, len(text), max_chars):
+        offset_end = min(offset_start + max_chars, len(text))
+        chunks.append((offset_start, offset_end, text[offset_start:offset_end]))
+    return chunks
 
 
 def _coerce_json_payload(raw: Any) -> dict[str, Any] | None:
@@ -1162,7 +1274,13 @@ def _resolve_owner_slice_id(
         )
         if matched_preferred:
             return matched_preferred
-        return possible_owner_slices[0]
+        if len(possible_owner_slices) == 1:
+            return possible_owner_slices[0]
+        logger.warning(
+            "L1 triage: ambiguous owner slice candidates for file=%s candidates=%s",
+            file_hint,
+            possible_owner_slices,
+        )
 
     matched_discovered = _best_slice_match(
         file_hint=file_hint, candidate_slice_ids=discovered_slice_ids
@@ -1270,71 +1388,200 @@ def _extract_nearest_spec_text(lines: list[str], match_index: int) -> tuple[str,
     return current_text, match_index + 1
 
 
+def _resolve_spec_catalog_roots(
+    *,
+    ctx: Any,
+    workspace_root: Path,
+    search_hints: dict[str, Any],
+) -> list[Path]:
+    try:
+        workspace_root = workspace_root.resolve()
+    except OSError:
+        return []
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    def _append(path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        if not resolved.is_dir() or resolved in seen:
+            return
+        if not _is_relative_to(resolved, workspace_root):
+            return
+        seen.add(resolved)
+        roots.append(resolved)
+
+    slice_root_value = str(getattr(ctx, "slice_root", "") or "").strip()
+    if slice_root_value:
+        _append(Path(slice_root_value))
+
+    slice_id = str(getattr(ctx, "slice_id", "") or "").strip()
+    if slice_id:
+        _append(workspace_root / "libraries" / slice_id)
+
+    possible_owner_slices = search_hints.get("possible_owner_slices", [])
+    if isinstance(possible_owner_slices, list):
+        for slice_name in possible_owner_slices:
+            text = str(slice_name).strip()
+            if text:
+                _append(workspace_root / "libraries" / text)
+
+    # Single-library layout fallback remains bounded to workspace root.
+    if not roots and not (workspace_root / "libraries").exists():
+        _append(workspace_root)
+
+    return roots
+
+
 def _search_spec_catalog(
     workspace_root: Path,
     need: dict[str, Any],
     spec_refs: list[dict[str, Any]],
-) -> dict[str, Any] | None:
+    *,
+    scope_roots: list[Path],
+) -> tuple[dict[str, Any] | None, list[str]]:
     """Search for matching spec text in workspace slice files.
 
-    Scans text-like files under the workspace for spec comment blocks that
+    Scans text-like files under scoped roots for spec comment blocks that
     mention the needed artifact. Returns a match dict on success, None if
     nothing found.
     """
+    try:
+        workspace_root = workspace_root.resolve()
+    except OSError:
+        return None, ["Workspace root could not be resolved for spec catalog scanning."]
+
+    issues: list[str] = []
+    candidates: list[dict[str, Any]] = []
+
+    def _add_candidate(candidate: dict[str, Any]) -> None:
+        spec_text = str(candidate.get("spec_text", "")).strip()
+        if not spec_text:
+            return
+        candidates.append(candidate)
+
     # Prefer verbatim signal spec references when provided.
-    for ref in spec_refs:
+    for index, ref in enumerate(spec_refs):
         if not isinstance(ref, dict):
             continue
         spec_text = str(ref.get("spec_text", "")).strip()
         if not spec_text:
             continue
-        return {
-            "spec_text": spec_text,
-            "file": str(ref.get("source_file", "")).strip(),
-            "symbol": str(ref.get("source_symbol", "")).strip(),
-            "line_hint": int(ref.get("source_line_hint", 0) or 0),
-            "matched_in": "signal_spec_ref",
-        }
+        _add_candidate(
+            {
+                "spec_text": spec_text,
+                "file": str(ref.get("source_file", "")).strip(),
+                "symbol": str(ref.get("source_symbol", "")).strip(),
+                "line_hint": int(ref.get("source_line_hint", 0) or 0),
+                "matched_in": "signal_spec_ref",
+                "match_score": 10_000 - index,
+            }
+        )
 
     artifact_key = str(need.get("artifact_key", "")).strip()
+    if not artifact_key and candidates:
+        ranked = sorted(candidates, key=lambda row: int(row.get("match_score", 0)), reverse=True)
+        candidate_matches = [
+            {k: v for k, v in row.items() if k != "match_score"} for row in ranked[:10]
+        ]
+        top = dict(candidate_matches[0])
+        top["candidate_matches"] = candidate_matches
+        return top, issues
     if not artifact_key:
-        return None
+        return None, issues
 
     search_terms = [artifact_key.lower(), *_extract_artifact_channel_tokens(artifact_key)]
     search_terms = [term for term in _dedupe_preserve_order(search_terms) if term]
     if not search_terms:
-        return None
+        return None, issues
 
-    for path in sorted(workspace_root.rglob("*")):
-        if not path.is_file():
-            continue
-        if not _is_text_like_file(path):
-            continue
+    normalized_roots: list[Path] = []
+    seen_roots: set[Path] = set()
+    for root in scope_roots:
         try:
-            content = path.read_text(encoding="utf-8", errors="replace")
+            resolved_root = root.resolve()
         except OSError:
             continue
-        content_lower = content.lower()
-        if not any(term in content_lower for term in search_terms):
+        if not resolved_root.is_dir() or resolved_root in seen_roots:
             continue
+        if not _is_relative_to(resolved_root, workspace_root):
+            continue
+        seen_roots.add(resolved_root)
+        normalized_roots.append(resolved_root)
 
-        rel = str(path.relative_to(workspace_root))
-        lines = content.splitlines()
-        for idx, line in enumerate(lines):
-            line_lower = line.lower()
-            if not any(term in line_lower for term in search_terms):
+    if not normalized_roots:
+        issues.append("No scoped roots were available for spec catalog scanning.")
+        if candidates:
+            ranked = sorted(
+                candidates, key=lambda row: int(row.get("match_score", 0)), reverse=True
+            )
+            candidate_matches = [
+                {k: v for k, v in row.items() if k != "match_score"} for row in ranked[:10]
+            ]
+            top = dict(candidate_matches[0])
+            top["candidate_matches"] = candidate_matches
+            return top, issues
+        return None, issues
+
+    seen_files: set[Path] = set()
+    for root in normalized_roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path in seen_files:
                 continue
-            spec_text, line_hint = _extract_nearest_spec_text(lines, idx)
-            if spec_text:
-                return {
-                    "spec_text": spec_text,
-                    "file": rel,
-                    "symbol": "",
-                    "line_hint": line_hint,
-                    "matched_in": "spec_catalog_scan",
-                }
+            seen_files.add(path)
+            if not _is_text_like_file(path):
+                continue
+            rel = (
+                str(path.relative_to(workspace_root))
+                if _is_relative_to(path, workspace_root)
+                else str(path.relative_to(root))
+            )
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                issues.append(f"{rel}: utf-8 decode failed ({exc.reason})")
+                continue
+            except OSError as exc:
+                issues.append(f"{rel}: read failed ({exc})")
+                continue
+            content_lower = content.lower()
+            if not any(term in content_lower for term in search_terms):
+                continue
 
-    return None
+            lines = content.splitlines()
+            for idx, line in enumerate(lines):
+                line_lower = line.lower()
+                term_hits = sum(1 for term in search_terms if term in line_lower)
+                if term_hits == 0:
+                    continue
+                spec_text, line_hint = _extract_nearest_spec_text(lines, idx)
+                if not spec_text:
+                    continue
+                _add_candidate(
+                    {
+                        "spec_text": spec_text,
+                        "file": rel,
+                        "symbol": "",
+                        "line_hint": line_hint,
+                        "matched_in": "spec_catalog_scan",
+                        "match_score": term_hits,
+                    }
+                )
+
+    if not candidates:
+        return None, issues
+
+    ranked = sorted(candidates, key=lambda row: int(row.get("match_score", 0)), reverse=True)
+    candidate_matches = [
+        {k: v for k, v in row.items() if k != "match_score"} for row in ranked[:10]
+    ]
+    top = dict(candidate_matches[0])
+    top["candidate_matches"] = candidate_matches
+    return top, issues
 
 
 def _create_work_item_from_spec(

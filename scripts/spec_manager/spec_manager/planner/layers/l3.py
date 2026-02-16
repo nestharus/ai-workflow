@@ -346,7 +346,7 @@ class L3LayerResearchAdapter:
         self._constraints_tool = constraints_tool
 
     def run_agent(self, prompt: str) -> str:
-        return self._query_text(prompt)
+        return self._query_text_result(prompt)["answer"]
 
     def summarize_quality_evidence(self, changed_files: list[str], ctx: Any) -> dict[str, Any]:
         if not changed_files:
@@ -378,11 +378,14 @@ class L3LayerResearchAdapter:
 
         resolved_constraints: dict[str, Any] = {}
         questions: list[str] = []
+        resolution_failures: list[dict[str, str]] = []
 
-        for event in events:
+        for event_index, event in enumerate(events):
             event_file = str(event.get("file", "")).strip()
             event_span = str(event.get("function_span", "")).strip()
             key = f"{event_file}::{event_span}" if event_span else event_file
+            if not key:
+                key = f"event:{event_index + 1}"
             question = str(event.get("question", "")).strip()
             if not question:
                 question = (
@@ -391,7 +394,8 @@ class L3LayerResearchAdapter:
                     else "What is the expected quality refactoring boundary?"
                 )
 
-            constrained_answer = self._resolve_from_constraints(ctx, question)
+            constrained_result = self._resolve_from_constraints_result(ctx, question)
+            constrained_answer = constrained_result["answer"]
             if constrained_answer:
                 resolved_constraints[key or question] = {
                     "source": "constraints_tool",
@@ -399,19 +403,32 @@ class L3LayerResearchAdapter:
                     "behavior_change": False,
                 }
                 continue
+            if constrained_result["error"]:
+                resolution_failures.append(
+                    {
+                        "stage": "constraints_tool",
+                        "event_key": key,
+                        "question": question,
+                        "error": constrained_result["error"],
+                    }
+                )
 
             matching = smell_nodes.get(key)
+            smell_evidence = ""
             if matching:
-                resolved_constraints[key] = {
-                    "source": "quality_graph",
-                    "smell_type": matching.get("smell_type", "unknown"),
-                    "severity": matching.get("severity", "info"),
-                    "approach": f"refactor {matching.get('smell_type', 'issue')}",
-                    "behavior_change": False,
-                }
-                continue
+                smell_evidence = (
+                    f"smell_type={matching.get('smell_type', 'unknown')}, "
+                    f"severity={matching.get('severity', 'info')}, key={key}"
+                )
 
-            research_answer = self._query_text(question, ctx=ctx, hint="under_spec")
+            research_prompt = question
+            if smell_evidence:
+                research_prompt = (
+                    f"{question}\nKnown quality evidence: {smell_evidence}\n"
+                    "Use this evidence as context only and avoid speculative commitments."
+                )
+            research_result = self._query_text_result(research_prompt, ctx=ctx, hint="under_spec")
+            research_answer = research_result["answer"]
             if research_answer:
                 resolved_constraints[key or question] = {
                     "source": "research_tool",
@@ -419,21 +436,37 @@ class L3LayerResearchAdapter:
                     "behavior_change": False,
                 }
                 continue
+            if research_result["error"]:
+                resolution_failures.append(
+                    {
+                        "stage": "research_tool",
+                        "event_key": key,
+                        "question": question,
+                        "error": research_result["error"],
+                    }
+                )
 
-            questions.append(question)
+            if smell_evidence:
+                questions.append(f"{question} Known quality evidence: {smell_evidence}")
+            else:
+                questions.append(question)
 
         return {
             "blocked": bool(questions),
             "constraints": resolved_constraints,
             "questions": questions,
+            "resolution_failures": resolution_failures,
         }
 
     def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
         return None
 
     def _resolve_from_constraints(self, ctx: Any, question: str) -> str:
+        return self._resolve_from_constraints_result(ctx, question)["answer"]
+
+    def _resolve_from_constraints_result(self, ctx: Any, question: str) -> dict[str, str]:
         if not question or self._constraints_tool is None:
-            return ""
+            return {"answer": "", "error": ""}
         slice_id = str(getattr(ctx, "slice_id", "") or "__system__")
         try:
             if hasattr(self._constraints_tool, "check_coverage"):
@@ -442,20 +475,30 @@ class L3LayerResearchAdapter:
                     record = coverage.get(question)
                     answer = str(getattr(record, "answer", "") or "").strip()
                     if answer:
-                        return answer
-        except Exception:
-            logger.debug("L3 constraints tool failed", exc_info=True)
-        return ""
+                        return {"answer": answer, "error": ""}
+        except Exception as exc:
+            logger.warning("L3 constraints tool failed", exc_info=True)
+            return {"answer": "", "error": str(exc).strip() or "constraints tool failure"}
+        return {"answer": "", "error": ""}
 
     def _query_text(self, question: str, *, ctx: Any | None = None, hint: str = "") -> str:
+        return self._query_text_result(question, ctx=ctx, hint=hint)["answer"]
+
+    def _query_text_result(
+        self,
+        question: str,
+        *,
+        ctx: Any | None = None,
+        hint: str = "",
+    ) -> dict[str, str]:
         prompt = str(question or "").strip()
         if not prompt or self._research_tool is None:
-            return ""
+            return {"answer": "", "error": ""}
 
         try:
             if callable(self._research_tool):
                 raw = self._research_tool(prompt)
-                return str(raw).strip()
+                return {"answer": str(raw).strip(), "error": ""}
             if hasattr(self._research_tool, "research"):
                 from spec_manager.planner.tools.research_tool import ResearchQuery
 
@@ -472,10 +515,11 @@ class L3LayerResearchAdapter:
                 )
                 synthesis = str(getattr(result, "synthesis", "") or "").strip()
                 if synthesis:
-                    return synthesis
-        except Exception:
-            logger.debug("L3 research query failed", exc_info=True)
-        return ""
+                    return {"answer": synthesis, "error": ""}
+        except Exception as exc:
+            logger.warning("L3 research query failed", exc_info=True)
+            return {"answer": "", "error": str(exc).strip() or "research tool failure"}
+        return {"answer": "", "error": ""}
 
     @staticmethod
     def _slice_id_from_ctx(ctx: Any | None) -> str:

@@ -125,6 +125,7 @@ _ARCH_FILE_HINT_TOKENS = (
     "arch",
     "pin",
 )
+_PLANNER_DISCOVERY_CHUNK_SIZE = 12000
 
 
 def _empty_topology() -> dict[str, Any]:
@@ -337,6 +338,18 @@ def _extract_first_json_object(text: str) -> str:
     return ""
 
 
+def _chunk_text_with_offsets(text: str, *, max_chars: int) -> list[tuple[int, int, str]]:
+    if max_chars <= 0:
+        return [(0, len(text), text)]
+    if not text:
+        return [(0, 0, "")]
+    chunks: list[tuple[int, int, str]] = []
+    for offset_start in range(0, len(text), max_chars):
+        offset_end = min(offset_start + max_chars, len(text))
+        chunks.append((offset_start, offset_end, text[offset_start:offset_end]))
+    return chunks
+
+
 def _normalize_topology_graph(
     payload: dict[str, Any] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
@@ -472,13 +485,22 @@ class L2LayerResearchAdapter:
         self._resolve_signal_fn = resolve_signal_fn
 
     def run_agent(self, prompt: str, *, ctx: Any | None = None, hint: str = "") -> str:
+        return self.run_agent_result(prompt, ctx=ctx, hint=hint)["answer"]
+
+    def run_agent_result(
+        self,
+        prompt: str,
+        *,
+        ctx: Any | None = None,
+        hint: str = "",
+    ) -> dict[str, str]:
         question = str(prompt or "").strip()
         if not question or self._research_tool is None:
-            return ""
+            return {"answer": "", "error": ""}
         try:
             if callable(self._research_tool):
                 raw = self._research_tool(question)
-                return str(raw).strip()
+                return {"answer": str(raw).strip(), "error": ""}
             if hasattr(self._research_tool, "research"):
                 from spec_manager.planner.tools.research_tool import ResearchQuery
 
@@ -495,15 +517,16 @@ class L2LayerResearchAdapter:
                 )
                 synthesis = str(getattr(result, "synthesis", "") or "").strip()
                 if synthesis:
-                    return synthesis
+                    return {"answer": synthesis, "error": ""}
             if hasattr(self._research_tool, "search"):
                 raw_search = self._research_tool.search(question, max_results=1)
                 best_hit = getattr(raw_search, "best_hit", None)
                 if best_hit is not None:
-                    return str(getattr(best_hit, "text", "") or "").strip()
-        except Exception:
-            logger.debug("L2 research query failed", exc_info=True)
-        return ""
+                    return {"answer": str(getattr(best_hit, "text", "") or "").strip(), "error": ""}
+        except Exception as exc:
+            logger.warning("L2 research query failed", exc_info=True)
+            return {"answer": "", "error": str(exc).strip() or "research tool failure"}
+        return {"answer": "", "error": ""}
 
     @staticmethod
     def _slice_id_from_ctx(ctx: Any | None) -> str:
@@ -527,8 +550,11 @@ class L2LayerResearchAdapter:
         return " ".join(context_parts)
 
     def resolve_from_constraints(self, ctx: Any, question: str) -> str:
+        return self.resolve_from_constraints_result(ctx, question)["answer"]
+
+    def resolve_from_constraints_result(self, ctx: Any, question: str) -> dict[str, str]:
         if not question or self._constraints_tool is None:
-            return ""
+            return {"answer": "", "error": ""}
         slice_id = str(getattr(ctx, "slice_id", "") or "__system__")
         try:
             if hasattr(self._constraints_tool, "check_coverage"):
@@ -537,10 +563,11 @@ class L2LayerResearchAdapter:
                     record = coverage.get(question)
                     answer = str(getattr(record, "answer", "") or "").strip()
                     if answer:
-                        return answer
-        except Exception:
-            logger.debug("L2 constraints tool failed", exc_info=True)
-        return ""
+                        return {"answer": answer, "error": ""}
+        except Exception as exc:
+            logger.warning("L2 constraints tool failed", exc_info=True)
+            return {"answer": "", "error": str(exc).strip() or "constraints tool failure"}
+        return {"answer": "", "error": ""}
 
     def resolve_under_spec(
         self,
@@ -666,11 +693,12 @@ class L2Planner:
                 "(component_manifest/pins_registry/entrypoints/handlers/routes/wiring)."
             )
 
-        topology_payload = self._derive_arch_topology(
+        topology_payload, artifact_issues = self._derive_arch_topology(
             workspace_root=workspace_root,
             scope_roots=scope_roots,
             arch_files=routed_arch_files,
         )
+        discovery_issues.extend(artifact_issues)
         nodes, edges, payload_arch_files, topology_issues = _normalize_topology_graph(
             topology_payload
         )
@@ -835,11 +863,11 @@ class L2Planner:
         workspace_root: Path | None,
         scope_roots: list[Path],
         arch_files: list[str],
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, list[str]]:
         if self._integration_tool is None:
-            return None
+            return None, []
 
-        arch_artifacts = self._load_arch_artifacts(
+        arch_artifacts, artifact_issues = self._load_arch_artifacts(
             arch_files=arch_files,
             workspace_root=workspace_root,
             scope_roots=scope_roots,
@@ -893,14 +921,14 @@ class L2Planner:
                 )
         except Exception:
             logger.warning("L2 integration tool failed during topology derivation", exc_info=True)
-            return None
+            return None, artifact_issues
 
         payload_dict = _coerce_json_payload(raw)
         if payload_dict is None:
-            return None
+            return None, artifact_issues
         if "arch_files" not in payload_dict:
             payload_dict["arch_files"] = list(arch_files)
-        return payload_dict
+        return payload_dict, artifact_issues
 
     @staticmethod
     def _load_arch_artifacts(
@@ -908,8 +936,9 @@ class L2Planner:
         arch_files: list[str],
         workspace_root: Path | None,
         scope_roots: list[Path],
-    ) -> list[dict[str, str]]:
-        artifacts: list[dict[str, str]] = []
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        artifacts: list[dict[str, Any]] = []
+        issues: list[str] = []
         for ref in arch_files:
             candidate_paths = L2Planner._resolve_arch_ref_paths(
                 ref,
@@ -917,20 +946,62 @@ class L2Planner:
                 scope_roots=scope_roots,
             )
             if not candidate_paths:
-                artifacts.append({"path": ref, "content": ""})
+                artifacts.append(
+                    {
+                        "path": ref,
+                        "content": "",
+                        "content_length": 0,
+                        "chunk_count": 0,
+                        "chunks": [],
+                        "read_error": "No candidate path resolved for architecture artifact.",
+                    }
+                )
+                issues.append(f"{ref}: no readable path resolved for architecture artifact")
                 continue
             loaded = False
             for candidate in candidate_paths:
                 try:
-                    content = candidate.read_text(encoding="utf-8", errors="replace")
-                except OSError:
+                    content = candidate.read_text(encoding="utf-8")
+                except UnicodeDecodeError as exc:
+                    issues.append(f"{ref}: utf-8 decode failed at {candidate} ({exc.reason})")
                     continue
-                artifacts.append({"path": ref, "content": content[:16000]})
+                except OSError as exc:
+                    issues.append(f"{ref}: read failed at {candidate} ({exc})")
+                    continue
+                chunks = _chunk_text_with_offsets(content, max_chars=_PLANNER_DISCOVERY_CHUNK_SIZE)
+                artifacts.append(
+                    {
+                        "path": ref,
+                        "content": content,
+                        "content_length": len(content),
+                        "chunk_count": len(chunks),
+                        "chunks": [
+                            {
+                                "chunk_index": index,
+                                "chunk_count": len(chunks),
+                                "offset_start": offset_start,
+                                "offset_end": offset_end,
+                                "content": chunk_text,
+                            }
+                            for index, (offset_start, offset_end, chunk_text) in enumerate(chunks)
+                        ],
+                    }
+                )
                 loaded = True
                 break
             if not loaded:
-                artifacts.append({"path": ref, "content": ""})
-        return artifacts
+                artifacts.append(
+                    {
+                        "path": ref,
+                        "content": "",
+                        "content_length": 0,
+                        "chunk_count": 0,
+                        "chunks": [],
+                        "read_error": "Failed to read architecture artifact "
+                        "from all candidate paths.",
+                    }
+                )
+        return artifacts, issues
 
     @staticmethod
     def _coerce_integration_graph_payload(graph: Any, arch_files: list[str]) -> dict[str, Any]:
@@ -1317,11 +1388,7 @@ class L2Planner:
 
         result: dict[str, Any] = {"intentions": intentions}
         if session.new_constraints:
-            constraints_to_write = [
-                constraint.to_dict()
-                for constraint in session.new_constraints
-                if str(getattr(constraint, "dimension", "")).strip().lower() == "software"
-            ]
+            constraints_to_write = [constraint.to_dict() for constraint in session.new_constraints]
             if constraints_to_write:
                 result["new_constraints_to_write"] = constraints_to_write
         if session.under_spec_events:
@@ -1379,43 +1446,74 @@ class L2Planner:
         arch_file_refs = self._collect_discovery_arch_file_refs(discovery)
         resolved_constraints: dict[str, str] = {}
         remaining_questions: list[str] = []
+        resolution_failures: list[dict[str, str]] = []
 
-        for event in events:
-            event_id = event.get("id", event.get("event_id", ""))
+        for event_index, event in enumerate(events):
             question = str(event.get("question", event.get("description", ""))).strip()
-            constraint_key = event_id or question
+            constraint_key = self._event_resolution_key(event, event_index)
 
             # Strategy 1: constraints first.
-            constraint_answer = self.layer_research_adapter.resolve_from_constraints(ctx, question)
+            constraint_result = self.layer_research_adapter.resolve_from_constraints_result(
+                ctx, question
+            )
+            constraint_answer = constraint_result["answer"]
             if constraint_answer:
                 resolved_constraints[constraint_key] = constraint_answer
                 continue
+            if constraint_result["error"]:
+                resolution_failures.append(
+                    {
+                        "stage": "constraints_tool",
+                        "event_key": constraint_key,
+                        "question": question,
+                        "error": constraint_result["error"],
+                    }
+                )
 
-            # Strategy 2: resolve from routed architecture artifacts.
-            artifact_answer = self._resolve_event_from_artifacts(
+            # Strategy 2: gather routed architecture evidence (does not auto-resolve).
+            artifact_refs = self._resolve_event_from_artifacts(
                 event=event,
                 question=question,
                 arch_file_refs=arch_file_refs,
                 workspace_root=workspace_root,
                 scope_roots=scope_roots,
             )
-            if artifact_answer:
-                resolved_constraints[constraint_key] = artifact_answer
-                continue
+            artifact_context = self._format_artifact_ref_context(artifact_refs)
 
             # Strategy 3: shared research lookup.
-            answer = self.layer_research_adapter.run_agent(
-                question,
+            research_prompt = question
+            if artifact_context:
+                research_prompt = (
+                    f"{question}\nKnown architecture evidence: {artifact_context}\n"
+                    "Use this evidence only as context and avoid speculative commitments."
+                )
+            answer_result = self.layer_research_adapter.run_agent_result(
+                research_prompt,
                 ctx=ctx,
                 hint="under_spec",
             )
+            answer = answer_result["answer"]
             if answer:
                 resolved_constraints[constraint_key] = answer
                 continue
+            if answer_result["error"]:
+                resolution_failures.append(
+                    {
+                        "stage": "research_tool",
+                        "event_key": constraint_key,
+                        "question": question,
+                        "error": answer_result["error"],
+                    }
+                )
 
             # Strategy 4: cannot resolve -- block.
             if question:
-                remaining_questions.append(question)
+                if artifact_context:
+                    remaining_questions.append(
+                        f"{question} Known architecture evidence: {artifact_context}"
+                    )
+                else:
+                    remaining_questions.append(question)
             elif constraint_key:
                 remaining_questions.append(f"Cannot resolve under-spec event: {constraint_key}")
 
@@ -1424,6 +1522,7 @@ class L2Planner:
             "blocked": blocked,
             "constraints": resolved_constraints,
             "questions": remaining_questions,
+            "resolution_failures": resolution_failures,
         }
 
     def _compose_interactive_under_spec_questions(
@@ -1443,13 +1542,14 @@ class L2Planner:
             if not base_question:
                 base_question = "What requirement should resolve this architecture ambiguity?"
 
-            artifact_context = self._resolve_event_from_artifacts(
+            artifact_refs = self._resolve_event_from_artifacts(
                 event=event,
                 question=base_question,
                 arch_file_refs=arch_file_refs,
                 workspace_root=None,
                 scope_roots=[],
             )
+            artifact_context = self._format_artifact_ref_context(artifact_refs)
             if artifact_context:
                 questions.append(f"{base_question} Known artifacts: {artifact_context}")
                 continue
@@ -1460,6 +1560,25 @@ class L2Planner:
                 "architecture files that define them."
             )
         return questions
+
+    @staticmethod
+    def _event_resolution_key(event: dict[str, Any], event_index: int) -> str:
+        event_id = str(event.get("event_id", event.get("id", ""))).strip()
+        if event_id:
+            return event_id
+        question = str(event.get("question", event.get("description", ""))).strip()
+        if question:
+            digest = sha256(question.encode("utf-8")).hexdigest()[:12]
+            return f"event:{event_index + 1}:{digest}"
+        return f"event:{event_index + 1}"
+
+    @staticmethod
+    def _format_artifact_ref_context(refs: list[str], *, limit: int = 5) -> str:
+        if not refs:
+            return ""
+        shown = refs[: max(limit, 1)]
+        suffix = f" (+{len(refs) - len(shown)} more)" if len(refs) > len(shown) else ""
+        return f"relevant_refs={', '.join(shown)}{suffix}"
 
     @staticmethod
     def _resolve_workspace_root(workspace_root_value: Any) -> Path | None:
@@ -1587,14 +1706,14 @@ class L2Planner:
         arch_file_refs: list[str],
         workspace_root: Path | None,
         scope_roots: list[Path],
-    ) -> str | None:
-        """Return a constraint answer derived from routed architecture artifacts."""
+    ) -> list[str]:
+        """Return routed architecture refs that provide evidence for this event."""
         if not arch_file_refs:
-            return None
+            return []
 
         terms = L2Planner._collect_event_terms(event, question)
         if not terms:
-            return None
+            return []
 
         matched_refs: list[str] = []
         for ref in arch_file_refs[:80]:
@@ -1616,7 +1735,9 @@ class L2Planner:
 
             for candidate in candidate_paths:
                 try:
-                    contents = candidate.read_text(encoding="utf-8", errors="ignore").lower()
+                    contents = candidate.read_text(encoding="utf-8").lower()
+                except UnicodeDecodeError:
+                    continue
                 except OSError:
                     continue
                 if any(term in contents for term in terms):
@@ -1624,9 +1745,8 @@ class L2Planner:
                     break
 
         if not matched_refs:
-            return None
-
-        return f"Artifact-derived resolution: relevant_refs={', '.join(matched_refs[:5])}."
+            return []
+        return list(dict.fromkeys(matched_refs))
 
     @staticmethod
     def _coerce_evidence_answer(evidence_hit: Any) -> str:
@@ -1664,16 +1784,22 @@ class L2Planner:
             return None
 
         signal_text = signal if isinstance(signal, str) else getattr(signal, "text", str(signal))
-        result = self.layer_research_adapter.run_agent(
+        result = self.layer_research_adapter.run_agent_result(
             str(signal_text),
             ctx=ctx,
             hint="signal",
         )
-        if result:
+        if result["answer"]:
             return {
                 "resolved": True,
                 "source": "research_tool",
-                "detail": result,
+                "detail": result["answer"],
+            }
+        if result["error"]:
+            return {
+                "resolved": False,
+                "source": "research_tool",
+                "error": result["error"],
             }
         return None
 
