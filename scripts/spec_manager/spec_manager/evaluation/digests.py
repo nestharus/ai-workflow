@@ -140,7 +140,7 @@ def build_code_digest(
     quality_report_path = run_reports / "code_quality_report.json"
 
     # Build file list from run snapshot only (no workspace/global fallback).
-    snapshot_dir = run_dir / "snapshots" / "final_files"
+    snapshot_dir = run_dir / "snapshot" / "files" / "spec_snapshot"
     if snapshot_dir.exists():
         files_info, duplication_ratio, long_line_ratio = _build_file_inventory(snapshot_dir, run_id)
     else:
@@ -330,7 +330,9 @@ def _build_file_inventory(
                     "loc": loc,
                     "sha256": sha,
                     "role_hint": "",
-                    "snapshot_path": f".pdd_runs/{run_id}/snapshots/final_files/{rel_path}",
+                    "snapshot_path": (
+                        f".pdd_runs/{run_id}/snapshot/files/spec_snapshot/{rel_path}"
+                    ),
                 }
             )
 

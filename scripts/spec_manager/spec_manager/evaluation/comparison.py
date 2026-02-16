@@ -44,7 +44,7 @@ class ComparisonRunner:
         pairwise_arch_judge: Any | None = None,
         pairwise_code_judge: Any | None = None,
     ) -> dict[str, Any]:
-        """Run comparison on manifest entries.
+        """Run comparison on manifest runs.
 
         Args:
             manifest: Comparison manifest from MultiModelRunner.
@@ -54,18 +54,34 @@ class ComparisonRunner:
         Returns:
             Comparison result dict.
         """
-        entries = manifest.get("entries", [])
-        completed = [e for e in entries if e.get("status") == "completed"]
+        runs = manifest.get("runs", [])
+        completed = [
+            entry
+            for entry in runs
+            if str(entry.get("status", "completed")).strip().lower() == "completed"
+        ]
 
         # Load digests and scorecards
         run_data: dict[str, dict[str, Any]] = {}
         for entry in completed:
-            run_id = entry["run_id"]
+            run_id = str(entry.get("run_id", "")).strip()
+            if not run_id:
+                continue
+            snapshot_manifest_path = str(entry.get("snapshot_manifest", "")).strip()
+            snapshot_manifest = (
+                self._load_json(str(self._workspace_path(snapshot_manifest_path)))
+                if snapshot_manifest_path
+                else None
+            ) or {}
+            reports_dir = self._resolve_reports_dir(
+                run_id=run_id,
+                snapshot_manifest=snapshot_manifest,
+            )
             run_data[run_id] = {
-                "profile_name": entry.get("profile_name", ""),
-                "arch_digest": self._load_json(entry.get("arch_digest_path", "")),
-                "code_digest": self._load_json(entry.get("code_digest_path", "")),
-                "quality_scorecard": self._load_json(entry.get("quality_scorecard_path", "")),
+                "model": entry.get("model", ""),
+                "arch_digest": self._load_json(str(reports_dir / "architecture_digest.json")),
+                "code_digest": self._load_json(str(reports_dir / "code_digest.json")),
+                "quality_scorecard": self._load_json(str(reports_dir / "quality_scorecard.json")),
                 "duration_ms": entry.get("duration_ms", 0.0),
             }
 
@@ -73,7 +89,8 @@ class ComparisonRunner:
         summary = self._build_summary(run_data)
 
         # Canonical responsibility alignment
-        spec_summary = manifest.get("spec_summary", "")
+        spec_payload = manifest.get("spec", {})
+        spec_summary = spec_payload.get("path", "") if isinstance(spec_payload, dict) else ""
         responsibility_alignment = self._align_responsibilities(
             list(run_data.values()), spec_summary
         )
@@ -124,6 +141,8 @@ class ComparisonRunner:
         result = {
             "comparison_id": self.comparison_id,
             "runs": list(run_data.keys()),
+            "spec": spec_payload if isinstance(spec_payload, dict) else {},
+            "pipeline_git_sha": manifest.get("pipeline_git_sha", ""),
             "summary": summary,
             "responsibility_alignment": responsibility_alignment,
             "pairwise": pairwise_results,
@@ -228,7 +247,7 @@ class ComparisonRunner:
             rows.append(
                 {
                     "run_id": run_id,
-                    "profile_name": data.get("profile_name", ""),
+                    "model": data.get("model", ""),
                     "arch_quality_score": sc.get("arch_quality_score", 0.0),
                     "code_quality_score": sc.get("code_quality_score", 0.0),
                     "spec_fidelity_score": sc.get("spec_fidelity_score", 0.0),
@@ -275,13 +294,13 @@ class ComparisonRunner:
             "",
             "## Summary",
             "",
-            "| Run | Profile | Arch Score | Code Score | Spec Fidelity | Status | Duration |",
-            "|-----|---------|-----------|-----------|---------------|--------|----------|",
+            "| Run | Model | Arch Score | Code Score | Spec Fidelity | Status | Duration |",
+            "|-----|-------|-----------|-----------|---------------|--------|----------|",
         ]
 
         for row in result.get("summary", []):
             lines.append(
-                f"| {row['run_id']} | {row['profile_name']} "
+                f"| {row['run_id']} | {row['model']} "
                 f"| {row['arch_quality_score']:.3f} "
                 f"| {row['code_quality_score']:.3f} "
                 f"| {row['spec_fidelity_score']:.3f} "
@@ -347,11 +366,33 @@ class ComparisonRunner:
                     lines.append("")
                     sorted_runs = sorted(wins.items(), key=lambda x: x[1], reverse=True)
                     for run_id, count in sorted_runs:
-                        profile = run_data.get(run_id, {}).get("profile_name", "?")
-                        lines.append(f"- {run_id} ({profile}): {count} wins")
+                        model = run_data.get(run_id, {}).get("model", "?")
+                        lines.append(f"- {run_id} ({model}): {count} wins")
                     lines.append("")
 
         return "\n".join(lines)
+
+    def _resolve_reports_dir(
+        self,
+        *,
+        run_id: str,
+        snapshot_manifest: dict[str, Any],
+    ) -> Path:
+        """Resolve run-scoped reports directory from snapshot contract."""
+        paths = snapshot_manifest.get("paths", {})
+        if isinstance(paths, dict):
+            reports_dir = paths.get("reports_dir", "")
+            if isinstance(reports_dir, str) and reports_dir.strip():
+                return self._workspace_path(reports_dir)
+
+        return self.workspace_root / "reports" / "pdd" / run_id
+
+    def _workspace_path(self, path_str: str) -> Path:
+        """Resolve absolute or workspace-relative paths safely."""
+        path = Path(path_str)
+        if path.is_absolute():
+            return path
+        return self.workspace_root / path
 
     def _load_json(self, path_str: str) -> dict[str, Any] | None:
         """Load a JSON file, returning None on failure."""

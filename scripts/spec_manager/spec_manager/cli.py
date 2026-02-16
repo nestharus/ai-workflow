@@ -493,7 +493,7 @@ def cmd_quality(args: argparse.Namespace) -> int:
     workspace = Path.cwd()
     run_id = args.run_id
     run_dir = workspace / ".pdd_runs" / run_id
-    snapshot_dir = run_dir / "snapshots" / "final_files"
+    snapshot_dir = run_dir / "snapshot" / "files" / "spec_snapshot"
 
     print(f"Computing quality scorecard for run: {run_id}")
 

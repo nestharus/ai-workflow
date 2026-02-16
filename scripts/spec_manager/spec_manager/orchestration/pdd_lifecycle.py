@@ -1016,22 +1016,27 @@ class PddLifecycle:
         _enable_quality = (
             _run_config.enable_quality_scoring if _run_config else self._compute_quality
         )
-        _enable_snapshots = _run_config.enable_snapshots if _run_config else True
-        snapshot_needed = _enable_snapshots or _enable_quality
+        producer_model_id = self._resolve_model_id_for_role("refinement")
+        judge_model_id = self._resolve_model_id_for_role("judge")
+        git_sha = self._read_git_sha() or ""
 
-        # Snapshot (required for immutable digest-based quality scoring).
-        if snapshot_needed:
-            try:
-                from spec_manager.evaluation.snapshot import snapshot_run
+        # Snapshot source tree and existing run reports (always on).
+        try:
+            from spec_manager.evaluation.snapshot import snapshot_run
 
-                snapshot_run(self.manager.structure.root, self.manager.run_id)
-            except Exception as exc:
-                logger.warning("Snapshot failed: %s", exc)
+            snapshot_run(
+                self.manager.structure.root,
+                self.manager.run_id,
+                pipeline_git_sha=git_sha,
+                producer_model_id=producer_model_id,
+                judge_model_id=judge_model_id,
+            )
+        except Exception as exc:
+            logger.warning("Snapshot failed: %s", exc)
 
         arch_digest: dict[str, Any] | None = None
         code_digest: dict[str, Any] | None = None
-        producer_model_id = self._resolve_model_id_for_role("refinement")
-        git_sha = self._read_git_sha() or ""
+        spec_hash_for_snapshot = ""
         try:
             from spec_manager.evaluation.digests import (
                 build_architecture_digest,
@@ -1059,6 +1064,12 @@ class PddLifecycle:
             (run_reports / "code_digest.json").write_text(
                 json.dumps(code_digest, indent=2), encoding="utf-8"
             )
+            if isinstance(arch_digest, dict):
+                spec_payload = arch_digest.get("spec", {})
+                if isinstance(spec_payload, dict):
+                    candidate_hash = spec_payload.get("spec_hash", "")
+                    if isinstance(candidate_hash, str):
+                        spec_hash_for_snapshot = candidate_hash
         except Exception as digest_exc:
             logger.warning("Digest build failed: %s", digest_exc, exc_info=True)
 
@@ -1075,7 +1086,6 @@ class PddLifecycle:
                     from spec_manager.refinement.evals.judges.cache import JudgeCache
 
                     arch_judge_output = None
-                    judge_model_id = self._resolve_model_id_for_role("judge")
                     try:
                         arch_judge = ArchitectureQualityJudge(
                             workspace=self.manager.structure.root,
@@ -1116,6 +1126,19 @@ class PddLifecycle:
         results["final_report_path"] = str(report_path)
         results["scorecard_json_path"] = str(scorecard_json_path)
         results["run_summary_path"] = self._run_report_relpath("run_summary.json")
+        try:
+            from spec_manager.evaluation.snapshot import snapshot_run
+
+            snapshot_run(
+                self.manager.structure.root,
+                self.manager.run_id,
+                spec_hash=spec_hash_for_snapshot,
+                pipeline_git_sha=git_sha,
+                producer_model_id=producer_model_id,
+                judge_model_id=judge_model_id,
+            )
+        except Exception as exc:
+            logger.warning("Snapshot refresh failed: %s", exc)
 
         # Final whole-run governance gate
         final_governance = self._run_governance_check(
@@ -1171,6 +1194,19 @@ class PddLifecycle:
         results["final_report_path"] = str(report_path)
         results["scorecard_json_path"] = str(scorecard_json_path)
         results["run_summary_path"] = self._run_report_relpath("run_summary.json")
+        try:
+            from spec_manager.evaluation.snapshot import snapshot_run
+
+            snapshot_run(
+                self.manager.structure.root,
+                self.manager.run_id,
+                spec_hash=spec_hash_for_snapshot,
+                pipeline_git_sha=git_sha,
+                producer_model_id=producer_model_id,
+                judge_model_id=judge_model_id,
+            )
+        except Exception as exc:
+            logger.warning("Snapshot refresh failed: %s", exc)
 
         results["merge_tag"] = self._perform_release_merge_and_tag()
         merge_tag = results["merge_tag"]

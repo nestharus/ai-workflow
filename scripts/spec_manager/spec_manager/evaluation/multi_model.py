@@ -14,8 +14,10 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -56,16 +58,12 @@ class MultiModelRunConfig:
 class RunManifestEntry:
     """A single entry in the comparison manifest."""
 
-    profile_name: str = ""
+    model: str = ""
     run_id: str = ""
+    snapshot_manifest: str = ""
     replicate: int = 0
     status: str = ""  # completed, failed
     duration_ms: float = 0.0
-    arch_digest_path: str = ""
-    code_digest_path: str = ""
-    quality_scorecard_path: str = ""
-    planner_scorecard_path: str = ""
-    snapshot_manifest_path: str = ""
 
 
 class MultiModelRunner:
@@ -106,6 +104,8 @@ class MultiModelRunner:
         if not comparison_id:
             comparison_id = f"cmp-{int(time.time())}"
 
+        spec_hash = self._hash_input_path(self.input_folder)
+        pipeline_git_sha = self._read_git_sha(self.workspace_root)
         entries: list[RunManifestEntry] = []
 
         for profile in profiles:
@@ -121,8 +121,10 @@ class MultiModelRunner:
                 entry = self._run_single(
                     profile=profile,
                     run_id=run_id,
+                    comparison_id=comparison_id,
                     replicate=rep,
                     judge_model=judge_model,
+                    pipeline_git_sha=pipeline_git_sha,
                     compute_quality=compute_quality,
                     enable_planner_eval=enable_planner_eval,
                     allow_self_judge=allow_self_judge,
@@ -131,18 +133,23 @@ class MultiModelRunner:
 
         manifest = {
             "comparison_id": comparison_id,
+            "spec": {
+                "path": str(self.input_folder),
+                "hash": spec_hash,
+            },
+            "pipeline_git_sha": pipeline_git_sha,
+            "runs": [asdict(e) for e in entries],
             "profiles": [p.to_dict() for p in profiles],
             "runs_per_model": runs_per_model,
-            "judge_model": judge_model,
+            "judge_model_id": judge_model,
             "enable_planner_eval": enable_planner_eval,
-            "entries": [asdict(e) for e in entries],
-            "timestamp": time.time(),
+            "created_at": time.time(),
         }
 
         # Write manifest
         manifest_dir = self.workspace_root / "reports" / "pdd" / "comparisons" / comparison_id
         manifest_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = manifest_dir / "manifest.json"
+        manifest_path = manifest_dir / "comparison_manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         logger.info("Comparison manifest written: %s", manifest_path)
@@ -152,46 +159,47 @@ class MultiModelRunner:
         self,
         profile: ModelProfile,
         run_id: str,
+        comparison_id: str,
         replicate: int,
         judge_model: str,
+        pipeline_git_sha: str,
         compute_quality: bool,
         enable_planner_eval: bool,
         allow_self_judge: bool,
     ) -> RunManifestEntry:
         """Run a single pipeline instance."""
         entry = RunManifestEntry(
-            profile_name=profile.name,
+            model=profile.name,
             run_id=run_id,
             replicate=replicate,
         )
 
         start = time.time()
+        run_workspace = self.workspace_root
         try:
             manager = WorkspaceManager(
                 run_id=run_id,
                 input_folder=self.input_folder,
             )
             manager.initialize()
-            run_workspace = manager.workspace_path
+            workspace_candidate = manager.workspace_path
+            if isinstance(workspace_candidate, Path):
+                run_workspace = workspace_candidate
 
             lifecycle = PddLifecycle(manager, mode="auto", model_profile=profile)
             run_results = lifecycle.run()
-
-            # Snapshot
-            snap_path = snapshot_run(run_workspace, run_id)
-            entry.snapshot_manifest_path = str(snap_path)
 
             # Digests
             arch_digest = build_architecture_digest(
                 run_workspace,
                 run_id,
-                git_sha="",
+                git_sha=pipeline_git_sha,
                 producer_model_id=profile.producer_model_id,
             )
             code_digest = build_code_digest(
                 run_workspace,
                 run_id,
-                git_sha="",
+                git_sha=pipeline_git_sha,
                 producer_model_id=profile.producer_model_id,
             )
 
@@ -200,20 +208,15 @@ class MultiModelRunner:
 
             arch_path = run_reports / "architecture_digest.json"
             arch_path.write_text(json.dumps(arch_digest, indent=2), encoding="utf-8")
-            entry.arch_digest_path = str(arch_path)
 
             code_path = run_reports / "code_digest.json"
             code_path.write_text(json.dumps(code_digest, indent=2), encoding="utf-8")
-            entry.code_digest_path = str(code_path)
 
             planner_scorecard = None
             if enable_planner_eval:
                 try:
                     planner_eval = PlannerEvalHarness(run_workspace).score_existing_traces(run_id)
                     planner_scorecard = planner_eval.scorecard
-                    planner_path = run_reports / "planner_scorecard.json"
-                    if planner_path.exists():
-                        entry.planner_scorecard_path = str(planner_path)
                     if planner_eval.errors:
                         logger.warning(
                             "Planner eval for run %s reported issues: %s",
@@ -231,7 +234,7 @@ class MultiModelRunner:
 
                 if judge_model:
                     run_dir = run_workspace / ".pdd_runs" / run_id
-                    snapshot_dir = run_dir / "snapshots" / "final_files"
+                    snapshot_dir = run_dir / "snapshot" / "files" / "spec_snapshot"
                     judge_cache = JudgeCache(run_workspace / "analysis" / "judge_cache")
 
                     arch_judge = ArchitectureQualityJudge(
@@ -281,14 +284,103 @@ class MultiModelRunner:
                     pipeline_scorecard=(run_results or {}).get("scorecard"),
                     planner_scorecard=planner_scorecard,
                 )
-                json_path, _ = reporter.write(scorecard)
-                entry.quality_scorecard_path = str(json_path)
+                reporter.write(scorecard)
 
+            spec_hash = self._extract_spec_hash(arch_digest, run_workspace, run_id)
+            snap_path = snapshot_run(
+                run_workspace,
+                run_id,
+                comparison_id=comparison_id,
+                spec_hash=spec_hash,
+                pipeline_git_sha=pipeline_git_sha,
+                producer_model_id=profile.producer_model_id,
+                judge_model_id=judge_model,
+            )
+            entry.snapshot_manifest = str(snap_path)
             entry.status = "completed"
 
         except Exception:
             logger.exception("Run %s failed", run_id)
             entry.status = "failed"
+            try:
+                snap_path = snapshot_run(
+                    run_workspace,
+                    run_id,
+                    comparison_id=comparison_id,
+                    pipeline_git_sha=pipeline_git_sha,
+                    producer_model_id=profile.producer_model_id,
+                    judge_model_id=judge_model,
+                )
+                entry.snapshot_manifest = str(snap_path)
+            except Exception:
+                logger.exception("Snapshot failed for run %s after pipeline failure", run_id)
 
         entry.duration_ms = (time.time() - start) * 1000
         return entry
+
+    @staticmethod
+    def _extract_spec_hash(arch_digest: dict[str, Any], workspace: Path, run_id: str) -> str:
+        """Resolve spec hash from digest first, then run summary artifact."""
+        spec_payload = arch_digest.get("spec", {})
+        if isinstance(spec_payload, dict):
+            value = spec_payload.get("spec_hash", "")
+            if isinstance(value, str) and value:
+                return value
+
+        if not isinstance(workspace, Path):
+            return ""
+        spec_summary_path = workspace / ".pdd_runs" / run_id / "spec_summary.json"
+        if spec_summary_path.exists():
+            try:
+                raw_payload = spec_summary_path.read_text(encoding="utf-8")
+                if not isinstance(raw_payload, str):
+                    return ""
+                data = json.loads(raw_payload)
+            except (json.JSONDecodeError, OSError, TypeError, ValueError):
+                return ""
+            value = data.get("spec_hash", "") if isinstance(data, dict) else ""
+            if isinstance(value, str):
+                return value
+        return ""
+
+    @staticmethod
+    def _read_git_sha(repo_root: Path) -> str:
+        """Resolve HEAD SHA for reproducibility metadata."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return ""
+        return result.stdout.strip()
+
+    @staticmethod
+    def _hash_input_path(path: Path) -> str:
+        """Hash input spec path deterministically for comparison manifests."""
+        if not path.exists():
+            return ""
+        if path.is_file():
+            try:
+                return hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                return ""
+
+        records: list[str] = []
+        for fp in sorted(path.rglob("*")):
+            if not fp.is_file():
+                continue
+            try:
+                digest = hashlib.sha256(fp.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            rel_path = fp.relative_to(path).as_posix()
+            records.append(f"{rel_path}:{digest}")
+
+        if not records:
+            return ""
+        return hashlib.sha256("\n".join(records).encode("utf-8")).hexdigest()

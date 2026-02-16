@@ -613,7 +613,7 @@ class PlannerEvalHarness:
 
         judge_cache = JudgeCache(workspace / "analysis" / "judge_cache")
         run_dir = workspace / ".pdd_runs" / run_id
-        snapshot_dir = run_dir / "snapshots" / "final_files"
+        snapshot_dir = run_dir / "snapshot" / "files" / "spec_snapshot"
 
         arch_judge_output = (
             ArchitectureQualityJudge(
