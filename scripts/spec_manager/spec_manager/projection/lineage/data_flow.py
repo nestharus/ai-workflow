@@ -72,7 +72,9 @@ class DataFlowHop:
     signals_passed: list[str] = field(default_factory=list)
     signals_dropped: list[str] = field(default_factory=list)
     signals_added: list[str] = field(default_factory=list)
-    hop_type: ProjectionType = ProjectionType.PASS_THROUGH
+    hop_type: ProjectionType | None = ProjectionType.PASS_THROUGH
+    assessed: bool = True
+    assessment_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -82,7 +84,9 @@ class DataFlowHop:
             "signals_passed": self.signals_passed,
             "signals_dropped": self.signals_dropped,
             "signals_added": self.signals_added,
-            "hop_type": self.hop_type.value,
+            "hop_type": self.hop_type.value if self.hop_type is not None else None,
+            "assessed": self.assessed,
+            "assessment_reason": self.assessment_reason,
         }
 
     @classmethod
@@ -94,7 +98,9 @@ class DataFlowHop:
             signals_passed=data.get("signals_passed", []),
             signals_dropped=data.get("signals_dropped", []),
             signals_added=data.get("signals_added", []),
-            hop_type=ProjectionType(data["hop_type"]),
+            hop_type=ProjectionType(data["hop_type"]) if data.get("hop_type") else None,
+            assessed=bool(data.get("assessed", True)),
+            assessment_reason=str(data.get("assessment_reason", "")),
         )
 
 
@@ -149,11 +155,19 @@ class DataFlowTracker:
 
         # Find the lineage edge to get the transformation type
         edges = self.lineage_table.trace_forward(from_unit)
-        hop_type = ProjectionType.PASS_THROUGH
+        hop_type: ProjectionType | None = None
         for edge in edges:
             if edge.to_unit == to_unit:
                 hop_type = edge.transformation
                 break
+        if hop_type is None:
+            return DataFlowHop(
+                source_unit=from_unit,
+                target_unit=to_unit,
+                hop_type=None,
+                assessed=False,
+                assessment_reason="missing_lineage_edge",
+            )
 
         source_out = set(source_spec.signals_out)
         target_in = set(target_spec.signals_in)
@@ -172,6 +186,8 @@ class DataFlowTracker:
             signals_dropped=signals_dropped,
             signals_added=signals_added,
             hop_type=hop_type,
+            assessed=True,
+            assessment_reason="",
         )
 
     def find_signal_loss(self) -> list[DataFlowHop]:
@@ -182,8 +198,39 @@ class DataFlowTracker:
         """
         lossy_hops: list[DataFlowHop] = []
         for edge in self.lineage_table.edges:
+            source_spec = self._signal_specs.get(edge.from_unit)
+            target_spec = self._signal_specs.get(edge.to_unit)
+            if source_spec is None or target_spec is None:
+                missing: list[str] = []
+                if source_spec is None:
+                    missing.append(f"missing_source_spec:{edge.from_unit}")
+                if target_spec is None:
+                    missing.append(f"missing_target_spec:{edge.to_unit}")
+                lossy_hops.append(
+                    DataFlowHop(
+                        source_unit=edge.from_unit,
+                        target_unit=edge.to_unit,
+                        hop_type=edge.transformation,
+                        assessed=False,
+                        assessment_reason=";".join(missing),
+                    )
+                )
+                continue
+
             hop = self.compute_flow_projection(edge.from_unit, edge.to_unit)
-            if hop is not None and hop.signals_dropped:
+            if hop is None:
+                lossy_hops.append(
+                    DataFlowHop(
+                        source_unit=edge.from_unit,
+                        target_unit=edge.to_unit,
+                        hop_type=edge.transformation,
+                        assessed=False,
+                        assessment_reason="projection_unavailable",
+                    )
+                )
+                continue
+
+            if not hop.assessed or hop.signals_dropped:
                 lossy_hops.append(hop)
         return lossy_hops
 

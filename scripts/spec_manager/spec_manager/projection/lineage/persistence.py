@@ -8,6 +8,7 @@ interface_index.json.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from spec_manager.projection.lineage.table import ProjectionLineageTable
@@ -21,6 +22,13 @@ def save_lineage_table(table: ProjectionLineageTable, path: Path) -> None:
         path: File path to write to.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        history_dir = path.parent / f".{path.stem}_history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_name = f"{path.stem}.{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}.json"
+        snapshot_path = history_dir / snapshot_name
+        snapshot_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
     data = table.to_dict()
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 

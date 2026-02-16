@@ -51,6 +51,8 @@ class TestPinCheckResult:
     test_coverage_ratio: float = 0.0
     associations_found: int = 0
     baseline_updated: bool = False
+    baseline_update_notes: list[str] = field(default_factory=list)
+    rejected_observation_count: int = 0
 
 
 def check_test_pin_alignment(
@@ -89,6 +91,7 @@ def check_test_pin_alignment(
         runtime_observations=runtime_observations,
         observations_path=observations_path,
     )
+    rejected_observation_count = len(test_pin_map.rejected_rows)
 
     # Step 3: Load existing baseline
     baseline_store = load_baseline(baseline_path)
@@ -112,6 +115,7 @@ def check_test_pin_alignment(
 
     # Step 7: Optionally update baseline
     baseline_updated = False
+    baseline_update_notes: list[str] = []
     if update_baseline_flag:
         if not baseline_store.baselines:
             # No existing baseline -- create new one
@@ -119,9 +123,16 @@ def check_test_pin_alignment(
             save_baseline(new_store, baseline_path)
             baseline_updated = True
         else:
-            updated_store, _changes = update_baseline(baseline_store, test_pin_map, force=True)
-            save_baseline(updated_store, baseline_path)
-            baseline_updated = True
+            prior_count = len(baseline_store.baselines)
+            prior_updated_at = baseline_store.updated_at
+            updated_store, changes = update_baseline(baseline_store, test_pin_map, force=False)
+            baseline_update_notes.extend(changes)
+            if (
+                len(updated_store.baselines) != prior_count
+                or updated_store.updated_at != prior_updated_at
+            ):
+                save_baseline(updated_store, baseline_path)
+                baseline_updated = True
 
     return TestPinCheckResult(
         drift_items=drift_items,
@@ -131,6 +142,8 @@ def check_test_pin_alignment(
         test_coverage_ratio=test_coverage_ratio,
         associations_found=len(test_pin_map.associations),
         baseline_updated=baseline_updated,
+        baseline_update_notes=baseline_update_notes,
+        rejected_observation_count=rejected_observation_count,
     )
 
 
@@ -143,7 +156,7 @@ def _collect_test_files(test_roots: list[Path]) -> list[Path]:
     Returns:
         List of test file paths.
     """
-    from spec_manager.core.language import is_source_file, is_test_file, source_rglob
+    from spec_manager.core.language import is_test_file, source_rglob
 
     test_files: list[Path] = []
     for root in test_roots:
@@ -151,7 +164,7 @@ def _collect_test_files(test_roots: list[Path]) -> list[Path]:
             for py_file in source_rglob(root):
                 if is_test_file(py_file.name):
                     test_files.append(py_file)
-        elif root.is_file() and is_source_file(root.suffix):
+        elif root.is_file() and is_test_file(root.name):
             test_files.append(root)
     return test_files
 

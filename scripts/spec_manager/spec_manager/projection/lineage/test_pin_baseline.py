@@ -30,23 +30,34 @@ class TestSignatureBaseline:
     signature_hash: str
     signature_text: str
     recorded_at: str
+    status: str = "active"
+    status_reason: str = ""
+    supersedes_hash: str = ""
+    superseded_at: str = ""
+    superseded_by_hash: str = ""
 
 
 @dataclass
 class TestPinBaselineStore:
     """Persistent store of test-pin runtime signature baselines."""
 
-    schema_version: str = "1.0"
+    schema_version: str = "2.0"
     baselines: list[TestSignatureBaseline] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 
     def get_baseline(self, test_file: str, test_function: str) -> TestSignatureBaseline | None:
         """Find a baseline entry by test file and function name."""
-        for bl in self.baselines:
-            if bl.test_file == test_file and bl.test_function == test_function:
-                return bl
-        return None
+        candidates = [
+            bl
+            for bl in self.baselines
+            if bl.test_file == test_file
+            and bl.test_function == test_function
+            and bl.status != "superseded"
+        ]
+        if not candidates:
+            return None
+        return candidates[-1]
 
 
 def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
@@ -61,25 +72,31 @@ def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
             continue
         seen.add(key)
 
-        sig_hash = _compute_test_signature_hash(test_pin_map, assoc.test_file, assoc.test_function)
+        sig_hash = compute_test_signature_hash(test_pin_map, assoc.test_file, assoc.test_function)
         sig_text = _extract_test_signature_text(test_pin_map, assoc.test_file, assoc.test_function)
-        if sig_hash is None:
-            continue
 
         primary_pin = _primary_pin_for_test(test_pin_map, assoc.test_file, assoc.test_function)
+        status = "active"
+        status_reason = ""
+        if sig_hash is None:
+            status = "missing_signature"
+            status_reason = "signature_hash_unavailable_for_test_identity"
+
         baselines.append(
             TestSignatureBaseline(
                 test_file=assoc.test_file,
                 test_function=assoc.test_function,
                 pin_func_id=primary_pin,
-                signature_hash=sig_hash,
+                signature_hash=sig_hash or "",
                 signature_text=sig_text,
                 recorded_at=now,
+                status=status,
+                status_reason=status_reason,
             )
         )
 
     return TestPinBaselineStore(
-        schema_version="1.0",
+        schema_version="2.0",
         baselines=baselines,
         created_at=now,
         updated_at=now,
@@ -113,21 +130,23 @@ def update_baseline(
     """Merge new runtime associations into an existing baseline store."""
     now = datetime.now(UTC).isoformat()
     changes: list[str] = []
-
-    existing_lookup: dict[tuple[str, str], int] = {}
-    for i, bl in enumerate(existing.baselines):
-        existing_lookup[(bl.test_file, bl.test_function)] = i
+    mutated = False
 
     new_baseline = build_baseline(new_map)
 
     for new_bl in new_baseline.baselines:
-        key = (new_bl.test_file, new_bl.test_function)
-        if key in existing_lookup:
-            idx = existing_lookup[key]
-            old_bl = existing.baselines[idx]
+        old_bl = existing.get_baseline(new_bl.test_file, new_bl.test_function)
+        if old_bl is not None:
             if old_bl.signature_hash != new_bl.signature_hash:
                 if force:
-                    existing.baselines[idx] = new_bl
+                    old_bl.status = "superseded"
+                    old_bl.status_reason = "superseded_by_forced_update"
+                    old_bl.superseded_at = now
+                    old_bl.superseded_by_hash = new_bl.signature_hash
+                    new_bl.supersedes_hash = old_bl.signature_hash
+                    new_bl.recorded_at = now
+                    existing.baselines.append(new_bl)
+                    mutated = True
                     changes.append(
                         f"Updated {new_bl.test_function} in {new_bl.test_file}: "
                         f"{old_bl.signature_hash} -> {new_bl.signature_hash}"
@@ -139,13 +158,15 @@ def update_baseline(
                     )
         else:
             existing.baselines.append(new_bl)
+            mutated = True
             changes.append(f"Added new baseline for {new_bl.test_function} in {new_bl.test_file}")
 
-    existing.updated_at = now
+    if mutated:
+        existing.updated_at = now
     return existing, changes
 
 
-def _compute_test_signature_hash(
+def compute_test_signature_hash(
     test_pin_map: TestPinMap,
     test_file: str,
     test_function: str,
@@ -229,7 +250,7 @@ def _store_to_dict(store: TestPinBaselineStore) -> dict[str, Any]:
 def _store_from_dict(data: dict[str, Any]) -> TestPinBaselineStore:
     """Deserialize a TestPinBaselineStore from a dictionary."""
     return TestPinBaselineStore(
-        schema_version=data.get("schema_version", "1.0"),
+        schema_version=data.get("schema_version", "2.0"),
         baselines=[TestSignatureBaseline(**bl) for bl in data.get("baselines", [])],
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
@@ -240,6 +261,7 @@ __all__ = [
     "TestPinBaselineStore",
     "TestSignatureBaseline",
     "build_baseline",
+    "compute_test_signature_hash",
     "load_baseline",
     "save_baseline",
     "update_baseline",

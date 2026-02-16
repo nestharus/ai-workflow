@@ -9,6 +9,7 @@ and confidence threshold.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
 from spec_manager.projection.lineage.edges import ProjectionLineageEdge
@@ -25,6 +26,7 @@ class ProjectionLineageTable:
 
     def __init__(self) -> None:
         self.edges: list[ProjectionLineageEdge] = []
+        self.removed_edges: list[dict[str, Any]] = []
         self._by_from: dict[str, list[ProjectionLineageEdge]] = defaultdict(list)
         self._by_to: dict[str, list[ProjectionLineageEdge]] = defaultdict(list)
         self._by_transformation: dict[ProjectionType, list[ProjectionLineageEdge]] = defaultdict(
@@ -69,11 +71,12 @@ class ProjectionLineageTable:
         self._by_transformation[transformation].append(edge)
         return edge
 
-    def remove_edges_for(self, unit_id: str) -> int:
+    def remove_edges_for(self, unit_id: str, *, reason: str = "remove_edges_for") -> int:
         """Remove all edges involving a unit (as either from or to).
 
         Args:
             unit_id: The unit ID to remove edges for.
+            reason: Why the edges were removed.
 
         Returns:
             Number of edges removed.
@@ -82,6 +85,14 @@ class ProjectionLineageTable:
         removed_count = len(to_remove)
 
         for edge in to_remove:
+            self.removed_edges.append(
+                {
+                    "edge": edge.to_dict(),
+                    "removed_at": datetime.now(UTC).isoformat(),
+                    "removed_reason": reason,
+                    "removed_unit_id": unit_id,
+                }
+            )
             self.edges.remove(edge)
             # Clean up from-index
             if edge in self._by_from.get(edge.from_unit, []):
@@ -191,27 +202,43 @@ class ProjectionLineageTable:
 
     # --- Serialization ---
 
-    def to_dict(self) -> list[dict[str, Any]]:
-        """Serialize to a list of edge dictionaries."""
-        return [e.to_dict() for e in self.edges]
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize active and removed edges."""
+        return {
+            "schema_version": "2.0",
+            "active_edges": [e.to_dict() for e in self.edges],
+            "removed_edges": list(self.removed_edges),
+        }
 
     @classmethod
-    def from_dict(cls, data: list[dict[str, Any]]) -> ProjectionLineageTable:
-        """Deserialize from a list of edge dictionaries.
+    def from_dict(cls, data: dict[str, Any]) -> ProjectionLineageTable:
+        """Deserialize from serialized active and removed edges.
 
         Args:
-            data: List of serialized edge dictionaries.
+            data: Serialized lineage table payload.
 
         Returns:
             Reconstructed ProjectionLineageTable with indexes.
         """
+        if not isinstance(data, dict):
+            raise TypeError("ProjectionLineageTable payload must be an object.")
+
+        active = data.get("active_edges")
+        if not isinstance(active, list):
+            raise TypeError("ProjectionLineageTable.active_edges must be a list.")
+
+        removed = data.get("removed_edges", [])
+        if not isinstance(removed, list):
+            raise TypeError("ProjectionLineageTable.removed_edges must be a list.")
+
         table = cls()
-        for edge_data in data:
+        for edge_data in active:
             edge = ProjectionLineageEdge.from_dict(edge_data)
             table.edges.append(edge)
             table._by_from[edge.from_unit].append(edge)
             table._by_to[edge.to_unit].append(edge)
             table._by_transformation[edge.transformation].append(edge)
+        table.removed_edges = removed
         return table
 
 

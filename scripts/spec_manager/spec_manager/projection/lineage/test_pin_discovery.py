@@ -8,7 +8,6 @@ by a language/runtime-specific instrumentation plugin.
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +16,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
-logger = logging.getLogger(__name__)
+
+class ObservationLoadError(RuntimeError):
+    """Runtime observation payload could not be loaded/parsed."""
 
 
 class TestPinDiscoverer(Protocol):
@@ -47,6 +48,7 @@ class TestPinMap:
     """Complete mapping of test functions to pin-functions."""
 
     associations: list[TestPinAssociation] = field(default_factory=list)
+    rejected_rows: list[dict[str, Any]] = field(default_factory=list)
     scan_timestamp: str = ""
     test_roots_scanned: list[str] = field(default_factory=list)
 
@@ -95,35 +97,55 @@ def discover_test_pin_associations(
     - confidence (optional)
     - association_type (optional)
     """
-    name_to_pin: dict[str, str] = {}
+    pin_name_to_ids: dict[str, list[str]] = {}
+    pin_module_and_name_to_ids: dict[tuple[str, str], list[str]] = {}
+    pin_id_to_name: dict[str, str] = {}
     for pf in registry.pin_functions:
-        name_to_pin[pf.function_name] = pf.pin_func_id
+        pin_name_to_ids.setdefault(pf.function_name, []).append(pf.pin_func_id)
+        pin_module_and_name_to_ids.setdefault((pf.module_path, pf.function_name), []).append(
+            pf.pin_func_id
+        )
+        pin_id_to_name[pf.pin_func_id] = pf.function_name
     allowed_pin_ids = {pf.pin_func_id for pf in registry.pin_functions}
 
     allowed_files: set[str] = {
         str(path).replace("\\", "/") for path in test_files if isinstance(path, Path)
     }
 
-    raw_observations: list[dict[str, Any]] = []
+    raw_observations: list[Any] = []
     if runtime_observations:
-        raw_observations.extend(item for item in runtime_observations if isinstance(item, dict))
+        raw_observations.extend(runtime_observations)
     if observations_path is not None:
         raw_observations.extend(_load_observations(observations_path))
 
     associations: list[TestPinAssociation] = []
+    rejected_rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
     for row in raw_observations:
-        assoc = _normalize_runtime_observation(
+        if not isinstance(row, dict):
+            rejected_rows.append(
+                {
+                    "reason": "observation_row_not_object",
+                    "row": {"value": repr(row)},
+                }
+            )
+            continue
+
+        assoc, rejection_reason = _normalize_runtime_observation(
             row=row,
-            name_to_pin=name_to_pin,
+            pin_name_to_ids=pin_name_to_ids,
+            pin_module_and_name_to_ids=pin_module_and_name_to_ids,
+            pin_id_to_name=pin_id_to_name,
             allowed_pin_ids=allowed_pin_ids,
             allowed_files=allowed_files,
         )
         if assoc is None:
+            rejected_rows.append({"reason": rejection_reason, "row": dict(row)})
             continue
         key = (assoc.test_file, assoc.test_function, assoc.pin_func_id)
         if key in seen:
+            rejected_rows.append({"reason": "duplicate_association", "row": dict(row)})
             continue
         seen.add(key)
         associations.append(assoc)
@@ -132,38 +154,47 @@ def discover_test_pin_associations(
 
     return TestPinMap(
         associations=associations,
+        rejected_rows=rejected_rows,
         scan_timestamp=datetime.now(UTC).isoformat(),
         test_roots_scanned=test_roots,
     )
 
 
-def _load_observations(path: Path) -> list[dict[str, Any]]:
+def _load_observations(path: Path) -> list[Any]:
     if not path.exists():
         return []
+
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        logger.warning("Failed to load runtime test-pin observations from %s", path)
-        return []
+    except (OSError, ValueError, TypeError) as exc:
+        raise ObservationLoadError(
+            f"Failed to load runtime test-pin observations from {path}: {exc}"
+        ) from exc
+
     if isinstance(loaded, list):
-        return [item for item in loaded if isinstance(item, dict)]
+        return loaded
     if isinstance(loaded, dict):
         rows = loaded.get("observations")
         if isinstance(rows, list):
-            return [item for item in rows if isinstance(item, dict)]
-    return []
+            return rows
+
+    raise ObservationLoadError(
+        f"Runtime observation payload at {path} must be a list or object with 'observations' list."
+    )
 
 
 def _normalize_runtime_observation(
     *,
     row: dict[str, Any],
-    name_to_pin: dict[str, str],
+    pin_name_to_ids: dict[str, list[str]],
+    pin_module_and_name_to_ids: dict[tuple[str, str], list[str]],
+    pin_id_to_name: dict[str, str],
     allowed_pin_ids: set[str],
     allowed_files: set[str],
-) -> TestPinAssociation | None:
+) -> tuple[TestPinAssociation | None, str]:
     test_file = str(row.get("test_file") or row.get("test_path") or row.get("file") or "").strip()
     if not test_file:
-        return None
+        return None, "missing_test_file"
     test_file = test_file.replace("\\", "/")
 
     if (
@@ -171,48 +202,78 @@ def _normalize_runtime_observation(
         and test_file not in allowed_files
         and not any(test_file.endswith(f) for f in allowed_files)
     ):
-        return None
+        return None, "test_file_not_in_allowed_roots"
 
     test_function = str(row.get("test_function") or row.get("test_name") or "").strip()
     if not test_function:
-        return None
+        return None, "missing_test_function"
 
     pin_func_id = str(row.get("pin_func_id") or row.get("pin_id") or "").strip()
     pin_function_name = str(row.get("pin_function_name") or "").strip()
     if not pin_func_id:
-        if pin_function_name and pin_function_name in name_to_pin:
-            pin_func_id = name_to_pin[pin_function_name]
+        if not pin_function_name:
+            return None, "missing_pin_identity"
+
+        pin_module_path = str(
+            row.get("pin_module_path") or row.get("pin_module") or row.get("module_path") or ""
+        ).strip()
+
+        if pin_module_path:
+            module_candidates = pin_module_and_name_to_ids.get(
+                (pin_module_path, pin_function_name), []
+            )
+            if len(module_candidates) == 1:
+                pin_func_id = module_candidates[0]
+            elif len(module_candidates) > 1:
+                return None, "ambiguous_pin_identity_for_module_and_name"
+            else:
+                return None, "unknown_pin_identity_for_module_and_name"
         else:
-            return None
+            name_candidates = pin_name_to_ids.get(pin_function_name, [])
+            if len(name_candidates) == 1:
+                pin_func_id = name_candidates[0]
+            elif len(name_candidates) > 1:
+                return None, "ambiguous_pin_function_name"
+            else:
+                return None, "unknown_pin_function_name"
     if pin_func_id not in allowed_pin_ids:
-        return None
+        return None, "unknown_pin_func_id"
 
     if not pin_function_name:
-        for fn_name, resolved_id in name_to_pin.items():
-            if resolved_id == pin_func_id:
-                pin_function_name = fn_name
-                break
+        pin_function_name = pin_id_to_name.get(pin_func_id, "")
+    if not pin_function_name:
+        return None, "unable_to_resolve_pin_function_name"
 
-    try:
-        confidence = float(row.get("confidence", 1.0) or 0.0)
-    except (TypeError, ValueError):
+    confidence_raw = row.get("confidence", 1.0)
+    if confidence_raw in (None, ""):
         confidence = 1.0
+    else:
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            return None, "invalid_confidence_format"
+        if not 0.0 <= confidence <= 1.0:
+            return None, "confidence_out_of_range"
 
     association_type = str(
         row.get("association_type") or row.get("source") or "runtime_instrumentation"
     ).strip()
 
-    return TestPinAssociation(
-        test_file=test_file,
-        test_function=test_function,
-        pin_func_id=pin_func_id,
-        pin_function_name=pin_function_name,
-        association_type=association_type or "runtime_instrumentation",
-        confidence=max(0.0, min(1.0, confidence)),
+    return (
+        TestPinAssociation(
+            test_file=test_file,
+            test_function=test_function,
+            pin_func_id=pin_func_id,
+            pin_function_name=pin_function_name,
+            association_type=association_type or "runtime_instrumentation",
+            confidence=confidence,
+        ),
+        "",
     )
 
 
 __all__ = [
+    "ObservationLoadError",
     "RuntimeInstrumentationTestPinDiscoverer",
     "TestPinAssociation",
     "TestPinDiscoverer",

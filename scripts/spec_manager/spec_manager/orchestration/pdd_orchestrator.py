@@ -1257,6 +1257,11 @@ class PddOrchestrator:
             lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
             lineage_table = lineage_builder.build_lineage()
             outputs["lineage_edges"] = len(lineage_table.edges)
+            outputs["lineage_rejections"] = len(lineage_builder.rejected_records)
+            if lineage_builder.rejected_records:
+                outputs["lineage_rejection_reasons"] = [
+                    rejection.reason for rejection in lineage_builder.rejected_records[:10]
+                ]
 
             # Find orphan atoms (known but not projected)
             known_atom_ids = {a.atom_id for a in atom_defs}
@@ -1270,6 +1275,7 @@ class PddOrchestrator:
         else:
             outputs["lineage_edges"] = 0
             outputs["orphan_atoms"] = 0
+            outputs["lineage_rejections"] = 0
             outputs["note_lineage"] = "No atoms registered — skipping lineage build."
 
         # 4. Generate analysis file (atom registry, imports, adjacency, data flow)

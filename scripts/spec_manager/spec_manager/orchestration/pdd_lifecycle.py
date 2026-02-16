@@ -1662,6 +1662,7 @@ class PddLifecycle:
                 "passed": len(orphan_atoms) == 0,
                 "import_edges": len(import_records),
                 "lineage_edges": len(lineage_table.edges),
+                "lineage_rejections": len(lineage_builder.rejected_records),
                 "known_atoms": len(known_atom_ids),
                 "orphan_atoms": len(orphan_atoms),
                 "orphan_atom_ids": sorted(orphan_atoms)[:50],

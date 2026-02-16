@@ -89,14 +89,26 @@ class PinDriftDetector:
         self.lineage_table = lineage_table
         self.atoms = atoms
         self._atoms_by_id: dict[str, AtomDefinition] = {a.atom_id: a for a in atoms}
+        self.last_check_manifest: dict[str, str] = {}
 
-    def detect_all_drift(self) -> list[PinDrift]:
+    def detect_all_drift(
+        self,
+        import_records: list[RawImportRecord] | None = None,
+    ) -> list[PinDrift]:
         """Run all drift checks on all edges.
 
         Returns:
             Combined list of all detected drift items.
         """
         drifts: list[PinDrift] = []
+        self.last_check_manifest = {
+            "file_drift": "executed",
+            "signature_drift": "executed",
+            "import_drift": (
+                "executed" if import_records is not None else "skipped:no_import_records_provided"
+            ),
+            "wrapper_staleness": "skipped:no_wrapper_contract_data",
+        }
 
         for edge in self.lineage_table.edges:
             # Check file drift on the atom side
@@ -110,6 +122,11 @@ class PinDriftDetector:
                 sig_drift = self.detect_signature_drift(edge, atom)
                 if sig_drift is not None:
                     drifts.append(sig_drift)
+
+            if import_records is not None:
+                import_drift = self.detect_import_drift(edge, import_records)
+                if import_drift is not None:
+                    drifts.append(import_drift)
 
         return drifts
 
@@ -241,19 +258,25 @@ class PinDriftDetector:
             List of PinDrift for each test whose signature changed.
         """
         from spec_manager.projection.lineage.test_pin_baseline import (
-            _compute_test_signature_hash,
+            compute_test_signature_hash,
         )
 
         drifts: list[PinDrift] = []
 
         for bl in baseline_store.baselines:
-            current_hash = _compute_test_signature_hash(
+            baseline_status = getattr(bl, "status", "active")
+            if baseline_status == "superseded":
+                continue
+
+            current_hash = compute_test_signature_hash(
                 current_map,
                 bl.test_file,
                 bl.test_function,
             )
 
             if current_hash is None:
+                if baseline_status == "missing_signature":
+                    continue
                 # Test function no longer exists -- create a synthetic edge
                 # to report the drift against
                 edge = self._find_or_create_edge(bl.pin_func_id)
@@ -314,6 +337,10 @@ class PinDriftDetector:
             )
 
         return None
+
+    def get_last_check_manifest(self) -> dict[str, str]:
+        """Return execution status for each drift check gate."""
+        return dict(self.last_check_manifest)
 
 
 __all__ = [

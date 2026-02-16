@@ -10,7 +10,7 @@ design document (Section 11) and ALGORITHM.md Phase 5.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from spec_manager.schemas.pin_functions import ProjectionType
@@ -42,7 +42,7 @@ class ProjectionLineageEdge:
     to_unit: str
     transformation: ProjectionType
     confidence: float = 1.0
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     details: dict[str, Any] = field(default_factory=dict)
     pin_id: str | None = None
 
@@ -53,7 +53,7 @@ class ProjectionLineageEdge:
             "to_unit": self.to_unit,
             "transformation": self.transformation.value,
             "confidence": self.confidence,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": self.timestamp.astimezone(UTC).isoformat(),
             "details": self.details,
             "pin_id": self.pin_id,
         }
@@ -61,12 +61,15 @@ class ProjectionLineageEdge:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProjectionLineageEdge:
         """Deserialize from dictionary."""
+        parsed_ts = datetime.fromisoformat(data["timestamp"])
+        if parsed_ts.tzinfo is None:
+            parsed_ts = parsed_ts.replace(tzinfo=UTC)
         return cls(
             from_unit=data["from_unit"],
             to_unit=data["to_unit"],
             transformation=ProjectionType(data["transformation"]),
             confidence=data.get("confidence", 1.0),
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=parsed_ts.astimezone(UTC),
             details=data.get("details", {}),
             pin_id=data.get("pin_id"),
         )
