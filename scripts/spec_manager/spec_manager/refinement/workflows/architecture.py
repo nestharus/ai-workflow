@@ -862,6 +862,15 @@ def _build_architecture_proposal_prompt(
     return "\n".join(lines).strip() + "\n"
 
 
+def build_architecture_proposal_prompt(
+    lib_charters: dict[str, str],
+    lib_specs: dict[str, str],
+    briefs: dict[str, dict[str, Any]],
+) -> str:
+    """Public projection for architecture proposal prompt construction."""
+    return _build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
+
+
 def _build_architecture_selection_prompt(
     candidates: dict[str, str], lib_specs: dict[str, str]
 ) -> str:
@@ -931,6 +940,13 @@ def _build_architecture_selection_prompt(
         ]
     )
     return "\n".join(lines).strip() + "\n"
+
+
+def build_architecture_selection_prompt(
+    candidates: dict[str, str], lib_specs: dict[str, str]
+) -> str:
+    """Public projection for architecture selection prompt construction."""
+    return _build_architecture_selection_prompt(candidates, lib_specs)
 
 
 def _map_libraries_distributed(
@@ -1113,6 +1129,16 @@ def _build_library_mapping_prompt(
         "}",
     ]
     return "\n".join(lines)
+
+
+def build_library_mapping_prompt(
+    lib_id: str,
+    selected_architecture: str,
+    charter: str,
+    spec: str,
+) -> str:
+    """Public projection for architecture-library mapping prompt construction."""
+    return _build_library_mapping_prompt(lib_id, selected_architecture, charter, spec)
 
 
 def _format_architecture_mapping(

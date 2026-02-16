@@ -15,7 +15,7 @@ from spec_manager.refinement.validation_utils import (
     build_file_id_lookup,
     build_section_alias_map,
 )
-from spec_manager.refinement.workflows.architecture import _validate_architecture_citations
+from spec_manager.refinement.workflows.architecture import validate_architecture_citations
 from spec_manager.refinement.workflows.spec_patches import (
     SpecDocument,
     apply_patch,
@@ -132,7 +132,7 @@ def _extract_sections(content: str) -> dict[str, str]:
     for index, match in enumerate(matches):
         title = match.group(1).strip()
         start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(content) else len(content)
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
         sections[title] = content[start:end].strip()
     return sections
 
@@ -288,7 +288,7 @@ def validate_architecture_proposal_output(
 
     # Validate citations are in library-pointer space and exist.
     as_text = output if isinstance(output, str) else json.dumps(output)
-    issues.extend(_validate_architecture_citations(as_text, manager))
+    issues.extend(validate_architecture_citations(as_text, manager))
 
     # Forbid file-level pointers in Phase 6 artifacts.
     if re.search(r"\[F\d{4}::", as_text):
@@ -324,7 +324,7 @@ def validate_architecture_selection_output(
         )
 
     rationale = str(data.get("rationale", ""))
-    issues.extend(_validate_architecture_citations(rationale, manager))
+    issues.extend(validate_architecture_citations(rationale, manager))
     if re.search(r"\[F\d{4}::", rationale):
         issues.append(
             _issue("file_pointer_in_rationale", "Selection rationale must not cite [F####::...].")
@@ -383,7 +383,7 @@ def validate_architecture_library_mapping_output(
         issues.append(_issue("invalid_citations", "citations must be a list of strings."))
 
     # Validate citations exist and are in library-pointer space.
-    issues.extend(_validate_architecture_citations(json.dumps(data), manager))
+    issues.extend(validate_architecture_citations(json.dumps(data), manager))
     if re.search(r"\[F\d{4}::", json.dumps(data)):
         issues.append(
             _issue("file_pointer_in_mapping", "Architecture mapping must not cite [F####::...].")

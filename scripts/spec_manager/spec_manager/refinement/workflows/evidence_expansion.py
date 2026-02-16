@@ -233,6 +233,17 @@ def _build_evidence_prompt(
     return "\n".join(lines).strip() + "\n"
 
 
+def build_evidence_prompt(
+    lib_id: str,
+    charter_content: str,
+    file_id: str,
+    summary_content: str,
+    manager: WorkspaceManager,
+) -> str:
+    """Public projection for evidence mapper prompt construction."""
+    return _build_evidence_prompt(lib_id, charter_content, file_id, summary_content, manager)
+
+
 def _build_spotcheck_prompt(
     lib_id: str,
     charter_content: str,

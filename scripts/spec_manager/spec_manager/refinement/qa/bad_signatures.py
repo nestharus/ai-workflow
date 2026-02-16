@@ -65,16 +65,15 @@ def scan_known_bad_signatures(text: str) -> list[dict[str, Any]]:
     """Scan text for known bad signature patterns."""
     issues: list[dict[str, Any]] = []
     for signature_id, pattern, message in _SIGNATURES:
-        match = pattern.search(text or "")
-        if not match:
-            continue
-        excerpt = match.group(0)
-        issues.append(
-            {
-                "type": "known_bad_signature",
-                "signature": signature_id,
-                "message": message,
-                "excerpt": excerpt[:200],
-            }
-        )
+        for occurrence, match in enumerate(pattern.finditer(text or ""), start=1):
+            excerpt = match.group(0)
+            issues.append(
+                {
+                    "type": "known_bad_signature",
+                    "signature": signature_id,
+                    "message": message,
+                    "occurrence": occurrence,
+                    "excerpt": excerpt[:200],
+                }
+            )
     return issues

@@ -98,6 +98,20 @@ class WorkspaceManager:
         """Persist current state to disk."""
         self._save_state()
 
+    def set_mode(self, mode: str) -> None:
+        """Set workspace mode and persist state."""
+        self.state.mode = mode
+        self._save_state()
+
+    def rebuild_spec_snapshot_baseline(self) -> list[str]:
+        """Recompute snapshot baseline from current snapshot files and persist it."""
+        baseline, issues = self._build_spec_snapshot_baseline()
+        if issues:
+            return issues
+        self.state.spec_snapshot_baseline = baseline
+        self._save_state()
+        return []
+
     # --- Workspace Lifecycle ---
 
     def initialize(self, force: bool = False) -> list[str]:

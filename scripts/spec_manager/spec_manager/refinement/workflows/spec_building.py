@@ -103,6 +103,11 @@ def _build_file_ref(file_id: str, manager: WorkspaceManager) -> str:
     return f"spec_snapshot/{relpath}" if relpath else file_id
 
 
+def build_file_ref(file_id: str, manager: WorkspaceManager) -> str:
+    """Public projection for file-reference construction."""
+    return _build_file_ref(file_id, manager)
+
+
 def _build_file_ref_list(file_manifest: dict[str, Any]) -> list[str]:
     refs: list[str] = []
     for _, entry in file_manifest.items():
@@ -402,6 +407,35 @@ def _build_patch_prompt(
         ]
     )
     return "\n".join(lines).strip() + "\n"
+
+
+def build_patch_prompt(
+    lib_id: str,
+    charter_content: str,
+    spec_content: str,
+    file_id: str,
+    file_ref: str,
+    file_content: str,
+    evidence_sections: list[str],
+    valid_section_ids: list[str],
+    valid_file_refs: list[str],
+    file_id_lookup: dict[str, str],
+    gaps: list[Gap] | None = None,
+) -> str:
+    """Public projection for spec patch prompt construction."""
+    return _build_patch_prompt(
+        lib_id=lib_id,
+        charter_content=charter_content,
+        spec_content=spec_content,
+        file_id=file_id,
+        file_ref=file_ref,
+        file_content=file_content,
+        evidence_sections=evidence_sections,
+        valid_section_ids=valid_section_ids,
+        valid_file_refs=valid_file_refs,
+        file_id_lookup=file_id_lookup,
+        gaps=gaps,
+    )
 
 
 def _filter_open_gaps_for_file(gaps: list[Gap], file_ref: str) -> list[Gap]:

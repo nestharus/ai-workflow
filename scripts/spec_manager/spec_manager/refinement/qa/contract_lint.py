@@ -358,7 +358,16 @@ def lint_evid_compliance(agents_dir: Path) -> list[LintIssue]:
 
         try:
             content = prompt_path.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as exc:
+            issues.append(
+                LintIssue(
+                    severity="error",
+                    file=rel_path,
+                    line=None,
+                    message=f"Failed to read prompt: {exc}",
+                    hint="Check file permissions or encoding.",
+                )
+            )
             continue
 
         # Check evidence-producing agents for EVID documentation
@@ -461,7 +470,6 @@ def run_contract_lint(
     Returns:
         Tuple of (list of issues, exit code).
         Exit code is 1 if any errors found, 0 otherwise.
-        Note: hardcoding scanner findings are warnings only (report-only mode).
     """
     # Collect agent names referenced by workflows to scope ID format checks
     workflow_agents = _collect_workflow_agent_names(workflows_dir)
@@ -472,7 +480,7 @@ def run_contract_lint(
     issues.extend(lint_pointer_conventions(agents_dir, workflow_agents=workflow_agents))
     issues.extend(lint_evid_compliance(agents_dir))  # CON-0021 enforcement
 
-    # Add hardcoding scanner (report-only mode - warnings only)
+    # Add hardcoding scanner findings as blocking lint errors.
     if scan_source_dirs is None:
         # Default: scan spec_manager source directory
         spec_manager_src = PROJECT_ROOT / "scripts" / "spec_manager" / "spec_manager"
@@ -490,7 +498,7 @@ def run_contract_lint(
                     rel_path = finding.file
                 issues.append(
                     LintIssue(
-                        severity="warning",  # Report-only: warnings not errors
+                        severity="error",
                         file=rel_path,
                         line=finding.line,
                         message=f"[CON-0003] {finding.message}",

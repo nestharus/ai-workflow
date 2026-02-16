@@ -21,12 +21,12 @@ from spec_manager.refinement.qa.validators import (
 )
 from spec_manager.refinement.validation_utils import build_file_id_lookup
 from spec_manager.refinement.workflows.architecture import (
-    _build_architecture_proposal_prompt,
-    _build_architecture_selection_prompt,
-    _build_library_mapping_prompt,
+    build_architecture_proposal_prompt,
+    build_architecture_selection_prompt,
+    build_library_mapping_prompt,
 )
-from spec_manager.refinement.workflows.evidence_expansion import _build_evidence_prompt
-from spec_manager.refinement.workflows.spec_building import _build_file_ref, _build_patch_prompt
+from spec_manager.refinement.workflows.evidence_expansion import build_evidence_prompt
+from spec_manager.refinement.workflows.spec_building import build_file_ref, build_patch_prompt
 from spec_manager.refinement.workspace import WorkspaceManager, WorkspaceState
 
 
@@ -239,9 +239,7 @@ def _run_phase0_determinism_test(*, base_run_id: str, fixture_dir: Path) -> dict
     resume_target = _pick_snapshot_file(resume_manager.structure.spec_snapshot_dir)
     _append_byte(resume_target)
     # Refresh baseline to bypass immutability so manifest conflict triggers on resume.
-    resume_baseline, resume_baseline_issues = resume_manager._build_spec_snapshot_baseline()
-    resume_manager.state.spec_snapshot_baseline = resume_baseline
-    resume_manager._save_state()
+    resume_baseline_issues = resume_manager.rebuild_spec_snapshot_baseline()
     resume_issues = resume_manager.initialize(force=False)
 
     immut_run_id = _phase0_run_id(base_run_id, "phase0_immut")
@@ -286,8 +284,7 @@ def _run_phase0_mode_detection_test(
     detected_mode = patch_manager.state.mode
     existing_mode = "snapshot" if detected_mode == "patch_stream" else "patch_stream"
     # Force a mismatch to confirm resume warnings and mode stability.
-    patch_manager.state.mode = existing_mode
-    patch_manager._save_state()
+    patch_manager.set_mode(existing_mode)
     resume_issues = patch_manager.initialize(force=False)
     resume_state = _read_json(patch_manager.structure.root / "state.json")
 
@@ -530,7 +527,7 @@ class EvidenceMapperAllowlistCase(QaCase):
             "- INTEGRATION: [F0001::INTEGRATION]\n"
         )
 
-        prompt = _build_evidence_prompt(
+        prompt = build_evidence_prompt(
             lib_id=lib_id,
             charter_content=charter,
             file_id=file_id,
@@ -636,13 +633,13 @@ Provide durable persistence APIs. [F0002::INTRO]
             ],
         )
 
-        file_ref = _build_file_ref(file_id, manager)
+        file_ref = build_file_ref(file_id, manager)
         file_id_lookup = build_file_id_lookup(
             manager.state.file_manifest, manager.structure.spec_snapshot_dir
         )
         file_refs = [file_id_lookup.get(f) for f in manager.state.file_manifest]
 
-        prompt = _build_patch_prompt(
+        prompt = build_patch_prompt(
             lib_id=lib_id,
             charter_content=charter,
             spec_content=current_spec,
@@ -786,7 +783,7 @@ class ArchitectureProposalCase(QaCase):
                 ],
             }
 
-        prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
+        prompt = build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
 
         acceptance = [
             "Output is a JSON array with 3-5 candidates.",
@@ -885,7 +882,7 @@ class ArchitectureSelectionCase(QaCase):
             if spec_path.exists():
                 lib_specs[lib_dir.name] = spec_path.read_text(encoding="utf-8")
 
-        prompt = _build_architecture_selection_prompt(candidates, lib_specs)
+        prompt = build_architecture_selection_prompt(candidates, lib_specs)
 
         acceptance = [
             "Output is valid JSON with selected_arch_id and rationale.",
@@ -961,7 +958,7 @@ class ArchitectureLibraryMappingCase(QaCase):
         target_lib_id = "LIB-0002"
         charter = lib_charters.get(target_lib_id, "")
         spec = lib_specs.get(target_lib_id, "")
-        prompt = _build_library_mapping_prompt(target_lib_id, selected_architecture, charter, spec)
+        prompt = build_library_mapping_prompt(target_lib_id, selected_architecture, charter, spec)
 
         acceptance = [
             "Output is valid JSON for a single-library mapping fragment.",

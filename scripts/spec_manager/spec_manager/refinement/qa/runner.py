@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import re
 import subprocess
@@ -11,12 +10,14 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from spec_manager.refinement.qa.bad_signatures import scan_known_bad_signatures
 from spec_manager.refinement.qa.cases import QA_CASES, PreparedQaCase, qa_fixture_dir
 from spec_manager.refinement.workspace import WorkspaceManager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+AGENT_TIMEOUT_SECONDS = 300
 
 _FILE_OUTPUT_RE = re.compile(r"see `([^`]+)` for details\\.?$", re.IGNORECASE)
 
@@ -31,6 +32,7 @@ class AgentExecResult:
     stderr: str
     exit_code: int
     duration_s: float
+    timed_out: bool
 
 
 def _read_git_sha() -> str | None:
@@ -66,13 +68,30 @@ def _run_agent_capture(*, agent_name: str, prompt: str, prompt_path: Path) -> Ag
     ]
 
     started = time.time()
-    result = subprocess.run(
-        cmd,
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=AGENT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        duration_s = time.time() - started
+        stdout = (str(exc.stdout or "")).strip()
+        timeout_message = f"Agent invocation timed out after {AGENT_TIMEOUT_SECONDS} seconds."
+        stderr_parts = [(str(exc.stderr or "")).strip(), timeout_message]
+        stderr = "\n".join(part for part in stderr_parts if part).strip()
+        return AgentExecResult(
+            agent_name=agent_name,
+            prompt_path=prompt_path,
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=124,
+            duration_s=duration_s,
+            timed_out=True,
+        )
     duration_s = time.time() - started
 
     stdout = (result.stdout or "").strip()
@@ -85,6 +104,7 @@ def _run_agent_capture(*, agent_name: str, prompt: str, prompt_path: Path) -> Ag
         stderr=stderr,
         exit_code=result.returncode,
         duration_s=duration_s,
+        timed_out=False,
     )
 
 
@@ -109,11 +129,6 @@ def _maybe_read_file_output(stdout: str) -> str | None:
     content = path.read_text(encoding="utf-8").strip()
     if not content:
         return None
-
-    # Cleanup the known temporary artifact to avoid polluting the repo root.
-    if path.name.upper() == "ARCHITECTURE-MAPPING.MD":
-        with contextlib.suppress(OSError):
-            path.unlink()
 
     return content
 
@@ -141,9 +156,17 @@ def _truncate_for_judge(text: str, *, max_chars: int = 12000) -> str:
         return text
     if len(text) <= max_chars:
         return text
-    head = text[:9000]
-    tail = text[-2000:] if len(text) > 11000 else ""
-    return f"{head}\n\n...[truncated]...\n\n{tail}".strip() + "\n"
+    chunks = [text[index : index + max_chars] for index in range(0, len(text), max_chars)]
+    lines: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        lines.append(f"[chunk {idx}/{len(chunks)}]")
+        lines.append(chunk)
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _new_session_id() -> str:
+    return f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid4().hex[:8]}"
 
 
 def _build_judge_prompt(
@@ -217,6 +240,7 @@ def _render_case_report(
         lines.append(f"- judge_passed: {passed}")
     if score is not None:
         lines.append(f"- judge_score: {score}")
+    lines.append(f"- timed_out: {agent_exec.timed_out}")
     if judge_summary:
         lines.append(f"- judge_summary: {judge_summary}")
     lines.append("")
@@ -318,7 +342,7 @@ def run_qa_case(
         if issues:
             raise RuntimeError(f"QA workspace init failed: {issues}")
 
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_id = _new_session_id()
     session_dir = _qa_session_dir(manager, session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -361,7 +385,7 @@ def run_qa_suite(
         if issues:
             raise RuntimeError(f"QA workspace init failed: {issues}")
 
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_id = _new_session_id()
     session_dir = _qa_session_dir(manager, session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -428,6 +452,7 @@ def _run_prepared_case(
             stderr="",
             exit_code=0,
             duration_s=0.0,
+            timed_out=False,
         )
     else:
         agent_exec = _run_agent_capture(
@@ -450,6 +475,15 @@ def _run_prepared_case(
     )
 
     deterministic_issues = prepared.validator(processed_output, manager, prepared.allowlists)
+    if agent_exec.timed_out:
+        deterministic_issues.append(
+            {
+                "type": "agent_timeout",
+                "message": (
+                    f"Agent execution exceeded timeout bound ({AGENT_TIMEOUT_SECONDS} seconds)."
+                ),
+            }
+        )
     signature_issues: list[dict[str, Any]] = []
     for kind, text in (
         ("raw", raw_output),
@@ -468,6 +502,11 @@ def _run_prepared_case(
         _write_json(case_dir / "judge.json", {"skipped": "non_agent_case"})
         passed = len(deterministic_issues) == 0
         score = None
+    elif agent_exec.timed_out:
+        judge_data = None
+        _write_json(case_dir / "judge.json", {"skipped": "agent_timeout"})
+        passed = False
+        score = None
     else:
         judge_prompt = _build_judge_prompt(
             prepared=prepared,
@@ -485,7 +524,14 @@ def _run_prepared_case(
         (case_dir / "judge_stdout.txt").write_text(judge_exec.stdout + "\n", encoding="utf-8")
         (case_dir / "judge_stderr.txt").write_text(judge_exec.stderr + "\n", encoding="utf-8")
 
-        if judge_exec.exit_code == 0 and judge_exec.stdout.strip():
+        if judge_exec.timed_out:
+            judge_data = {
+                "error": "judge_timeout",
+                "message": (
+                    f"Judge execution exceeded timeout bound ({AGENT_TIMEOUT_SECONDS} seconds)."
+                ),
+            }
+        elif judge_exec.exit_code == 0 and judge_exec.stdout.strip():
             try:
                 judge_data = json.loads(judge_exec.stdout)
             except json.JSONDecodeError:
@@ -519,6 +565,7 @@ def _run_prepared_case(
         "score": score,
         "exit_code": agent_exec.exit_code,
         "duration_s": agent_exec.duration_s,
+        "timed_out": agent_exec.timed_out,
         "deterministic_issues_count": len(deterministic_issues),
         "report_path": str(case_dir / "report.md"),
     }
