@@ -56,7 +56,7 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
         if spec_path.exists():
             lib_specs[lib_id] = spec_path.read_text(encoding="utf-8")
 
-    briefs = _extract_architecture_briefs(libraries, manager, format_evidence)
+    briefs, brief_issues = _extract_architecture_briefs(libraries, manager, format_evidence)
     prompt = _build_architecture_proposal_prompt(lib_charters, lib_specs, briefs)
 
     try:
@@ -110,15 +110,16 @@ def propose_architectures(run_id: str) -> dict[str, Any]:
 
     tracker.finish()
 
+    issues: list[dict[str, Any]] = list(brief_issues)
     phase_result = manager.state.phases[Phase.ARCHITECTURE_PROPOSAL.value]
-    phase_result.issues = []
+    phase_result.issues = issues
 
     outputs = {"candidates_count": len(candidates)}
     manager.complete_phase(Phase.ARCHITECTURE_PROPOSAL, outputs=outputs)
 
     return {
         "candidates_created": len(candidates),
-        "issues": [],
+        "issues": issues,
         "format_evidence": format_evidence,
     }
 
@@ -293,7 +294,9 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     selected_content = selected_path.read_text(encoding="utf-8")
 
     libraries = manager.get_all_libraries_recursive()
-    mapping_fragments = _map_libraries_distributed(selected_content, libraries, manager)
+    mapping_fragments, mapping_issues = _map_libraries_distributed(
+        selected_content, libraries, manager
+    )
     mapping = _aggregate_mapping_fragments(mapping_fragments, libraries)
 
     component_mappings: dict[str, list[str]] = mapping.get("component_mappings", {})
@@ -305,7 +308,7 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
     for libs in component_mappings.values():
         mapped_libs.update(libs)
 
-    issues: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = list(mapping_issues)
 
     if unmapped:
         issues.append(
@@ -408,11 +411,12 @@ def _extract_architecture_briefs(
     libraries: dict[str, Path],
     manager: WorkspaceManager,
     format_evidence: list[dict[str, Any]] | None = None,
-) -> dict[str, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Extract architecture briefs from all libraries in parallel."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     briefs: dict[str, dict[str, Any]] = {}
+    issues: list[dict[str, Any]] = []
     tracker = ProgressTracker(
         total=len(libraries),
         description="Extracting architecture briefs",
@@ -446,12 +450,18 @@ def _extract_architecture_briefs(
                 lib_id, brief = future.result()
                 briefs[lib_id] = brief
                 tracker.update(status=lib_id)
-            except Exception:
+            except Exception as exc:
+                issues.append(
+                    {
+                        "type": "architecture_brief_failed",
+                        "lib_id": lib_id,
+                        "error": str(exc),
+                    }
+                )
                 tracker.update(status=f"{lib_id} (failed)")
-                # Continue with other libraries
 
     tracker.finish()
-    return briefs
+    return briefs, issues
 
 
 def _build_brief_extraction_prompt(lib_id: str, charter: str, spec: str) -> str:
@@ -953,11 +963,12 @@ def _map_libraries_distributed(
     selected_architecture: str,
     libraries: dict[str, Path],
     manager: WorkspaceManager,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Map each library to architecture components in parallel."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     fragments: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
     tracker = ProgressTracker(
         total=len(libraries),
         description="Mapping libraries to architecture",
@@ -991,12 +1002,18 @@ def _map_libraries_distributed(
                 fragment = future.result()
                 fragments.append(fragment)
                 tracker.update(status=lib_id)
-            except Exception:
+            except Exception as exc:
+                issues.append(
+                    {
+                        "type": "architecture_mapping_fragment_failed",
+                        "lib_id": lib_id,
+                        "error": str(exc),
+                    }
+                )
                 tracker.update(status=f"{lib_id} (failed)")
-                # Continue with other libraries
 
     tracker.finish()
-    return fragments
+    return fragments, issues
 
 
 def _validate_mapping_fragment(fragment: dict[str, Any], lib_id: str) -> None:
@@ -1191,30 +1208,7 @@ def _format_architecture_mapping(
 
 
 def _summarize_spec_for_prompt(spec: str) -> str:
-    sections = _extract_markdown_sections(spec)
-    if not sections:
-        return _strip_file_citations(spec.strip())[:1500]
-
-    wanted = [
-        "intent",
-        "requirements",
-        "constraints",
-        "dependencies",
-        "performance",
-        "security",
-        "availability",
-    ]
-    lines: list[str] = []
-    for title, body in sections.items():
-        if any(key in title.lower() for key in wanted):
-            lines.append(f"## {title}")
-            lines.append(_strip_file_citations(body.strip()))
-            lines.append("")
-
-    if lines:
-        return "\n".join(lines).strip()[:2000]
-
-    return _strip_file_citations(spec.strip())[:2000]
+    return spec.strip()
 
 
 def _extract_charter_intent(charter: str) -> str:

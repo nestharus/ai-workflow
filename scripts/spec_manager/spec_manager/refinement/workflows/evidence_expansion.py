@@ -146,8 +146,8 @@ def _compute_pair_priority(
             prompt=prompt,
             workspace=manager.workspace_path,
         )
-    except RuntimeError:
-        return 0.5, "classifier_uncertain"
+    except RuntimeError as exc:
+        return 0.5, f"classifier_runtime_error: {exc}"
 
     try:
         output_text = str(output)
@@ -159,9 +159,9 @@ def _compute_pair_priority(
             location="_compute_pair_priority",
         )
         data = json.loads(json_payload)
-    except Exception:
-        logger.debug("Evidence expansion classifier failed", exc_info=True)
-        return 0.5, "classifier_uncertain"
+    except Exception as exc:
+        logger.debug("Evidence expansion classifier parse failed", exc_info=True)
+        return 0.5, f"classifier_parse_error: {exc}"
 
     relevant = str(data.get("relevant", "")).strip().lower()
     if relevant == "yes":
@@ -596,6 +596,17 @@ def expand_evidence(run_id: str) -> dict[str, Any]:
                 manager=manager,
                 format_evidence=format_evidence,
             )
+            if rationale.startswith("classifier_runtime_error:") or rationale.startswith(
+                "classifier_parse_error:"
+            ):
+                issues.append(
+                    {
+                        "type": "priority_classifier_failed",
+                        "lib_id": lib_id,
+                        "file_id": file_id,
+                        "message": rationale,
+                    }
+                )
 
             # Skip pairs that are explicitly rejected or below the low-confidence floor;
             # spotcheck_evidence remains the fallback audit path for skipped pairs.

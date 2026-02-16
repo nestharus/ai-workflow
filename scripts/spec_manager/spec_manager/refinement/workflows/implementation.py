@@ -501,14 +501,12 @@ def _gather_interface_contracts(run_root: Path, edge_ids: list[str]) -> dict[str
 
         if content is None:
             content = f"**{edge_id}**: [Interface contract not found]"
-        if len(content) > 2000:
-            content = f"{content[:2000]}...[truncated]"
         contracts[edge_id] = content
 
     return contracts
 
 
-def _read_file_with_limit(file_path: Path, max_chars: int = 5000) -> str:
+def _read_file_with_limit(file_path: Path) -> str:
     if not file_path.exists():
         return f"[Missing file: {file_path}]"
     try:
@@ -528,67 +526,15 @@ def _read_file_with_limit(file_path: Path, max_chars: int = 5000) -> str:
         return f"[Binary file: {file_path.name}]"
     except OSError as exc:
         return f"[Error reading file: {exc}]"
-    if len(text) <= max_chars:
-        return text
-    lines = text.splitlines(keepends=True)
-    total_lines = len(lines)
-    head_budget = max_chars // 2
-    tail_budget = max_chars - head_budget
-    head_chars = 0
-    head_end = 0
-    for i, line in enumerate(lines):
-        if head_chars + len(line) > head_budget and head_end > 0:
-            break
-        head_chars += len(line)
-        head_end = i + 1
-    tail_chars = 0
-    tail_start = total_lines
-    for i in range(total_lines - 1, head_end - 1, -1):
-        if tail_chars + len(lines[i]) > tail_budget and tail_start < total_lines:
-            break
-        tail_chars += len(lines[i])
-        tail_start = i
-    if tail_start <= head_end:
-        head_text = "".join(lines[:head_end]).rstrip("\n")
-        return (
-            f"{head_text}\n\n"
-            f"...[File truncated: showing lines 1\u2013{head_end} of {total_lines} "
-            f"total lines ({len(text)} characters)]"
-        )
-    head_text = "".join(lines[:head_end]).rstrip("\n")
-    tail_text = "".join(lines[tail_start:]).rstrip("\n")
-    omitted_count = tail_start - head_end
-    return (
-        f"{head_text}\n\n"
-        f"...[Lines {head_end + 1}\u2013{tail_start} omitted ({omitted_count} lines)]\n\n"
-        f"{tail_text}\n\n"
-        f"...[File truncated: showing lines 1\u2013{head_end} and "
-        f"{tail_start + 1}\u2013{total_lines} of {total_lines} total lines "
-        f"({len(text)} characters)]"
-    )
+    return text
 
 
 def _gather_suggested_files_content(repo_root: Path, suggested_files: list[str]) -> dict[str, str]:
     contents: dict[str, str] = {}
     for file_path in suggested_files:
         resolved_path = repo_root / file_path
-        contents[file_path] = _read_file_with_limit(resolved_path, max_chars=5000)
+        contents[file_path] = _read_file_with_limit(resolved_path)
     return contents
-
-
-def _estimate_tokens(text: str) -> int:
-    return max(1, (len(text) + 3) // 4)
-
-
-def _truncate_section(content: str, max_chars: int, section_name: str) -> str:
-    if len(content) <= max_chars:
-        return content
-    estimated_tokens = _estimate_tokens(content)
-    truncated = content[:max_chars]
-    return (
-        f"{truncated}\n\n...[{section_name} truncated: showing {max_chars} of {len(content)} "
-        f"characters (~{estimated_tokens} tokens)]"
-    )
 
 
 def build_context_bundle(run_root: Path, task_id: str, repo_root: Path) -> str:
@@ -702,33 +648,6 @@ def build_context_bundle(run_root: Path, task_id: str, repo_root: Path) -> str:
         section_3_lines.append("None")
 
     section_3 = "\n".join(section_3_lines)
-
-    section_1 = _truncate_section(section_1, 10000, "Task Requirements")
-    section_2 = _truncate_section(section_2, 20000, "Relevant Specs / Interfaces")
-    section_3 = _truncate_section(section_3, 20000, "Relevant Code Context")
-
-    total_limit = 50000
-    sections = [section_1, section_2, section_3]
-    total_length = sum(len(section) for section in sections)
-    attempts = 0
-    while total_length > total_limit and attempts < 3:
-        scale = total_limit / total_length
-        section_1 = _truncate_section(
-            section_1, max(1, int(len(section_1) * scale)), "Task Requirements"
-        )
-        section_2 = _truncate_section(
-            section_2,
-            max(1, int(len(section_2) * scale)),
-            "Relevant Specs / Interfaces",
-        )
-        section_3 = _truncate_section(
-            section_3,
-            max(1, int(len(section_3) * scale)),
-            "Relevant Code Context",
-        )
-        sections = [section_1, section_2, section_3]
-        total_length = sum(len(section) for section in sections)
-        attempts += 1
 
     return "\n\n".join([section_1, section_2, section_3])
 

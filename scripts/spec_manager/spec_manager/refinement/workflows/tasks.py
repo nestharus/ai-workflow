@@ -23,7 +23,6 @@ from spec_manager.schemas.edge_list import (
     read_interface_index_json,
 )
 from spec_manager.schemas.spec_indexes import (
-    _SPEC_ELEMENT_ID_RE,
     DecisionsIndex,
     SpecIndex,
 )
@@ -34,7 +33,6 @@ from spec_manager.schemas.tasks import (
     TaskIndexSchema,
     TaskSchema,
     TaskStatusSchema,
-    _find_patch_graph_cycles,
     validate_acceptance_criteria,
     validate_decision_gap_coverage,
     validate_edge_coverage,
@@ -68,6 +66,9 @@ _EDGE_ID_RE = re.compile(r"EDGE-LIB-\d{4}-LIB-\d{4}")
 _DECISION_ID_RE = re.compile(r"ANL-LIB-\d{4}-\d{4}")
 _GAP_ID_RE = re.compile(r"GAP-[A-Z_]+")
 _TASK_ID_FRAGMENT_RE = re.compile(r"TASK-\d{4}")
+_SPEC_ELEMENT_ID_RE = re.compile(
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
+)
 
 
 def _set_issue_sink(issues: list[dict[str, Any]] | None) -> None:
@@ -462,12 +463,7 @@ def validate_task_graph(graph: PatchGraphSchema) -> None:
     if is_valid:
         return
 
-    adjacency: dict[str, list[str]] = {node: [] for node in graph.nodes}
-    for source, target in graph.edges:
-        adjacency.setdefault(source, []).append(target)
-
-    cycles = _find_patch_graph_cycles(adjacency)
-    cycle_chain = "; ".join(" -> ".join(cycle) for cycle in cycles) if cycles else "; ".join(errors)
+    cycle_chain = "; ".join(errors) if errors else "unknown cycle"
     raise ValueError(f"Circular dependency detected: {cycle_chain}. Tasks must form a DAG.")
 
 

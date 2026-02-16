@@ -873,16 +873,16 @@ def generate_library_charter(
         )
 
     from .library_synthesis import (
-        _validate_evidence_sources,
-        _validate_library_ids,
-        _validate_overlap_resolutions,
+        validate_evidence_sources,
+        validate_library_ids,
+        validate_overlap_resolutions,
     )
 
     issues: list[dict[str, Any]] = []
     format_evidence: list[dict[str, Any]] = []
-    issues.extend(_validate_library_ids([charter]))
-    issues.extend(_validate_evidence_sources([charter], manager))
-    issues.extend(_validate_overlap_resolutions([charter]))
+    issues.extend(validate_library_ids([charter]))
+    issues.extend(validate_evidence_sources([charter], manager))
+    issues.extend(validate_overlap_resolutions([charter]))
 
     if issues:
         try:
@@ -905,9 +905,9 @@ def generate_library_charter(
                     repaired_charters[0],
                 )
                 repaired_issues: list[dict[str, Any]] = []
-                repaired_issues.extend(_validate_library_ids([repaired_charter]))
-                repaired_issues.extend(_validate_evidence_sources([repaired_charter], manager))
-                repaired_issues.extend(_validate_overlap_resolutions([repaired_charter]))
+                repaired_issues.extend(validate_library_ids([repaired_charter]))
+                repaired_issues.extend(validate_evidence_sources([repaired_charter], manager))
+                repaired_issues.extend(validate_overlap_resolutions([repaired_charter]))
                 if not repaired_issues:
                     charter = repaired_charter
                     issues = []
@@ -1256,7 +1256,7 @@ def resolve_all_overlaps(
             new_charters.append(new_charter)
             decision_entry["created_lib_id"] = new_lib_id
 
-            from .library_synthesis import _write_library_event
+            from .library_synthesis import write_library_event
 
             created_event = LibraryEvent(
                 event_type=LibraryEventType.LIBRARY_CREATED,
@@ -1275,7 +1275,7 @@ def resolve_all_overlaps(
                 },
                 previous_state=None,
             )
-            _write_library_event(manager.structure.libraries_dir / new_lib_id, created_event)
+            write_library_event(manager.structure.libraries_dir / new_lib_id, created_event)
 
             split_rationale = rationale or "Overlap resolution created cross-cutting library."
             for source_lib_id in (lib_id_a, lib_id_b):
@@ -1290,7 +1290,7 @@ def resolve_all_overlaps(
                     },
                     previous_state=None,
                 )
-                _write_library_event(manager.structure.libraries_dir / source_lib_id, split_event)
+                write_library_event(manager.structure.libraries_dir / source_lib_id, split_event)
         elif decision == "mark_shared_boundary":
             pass
         else:
@@ -1584,7 +1584,7 @@ def judge_concern_assignments(
     }
 
 
-def _write_concern_evidence(judge_result: dict[str, Any], manager: WorkspaceManager) -> Path:
+def write_concern_evidence(judge_result: dict[str, Any], manager: WorkspaceManager) -> Path:
     pass_04_dir = manager.structure.intermediates_dir / "pass_04"
     pass_04_dir.mkdir(parents=True, exist_ok=True)
     evidence_path = pass_04_dir / "evidence.jsonl"
@@ -1629,7 +1629,7 @@ def _write_concern_evidence(judge_result: dict[str, Any], manager: WorkspaceMana
     return evidence_path
 
 
-def _validate_concern_coverage(
+def validate_concern_coverage(
     judge_result: dict[str, Any], manager: WorkspaceManager
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []

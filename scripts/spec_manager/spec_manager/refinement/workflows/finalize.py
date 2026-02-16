@@ -90,6 +90,10 @@ def finalize_run(run_id: str) -> dict[str, Any]:
             logger.warning("Trace index validation found %d issue(s).", len(validation_errors))
             for error in validation_errors:
                 logger.warning("Trace index validation: %s", error)
+            raise RuntimeError(
+                "Trace index validation failed; finalization blocked. "
+                f"Issues: {'; '.join(validation_errors)}"
+            )
 
         generate_coverage_report(manager)
         generate_compliance_report(manager, run_qa=True)

@@ -665,7 +665,11 @@ def _build_sublibrary_spec(manager: WorkspaceManager, sub_lib_dir: Path) -> None
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    sources = _read_evidence_sources(sub_lib_dir)
+    try:
+        sources = _read_evidence_sources(sub_lib_dir)
+    except ValueError as exc:
+        logger.warning("Skipping sub-library spec build for %s: %s", lib_id, exc)
+        return
     evidence_map = _normalize_evidence_sources(sources, file_id_lookup=file_id_lookup)
     if not evidence_map:
         return

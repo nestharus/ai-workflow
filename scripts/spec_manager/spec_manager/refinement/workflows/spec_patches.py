@@ -115,17 +115,11 @@ class SpecDocument:
         return [line.rstrip() for line in text.splitlines()]
 
 
-def _normalize_section_name(name: str) -> str:
-    """Map legacy section names to PDD equivalents."""
-    return LEGACY_SECTION_MAP.get(name, name)
-
-
 def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> list[str]:
     """Validate a patch operation.
 
-    Accepts both legacy (Intent, Requirements, ...) and PDD (Analysis,
-    Overview, Details, Constraints) section names; legacy names are
-    silently normalized.
+    Requires explicit PDD section names (Analysis, Overview, Details,
+    Constraints). Legacy section names are rejected with a corrective error.
 
     Args:
         op: The patch operation to validate.
@@ -137,9 +131,12 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
     errors: list[str] = []
     if op.op not in {"add", "move", "edit"}:
         errors.append(f"Invalid op '{op.op}'.")
-    # Normalize legacy section names before validation
-    op.section = _normalize_section_name(op.section)
-    if op.section not in valid_sections:
+    legacy_section = LEGACY_SECTION_MAP.get(op.section)
+    if legacy_section is not None and op.section != legacy_section:
+        errors.append(
+            f"Legacy section '{op.section}' is not supported; use '{legacy_section}' explicitly."
+        )
+    elif op.section not in valid_sections:
         errors.append(f"Invalid section '{op.section}'.")
     if op.bullet_index is not None and op.bullet_index < 0:
         errors.append("bullet_index must be non-negative when provided.")
@@ -148,13 +145,17 @@ def validate_patch_operation(op: PatchOperation, valid_sections: list[str]) -> l
     if op.op == "move":
         if op.source_section is None:
             errors.append("move operations require source_section.")
-        else:
-            op.source_section = _normalize_section_name(op.source_section)
         if op.bullet_index is None:
-            # Degrade to add operation - LLM omitted which bullet to move
-            op.op = "add"  # type: ignore[assignment]
-        if op.source_section is not None and op.source_section not in valid_sections:
-            errors.append(f"Invalid source_section '{op.source_section}'.")
+            errors.append("move operations require bullet_index.")
+        if op.source_section is not None:
+            legacy_source = LEGACY_SECTION_MAP.get(op.source_section)
+            if legacy_source is not None and op.source_section != legacy_source:
+                errors.append(
+                    "Legacy source_section "
+                    f"'{op.source_section}' is not supported; use '{legacy_source}' explicitly."
+                )
+            elif op.source_section not in valid_sections:
+                errors.append(f"Invalid source_section '{op.source_section}'.")
     content_stripped = op.content.strip()
     if op.op in {"add", "edit"} and not content_stripped:
         errors.append("content must be non-empty for add/edit operations.")

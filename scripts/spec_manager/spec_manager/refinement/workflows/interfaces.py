@@ -58,13 +58,6 @@ def _record_issue(
     logger.warning("%s (%s): %s", lib_id, error_type, message)
 
 
-def _truncate_text(value: str, limit: int) -> str:
-    trimmed = value.strip()
-    if len(trimmed) <= limit:
-        return trimmed
-    return trimmed[:limit].rstrip()
-
-
 def _read_spec_index(lib_dir: Path) -> SpecIndex | None:
     spec_index_path = lib_dir / "spec_index.json"
     lib_id = lib_dir.name
@@ -216,12 +209,12 @@ def _build_edge_extraction_prompt(
     spec_index: SpecIndex,
     allocated_library_ids: set[str],
 ) -> str:
-    charter_excerpt = _truncate_text(charter, 2000) if charter else ""
+    charter_excerpt = charter.strip() if charter else ""
     allowlist = ", ".join(sorted(allocated_library_ids))
 
     element_lines: list[str] = []
     for element in spec_index.elements:
-        summary = _truncate_text(element.text, 280)
+        summary = (element.text or "").strip()
         element_lines.append(f"- {element.element_id}: {summary}")
     if not element_lines:
         element_lines.append("- None")

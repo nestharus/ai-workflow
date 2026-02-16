@@ -5,7 +5,6 @@ Evaluates specs against the approved overview for completeness and correctness.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from pathlib import Path
@@ -168,12 +167,20 @@ def evaluate_qa(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
             high_severity = [f for f in findings if f.get("severity") == "high"]
             if high_severity:
                 rca_prompt = _build_root_cause_prompt(high_severity, lib_id)
-                with contextlib.suppress(RuntimeError):
+                try:
                     run_agent(
                         agent_name="chatgpt-root-cause-analyzer",
                         prompt=rca_prompt,
                         workspace=manager.workspace_path,
-                    )  # Root cause analysis is best-effort
+                    )
+                except RuntimeError as exc:
+                    issues.append(
+                        {
+                            "lib_id": lib_id,
+                            "type": "root_cause_analysis_failed",
+                            "message": str(exc),
+                        }
+                    )
 
             if iteration + 1 >= max_iterations:
                 break

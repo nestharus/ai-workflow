@@ -26,8 +26,6 @@ from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManag
 
 from .library_labeling import (
     CharterResults,
-    _validate_concern_coverage,
-    _write_concern_evidence,
     aggregate_labels,
     build_library_shapes,
     generate_all_charters,
@@ -35,21 +33,23 @@ from .library_labeling import (
     label_all_files,
     refine_library_labels,
     resolve_all_overlaps,
+    validate_concern_coverage,
     validate_library_shapes,
+    write_concern_evidence,
 )
 
 LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
 logger = logging.getLogger(__name__)
 
 
-def _write_library_event(lib_dir: Path, event: LibraryEvent) -> None:
+def write_library_event(lib_dir: Path, event: LibraryEvent) -> None:
     """Append a library event to events.jsonl with an atomic rewrite."""
-    events = _read_library_events(lib_dir)
+    events = read_library_events(lib_dir)
     events.append(event)
-    _rewrite_library_events(lib_dir, events)
+    rewrite_library_events(lib_dir, events)
 
 
-def _rewrite_library_events(lib_dir: Path, events: list[LibraryEvent]) -> None:
+def rewrite_library_events(lib_dir: Path, events: list[LibraryEvent]) -> None:
     """Rewrite events.jsonl atomically from a list of events."""
     lib_dir.mkdir(parents=True, exist_ok=True)
     events_path = lib_dir / "events.jsonl"
@@ -62,7 +62,7 @@ def _rewrite_library_events(lib_dir: Path, events: list[LibraryEvent]) -> None:
     temp_path.replace(events_path)
 
 
-def _read_library_events(lib_dir: Path) -> list[LibraryEvent]:
+def read_library_events(lib_dir: Path) -> list[LibraryEvent]:
     """Read library events from events.jsonl."""
     events_path = lib_dir / "events.jsonl"
     if not events_path.exists():
@@ -202,7 +202,7 @@ def _record_library_rename(
         metadata={"old_name": old_name, "new_name": new_name, "reason": reason},
         previous_state=None,
     )
-    _write_library_event(lib_dir, event)
+    write_library_event(lib_dir, event)
 
 
 def _record_boundary_change(
@@ -225,7 +225,7 @@ def _record_boundary_change(
         },
         previous_state=None,
     )
-    _write_library_event(lib_dir, event)
+    write_library_event(lib_dir, event)
 
 
 def _deduplicate_library_ids(charters: list[LibraryCharter]) -> list[LibraryCharter]:
@@ -490,7 +490,7 @@ def _write_library_artifacts(
     (lib_dir / "gaps.md").write_text("", encoding="utf-8")
     (lib_dir / "decisions.md").write_text("", encoding="utf-8")
 
-    existing_events = _read_library_events(lib_dir)
+    existing_events = read_library_events(lib_dir)
     created_event = next(
         (
             event
@@ -518,10 +518,10 @@ def _write_library_artifacts(
             },
             previous_state=None,
         )
-        _rewrite_library_events(lib_dir, [created_event, *existing_events])
+        rewrite_library_events(lib_dir, [created_event, *existing_events])
     elif existing_events and existing_events[0].event_type != LibraryEventType.LIBRARY_CREATED:
         reordered = [created_event, *[event for event in existing_events if event != created_event]]
-        _rewrite_library_events(lib_dir, reordered)
+        rewrite_library_events(lib_dir, reordered)
 
 
 def synthesize_libraries(run_id: str) -> dict[str, Any]:
@@ -621,10 +621,10 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     try:
         judge_result = judge_concern_assignments(charters, manager)
         issues.extend(judge_result.get("issues", []))
-        issues.extend(_validate_concern_coverage(judge_result, manager))
+        issues.extend(validate_concern_coverage(judge_result, manager))
 
         if judge_result.get("gaps") or judge_result.get("decisions"):
-            evidence_path = _write_concern_evidence(judge_result, manager)
+            evidence_path = write_concern_evidence(judge_result, manager)
             logger.info("Wrote concern evidence to %s", evidence_path)
 
         total_concerns = (
@@ -725,7 +725,7 @@ def synthesize_libraries(run_id: str) -> dict[str, Any]:
     for charter in charters:
         lib_dir = manager.structure.libraries_dir / charter.lib_id
         event_issues = _validate_event_monotonicity(
-            _read_library_events(lib_dir), expected_lib_id=charter.lib_id
+            read_library_events(lib_dir), expected_lib_id=charter.lib_id
         )
         for issue in event_issues:
             if "lib_id" not in issue:

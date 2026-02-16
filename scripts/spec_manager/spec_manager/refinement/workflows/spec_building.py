@@ -780,10 +780,14 @@ def _read_evidence_sources(lib_dir: Path) -> list[dict[str, Any]]:
         return []
     try:
         payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{evidence_path} contains invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise TypeError(f"{evidence_path} must be a JSON object.")
     sources = payload.get("sources", [])
-    return sources if isinstance(sources, list) else []
+    if not isinstance(sources, list):
+        raise TypeError(f"{evidence_path} field 'sources' must be a JSON array.")
+    return sources
 
 
 def _normalize_evidence_sources(
@@ -930,7 +934,18 @@ def _build_library_spec(
     file_id_lookup = build_file_id_lookup(
         manager.state.file_manifest, manager.structure.spec_snapshot_dir
     )
-    sources = _read_evidence_sources(lib_dir)
+    try:
+        sources = _read_evidence_sources(lib_dir)
+    except (TypeError, ValueError) as exc:
+        return {
+            "lib_id": lib_id,
+            "errors": [{"lib_id": lib_id, "error": str(exc)}],
+            "issues": [],
+            "iterations": 0,
+            "converged": False,
+            "failed": True,
+            "coverage_metrics": {},
+        }
     evidence_map = _normalize_evidence_sources(sources, file_id_lookup=file_id_lookup)
     if not evidence_map:
         return {

@@ -179,17 +179,63 @@ def check_alignment(run_id: str, max_iterations: int = 3) -> dict[str, Any]:
                     )
                     patch_set = parse_patch_json(patch_json)
                     spec_doc = SpecDocument(spec_content)
-                    for op in patch_set.operations:
+                    patch_failures: list[dict[str, Any]] = []
+                    for op_index, op in enumerate(patch_set.operations, start=1):
                         op_errors = validate_patch_operation(op, VALID_SPEC_SECTIONS)
-                        if not op_errors:
-                            try:
-                                apply_patch(spec_doc, op)
-                            except Exception:
-                                logger.debug("Alignment check parsing failed", exc_info=True)
+                        if op_errors:
+                            patch_failures.append(
+                                {
+                                    "lib_id": lib_id,
+                                    "type": "patch_validation_failed",
+                                    "operation_index": op_index,
+                                    "operation": {
+                                        "op": op.op,
+                                        "section": op.section,
+                                        "bullet_index": op.bullet_index,
+                                        "content": op.content,
+                                        "citations": list(op.citations),
+                                        "source_section": op.source_section,
+                                    },
+                                    "errors": op_errors,
+                                }
+                            )
+                            continue
+                        try:
+                            apply_patch(spec_doc, op)
+                        except Exception as exc:
+                            patch_failures.append(
+                                {
+                                    "lib_id": lib_id,
+                                    "type": "patch_apply_failed",
+                                    "operation_index": op_index,
+                                    "operation": {
+                                        "op": op.op,
+                                        "section": op.section,
+                                        "bullet_index": op.bullet_index,
+                                        "content": op.content,
+                                        "citations": list(op.citations),
+                                        "source_section": op.source_section,
+                                    },
+                                    "message": str(exc),
+                                }
+                            )
+                    if patch_failures:
+                        issues.extend(patch_failures)
+                        errors.append(
+                            {
+                                "lib_id": lib_id,
+                                "error": (
+                                    "Alignment patch application failed; "
+                                    "spec was not updated for this iteration."
+                                ),
+                            }
+                        )
+                        break
                     spec_content = render_spec(spec_doc, lib_id)
                     spec_path.write_text(spec_content, encoding="utf-8")
                 except Exception as exc:
-                    issues.append({"lib_id": lib_id, "type": "patch_failed", "message": str(exc)})
+                    errors.append({"lib_id": lib_id, "error": f"Patch processing failed: {exc}"})
+                    break
 
             if not drift_findings:
                 break

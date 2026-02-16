@@ -28,9 +28,9 @@ from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 from spec_manager.refinement.validation_utils import build_file_id_lookup
 from spec_manager.refinement.workflows.library_synthesis import (
-    _read_library_events,
-    _rewrite_library_events,
-    _write_library_event,
+    read_library_events,
+    rewrite_library_events,
+    write_library_event,
 )
 from spec_manager.refinement.workflows.spec_stabilization import (
     _extract_sections_with_positions,
@@ -199,7 +199,7 @@ def _load_architecture_context(manager: WorkspaceManager) -> str | None:
     combined = "\n".join(sections).strip()
     if not combined:
         return None
-    return _truncate_text(combined, 2000)
+    return combined
 
 
 def _extract_evidence_pointers(text: str) -> list[str]:
@@ -690,8 +690,8 @@ def _build_boundary_judge_prompt(
     architecture_context: str | None,
 ) -> str:
     """Build prompt for boundary overlap judge agent."""
-    charter_a_excerpt = _truncate_text(charter_a, 500)
-    charter_b_excerpt = _truncate_text(charter_b, 500)
+    charter_a_text = charter_a.strip()
+    charter_b_text = charter_b.strip()
 
     lines = [
         "## OUTPUT CONTRACT (REQUIRED)",
@@ -716,22 +716,22 @@ def _build_boundary_judge_prompt(
         "",
         "## INPUT DATA",
         f"Library A ID: {lib_a_id}",
-        "Library A Charter (excerpt, first 500 chars):",
-        charter_a_excerpt or "(empty)",
+        "Library A Charter:",
+        charter_a_text or "(empty)",
         "",
         f"Library B ID: {lib_b_id}",
-        "Library B Charter (excerpt, first 500 chars):",
-        charter_b_excerpt or "(empty)",
+        "Library B Charter:",
+        charter_b_text or "(empty)",
         "",
-        "Matched Elements (top 10):",
+        "Matched Elements:",
     ]
 
     if matched_elements:
-        for idx, match in enumerate(matched_elements[:10], start=1):
+        for idx, match in enumerate(matched_elements, start=1):
             a_id = str(match.get("element_a_id", "")).strip()
             b_id = str(match.get("element_b_id", "")).strip()
-            a_text = _truncate_text(str(match.get("element_a_text", "")), 200)
-            b_text = _truncate_text(str(match.get("element_b_text", "")), 200)
+            a_text = str(match.get("element_a_text", "")).strip()
+            b_text = str(match.get("element_b_text", "")).strip()
             similarity = match.get("similarity", 0.0)
             try:
                 similarity_value = float(similarity)
@@ -749,7 +749,7 @@ def _build_boundary_judge_prompt(
             [
                 "",
                 "Architecture Mapping Context:",
-                _truncate_text(architecture_context, 1000) or "(empty)",
+                architecture_context.strip() or "(empty)",
             ]
         )
 
@@ -779,8 +779,8 @@ def _build_split_planner_prompt(
     num_clusters: int,
 ) -> str:
     """Build prompt for split planner agent."""
-    charter_excerpt = _truncate_text(charter, 500)
-    spec_excerpt_trimmed = _truncate_text(spec_excerpt, 1000)
+    charter_text = charter.strip()
+    spec_excerpt_text = spec_excerpt.strip()
 
     clusters: dict[int, list[str]] = {}
     for element_id, cluster_id in cluster_assignments.items():
@@ -818,11 +818,11 @@ def _build_split_planner_prompt(
         "",
         "## INPUT DATA",
         f"Library ID: {lib_id}",
-        "Library Charter (excerpt, first 500 chars):",
-        charter_excerpt or "(empty)",
+        "Library Charter:",
+        charter_text or "(empty)",
         "",
-        "Spec Excerpt (requirements/invariants, first 1000 chars):",
-        spec_excerpt_trimmed or "(empty)",
+        "Spec Excerpt (requirements/invariants):",
+        spec_excerpt_text or "(empty)",
         "",
         f"Silhouette score: {silhouette_score:.3f}",
         f"Number of clusters: {num_clusters}",
@@ -869,7 +869,7 @@ def _parse_agent_json(output: str) -> dict[str, Any]:
     return json.loads(output)
 
 
-def _extract_spec_excerpt(spec_content: str, limit: int = 1000) -> str:
+def _extract_spec_excerpt(spec_content: str, limit: int | None = None) -> str:
     lines = spec_content.splitlines()
     capture = False
     collected: list[str] = []
@@ -883,6 +883,8 @@ def _extract_spec_excerpt(spec_content: str, limit: int = 1000) -> str:
     excerpt = "\n".join(collected).strip()
     if not excerpt:
         excerpt = spec_content.strip()
+    if limit is None:
+        return excerpt
     return _truncate_text(excerpt, limit)
 
 
@@ -934,7 +936,7 @@ def _plan_library_split(
     lib_dir = manager.structure.libraries_dir / lib_id
     charter = (lib_dir / "charter.md").read_text(encoding="utf-8")
     spec_content = (lib_dir / "spec.md").read_text(encoding="utf-8")
-    spec_excerpt = _extract_spec_excerpt(spec_content, limit=1000)
+    spec_excerpt = _extract_spec_excerpt(spec_content, limit=None)
 
     prompt = _build_split_planner_prompt(
         lib_id=lib_id,
@@ -2218,9 +2220,9 @@ def _create_split_library(
         previous_state=None,
     )
     try:
-        _write_library_event(lib_dir, event)
+        write_library_event(lib_dir, event)
     except Exception:
-        shutil.rmtree(lib_dir, ignore_errors=True)
+        shutil.rmtree(lib_dir)
         raise
 
     return new_lib_id
@@ -2307,8 +2309,24 @@ def _apply_single_split(
 
     try:
         source_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        source_evidence = {"sources": []}
+    except json.JSONDecodeError as exc:
+        result["errors"].append(
+            {
+                "type": "invalid_evidence",
+                "lib_id": source_lib_id,
+                "error": f"Source library evidence.json is invalid JSON: {exc}",
+            }
+        )
+        return result
+    if not isinstance(source_evidence, dict):
+        result["errors"].append(
+            {
+                "type": "invalid_evidence",
+                "lib_id": source_lib_id,
+                "error": "Source library evidence.json must be an object.",
+            }
+        )
+        return result
 
     split_groups = split_proposal.get("split_groups")
     if not isinstance(split_groups, list):
@@ -2350,7 +2368,7 @@ def _apply_single_split(
                 raise RuntimeError("Split library validation failed.")
     except Exception as exc:
         for lib_dir in created_dirs:
-            shutil.rmtree(lib_dir, ignore_errors=True)
+            shutil.rmtree(lib_dir)
         manager.state.allocated_library_ids = pre_split_allocated_ids
         manager.state.next_library_number = pre_split_next_number
         manager.save_state()
@@ -2381,7 +2399,7 @@ def _apply_single_split(
             json.dumps(updated_index, indent=2),
             encoding="utf-8",
         )
-        existing_events = _read_library_events(lib_dir)
+        existing_events = read_library_events(lib_dir)
         split_event = LibraryEvent(
             event_type=LibraryEventType.LIBRARY_SPLIT,
             timestamp=datetime.now().isoformat(),
@@ -2398,12 +2416,12 @@ def _apply_single_split(
             },
             previous_state=None,
         )
-        _rewrite_library_events(lib_dir, [*existing_events, split_event])
+        rewrite_library_events(lib_dir, [*existing_events, split_event])
     except Exception as exc:
         spec_path.write_text(source_spec_content, encoding="utf-8")
         spec_index_path.write_text(source_spec_index_content, encoding="utf-8")
         for lib_dir in created_dirs:
-            shutil.rmtree(lib_dir, ignore_errors=True)
+            shutil.rmtree(lib_dir)
         manager.state.allocated_library_ids = pre_split_allocated_ids
         manager.state.next_library_number = pre_split_next_number
         manager.save_state()
@@ -2552,13 +2570,45 @@ def _apply_single_move(
 
     try:
         source_evidence = json.loads(source_evidence_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        source_evidence = {"sources": []}
+    except json.JSONDecodeError as exc:
+        result["errors"].append(
+            {
+                "type": "invalid_evidence",
+                "lib_id": source_lib_id,
+                "error": f"Source library evidence.json is invalid JSON: {exc}",
+            }
+        )
+        return result
+    if not isinstance(source_evidence, dict):
+        result["errors"].append(
+            {
+                "type": "invalid_evidence",
+                "lib_id": source_lib_id,
+                "error": "Source library evidence.json must be an object.",
+            }
+        )
+        return result
 
     try:
         target_evidence = json.loads(target_evidence_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        target_evidence = {"sources": []}
+    except json.JSONDecodeError as exc:
+        result["errors"].append(
+            {
+                "type": "invalid_evidence",
+                "lib_id": target_lib_id,
+                "error": f"Target library evidence.json is invalid JSON: {exc}",
+            }
+        )
+        return result
+    if not isinstance(target_evidence, dict):
+        result["errors"].append(
+            {
+                "type": "invalid_evidence",
+                "lib_id": target_lib_id,
+                "error": "Target library evidence.json must be an object.",
+            }
+        )
+        return result
 
     element_ids = [element_id for element_id in action.elements if element_id]
     if not element_ids:
@@ -2638,8 +2688,8 @@ def _apply_single_move(
     target_spec_backup = target_spec_content
     source_evidence_backup = copy.deepcopy(source_evidence)
     target_evidence_backup = copy.deepcopy(target_evidence)
-    source_events_backup = copy.deepcopy(_read_library_events(source_dir))
-    target_events_backup = copy.deepcopy(_read_library_events(target_dir))
+    source_events_backup = copy.deepcopy(read_library_events(source_dir))
+    target_events_backup = copy.deepcopy(read_library_events(target_dir))
     source_spec_index_backup = source_spec_index_content
     target_spec_index_backup = target_spec_index_content
 
@@ -2789,8 +2839,8 @@ def _apply_single_move(
             and element.get("element_id") not in existing_target_ids
             and f"-{target_lib_id}-" in element.get("element_id")
         ]
-        source_events = _read_library_events(source_dir)
-        target_events = _read_library_events(target_dir)
+        source_events = read_library_events(source_dir)
+        target_events = read_library_events(target_dir)
         source_events.append(
             LibraryEvent(
                 event_type=LibraryEventType.BOUNDARY_CHANGED,
@@ -2821,8 +2871,8 @@ def _apply_single_move(
                 previous_state=None,
             )
         )
-        _rewrite_library_events(source_dir, source_events)
-        _rewrite_library_events(target_dir, target_events)
+        rewrite_library_events(source_dir, source_events)
+        rewrite_library_events(target_dir, target_events)
     except Exception as exc:
         source_spec_path.write_text(source_spec_backup, encoding="utf-8")
         target_spec_path.write_text(target_spec_backup, encoding="utf-8")
@@ -2834,8 +2884,8 @@ def _apply_single_move(
         )
         source_spec_index_path.write_text(source_spec_index_backup, encoding="utf-8")
         target_spec_index_path.write_text(target_spec_index_backup, encoding="utf-8")
-        _rewrite_library_events(source_dir, source_events_backup)
-        _rewrite_library_events(target_dir, target_events_backup)
+        rewrite_library_events(source_dir, source_events_backup)
+        rewrite_library_events(target_dir, target_events_backup)
         logger.exception(
             "Move action %s failed for %s -> %s",
             action.action_id,
