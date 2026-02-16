@@ -35,7 +35,7 @@ class TestRunnerRegistry:
         """Register a new runner class."""
         self._runners[runner_id] = runner_cls
 
-    def pick(self, *, root: Path) -> TestRunner:
+    def pick(self, *, root: Path, timeout_seconds: int = 300) -> TestRunner:
         """Pick the best test runner for the given project root.
 
         Returns PytestRunner by default (Python-first, extend later).
@@ -51,11 +51,13 @@ class TestRunnerRegistry:
                             root,
                             indicator,
                         )
+                        if runner_id == "pytest":
+                            return runner_cls(timeout_seconds=timeout_seconds)
                         return runner_cls()
 
         # Default to pytest
         logger.debug("No runner indicator found, defaulting to pytest for %s", root)
-        return PytestRunner()
+        return PytestRunner(timeout_seconds=timeout_seconds)
 
     def list_runners(self) -> list[str]:
         """List all registered runner IDs."""

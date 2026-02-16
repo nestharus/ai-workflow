@@ -6831,6 +6831,91 @@ class IntegrateStep:
             unique.append(anchor)
         return unique[:40]
 
+    @staticmethod
+    def _serialize_test_failure(failure: Any) -> dict[str, Any]:
+        """Normalize a TestFailure-like object into dict form."""
+        return {
+            "test_id": str(getattr(failure, "test_id", "") or "").strip() or None,
+            "file": str(getattr(failure, "file", "") or "").strip() or None,
+            "message": str(getattr(failure, "message", "") or "").strip(),
+            "raw_excerpt_path": str(getattr(failure, "raw_excerpt_path", "") or "").strip(),
+        }
+
+    @classmethod
+    def _serialize_test_run_result(cls, run_result: Any) -> dict[str, Any]:
+        """Normalize a TestRunResult-like object into receipt-safe JSON."""
+        failures = [
+            cls._serialize_test_failure(failure)
+            for failure in list(getattr(run_result, "failures", []) or [])
+        ]
+        return {
+            "passed": bool(getattr(run_result, "passed", False)),
+            "scope": str(getattr(run_result, "scope", "SLICE") or "SLICE").upper(),
+            "runner_id": str(getattr(run_result, "runner_id", "") or "").strip(),
+            "command": [str(item) for item in list(getattr(run_result, "command", []) or [])],
+            "stdout_path": str(getattr(run_result, "stdout_path", "") or "").strip(),
+            "stderr_path": str(getattr(run_result, "stderr_path", "") or "").strip(),
+            "total_tests": int(getattr(run_result, "total_tests", 0) or 0),
+            "passed_tests": int(getattr(run_result, "passed_tests", 0) or 0),
+            "failed_tests": int(getattr(run_result, "failed_tests", 0) or 0),
+            "duration_ms": float(getattr(run_result, "duration_ms", 0.0) or 0.0),
+            "failures": failures,
+        }
+
+    @staticmethod
+    def _not_run_test_payload(*, slice_id: str, layer: str, reason: str) -> dict[str, Any]:
+        """Build a structured receipt for skipped test execution."""
+        return {
+            "slice_id": slice_id,
+            "layer": layer,
+            "status": "not_run",
+            "reason": reason,
+            "result": {
+                "passed": False,
+                "scope": "SLICE",
+                "runner_id": "not_run",
+                "command": [],
+                "stdout_path": "",
+                "stderr_path": "",
+                "total_tests": 0,
+                "passed_tests": 0,
+                "failed_tests": 0,
+                "duration_ms": 0.0,
+                "failures": [
+                    {
+                        "test_id": None,
+                        "file": None,
+                        "message": reason,
+                        "raw_excerpt_path": "",
+                    }
+                ],
+            },
+        }
+
+    @staticmethod
+    def _run_slice_tests(*, test_root: Path, timeout_seconds: int = 300) -> Any:
+        """Run slice tests through the swappable TestRunnerRegistry."""
+        from spec_manager.core.testing.registry import TestRunnerRegistry
+        from spec_manager.core.testing.runner import TestFailure, TestRunResult
+
+        try:
+            registry = TestRunnerRegistry()
+            runner = registry.pick(root=test_root, timeout_seconds=timeout_seconds)
+            return runner.run(root=test_root, scope="SLICE", targets=None)
+        except Exception as exc:
+            return TestRunResult(
+                passed=False,
+                scope="SLICE",
+                runner_id="runner_error",
+                command=[],
+                failures=[
+                    TestFailure(
+                        message=f"Test runner invocation failed: {exc}",
+                        raw_excerpt_path="",
+                    )
+                ],
+            )
+
     def _build_test_failure_tickets(
         self,
         *,
@@ -6839,6 +6924,7 @@ class IntegrateStep:
         refs: list[str],
         summary: str,
         evidence_refs: list[str],
+        test_result: Any | None = None,
     ) -> list[DemotionTicket]:
         """Create traced TEST_FAILURE demotion tickets using DownwardFlowEngine."""
         active_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
@@ -6848,6 +6934,32 @@ class IntegrateStep:
         failing_files = self._extract_failure_files(
             refs=refs, summary=summary, changed_files=changed_files
         )
+        serialized_failures = [
+            self._serialize_test_failure(failure)
+            for failure in list(getattr(test_result, "failures", []) or [])
+        ]
+        structured_files = sorted(
+            {
+                str(failure.get("file", "")).strip()
+                for failure in serialized_failures
+                if str(failure.get("file", "")).strip()
+            }
+        )
+        if structured_files:
+            failing_files = structured_files
+
+        merged_evidence_refs = [str(ref).strip() for ref in evidence_refs if str(ref).strip()]
+        for path_candidate in (
+            str(getattr(test_result, "stdout_path", "") or "").strip(),
+            str(getattr(test_result, "stderr_path", "") or "").strip(),
+        ):
+            if path_candidate and path_candidate not in merged_evidence_refs:
+                merged_evidence_refs.append(path_candidate)
+        for failure in serialized_failures:
+            excerpt_path = str(failure.get("raw_excerpt_path", "")).strip()
+            if excerpt_path and excerpt_path not in merged_evidence_refs:
+                merged_evidence_refs.append(excerpt_path)
+
         slice_root = Path(ctx.slice_root) if ctx.slice_root else Path(".")
         trace_adapter = (
             self._build_pin_registry_adapter(slice_root) if slice_root.exists() else None
@@ -6861,7 +6973,7 @@ class IntegrateStep:
             FailureEvidence(
                 source="TEST_FAILURE",
                 failing_files=failing_files,
-                evidence_paths=evidence_refs,
+                evidence_paths=merged_evidence_refs,
                 stack_trace=summary,
             )
         )
@@ -6879,11 +6991,59 @@ class IntegrateStep:
                     severity="BLOCKER",
                     diagnosis=summary or "Integration test/merge failure",
                     failing_files=failing_files,
-                    evidence_refs=evidence_refs,
+                    evidence_refs=merged_evidence_refs,
                 )
             ]
 
         anchors = self._anchors_from_refs(failing_files=failing_files, refs=refs)
+        for failure in serialized_failures:
+            file_path = str(failure.get("file", "") or "").strip()
+            test_id = str(failure.get("test_id", "") or "").strip()
+            if file_path:
+                anchors.append(
+                    {
+                        "file": file_path,
+                        "symbol": test_id or None,
+                    }
+                )
+
+        normalized_anchors: list[dict[str, Any]] = []
+        seen_anchors: set[tuple[str, int, int, str]] = set()
+        for anchor in anchors:
+            key = (
+                str(anchor.get("file", "")).strip(),
+                int(anchor.get("start_line") or 0),
+                int(anchor.get("end_line") or 0),
+                str(anchor.get("symbol", "")).strip(),
+            )
+            if not key[0] or key in seen_anchors:
+                continue
+            seen_anchors.add(key)
+            normalized_anchors.append(anchor)
+        anchors = normalized_anchors[:40]
+
+        structured_summary = ""
+        if test_result is not None:
+            runner_id = str(getattr(test_result, "runner_id", "") or "").strip()
+            scope = str(getattr(test_result, "scope", "") or "").strip()
+            failed_count = int(getattr(test_result, "failed_tests", 0) or 0)
+            details = [part for part in (f"runner={runner_id}" if runner_id else "", scope) if part]
+            if failed_count > 0:
+                details.append(f"failed_tests={failed_count}")
+            snippets = []
+            for failure in serialized_failures[:5]:
+                test_id = str(failure.get("test_id", "") or "").strip()
+                message = str(failure.get("message", "") or "").strip()
+                if test_id and message:
+                    snippets.append(f"{test_id}: {message}")
+                elif test_id:
+                    snippets.append(test_id)
+                elif message:
+                    snippets.append(message)
+            if snippets:
+                details.append("; ".join(snippets))
+            structured_summary = " | ".join(details).strip()
+
         for ticket in tickets:
             ticket.slice_id = ctx.slice_id
             ticket.source = "TEST_FAILURE"
@@ -6893,7 +7053,11 @@ class IntegrateStep:
             ticket.severity = "BLOCKER"
             if summary and summary not in ticket.diagnosis:
                 ticket.diagnosis = f"{ticket.diagnosis}; {summary}".strip("; ")
-            ticket.evidence_refs = list(dict.fromkeys([*ticket.evidence_refs, *evidence_refs]))
+            if structured_summary and structured_summary not in ticket.diagnosis:
+                ticket.diagnosis = f"{ticket.diagnosis}; {structured_summary}".strip("; ")
+            ticket.evidence_refs = list(
+                dict.fromkeys([*ticket.evidence_refs, *merged_evidence_refs])
+            )
             ticket.failing_atoms = [
                 str(atom).removeprefix("PIN-ATOM-")
                 for atom in ticket.failing_atoms
@@ -6938,6 +7102,8 @@ class IntegrateStep:
             ci_tick_receipt: dict[str, Any] | None = None,
             failure_evidence: dict[str, Any] | None = None,
             investigator_report_refs: list[str] | None = None,
+            slice_test_payload: dict[str, Any] | None = None,
+            full_test_payload: dict[str, Any] | None = None,
         ) -> None:
             dirty_root, clean_root = resolve_worktree_roots()
             integration_payload: dict[str, Any] = {
@@ -6970,27 +7136,28 @@ class IntegrateStep:
                 integration_payload,
             )
 
-            tests_payload: dict[str, Any] = {
-                "slice_id": ctx.slice_id,
-                "layer": ctx.layer,
-                "note": "Per-slice integrate tests moved to batch pipeline tick",
-            }
+            if not isinstance(slice_test_payload, dict):
+                reason = str(error).strip() or "Slice tests were not executed"
+                slice_test_payload = self._not_run_test_payload(
+                    slice_id=ctx.slice_id,
+                    layer=ctx.layer,
+                    reason=reason,
+                )
             bundle.tests.slice_path = _write_iteration_json(
                 bundle,
                 evidence_root,
                 "tests.slice.json",
-                tests_payload,
+                slice_test_payload,
             )
-            bundle.tests.full_path = _write_iteration_json(
-                bundle,
-                evidence_root,
-                "tests.full.json",
-                {
-                    "slice_id": ctx.slice_id,
-                    "layer": ctx.layer,
-                    "note": "Full-suite integrate tests moved to batch pipeline tick",
-                },
-            )
+            if isinstance(full_test_payload, dict) and full_test_payload:
+                bundle.tests.full_path = _write_iteration_json(
+                    bundle,
+                    evidence_root,
+                    "tests.full.json",
+                    full_test_payload,
+                )
+            else:
+                bundle.tests.full_path = ""
 
         if wm is None:
             record_artifacts(merge=None, skipped=True)
@@ -7011,6 +7178,7 @@ class IntegrateStep:
         merge_attempts: list[dict[str, Any]] = []
         investigator_report_refs: list[str] = []
         failure_evidence: dict[str, Any] = {}
+        slice_test_payload: dict[str, Any] | None = None
         dirty_root, _ = resolve_worktree_roots()
 
         def is_direct_dirty_slice() -> bool:
@@ -7240,6 +7408,98 @@ class IntegrateStep:
                     error=diagnosis,
                 )
 
+        if dirty_root is None or not dirty_root.exists():
+            slice_test_payload = self._not_run_test_payload(
+                slice_id=ctx.slice_id,
+                layer=ctx.layer,
+                reason="Cannot run slice tests: dirty worktree is unavailable",
+            )
+        else:
+            timeout_seconds = 300
+            if isinstance(ctx.config, dict):
+                timeout_seconds = int(ctx.config.get("test_timeout_seconds", 300) or 300)
+            slice_test_result = self._run_slice_tests(
+                test_root=dirty_root,
+                timeout_seconds=timeout_seconds,
+            )
+            serialized_result = self._serialize_test_run_result(slice_test_result)
+            slice_test_payload = {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "result": serialized_result,
+            }
+            if not bool(serialized_result.get("passed", False)):
+                failure_rows = [
+                    row for row in serialized_result.get("failures", []) if isinstance(row, dict)
+                ]
+                refs: list[str] = []
+                for row in failure_rows:
+                    test_id = str(row.get("test_id", "") or "").strip()
+                    file_path = str(row.get("file", "") or "").strip()
+                    message = str(row.get("message", "") or "").strip()
+                    if test_id:
+                        refs.append(test_id)
+                    if file_path and message:
+                        refs.append(f"{file_path}: {message}")
+                    elif file_path:
+                        refs.append(file_path)
+                    elif message:
+                        refs.append(message)
+
+                runner_id = str(serialized_result.get("runner_id", "") or "").strip() or "runner"
+                failed_tests = int(serialized_result.get("failed_tests", 0) or 0)
+                diagnosis = (
+                    f"Slice tests failed after integrate via {runner_id}"
+                    f" (failed_tests={failed_tests})"
+                )
+                if not refs:
+                    refs.append(diagnosis)
+
+                evidence_refs = ["tests.slice.json"]
+                for path_candidate in (
+                    str(serialized_result.get("stdout_path", "")).strip(),
+                    str(serialized_result.get("stderr_path", "")).strip(),
+                ):
+                    if path_candidate:
+                        evidence_refs.append(path_candidate)
+                for row in failure_rows:
+                    excerpt_path = str(row.get("raw_excerpt_path", "") or "").strip()
+                    if excerpt_path:
+                        evidence_refs.append(excerpt_path)
+                evidence_refs = list(dict.fromkeys(evidence_refs))
+
+                failure_evidence = {
+                    "phase": "slice_test_failure",
+                    "test_result": serialized_result,
+                    "merge_attempts": merge_attempts,
+                    "ci_tick_receipt": ci_tick_receipt,
+                }
+                tickets = self._build_test_failure_tickets(
+                    ctx=ctx,
+                    bundle=bundle,
+                    refs=refs,
+                    summary=diagnosis,
+                    evidence_refs=evidence_refs,
+                    test_result=slice_test_result,
+                )
+                record_artifacts(
+                    merge=merge_result,
+                    emitted=tickets,
+                    error=diagnosis,
+                    merge_attempts=merge_attempts,
+                    ci_tick_triggered=ci_tick_triggered,
+                    ci_tick_error=ci_tick_error,
+                    ci_tick_receipt=ci_tick_receipt,
+                    failure_evidence=failure_evidence,
+                    investigator_report_refs=investigator_report_refs,
+                    slice_test_payload=slice_test_payload,
+                )
+                return StepResult(
+                    status="RETRY",
+                    emitted_tickets=tickets,
+                    error=diagnosis,
+                )
+
         record_artifacts(
             merge=merge_result,
             merge_attempts=merge_attempts,
@@ -7247,6 +7507,7 @@ class IntegrateStep:
             ci_tick_error=ci_tick_error,
             ci_tick_receipt=ci_tick_receipt,
             investigator_report_refs=investigator_report_refs,
+            slice_test_payload=slice_test_payload,
         )
         return StepResult(status="OK")
 

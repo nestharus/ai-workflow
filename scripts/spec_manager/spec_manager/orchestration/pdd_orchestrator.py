@@ -1420,11 +1420,9 @@ class PddOrchestrator:
             "gap_report_path": str(gap_report_path),
         }
 
-        # TODO: Add small test generation step here.
-        #   simpler.md step 4: "write small tests to validate small
-        #   units of work." After implementation writes code, generate
-        #   tests for each implemented function/atom, run them, and
-        #   include results in outputs for compliance gating.
+        # Legacy sequential path note: small test generation/execution is
+        # implemented in the active loop runner path
+        # (orchestration/implementation/runner.py + PromotionLoop gates).
 
         return outputs
 

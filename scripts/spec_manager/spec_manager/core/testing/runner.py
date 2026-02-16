@@ -67,8 +67,14 @@ class PytestRunner:
 
     runner_id: str = "pytest"
 
-    def __init__(self, extra_args: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        extra_args: list[str] | None = None,
+        *,
+        timeout_seconds: int = 300,
+    ) -> None:
         self._extra_args = extra_args or []
+        self._timeout_seconds = timeout_seconds
 
     def run(
         self,
@@ -111,7 +117,7 @@ class PytestRunner:
                 cwd=str(root),
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=self._timeout_seconds,
             )
 
             # Write stdout/stderr to files
@@ -126,7 +132,17 @@ class PytestRunner:
 
             # Parse failure info from stdout
             if not result.passed:
-                result.failures = self._parse_failures(proc.stdout)
+                result.failures = self._parse_failures(
+                    proc.stdout,
+                    raw_excerpt_path=str(stdout_path),
+                )
+                if not result.failures:
+                    result.failures = [
+                        TestFailure(
+                            message="pytest reported failure without explicit FAILED entries",
+                            raw_excerpt_path=str(stdout_path),
+                        )
+                    ]
 
             # Parse test counts from pytest output
             counts = self._parse_counts(proc.stdout)
@@ -136,7 +152,9 @@ class PytestRunner:
 
         except subprocess.TimeoutExpired:
             result.passed = False
-            result.failures = [TestFailure(message="Test execution timed out (300s)")]
+            result.failures = [
+                TestFailure(message=f"Test execution timed out ({self._timeout_seconds}s)")
+            ]
         except FileNotFoundError:
             result.passed = False
             result.failures = [TestFailure(message="pytest not found in PATH")]
@@ -145,7 +163,11 @@ class PytestRunner:
         return result
 
     @staticmethod
-    def _parse_failures(stdout: str) -> list[TestFailure]:
+    def _parse_failures(
+        stdout: str,
+        *,
+        raw_excerpt_path: str = "",
+    ) -> list[TestFailure]:
         """Extract failure info from pytest short-traceback output."""
         failures: list[TestFailure] = []
         lines = stdout.splitlines()
@@ -162,6 +184,7 @@ class PytestRunner:
                         test_id=test_id,
                         file=file_part,
                         message=message,
+                        raw_excerpt_path=raw_excerpt_path,
                     )
                 )
 

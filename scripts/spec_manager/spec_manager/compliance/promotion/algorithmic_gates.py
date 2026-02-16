@@ -5,10 +5,11 @@ from __future__ import annotations
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
+from spec_manager.core.testing.registry import TestRunnerRegistry
 from spec_manager.orchestration.evidence import EvidenceBundle
 
 
@@ -95,6 +96,59 @@ def check_no_stub_functions(bundle: EvidenceBundle, gate_spec: GateSpec) -> Gate
     )
 
 
+def _infer_targets_from_command(test_command: list[str]) -> list[str] | None:
+    """Extract explicit test targets from a legacy command list."""
+    if not test_command:
+        return None
+
+    skip_next = False
+    targets: list[str] = []
+    flags_with_value = {
+        "-k",
+        "-m",
+        "-p",
+        "-c",
+        "--maxfail",
+        "--rootdir",
+        "--confcutdir",
+        "--ignore",
+        "--ignore-glob",
+        "--deselect",
+        "--basetemp",
+        "--override-ini",
+    }
+
+    for arg in [str(item).strip() for item in test_command if str(item).strip()]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"python", "python3", "uv", "run", "pytest"}:
+            continue
+        if arg in flags_with_value:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        if arg == "pytest":
+            continue
+        targets.append(arg)
+
+    return targets or None
+
+
+def _is_pytest_command(test_command: list[str]) -> bool:
+    """Return True when command clearly invokes pytest."""
+    normalized = [str(item).strip().lower() for item in test_command if str(item).strip()]
+    if any(token == "pytest" for token in normalized):
+        return True
+    for idx, token in enumerate(normalized):
+        if token != "-m":
+            continue
+        if idx + 1 < len(normalized) and normalized[idx + 1] in {"pytest", "pytest.__main__"}:
+            return True
+    return False
+
+
 def check_all_tests_pass(
     test_command: list[str],
     project_root: Path,
@@ -102,35 +156,105 @@ def check_all_tests_pass(
 ) -> GateCheckResult:
     """Gate: all algorithmic tests pass."""
     start = time.monotonic()
-    timeout_seconds = gate_spec.params.get("timeout_seconds", 300)
+    timeout_seconds = int(gate_spec.params.get("timeout_seconds", 300) or 300)
+    requested_scope = str(gate_spec.params.get("scope", "FULL")).strip().upper()
+    scope: Literal["SLICE", "FULL"] = "SLICE" if requested_scope == "SLICE" else "FULL"
+    requested_targets = gate_spec.params.get("targets")
+    targets = (
+        [str(item).strip() for item in requested_targets if str(item).strip()]
+        if isinstance(requested_targets, list)
+        else _infer_targets_from_command(test_command)
+    )
 
+    findings: list[dict[str, Any]]
     try:
-        result = subprocess.run(
-            test_command,
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-        passed = result.returncode == 0
-        output = result.stdout + result.stderr
-        findings: list[dict[str, Any]] = []
-        if not passed:
-            findings.append(
-                {
-                    "returncode": result.returncode,
-                    "stdout": result.stdout[:2000],
-                    "stderr": result.stderr[:2000],
-                }
+        if test_command and not _is_pytest_command(test_command):
+            command_result = subprocess.run(
+                test_command,
+                cwd=str(project_root),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
             )
-    except subprocess.TimeoutExpired:
+            passed = command_result.returncode == 0
+            findings = [
+                {
+                    "runner_id": "external_command",
+                    "scope": scope,
+                    "command": list(test_command),
+                    "returncode": command_result.returncode,
+                    "stdout": command_result.stdout,
+                    "stderr": command_result.stderr,
+                }
+            ]
+            summary = (
+                "All algorithmic tests passed"
+                if passed
+                else f"External test command failed: {command_result.stderr[:200]}"
+            )
+            duration = (time.monotonic() - start) * 1000
+            return GateCheckResult(
+                gate_id=GateId.ALL_TESTS_PASS.value,
+                passed=passed,
+                mode=gate_spec.mode.value,
+                status=GateStatus.PASSED if passed else GateStatus.FAILED,
+                score=1.0 if passed else 0.0,
+                findings=findings,
+                summary=summary,
+                duration_ms=duration,
+            )
+
+        registry = TestRunnerRegistry()
+        runner = registry.pick(root=project_root, timeout_seconds=timeout_seconds)
+        run_result = runner.run(
+            root=project_root,
+            scope=scope,
+            targets=targets,
+        )
+        failures = [
+            {
+                "test_id": failure.test_id,
+                "file": failure.file,
+                "message": failure.message,
+                "raw_excerpt_path": failure.raw_excerpt_path,
+            }
+            for failure in run_result.failures
+        ]
+        findings = [
+            {
+                "runner_id": run_result.runner_id,
+                "scope": run_result.scope,
+                "command": run_result.command,
+                "stdout_path": run_result.stdout_path,
+                "stderr_path": run_result.stderr_path,
+                "total_tests": run_result.total_tests,
+                "passed_tests": run_result.passed_tests,
+                "failed_tests": run_result.failed_tests,
+                "duration_ms": run_result.duration_ms,
+                "failures": failures,
+            }
+        ]
+        passed = bool(run_result.passed)
+        if passed:
+            summary = "All algorithmic tests passed"
+        elif failures:
+            first_failure = failures[0]
+            first_id = str(first_failure.get("test_id") or first_failure.get("file") or "").strip()
+            suffix = f"; first={first_id}" if first_id else ""
+            summary = f"{len(failures)} test failure(s) detected{suffix}"
+        else:
+            summary = "Test runner reported failure without structured failure rows"
+    except Exception as exc:
         passed = False
-        output = f"Test command timed out after {timeout_seconds}s"
-        findings = [{"error": output}]
-    except FileNotFoundError:
-        passed = False
-        output = f"Test command not found: {test_command}"
-        findings = [{"error": output}]
+        findings = [
+            {
+                "error": str(exc),
+                "requested_command": list(test_command),
+                "scope": scope,
+            }
+        ]
+        summary = f"Test runner execution failed: {exc}"
 
     duration = (time.monotonic() - start) * 1000
 
@@ -141,9 +265,7 @@ def check_all_tests_pass(
         status=GateStatus.PASSED if passed else GateStatus.FAILED,
         score=1.0 if passed else 0.0,
         findings=findings,
-        summary=(
-            "All algorithmic tests passed" if passed else f"Test command failed: {output[:200]}"
-        ),
+        summary=summary,
         duration_ms=duration,
     )
 

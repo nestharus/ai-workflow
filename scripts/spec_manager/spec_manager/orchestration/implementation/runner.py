@@ -15,8 +15,11 @@ Output artifacts per slice iteration:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,8 +69,9 @@ class ImplementationRunner:
     2. Groups targets by file.
     3. Calls the ``pdd-function-implementor`` agent per function.
     4. Applies edits (function body or unified diff).
-    5. Collects pin/edge proposals, under-spec events, and test artifacts.
-    6. Writes all artifacts to the iteration directory.
+    5. Applies implementor-emitted test artifacts into the slice worktree.
+    6. Collects pin/edge proposals, under-spec events, and test artifacts.
+    7. Writes all artifacts to the iteration directory.
 
     Args:
         workspace_root: Repository root.
@@ -229,7 +233,11 @@ class ImplementationRunner:
         result.pin_proposals = [p.to_dict() for p in all_pin_proposals]
         result.edge_proposals = [e.to_dict() for e in all_edge_proposals]
         result.under_spec_events = [e.to_dict() for e in all_under_spec]
-        result.tests_added = [t.path for t in all_tests]
+        result.tests_added = self._materialize_test_artifacts(
+            slice_root=slice_root,
+            tests=all_tests,
+            errors=result.errors,
+        )
 
         if all_signals:
             result.signals = [s.to_dict() for s in all_signals]
@@ -393,6 +401,116 @@ class ImplementationRunner:
             path = iteration_dir / "notes.md"
             path.write_text("\n\n---\n\n".join(notes), encoding="utf-8")
             result.notes_path = str(path)
+
+    def _materialize_test_artifacts(
+        self,
+        *,
+        slice_root: Path,
+        tests: list[TestArtifact],
+        errors: list[dict[str, str]],
+    ) -> list[str]:
+        """Apply implementor-emitted test artifacts to the slice worktree."""
+        materialized: list[str] = []
+        seen: set[str] = set()
+        slice_root_resolved = slice_root.resolve()
+
+        for test in tests:
+            raw_path = str(test.path).strip().replace("\\", "/").lstrip("./")
+            if not raw_path:
+                errors.append({"file": "", "error": "Test artifact missing path"})
+                continue
+
+            target = (slice_root / raw_path).resolve()
+            try:
+                target.relative_to(slice_root_resolved)
+            except ValueError:
+                errors.append(
+                    {
+                        "file": raw_path,
+                        "error": "Test artifact path escapes slice worktree",
+                    }
+                )
+                continue
+
+            if str(test.unified_diff or "").strip():
+                applied, apply_error = self._apply_unified_diff(
+                    slice_root=slice_root,
+                    unified_diff=test.unified_diff,
+                )
+                if not applied:
+                    errors.append(
+                        {
+                            "file": raw_path,
+                            "error": f"Failed to apply test artifact diff: {apply_error}",
+                        }
+                    )
+                    continue
+
+            if not target.exists():
+                errors.append(
+                    {
+                        "file": raw_path,
+                        "error": "Test artifact was not materialized in the worktree",
+                    }
+                )
+                continue
+
+            if raw_path not in seen:
+                seen.add(raw_path)
+                materialized.append(raw_path)
+
+        return materialized
+
+    @staticmethod
+    def _apply_unified_diff(
+        *,
+        slice_root: Path,
+        unified_diff: str,
+    ) -> tuple[bool, str]:
+        """Apply a unified diff in the slice worktree using ``git apply``."""
+        if not unified_diff.strip():
+            return False, "empty unified diff"
+
+        patch_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                delete=False,
+                dir=slice_root,
+                prefix="impl_test_",
+                suffix=".diff",
+            ) as handle:
+                handle.write(unified_diff)
+                patch_path = Path(handle.name)
+
+            check = subprocess.run(
+                ["git", "apply", "--check", str(patch_path)],
+                cwd=slice_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if check.returncode != 0:
+                return False, check.stderr.strip() or "git apply --check failed"
+
+            apply = subprocess.run(
+                ["git", "apply", str(patch_path)],
+                cwd=slice_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if apply.returncode != 0:
+                return False, apply.stderr.strip() or "git apply failed"
+
+            return True, ""
+        except OSError as exc:
+            return False, str(exc)
+        finally:
+            if patch_path is not None:
+                with contextlib.suppress(OSError):
+                    patch_path.unlink()
 
 
 def _classify_under_spec(event: UnderSpecEvent) -> str:
