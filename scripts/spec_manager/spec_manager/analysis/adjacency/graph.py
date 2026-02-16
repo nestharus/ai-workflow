@@ -111,6 +111,75 @@ class NodeInfo:
         )
 
 
+def _merge_unique_values(*values: Any) -> list[Any]:
+    merged: list[Any] = []
+    for value in values:
+        if value is None:
+            continue
+        entries = value if isinstance(value, list) else [value]
+        for entry in entries:
+            if entry not in merged:
+                merged.append(entry)
+    return merged
+
+
+def _merge_node_info(existing: NodeInfo, incoming: NodeInfo) -> NodeInfo:
+    merged_metadata: dict[str, Any] = dict(existing.metadata)
+
+    for key, incoming_value in incoming.metadata.items():
+        if key not in merged_metadata:
+            merged_metadata[key] = incoming_value
+            continue
+        existing_value = merged_metadata[key]
+        if existing_value == incoming_value:
+            continue
+        merged_metadata[key] = _merge_unique_values(existing_value, incoming_value)
+
+    merged_node_type = existing.node_type
+    if existing.node_type == "unknown" and incoming.node_type != "unknown":
+        merged_node_type = incoming.node_type
+    elif incoming.node_type != "unknown" and incoming.node_type != existing.node_type:
+        merged_metadata["node_type_conflicts"] = _merge_unique_values(
+            merged_metadata.get("node_type_conflicts"),
+            existing.node_type,
+            incoming.node_type,
+        )
+
+    merged_file_path = existing.file_path or incoming.file_path
+    if (
+        existing.file_path is not None
+        and incoming.file_path is not None
+        and existing.file_path != incoming.file_path
+    ):
+        merged_metadata["file_path_conflicts"] = _merge_unique_values(
+            merged_metadata.get("file_path_conflicts"),
+            existing.file_path,
+            incoming.file_path,
+        )
+
+    merged_line_number = (
+        existing.line_number if existing.line_number is not None else incoming.line_number
+    )
+    if (
+        existing.line_number is not None
+        and incoming.line_number is not None
+        and existing.line_number != incoming.line_number
+    ):
+        merged_metadata["line_number_conflicts"] = _merge_unique_values(
+            merged_metadata.get("line_number_conflicts"),
+            existing.line_number,
+            incoming.line_number,
+        )
+
+    return NodeInfo(
+        node_id=existing.node_id,
+        node_type=merged_node_type,
+        file_path=merged_file_path,
+        line_number=merged_line_number,
+        metadata=merged_metadata,
+    )
+
+
 class AdjacencyGraph:
     """Lightweight weighted directed graph with signal-typed edges.
 
@@ -124,11 +193,17 @@ class AdjacencyGraph:
 
     def add_node(self, node_id: str, info: NodeInfo | None = None) -> None:
         """Add a node to the graph. If it already exists, update info if provided."""
+        if info is not None and info.node_id != node_id:
+            raise ValueError(
+                f"Node ID mismatch: add_node called with node_id='{node_id}' "
+                f"but NodeInfo.node_id='{info.node_id}'.",
+            )
+
         if node_id not in self._nodes:
             self._nodes[node_id] = info or NodeInfo(node_id=node_id, node_type="unknown")
             self._adj.setdefault(node_id, {})
         elif info is not None:
-            self._nodes[node_id] = info
+            self._nodes[node_id] = _merge_node_info(self._nodes[node_id], info)
 
     def add_edge(self, source: str, target: str, signal: EdgeSignal) -> None:
         """Add or augment an edge. If edge exists, appends signal."""
@@ -159,9 +234,8 @@ class AdjacencyGraph:
             result[target] = edge
         # Incoming
         for source, targets in self._adj.items():
-            if node_id in targets and source != node_id:
-                if source not in result:
-                    result[source] = targets[node_id]
+            if node_id in targets and source != node_id and source not in result:
+                result[source] = targets[node_id]
         return list(result.items())
 
     def nodes(self) -> list[str]:

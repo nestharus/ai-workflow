@@ -47,26 +47,42 @@ def build_cooccurrence_verifier_graph(
     Returns:
         AdjacencyGraph with SignalType.CO_OCCURRENCE edges
     """
+    allowed_window_modes = {"section", "paragraph"}
+    if window_mode not in allowed_window_modes:
+        supported = ", ".join(sorted(allowed_window_modes))
+        raise ValueError(
+            f"Unsupported window_mode '{window_mode}'. Expected one of: {supported}.",
+        )
+
     graph = AdjacencyGraph()
     all_cooccurrences: list[CoOccurrence] = []
+    skipped_inputs: list[str] = []
 
     for path in spec_paths:
         if not path.exists():
+            skipped_inputs.append(f"{path}: file does not exist")
             continue
         try:
             content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            skipped_inputs.append(f"{path}: unable to read ({exc.__class__.__name__})")
             continue
 
         source_file = str(path)
 
         if window_mode == "paragraph":
             section_entities = _extract_entity_mentions_by_paragraph(content)
-        else:
+        elif window_mode == "section":
             section_entities = _extract_entity_mentions(content)
 
         cooccurrences = _build_cooccurrence_edges(section_entities, source_file)
         all_cooccurrences.extend(cooccurrences)
+
+    if skipped_inputs:
+        details = "\n".join(f"- {entry}" for entry in skipped_inputs)
+        raise ValueError(
+            f"Co-occurrence graph build skipped one or more requested spec files:\n{details}",
+        )
 
     # Build graph from co-occurrences
     for cooc in all_cooccurrences:

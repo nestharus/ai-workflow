@@ -38,7 +38,7 @@ class ComponentReport:
             "nodes": sorted(self.nodes),
             "size": self.size,
             "signal_types_present": sorted(s.value for s in self.signal_types_present),
-            "total_internal_weight": round(self.total_internal_weight, 4),
+            "total_internal_weight": self.total_internal_weight,
             "classification": self.classification.value if self.classification else None,
             "classification_reason": self.classification_reason,
             "bridge_candidates": self.bridge_candidates,
@@ -64,7 +64,7 @@ class AdjacencyReport:
             "num_components": self.num_components,
             "components": [c.to_dict() for c in self.components],
             "signal_type_counts": self.signal_type_counts,
-            "signal_type_weights": {k: round(v, 4) for k, v in self.signal_type_weights.items()},
+            "signal_type_weights": self.signal_type_weights,
             "disconnected_warnings": self.disconnected_warnings,
         }
 
@@ -247,7 +247,7 @@ def build_unified_graph(
 
 def detect_disconnected_components(
     unified_graph: AdjacencyGraph,
-    partial_graphs: dict[str, AdjacencyGraph] | None = None,
+    partial_graphs: dict[SignalType, AdjacencyGraph] | None = None,
 ) -> AdjacencyReport:
     """Analyze the unified graph for disconnected components.
 
@@ -259,7 +259,7 @@ def detect_disconnected_components(
     Args:
         unified_graph: The merged graph from build_unified_graph()
         partial_graphs: Optional individual signal graphs for cross-checking.
-            Keys should be signal type names ("call", "event", "store", "cooccurrence").
+            Keys are SignalType members.
 
     Returns:
         AdjacencyReport with component analysis
@@ -297,7 +297,7 @@ def detect_disconnected_components(
         reason = ""
         bridge_candidates: list[dict[str, Any]] = []
 
-        if len(components) > 1:
+        if idx > 0:
             classification, reason, bridge_candidates = _classify_component(
                 component, components, unified_graph, partial_graphs
             )
@@ -350,7 +350,7 @@ def _classify_component(
     component: set[str],
     all_components: list[set[str]],
     unified_graph: AdjacencyGraph,
-    partial_graphs: dict[str, AdjacencyGraph] | None,
+    partial_graphs: dict[SignalType, AdjacencyGraph] | None,
 ) -> tuple[IsolationClassification, str, list[dict[str, Any]]]:
     """Classify a disconnected component.
 
@@ -376,12 +376,12 @@ def _classify_component(
     if partial_graphs:
         # Check store and co-occurrence graphs for cross-component edges
         weak_signal_graphs = {
-            name: graph
-            for name, graph in partial_graphs.items()
-            if name in ("store", "cooccurrence", "store_touch", "co_occurrence")
+            signal_type: graph
+            for signal_type, graph in partial_graphs.items()
+            if signal_type in {SignalType.STORE_TOUCH, SignalType.CO_OCCURRENCE}
         }
 
-        for graph_name, graph in weak_signal_graphs.items():
+        for signal_type, graph in weak_signal_graphs.items():
             for node in component:
                 for neighbor, edge in graph.all_neighbors(node):
                     if neighbor in other_nodes:
@@ -389,7 +389,7 @@ def _classify_component(
                             {
                                 "source": node,
                                 "target": neighbor,
-                                "signal_type": graph_name,
+                                "signal_type": signal_type.value,
                                 "weight": edge.total_weight,
                             }
                         )
