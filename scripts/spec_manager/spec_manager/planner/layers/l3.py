@@ -330,9 +330,15 @@ class L3SkeletonPlanner:
         if session.decision_requirements:
             result["decision_requirements"] = [dr.to_dict() for dr in session.decision_requirements]
         if session.new_constraints:
-            result["new_constraints"] = [c.to_dict() for c in session.new_constraints]
+            unresolved_constraints = [
+                constraint.to_dict()
+                for constraint in session.new_constraints
+                if constraint.authority_required != "planner_ok"
+            ]
+            if unresolved_constraints:
+                result["new_constraints"] = unresolved_constraints
         if session.under_spec_events:
-            result["under_spec_events"] = session.under_spec_events
+            result["under_spec_events"] = session.under_spec_event_dicts()
         if session.decision_outcomes:
             result["decision_outcomes"] = [o.to_dict() for o in session.decision_outcomes]
         return result

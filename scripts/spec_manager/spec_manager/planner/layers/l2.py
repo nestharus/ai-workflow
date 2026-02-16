@@ -1388,11 +1388,15 @@ class L2Planner:
 
         result: dict[str, Any] = {"intentions": intentions}
         if session.new_constraints:
-            constraints_to_write = [constraint.to_dict() for constraint in session.new_constraints]
+            constraints_to_write = [
+                constraint.to_dict()
+                for constraint in session.new_constraints
+                if constraint.authority_required != "planner_ok"
+            ]
             if constraints_to_write:
                 result["new_constraints_to_write"] = constraints_to_write
         if session.under_spec_events:
-            result["under_spec_events"] = session.under_spec_events
+            result["under_spec_events"] = session.under_spec_event_dicts()
         if session.decision_outcomes:
             result["decision_outcomes"] = [o.to_dict() for o in session.decision_outcomes]
         return result

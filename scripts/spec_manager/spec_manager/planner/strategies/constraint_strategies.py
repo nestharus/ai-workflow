@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
@@ -131,7 +132,10 @@ class ProblemFramerStrategy:
 
         prompt = _build_problem_frame_prompt(session)
         raw = self._run_agent(prompt)
-        session.problem_frame = _parse_problem_frame(raw)
+        parsed_frame, parse_failure_event = _parse_problem_frame(raw)
+        session.problem_frame = parsed_frame or ProblemFrame()
+        if parse_failure_event is not None:
+            session.add_under_spec_event(parse_failure_event)
         return session
 
 
@@ -154,12 +158,16 @@ class ConstraintEnricherStrategy:
 
         prompt = _build_enrichment_prompt(session)
         raw = self._run_agent(prompt)
-        hypotheses, requirements, conflict_report = _parse_enrichment_output(raw)
+        hypotheses, requirements, conflict_report, parse_failure_event = _parse_enrichment_output(
+            raw
+        )
 
         session.hypotheses.extend(hypotheses)
         session.decision_requirements.extend(requirements)
         if conflict_report and conflict_report.conflicts:
             session.conflict_report = conflict_report
+        if parse_failure_event is not None:
+            session.add_under_spec_event(parse_failure_event)
 
         return session
 
@@ -219,7 +227,7 @@ class CandidateEvaluatorStrategy:
         for outcome in session.decision_outcomes:
             evaluations.append(self._evaluate_decision_outcome(outcome.to_dict(), session))
 
-        session.candidate_evaluations = evaluations
+        session.set_candidate_evaluations(evaluations)
         return session
 
     @staticmethod
@@ -327,22 +335,20 @@ class CandidateEvaluatorStrategy:
 
 
 class TradeoffMapperStrategy:
-    """Always runs. Loads tradeoff axes from TRADEOFFS.md or uses defaults.
+    """Always runs. Loads the authoritative tradeoff priority ordering.
 
-    Looks for ``design/TRADEOFFS.md`` in the workspace root. If found,
-    extracts axis names from markdown headings (``## <axis>`` or
-    ``- <axis>``).  Falls back to a standard set of architectural
-    tradeoff dimensions.
+    Uses TRADEOFFS.md when available and parses the explicit priority model.
+    If the file cannot be loaded or parsed reliably, this strategy emits an
+    under-spec event and falls back to the canonical in-code ordering derived
+    from design guidance.
     """
 
-    _DEFAULT_AXES: ClassVar[tuple[str, ...]] = (
-        "performance",
-        "maintainability",
-        "simplicity",
-        "extensibility",
-        "reliability",
-        "scalability",
-        "security",
+    _AUTHORITATIVE_AXES: ClassVar[tuple[str, ...]] = (
+        "fidelity",
+        "robustness",
+        "diagnosability",
+        "efficiency",
+        "speed",
     )
 
     @property
@@ -353,55 +359,84 @@ class TradeoffMapperStrategy:
         self._workspace_root = workspace_root
 
     def run(self, session: PlanningSession) -> PlanningSession:
-        axes = self._load_axes()
+        axes, warning = self._load_axes()
         session.tradeoff_axes = axes
+        if warning is not None:
+            session.add_under_spec_event(warning)
         return session
 
-    def _load_axes(self) -> list[str]:
-        """Try loading TRADEOFFS.md; fall back to defaults."""
+    def _load_axes(self) -> tuple[list[str], dict[str, Any] | None]:
+        """Load authoritative axes and surface source/load failures explicitly."""
         if self._workspace_root is None:
-            return list(self._DEFAULT_AXES)
+            return list(self._AUTHORITATIVE_AXES), _build_tradeoff_source_warning(
+                reason="workspace root not available for TRADEOFFS lookup",
+                source_path="",
+            )
 
-        for candidate in [
+        candidates = [
+            self._workspace_root / ".tasks" / "plans" / "spec manager" / "design" / "TRADEOFFS.md",
             self._workspace_root / "design" / "TRADEOFFS.md",
             self._workspace_root / "TRADEOFFS.md",
-        ]:
-            if candidate.exists():
-                try:
-                    return self._parse_axes(candidate.read_text(encoding="utf-8"))
-                except OSError:
-                    pass
+        ]
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                axes = self._parse_axes(candidate.read_text(encoding="utf-8"))
+            except OSError:
+                logger.warning("Failed to read tradeoff source %s", candidate, exc_info=True)
+                return list(self._AUTHORITATIVE_AXES), _build_tradeoff_source_warning(
+                    reason="failed to read authoritative tradeoff source",
+                    source_path=str(candidate),
+                )
+            if axes:
+                return axes, None
+            return list(self._AUTHORITATIVE_AXES), _build_tradeoff_source_warning(
+                reason="failed to parse authoritative tradeoff priority ordering",
+                source_path=str(candidate),
+            )
 
-        return list(self._DEFAULT_AXES)
+        return list(self._AUTHORITATIVE_AXES), _build_tradeoff_source_warning(
+            reason="authoritative TRADEOFFS.md not found",
+            source_path="",
+        )
 
     @staticmethod
     def _parse_axes(content: str) -> list[str]:
-        """Extract axis names from markdown headings and list items."""
-        import re
+        """Extract the explicit priority ordering from TRADEOFFS.md."""
+        section_match = re.search(
+            r"(?is)^##\s+Priority ordering\s*(.+?)(?:^##\s+|\Z)",
+            content,
+            re.MULTILINE,
+        )
+        if section_match is None:
+            return []
 
-        axes: list[str] = []
-        seen: set[str] = set()
+        priorities: dict[int, str] = {}
+        for line in section_match.group(1).splitlines():
+            token = line.strip()
+            if not token:
+                continue
+            match = re.search(r"\*\*(\d+)\.\s*([^*]+?)\s*\*\*", token)
+            if match is None:
+                match = re.search(r"^(\d+)\.\s+\*\*([^*]+?)\*\*", token)
+            if match is None:
+                continue
+            rank = int(match.group(1))
+            canonical = _canonical_tradeoff_axis(match.group(2))
+            if canonical is None:
+                continue
+            priorities[rank] = canonical
 
-        for line in content.splitlines():
-            line = line.strip()
-            # Match ## headings or - list items
-            m = re.match(r"^#{1,3}\s+(.+)", line) or re.match(
-                r"^[-*]\s+\*?\*?(.+?)\*?\*?\s*$", line
-            )
-            if m:
-                axis = m.group(1).strip().lower()
-                # Skip generic headings
-                if (
-                    axis
-                    and axis not in seen
-                    and len(axis) < 40
-                    and axis
-                    not in ("overview", "introduction", "summary", "tradeoffs", "tradeoff axes")
-                ):
-                    axes.append(axis)
-                    seen.add(axis)
+        if not priorities:
+            return []
 
-        return axes if axes else list(TradeoffMapperStrategy._DEFAULT_AXES)
+        ordered = [priorities[index] for index in sorted(priorities)]
+        if ordered[: len(TradeoffMapperStrategy._AUTHORITATIVE_AXES)] != list(
+            TradeoffMapperStrategy._AUTHORITATIVE_AXES
+        ):
+            return []
+        return ordered
 
 
 class QuestionComposerStrategy:
@@ -426,10 +461,13 @@ class QuestionComposerStrategy:
         if self._run_agent is None:
             return session
 
-        prompt = _build_question_prompt(session.under_spec_events)
+        source_events = session.under_spec_event_dicts()
+        prompt = _build_question_prompt(source_events)
         raw = self._run_agent(prompt)
-        refined = _parse_question_output(raw, session.under_spec_events)
-        session.under_spec_events = refined
+        refined, parse_failure_event = _parse_question_output(raw, source_events)
+        session.set_under_spec_events(refined)
+        if parse_failure_event is not None:
+            session.add_under_spec_event(parse_failure_event)
         return session
 
 
@@ -518,20 +556,47 @@ def _has_security_privacy_compliance_signal(
 
 
 def _build_problem_frame_prompt(session: PlanningSession) -> str:
+    selected_gaps, omitted_gaps = _truncate_items(
+        session.gaps,
+        limit=30,
+        identifier=_gap_identifier,
+    )
     gaps_text = (
         "\n".join(
-            f"  - {g.get('target', '?')}: {g.get('description', '')}" for g in session.gaps[:30]
+            f"  - {gap.get('target', '?')}: {gap.get('description', '')}" for gap in selected_gaps
         )
         or "  (none)"
     )
+    gap_coverage = _build_coverage_summary(
+        label="gaps",
+        total=len(session.gaps),
+        selected=len(selected_gaps),
+        omitted_identifiers=omitted_gaps,
+    )
 
-    constraint_text = ""
-    if session.constraint_context and session.constraint_context.authoritative:
-        constraint_text = "\n".join(
-            f"  - [{c.constraint_id}] {c.question}"
-            for c in session.constraint_context.authoritative[:20]
+    authoritative = (
+        session.constraint_context.authoritative
+        if session.constraint_context and session.constraint_context.authoritative
+        else []
+    )
+    selected_constraints, omitted_constraints = _truncate_items(
+        authoritative,
+        limit=20,
+        identifier=_constraint_identifier,
+    )
+    constraint_text = (
+        "\n".join(
+            f"  - [{constraint.constraint_id}] {constraint.question}"
+            for constraint in selected_constraints
         )
-    constraint_text = constraint_text or "  (none)"
+        or "  (none)"
+    )
+    constraint_coverage = _build_coverage_summary(
+        label="constraints",
+        total=len(authoritative),
+        selected=len(selected_constraints),
+        omitted_identifiers=omitted_constraints,
+    )
 
     return f"""Frame the problem for the following planning context.
 
@@ -541,8 +606,14 @@ Layer: {session.ctx.get("layer", "L1")}
 Gaps:
 {gaps_text}
 
+Gap coverage:
+{gap_coverage}
+
 Existing constraints:
 {constraint_text}
+
+Constraint coverage:
+{constraint_coverage}
 
 Return a JSON object with keys:
 - goal: what this spec section aims to achieve
@@ -554,33 +625,50 @@ Return a JSON object with keys:
 """
 
 
-def _parse_problem_frame(raw: str) -> ProblemFrame:
+def _parse_problem_frame(raw: str) -> tuple[ProblemFrame | None, dict[str, Any] | None]:
     try:
         text = raw.strip()
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end == -1:
-            return ProblemFrame()
+            raise ValueError("problem frame output did not include a JSON object")
         parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise TypeError("problem frame output must be a JSON object")
         return ProblemFrame(
-            goal=parsed.get("goal", ""),
-            scope=parsed.get("scope", ""),
-            domain_markers=list(parsed.get("domain_markers", [])),
-            decision_points=list(parsed.get("decision_points", [])),
-            tradeoff_axes=list(parsed.get("tradeoff_axes", [])),
-            unknowns=list(parsed.get("unknowns", [])),
+            goal=str(parsed.get("goal", "")).strip(),
+            scope=str(parsed.get("scope", "")).strip(),
+            domain_markers=_coerce_string_list(parsed.get("domain_markers", [])),
+            decision_points=_coerce_string_list(parsed.get("decision_points", [])),
+            tradeoff_axes=_coerce_string_list(parsed.get("tradeoff_axes", [])),
+            unknowns=_coerce_string_list(parsed.get("unknowns", [])),
+        ), None
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse problem frame output", exc_info=True)
+        return None, _build_parse_failure_event(
+            stage="problem_framer",
+            raw=raw,
+            error=str(exc),
         )
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Failed to parse problem frame output")
-        return ProblemFrame()
 
 
 def _build_enrichment_prompt(session: PlanningSession) -> str:
+    selected_gaps, omitted_gaps = _truncate_items(
+        session.gaps,
+        limit=30,
+        identifier=_gap_identifier,
+    )
     gaps_text = (
         "\n".join(
-            f"  - {g.get('target', '?')}: {g.get('description', '')}" for g in session.gaps[:30]
+            f"  - {gap.get('target', '?')}: {gap.get('description', '')}" for gap in selected_gaps
         )
         or "  (none)"
+    )
+    gap_coverage = _build_coverage_summary(
+        label="gaps",
+        total=len(session.gaps),
+        selected=len(selected_gaps),
+        omitted_identifiers=omitted_gaps,
     )
 
     frame_text = ""
@@ -598,6 +686,7 @@ def _build_enrichment_prompt(session: PlanningSession) -> str:
         f"\nSlice: {session.ctx.get('slice_id', 'unknown')}\n"
         f"\nProblem frame:\n{frame_text}\n"
         f"\nGaps:\n{gaps_text}\n"
+        f"\nGap coverage:\n{gap_coverage}\n"
         "\nReturn a JSON object with keys:\n"
         "- hypotheses: list of objects with hypothesis_id, question,"
         " inferred_answer, source, confidence, dimension, reasoning\n"
@@ -610,7 +699,12 @@ def _build_enrichment_prompt(session: PlanningSession) -> str:
 
 def _parse_enrichment_output(
     raw: str,
-) -> tuple[list[ConstraintHypothesis], list[DecisionRequirement], ConflictReport | None]:
+) -> tuple[
+    list[ConstraintHypothesis],
+    list[DecisionRequirement],
+    ConflictReport | None,
+    dict[str, Any] | None,
+]:
     hypotheses: list[ConstraintHypothesis] = []
     requirements: list[DecisionRequirement] = []
     conflict_report: ConflictReport | None = None
@@ -620,42 +714,77 @@ def _parse_enrichment_output(
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end == -1:
-            return hypotheses, requirements, conflict_report
+            raise ValueError("constraint enrichment output did not include a JSON object")
         parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise TypeError("constraint enrichment output must be a JSON object")
 
-        for h in parsed.get("hypotheses", []):
-            if isinstance(h, dict):
-                hypotheses.append(ConstraintHypothesis.from_dict(h))
+        hypotheses_payload = parsed.get("hypotheses", [])
+        if not isinstance(hypotheses_payload, list):
+            raise TypeError("hypotheses payload must be a list")
+        requirements_payload = parsed.get("decision_requirements", [])
+        if not isinstance(requirements_payload, list):
+            raise TypeError("decision_requirements payload must be a list")
+        conflicts_payload = parsed.get("conflicts", [])
+        if conflicts_payload is not None and not isinstance(conflicts_payload, list):
+            raise TypeError("conflicts payload must be a list")
 
-        for dr in parsed.get("decision_requirements", []):
-            if isinstance(dr, dict):
-                requirements.append(DecisionRequirement.from_dict(dr))
+        for hypothesis in hypotheses_payload:
+            if isinstance(hypothesis, dict):
+                hypotheses.append(ConstraintHypothesis.from_dict(hypothesis))
 
-        conflicts = parsed.get("conflicts", [])
-        if conflicts:
+        for requirement in requirements_payload:
+            if isinstance(requirement, dict):
+                requirements.append(DecisionRequirement.from_dict(requirement))
+
+        if conflicts_payload:
             conflict_report = ConflictReport(
-                conflicts=[dict(c) for c in conflicts if isinstance(c, dict)]
+                conflicts=[
+                    dict(conflict) for conflict in conflicts_payload if isinstance(conflict, dict)
+                ]
             )
 
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Failed to parse enrichment output")
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse enrichment output", exc_info=True)
+        return (
+            hypotheses,
+            requirements,
+            conflict_report,
+            _build_parse_failure_event(
+                stage="constraint_enricher",
+                raw=raw,
+                error=str(exc),
+            ),
+        )
 
-    return hypotheses, requirements, conflict_report
+    return hypotheses, requirements, conflict_report, None
 
 
 def _build_question_prompt(events: list[dict[str, Any]]) -> str:
+    selected_events, omitted_events = _truncate_items(
+        events,
+        limit=20,
+        identifier=_event_identifier,
+    )
     events_text = (
         "\n".join(
-            f"  - {e.get('type', '?')}: {e.get('detail', e.get('question', ''))}"
-            for e in events[:20]
+            f"  - {event.get('type', '?')}: {event.get('detail', event.get('question', ''))}"
+            for event in selected_events
         )
         or "  (none)"
+    )
+    event_coverage = _build_coverage_summary(
+        label="under-spec events",
+        total=len(events),
+        selected=len(selected_events),
+        omitted_identifiers=omitted_events,
     )
 
     return (
         "Refine the following under-spec events into clear,"
         " actionable questions for human review.\n"
         f"\nEvents:\n{events_text}\n"
+        f"\nEvent coverage:\n{event_coverage}\n"
         "\nReturn a JSON array of objects with keys:\n"
         "- type: the event type\n"
         "- question: a clear, actionable question\n"
@@ -664,17 +793,133 @@ def _build_question_prompt(events: list[dict[str, Any]]) -> str:
     )
 
 
-def _parse_question_output(raw: str, original_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _parse_question_output(
+    raw: str,
+    original_events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     try:
         text = raw.strip()
         start = text.find("[")
         end = text.rfind("]")
         if start == -1 or end == -1:
-            return list(original_events)
+            raise ValueError("question composer output did not include a JSON array")
         parsed = json.loads(text[start : end + 1])
-        if not parsed:
-            return list(original_events)
-        return [dict(item) for item in parsed if isinstance(item, dict)]
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Failed to parse question composer output")
-        return list(original_events)
+        if not isinstance(parsed, list):
+            raise TypeError("question composer output must be a JSON array")
+        refined = [dict(item) for item in parsed if isinstance(item, dict)]
+        if not refined:
+            raise ValueError("question composer output had no event objects")
+        return refined, None
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse question composer output", exc_info=True)
+        return list(original_events), _build_parse_failure_event(
+            stage="question_composer",
+            raw=raw,
+            error=str(exc),
+        )
+
+
+def _coerce_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _truncate_items(
+    items: list[Any],
+    *,
+    limit: int,
+    identifier: Callable[[Any, int], str],
+) -> tuple[list[Any], list[str]]:
+    selected = list(items[: max(limit, 0)])
+    omitted_identifiers = [
+        identifier(item, index)
+        for index, item in enumerate(items[max(limit, 0) :], start=max(limit, 0))
+    ]
+    filtered_omitted = [value for value in omitted_identifiers if value]
+    return selected, filtered_omitted
+
+
+def _build_coverage_summary(
+    *,
+    label: str,
+    total: int,
+    selected: int,
+    omitted_identifiers: list[str],
+) -> str:
+    omitted = max(total - selected, 0)
+    omitted_text = ", ".join(omitted_identifiers[:20]) if omitted_identifiers else "(none)"
+    label_key = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "items"
+    return (
+        f"- total_{label_key}: {total}\n"
+        f"- included_{label_key}: {selected}\n"
+        f"- omitted_{label_key}: {omitted}\n"
+        f"- omitted_{label_key}_identifiers: {omitted_text}"
+    )
+
+
+def _gap_identifier(value: Any, index: int) -> str:
+    if not isinstance(value, dict):
+        return f"gap-{index + 1}"
+    explicit_id = str(value.get("gap_id", "")).strip() or str(value.get("id", "")).strip()
+    target = str(value.get("target", "")).strip()
+    return explicit_id or target or f"gap-{index + 1}"
+
+
+def _constraint_identifier(value: Any, index: int) -> str:
+    constraint_id = str(getattr(value, "constraint_id", "")).strip()
+    question = str(getattr(value, "question", "")).strip()
+    return constraint_id or question or f"constraint-{index + 1}"
+
+
+def _event_identifier(value: Any, index: int) -> str:
+    if not isinstance(value, dict):
+        return f"event-{index + 1}"
+    event_type = str(value.get("type", "")).strip()
+    question = str(value.get("question", value.get("detail", ""))).strip()
+    candidate_id = str(value.get("candidate_id", "")).strip()
+    decision_id = str(value.get("decision_id", "")).strip()
+    constraint_id = str(value.get("constraint_id", "")).strip()
+    reference = candidate_id or decision_id or constraint_id or question
+    return ": ".join(part for part in (event_type, reference) if part) or f"event-{index + 1}"
+
+
+def _build_parse_failure_event(*, stage: str, raw: str, error: str) -> dict[str, Any]:
+    return {
+        "type": "llm_parse_failure",
+        "question": f"Resolve malformed planner output for stage '{stage}'.",
+        "reason": error,
+        "detail": f"Planner stage '{stage}' produced non-parseable output.",
+        "stage": stage,
+        "raw_output": raw,
+        "raw_output_excerpt": raw[:1000],
+        "raw_output_length": len(raw),
+    }
+
+
+def _canonical_tradeoff_axis(raw_axis: str) -> str | None:
+    normalized = re.sub(r"[^a-z]+", " ", raw_axis.lower()).strip()
+    if normalized.startswith("fidelity"):
+        return "fidelity"
+    if normalized.startswith("robustness"):
+        return "robustness"
+    if normalized.startswith("diagnosability"):
+        return "diagnosability"
+    if normalized.startswith("efficiency"):
+        return "efficiency"
+    if normalized.startswith("speed"):
+        return "speed"
+    return None
+
+
+def _build_tradeoff_source_warning(*, reason: str, source_path: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "tradeoff_source_unavailable",
+        "question": "Validate tradeoff priority ordering for this planning run.",
+        "reason": reason,
+        "detail": "Tradeoff axes defaulted to the canonical fidelity-first ordering.",
+        "canonical_axes": list(TradeoffMapperStrategy._AUTHORITATIVE_AXES),
+    }
+    if source_path:
+        payload["source_path"] = source_path
+    return payload

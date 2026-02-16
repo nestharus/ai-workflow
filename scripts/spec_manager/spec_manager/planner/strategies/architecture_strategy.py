@@ -77,7 +77,26 @@ class ArchitecturePlannerStrategy:
         if session.constraint_context:
             auth_constraints = session.constraint_context.authoritative
 
-        evidence_refs = self._collect_slice_evidence_refs(session, slice_id)
+        evidence_refs, evidence_status = self._collect_slice_evidence_refs(session, slice_id)
+        if evidence_status is not None:
+            session.ctx["architecture_evidence_status"] = evidence_status
+            session.add_under_spec_event(
+                {
+                    "type": "evidence_unavailable",
+                    "question": "Evidence collection for architecture planning was partial.",
+                    "reason": str(evidence_status.get("reason", "")).strip()
+                    or "evidence source unavailable",
+                    "detail": (
+                        "Architecture decisions are proceeding with reduced evidence coverage."
+                    ),
+                    "source": str(evidence_status.get("source", "evidence_tool")).strip()
+                    or "evidence_tool",
+                    "slice_id": slice_id,
+                    "query": str(evidence_status.get("query", "")).strip(),
+                }
+            )
+        else:
+            session.ctx.pop("architecture_evidence_status", None)
 
         # 1. Detect decision points
         detector = DecisionPointDetector(
@@ -160,7 +179,7 @@ class ArchitecturePlannerStrategy:
                         existing_constraint_ids.add(fact.constraint_id)
 
             if outcome.under_spec_events:
-                session.under_spec_events.extend(outcome.under_spec_events)
+                session.extend_under_spec_events(outcome.under_spec_events)
 
         return session
 
@@ -204,8 +223,12 @@ class ArchitecturePlannerStrategy:
         # Tradeoff assignment from session axes
         tradeoff_assignment: dict[str, str] = {}
         if session.tradeoff_axes:
-            for axis in session.tradeoff_axes[:5]:
+            for axis in session.tradeoff_axes:
                 tradeoff_assignment[axis] = "consider"
+
+        evidence_status = session.ctx.get("architecture_evidence_status")
+        if isinstance(evidence_status, dict):
+            source_artifacts["evidence_status"] = dict(evidence_status)
 
         return ScopePacket(
             decision_id=dp.decision_id,
@@ -249,7 +272,11 @@ class ArchitecturePlannerStrategy:
             deduped.append(ref)
         return deduped
 
-    def _collect_slice_evidence_refs(self, session: PlanningSession, slice_id: str) -> list[str]:
+    def _collect_slice_evidence_refs(
+        self,
+        session: PlanningSession,
+        slice_id: str,
+    ) -> tuple[list[str], dict[str, Any] | None]:
         refs: list[str] = []
         for gap in session.gaps:
             if not isinstance(gap, dict):
@@ -265,7 +292,8 @@ class ArchitecturePlannerStrategy:
         if bundle_ref is not None:
             self._extend_refs(refs, self._collect_bundle_evidence_refs(bundle_ref))
 
-        self._extend_refs(refs, self._query_evidence_tool(slice_id, session.ctx))
+        tool_refs, evidence_status = self._query_evidence_tool(slice_id, session.ctx)
+        self._extend_refs(refs, tool_refs)
 
         seen: set[str] = set()
         deduped: list[str] = []
@@ -274,7 +302,7 @@ class ArchitecturePlannerStrategy:
                 continue
             seen.add(ref)
             deduped.append(ref)
-        return deduped
+        return deduped, evidence_status
 
     @staticmethod
     def _extend_refs(refs: list[str], value: Any) -> None:
@@ -334,9 +362,13 @@ class ArchitecturePlannerStrategy:
 
         return refs
 
-    def _query_evidence_tool(self, slice_id: str, ctx: dict[str, Any]) -> list[str]:
+    def _query_evidence_tool(
+        self,
+        slice_id: str,
+        ctx: dict[str, Any],
+    ) -> tuple[list[str], dict[str, Any] | None]:
         if self._evidence_tool is None:
-            return []
+            return [], None
 
         refs: list[str] = []
         query = f"{slice_id} architecture decision evidence"
@@ -352,15 +384,27 @@ class ArchitecturePlannerStrategy:
             else:
                 raw = None
         except Exception:
-            logger.debug("Failed querying evidence tool for slice %s", slice_id, exc_info=True)
-            return []
+            logger.warning("Failed querying evidence tool for slice %s", slice_id, exc_info=True)
+            return [], {
+                "source": "evidence_tool",
+                "status": "unavailable",
+                "reason": "exception while querying evidence tool",
+                "slice_id": slice_id,
+                "query": query,
+            }
 
         if raw is None:
-            return []
+            return [], {
+                "source": "evidence_tool",
+                "status": "unavailable",
+                "reason": "evidence tool returned no result",
+                "slice_id": slice_id,
+                "query": query,
+            }
         if isinstance(raw, dict):
             self._extend_refs(refs, raw.get("evidence_refs"))
             self._extend_refs(refs, raw.get("hits"))
-            return refs
+            return refs, None
         hits = getattr(raw, "hits", None)
         if isinstance(hits, list):
             for hit in hits:
@@ -370,8 +414,14 @@ class ArchitecturePlannerStrategy:
                 else:
                     self._extend_refs(refs, getattr(hit, "section_path", ""))
                     self._extend_refs(refs, getattr(hit, "lib_id", ""))
-            return refs
-        return refs
+            return refs, None
+        return refs, {
+            "source": "evidence_tool",
+            "status": "unavailable",
+            "reason": "evidence tool result shape was not recognized",
+            "slice_id": slice_id,
+            "query": query,
+        }
 
     def _materialize_outcome_constraints(
         self,
@@ -438,12 +488,15 @@ class ArchitecturePlannerStrategy:
         answer = ""
         resolved_dimension = dimension
         resolved_authority = "planner_ok" if dimension == "software" else "human_required"
+        resolved_source = "research"
+        resolved_confidence = 0.3
 
         if isinstance(payload, dict):
             text_question = str(payload.get("question", "")).strip()
             text_answer = str(payload.get("answer", payload.get("value", ""))).strip()
             payload_dimension = str(payload.get("dimension", "")).strip().lower()
             payload_authority_required = str(payload.get("authority_required", "")).strip().lower()
+            payload_source = str(payload.get("source", "")).strip().lower()
             if text_question:
                 question = text_question
             answer = text_answer or json.dumps(payload, sort_keys=True)
@@ -460,6 +513,11 @@ class ArchitecturePlannerStrategy:
                 resolved_authority = payload_authority_required
             elif resolved_dimension != "software":
                 resolved_authority = "human_required"
+            if payload_source in {"user", "research", "steering", "existing"}:
+                resolved_source = payload_source
+            resolved_confidence = ArchitecturePlannerStrategy._derive_generated_fact_confidence(
+                payload.get("confidence")
+            )
         elif isinstance(payload, str):
             answer = payload.strip()
         elif payload is not None:
@@ -481,9 +539,9 @@ class ArchitecturePlannerStrategy:
             constraint_id=constraint_id,
             question=question,
             answer=answer,
-            source="research",
-            confidence=1.0,
-            validated=True,
+            source=resolved_source,  # type: ignore[arg-type]
+            confidence=resolved_confidence,
+            validated=False,
             dimension=resolved_dimension,  # type: ignore[arg-type]
             authority_required=resolved_authority,  # type: ignore[arg-type]
             decision_type="architecture_decision",
@@ -494,8 +552,21 @@ class ArchitecturePlannerStrategy:
                 f"decision_id={decision_id}",
                 f"candidate_id={candidate_id}",
                 "origin=architecture_planner",
+                "validation=pending",
             ],
         )
+
+    @staticmethod
+    def _derive_generated_fact_confidence(value: Any) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0.3
+        if parsed < 0:
+            return 0.0
+        if parsed > 0.6:
+            return 0.6
+        return parsed
 
     @staticmethod
     def _resolve_applies_to_layers(
@@ -756,6 +827,7 @@ class ArchitecturePlannerStrategy:
                 selected_candidate_ref="",
                 metadata={
                     "decision_type": getattr(dp, "decision_type", ""),
+                    "scope": dp.scope,
                 },
             )
             try:
@@ -821,8 +893,11 @@ class ArchitecturePlannerStrategy:
                         WaitEdge(
                             waiting_slice=slice_id,
                             provider_slice=provider_slice,
-                            artifact_key=f"constraint:{constraint_id}",
-                            signal_id=f"constraint_wait:{slice_id}:{provider_slice}:{constraint_id}:{dp.decision_id}",
+                            artifact_key=f"arch_decision:{dp.decision_id}",
+                            signal_id=(
+                                f"constraint_wait:{slice_id}:{provider_slice}:"
+                                f"{constraint_id}:{dp.decision_id}"
+                            ),
                         )
                     )
                     existing_edges.add((slice_id, provider_slice))
@@ -872,7 +947,7 @@ class ArchitecturePlannerStrategy:
             if owner_slice_id:
                 return owner_slice_id
 
-        return ""
+        return constraint_id
 
     def _handle_wait_cycle(
         self,

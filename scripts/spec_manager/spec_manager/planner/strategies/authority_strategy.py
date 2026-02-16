@@ -14,7 +14,7 @@ from spec_manager.planner.constraints.authority import check_authority
 from spec_manager.planner.constraints.types import ConstraintFact
 from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 
-from .protocol import PlanningSession
+from .protocol import CandidateEvaluation, PlanningSession
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +61,14 @@ class AuthorityDeciderStrategy:
 
             if authority == "planner_ok":
                 fact.authority_required = "planner_ok"
+                _append_trace_entry(fact, "authority_review=planner_ok")
+                _record_constraint_authority_audit(session, fact, authority)
                 planner_ok_facts.append(fact)
             else:
                 fact.authority_required = "human_required"
-                session.under_spec_events.append(
+                _append_trace_entry(fact, "authority_review=human_required")
+                _record_constraint_authority_audit(session, fact, authority)
+                session.add_under_spec_event(
                     {
                         "type": "authority_required",
                         "constraint_id": fact.constraint_id,
@@ -78,9 +82,16 @@ class AuthorityDeciderStrategy:
 
         # Persist planner-ok facts
         if planner_ok_facts:
-            self._adapter.save_facts(slice_id, planner_ok_facts)
-
-        # Update session: keep only human-required constraints
+            deduped_facts: list[ConstraintFact] = []
+            seen_constraint_ids: set[str] = set()
+            for fact in planner_ok_facts:
+                fact_id = str(fact.constraint_id).strip()
+                if fact_id and fact_id in seen_constraint_ids:
+                    continue
+                if fact_id:
+                    seen_constraint_ids.add(fact_id)
+                deduped_facts.append(fact)
+            self._adapter.save_facts(slice_id, deduped_facts)
         session.new_constraints = remaining_constraints
 
         # Review decision_requirements
@@ -94,7 +105,7 @@ class AuthorityDeciderStrategy:
             )
 
             if authority == "human_required":
-                session.under_spec_events.append(
+                session.add_under_spec_event(
                     {
                         "type": "decision_required",
                         "decision_id": dr.decision_id,
@@ -123,34 +134,66 @@ class AuthorityDeciderStrategy:
                 str(event.get("type", "")),
                 str(event.get("candidate_id", "")),
             )
-            for event in session.under_spec_events
+            for event in session.under_spec_event_dicts()
             if isinstance(event, dict)
         }
 
         for evaluation in session.candidate_evaluations:
-            if not isinstance(evaluation, dict):
-                continue
-            recommendation = str(evaluation.get("recommendation", "")).strip().lower()
+            if isinstance(evaluation, dict):
+                typed_evaluation = CandidateEvaluation.from_dict(evaluation)
+            else:
+                typed_evaluation = evaluation
+            recommendation = typed_evaluation.recommendation.strip().lower()
             if recommendation not in {"needs_human", "reject"}:
                 continue
 
-            candidate_id = str(evaluation.get("candidate_id", "")).strip()
+            candidate_id = typed_evaluation.candidate_id
             key = ("candidate_evaluation", candidate_id)
             if key in existing_keys:
                 continue
 
-            session.under_spec_events.append(
+            session.add_under_spec_event(
                 {
                     "type": "candidate_evaluation",
                     "candidate_id": candidate_id,
-                    "source": evaluation.get("source", "unknown"),
+                    "source": typed_evaluation.source,
+                    "recommendation": typed_evaluation.recommendation,
+                    "coupling_score": typed_evaluation.coupling_score,
+                    "blast_radius": typed_evaluation.blast_radius,
+                    "constraints_checked": typed_evaluation.constraints_checked,
+                    "evaluation_metadata": dict(typed_evaluation.metadata),
                     "question": ("Candidate requires human review before authority decision."),
-                    "reason": "; ".join(
-                        str(reason).strip()
-                        for reason in evaluation.get("reasons", [])
-                        if str(reason).strip()
-                    )
+                    "reason": "; ".join(reason for reason in typed_evaluation.reasons if reason)
                     or "candidate evaluation requested human review",
+                    "reasons": list(typed_evaluation.reasons),
                 }
             )
             existing_keys.add(key)
+
+
+def _append_trace_entry(fact: ConstraintFact, entry: str) -> None:
+    trace_entries: list[str] = []
+    if isinstance(fact.trace, list):
+        trace_entries = fact.trace
+    elif fact.trace:
+        trace_entries = [str(fact.trace)]
+    if entry not in trace_entries:
+        trace_entries.append(entry)
+    fact.trace = trace_entries
+
+
+def _record_constraint_authority_audit(
+    session: PlanningSession,
+    fact: ConstraintFact,
+    authority: str,
+) -> None:
+    session.constraint_authority_audit.append(
+        {
+            "constraint_id": fact.constraint_id,
+            "authority": authority,
+            "dimension": fact.dimension,
+            "question": fact.question,
+            "answer": fact.answer,
+            "fact": fact.to_dict(),
+        }
+    )
