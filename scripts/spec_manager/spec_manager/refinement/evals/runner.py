@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from spec_manager.core.project_root import resolve_from_root
-from spec_manager.refinement.evals.checkpoint import CheckpointManager, EvalCheckpoint
+from spec_manager.refinement.evals.checkpoint import (
+    CheckpointCorruptedError,
+    CheckpointManager,
+    EvalCheckpoint,
+)
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.inputs.sequence_spec import SequenceSpec, load_sequence_spec
 from spec_manager.refinement.evals.logger import EvalLogger
@@ -220,7 +224,10 @@ class EvalRunner:
         Returns:
             EvalReport if resumed successfully, None otherwise.
         """
-        checkpoint = self.checkpoint_manager.load(run_id)
+        try:
+            checkpoint = self.checkpoint_manager.load(run_id)
+        except CheckpointCorruptedError as exc:
+            raise RuntimeError(str(exc)) from exc
         if checkpoint is None:
             return None
 
@@ -695,6 +702,8 @@ class EvalRunner:
                 state.errors.append(f"Failed to create workspace: {exc}")
                 return []
 
+        workflow_succeeded = True
+
         # Run the phase workflow (only on first iteration for each phase)
         if iteration == 1:
             try:
@@ -702,9 +711,11 @@ class EvalRunner:
                     state.workspace_manager, phase
                 )
                 if not workflow_result.get("success", False):
+                    workflow_succeeded = False
                     error_msg = workflow_result.get("error", "Unknown error")
                     state.errors.append(f"Phase {phase} workflow failed: {error_msg}")
             except Exception as exc:
+                workflow_succeeded = False
                 state.errors.append(f"Phase {phase} workflow exception: {exc}")
 
             # CRITICAL: Reload workspace manager from disk after workflow execution.
@@ -725,24 +736,33 @@ class EvalRunner:
             )
         except Exception as exc:
             state.errors.append(f"Failed to extract {phase} outputs: {exc}")
+        else:
+            omissions = state.workspace_integration.consume_phase_omissions(phase)
+            for omission in omissions:
+                state.errors.append(f"Phase {phase} extraction omission: {omission}")
 
-        # For eval purposes: force-complete the phase and all intermediate phases
-        # that downstream workflows require. This ensures we can evaluate the full
-        # pipeline even with partial failures.
+        # Only force-complete workspace phases when the authoritative workflow
+        # itself succeeded. Otherwise keep the failure state authoritative and
+        # continue evaluation in diagnostic-only mode.
         if iteration == 1:
-            # Map eval phases to the workspace phases that need to be completed.
-            # Downstream workflows check these intermediate phases.
-            phase_chain = self._get_phase_completion_chain(phase)
-            for ws_phase in phase_chain:
-                try:
-                    phase_result = state.workspace_manager.state.phases.get(ws_phase)
-                    if phase_result is None or phase_result.status != PhaseStatus.COMPLETED:
-                        state.workspace_manager.complete_phase(
-                            WorkspacePhase(ws_phase),
-                            outputs={"eval_forced": True, "has_outputs": bool(outputs)},
-                        )
-                except (ValueError, AttributeError, KeyError, OSError) as exc:
-                    state.errors.append(f"Force-completion failed for {ws_phase}: {exc}")
+            if workflow_succeeded:
+                # Map eval phases to the workspace phases that need to be
+                # completed. Downstream workflows check these intermediate phases.
+                phase_chain = self._get_phase_completion_chain(phase)
+                for ws_phase in phase_chain:
+                    try:
+                        phase_result = state.workspace_manager.state.phases.get(ws_phase)
+                        if phase_result is None or phase_result.status != PhaseStatus.COMPLETED:
+                            state.workspace_manager.complete_phase(
+                                WorkspacePhase(ws_phase),
+                                outputs={"eval_forced": True, "has_outputs": bool(outputs)},
+                            )
+                    except (ValueError, AttributeError, KeyError, OSError) as exc:
+                        state.errors.append(f"Force-completion failed for {ws_phase}: {exc}")
+            else:
+                state.errors.append(
+                    f"Skipped eval force-completion for {phase} because workflow did not succeed."
+                )
 
         return outputs
 

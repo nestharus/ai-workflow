@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -204,7 +205,10 @@ class SpecFidelityJudge:
         if random_slots > 0:
             run_id = str(code_digest.get("run_id", ""))
             pool = sorted(
-                remaining_pool, key=lambda file_data: hash(f"{run_id}:{file_data.get('path', '')}")
+                remaining_pool,
+                key=lambda file_data: sha256(
+                    f"{run_id}:{file_data.get('path', '')}".encode()
+                ).hexdigest(),
             )
             for file_data in pool[:random_slots]:
                 selected[str(file_data.get("path", ""))] = file_data

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -36,6 +36,7 @@ class SpecBuildingResult:
     decisions_made: list[str] = None
     constraints_identified: list[str] = None
     file_count: int = 0
+    parse_failures: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.citations_found is None:
@@ -62,6 +63,7 @@ def extract_spec_building_outputs(manager: WorkspaceManager) -> SpecBuildingResu
     decisions_made: set[str] = set()
     constraints_identified: set[str] = set()
     file_count = 0
+    parse_failures: list[str] = []
 
     # Read specs from manifest
     if specs_dir.exists():
@@ -108,7 +110,11 @@ def extract_spec_building_outputs(manager: WorkspaceManager) -> SpecBuildingResu
                         if constraint_text:
                             constraints_identified.add(constraint_text)
 
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{spec_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{spec_file}:{exc}")
                 continue
 
     # Also check for requirement files directly
@@ -127,7 +133,11 @@ def extract_spec_building_outputs(manager: WorkspaceManager) -> SpecBuildingResu
                         if req_text:
                             requirements_captured.add(req_text)
 
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{req_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{req_file}:{exc}")
                 continue
 
     return SpecBuildingResult(
@@ -136,6 +146,7 @@ def extract_spec_building_outputs(manager: WorkspaceManager) -> SpecBuildingResu
         decisions_made=sorted(decisions_made),
         constraints_identified=sorted(constraints_identified),
         file_count=file_count,
+        parse_failures=parse_failures,
     )
 
 
@@ -242,4 +253,5 @@ def eval_spec_building(
         duration_ms=duration_ms,
         gaps_open=final_score.expected_count - final_score.matched_count,
         gaps_closed=final_score.matched_count,
+        errors=final_result.parse_failures,
     )

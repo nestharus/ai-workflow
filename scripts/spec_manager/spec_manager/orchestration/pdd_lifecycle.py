@@ -542,6 +542,41 @@ class PddLifecycle:
     # Public API
     # ------------------------------------------------------------------
 
+    def build_planner(self, **kwargs: Any) -> Any:
+        """Build a planner instance using lifecycle defaults."""
+        return self._build_planner(**kwargs)
+
+    def discover_slices(self, layer: Layer) -> list[Any]:
+        """Discover promotion slices for a layer."""
+        return self._discover_slices(layer)
+
+    def run_layer(self, layer: Layer) -> dict[str, Any]:
+        """Run one layer (entry refinement → slices → exit refinement)."""
+        return self._run_layer(layer)
+
+    def run_transition(
+        self,
+        from_layer: Layer,
+        to_layer: Layer,
+        *,
+        max_rounds: int = 3,
+    ) -> dict[str, Any]:
+        """Run one inter-layer transition with demotion-driven rework."""
+        return self._run_transition(from_layer, to_layer, max_rounds=max_rounds)
+
+    def on_layer_completed(self, layer: Layer, result: dict[str, Any]) -> None:
+        """Extension hook invoked after a layer run completes."""
+        return None
+
+    def on_transition_completed(
+        self,
+        from_layer: Layer,
+        to_layer: Layer,
+        result: dict[str, Any],
+    ) -> None:
+        """Extension hook invoked after a transition run completes."""
+        return None
+
     def run(self) -> dict[str, Any]:
         """Run the full layer pipeline: intake → L1 → L2 → L3 → QA.
 
@@ -2030,6 +2065,7 @@ class PddLifecycle:
                 layer.upper(),
                 ", ".join(target.upper() for target in lower_targets),
             )
+            self.on_layer_completed(layer, results)
             return results
 
         # Per-slice work via PromotionLoop
@@ -2045,6 +2081,7 @@ class PddLifecycle:
         results["all_complete"] = bool(termination.get("all_slices_terminal", False))
 
         logger.info("=== Layer %s: DONE ===", layer.upper())
+        self.on_layer_completed(layer, results)
         return results
 
     def _run_transition(
@@ -2267,6 +2304,7 @@ class PddLifecycle:
         if transition_stuck:
             results["error"] = f"Transition {from_layer}→{to_layer} stuck after {max_rounds} rounds"
             results["governance_blocked"] = True
+            self.on_transition_completed(from_layer, to_layer, results)
             return results
 
         # Transition governance gate: no open governance FAIL + required artifacts present
@@ -2298,6 +2336,7 @@ class PddLifecycle:
                 f"Transition {from_layer}→{to_layer} blocked by governance gate: "
                 f"{governance.get('error', '')}"
             )
+            self.on_transition_completed(from_layer, to_layer, results)
             return results
 
         # Propagate clean → next layer's dirty
@@ -2502,6 +2541,7 @@ class PddLifecycle:
                             to_layer,
                         )
 
+        self.on_transition_completed(from_layer, to_layer, results)
         return results
 
     def _demotion_tickets_dir(self) -> Path:

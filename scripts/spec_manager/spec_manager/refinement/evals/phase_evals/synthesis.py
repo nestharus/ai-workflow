@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -36,6 +36,7 @@ class SynthesisResult:
     types_defined: int = 0
     dependencies_resolved: int = 0
     file_count: int = 0
+    parse_failures: list[str] = field(default_factory=list)
 
 
 def extract_synthesis_outputs(manager: WorkspaceManager) -> SynthesisResult:
@@ -54,6 +55,7 @@ def extract_synthesis_outputs(manager: WorkspaceManager) -> SynthesisResult:
     types_defined = 0
     dependencies_resolved = 0
     file_count = 0
+    parse_failures: list[str] = []
 
     # Read libraries from manifest
     if libraries_dir.exists():
@@ -81,7 +83,11 @@ def extract_synthesis_outputs(manager: WorkspaceManager) -> SynthesisResult:
                     1 for d in deps if isinstance(d, dict) and d.get("resolved", False)
                 )
 
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{lib_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{lib_file}:{exc}")
                 continue
 
     # Also check for synthesis output files
@@ -97,7 +103,11 @@ def extract_synthesis_outputs(manager: WorkspaceManager) -> SynthesisResult:
                     if lib_name:
                         libraries_synthesized.add(lib_name)
 
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{synth_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{synth_file}:{exc}")
                 continue
 
     return SynthesisResult(
@@ -106,6 +116,7 @@ def extract_synthesis_outputs(manager: WorkspaceManager) -> SynthesisResult:
         types_defined=types_defined,
         dependencies_resolved=dependencies_resolved,
         file_count=file_count,
+        parse_failures=parse_failures,
     )
 
 
@@ -199,4 +210,5 @@ def eval_library_synthesis(
         duration_ms=duration_ms,
         gaps_open=final_score.expected_count - final_score.matched_count,
         gaps_closed=final_score.matched_count,
+        errors=final_result.parse_failures,
     )

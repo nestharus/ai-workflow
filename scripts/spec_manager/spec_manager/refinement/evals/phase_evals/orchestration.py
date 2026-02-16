@@ -6,8 +6,8 @@ No mocks, no test doubles, no patches.
 
 The eval functions use the actual production classes:
 - PromotionLoop.run_slice() for per-slice evaluation
-- PddLifecycle._run_layer() for full layer evaluation
-- PddLifecycle._run_transition() for cross-layer transitions
+- PddLifecycle.run_layer() for full layer evaluation
+- PddLifecycle.run_transition() for cross-layer transitions
 - RunReporter for scoring
 - FinalReportGenerator for final reports
 - PddLifecycle.run() for full end-to-end pipeline
@@ -80,7 +80,7 @@ def setup_orchestration_workspace(
     manager.initialize(force=True)
 
     orchestrator = PddOrchestrator(manager)
-    orchestrator._install_phase0_output(_P0_OUTPUT)
+    orchestrator.install_phase0_output(_P0_OUTPUT)
 
     return manager, manager.workspace_path
 
@@ -91,7 +91,7 @@ def discover_eval_slices(
 ) -> list[dict[str, Any]]:
     """Discover available slices for evaluation at a given layer.
 
-    Uses PddLifecycle._discover_slices() — the actual production code path.
+    Uses PddLifecycle.discover_slices() — the actual production code path.
 
     For L1: slices = libraries (concern boundaries).
     For L2: slices = architectural components from manifest or libraries.
@@ -100,7 +100,7 @@ def discover_eval_slices(
     from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
 
     lifecycle = PddLifecycle(manager, mode="auto")
-    slice_refs = lifecycle._discover_slices(layer)
+    slice_refs = lifecycle.discover_slices(layer)
 
     return [
         {
@@ -179,7 +179,7 @@ def run_lifecycle_layer(
     manager: WorkspaceManager,
     layer: str,
 ) -> dict[str, Any]:
-    """Run PddLifecycle._run_layer() for a single layer with real LLM calls.
+    """Run PddLifecycle.run_layer() for a single layer with real LLM calls.
 
     Runs: entry refinement -> per-slice PromotionLoop -> exit refinement.
 
@@ -192,7 +192,7 @@ def run_lifecycle_layer(
     lifecycle = PddLifecycle(manager, mode="auto")
 
     start = time.perf_counter()
-    result = lifecycle._run_layer(layer)
+    result = lifecycle.run_layer(layer)
     duration_ms = (time.perf_counter() - start) * 1000
 
     result["duration_ms"] = duration_ms
@@ -204,7 +204,7 @@ def run_lifecycle_transition(
     from_layer: str,
     to_layer: str,
 ) -> dict[str, Any]:
-    """Run PddLifecycle._run_transition() between layers with real LLM calls.
+    """Run PddLifecycle.run_transition() between layers with real LLM calls.
 
     Runs the next layer's typed refinement as a gate. If demotion tickets
     are emitted, re-runs previous layer slices (up to 3 rounds).
@@ -218,7 +218,7 @@ def run_lifecycle_transition(
     lifecycle = PddLifecycle(manager, mode="auto")
 
     start = time.perf_counter()
-    result = lifecycle._run_transition(from_layer, to_layer)
+    result = lifecycle.run_transition(from_layer, to_layer)
     duration_ms = (time.perf_counter() - start) * 1000
 
     result["duration_ms"] = duration_ms
@@ -328,20 +328,21 @@ def run_full_pipeline(
             _apply_workspace_override(self.manager.workspace_path, override_path)
             logger.info("Applied workspace override for %s from %s", layer, override_path)
 
-        def _run_transition(self, from_layer: str, to_layer: str) -> dict[str, Any]:
-            result = super()._run_transition(from_layer, to_layer)
+        def on_transition_completed(
+            self,
+            from_layer: str,
+            to_layer: str,
+            result: dict[str, Any],
+        ) -> None:
             if from_layer == "l1" and to_layer == "l2":
                 self._record_eval_snapshot("l1_workspace")
             elif from_layer == "l2" and to_layer == "l3":
                 self._record_eval_snapshot("l2_workspace")
             self._apply_layer_override(to_layer)
-            return result
 
-        def _run_layer(self, layer: str) -> dict[str, Any]:
-            result = super()._run_layer(layer)
+        def on_layer_completed(self, layer: str, result: dict[str, Any]) -> None:
             if layer == "l3":
                 self._record_eval_snapshot("l3_workspace")
-            return result
 
     lifecycle = EvalLifecycle(
         manager,

@@ -101,6 +101,23 @@ class LoadedTrace:
     status: str = ""
     overridden: bool = False
     planner_version: str = ""
+    load_issues: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TraceLoadDiagnostics:
+    """Aggregated diagnostics collected while loading planner traces."""
+
+    issues: list[str] = field(default_factory=list)
+
+    def record(self, issue: str) -> None:
+        self.issues.append(issue)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "issue_count": len(self.issues),
+            "issues": list(self.issues),
+        }
 
 
 # ------------------------------------------------------------------
@@ -123,8 +140,25 @@ def trace_dir(workspace_root: Path, trace_id: str) -> Path:
 # ------------------------------------------------------------------
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Read a JSONL file, skipping malformed lines.
+def _record_issue(
+    issue: str,
+    *,
+    issues: list[str] | None = None,
+    diagnostics: TraceLoadDiagnostics | None = None,
+) -> None:
+    if issues is not None:
+        issues.append(issue)
+    if diagnostics is not None:
+        diagnostics.record(issue)
+
+
+def _read_jsonl(
+    path: Path,
+    *,
+    issues: list[str] | None = None,
+    diagnostics: TraceLoadDiagnostics | None = None,
+) -> list[dict[str, Any]]:
+    """Read a JSONL file, recording malformed lines as diagnostics.
 
     Returns an empty list when the file does not exist.
     """
@@ -135,7 +169,9 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
+        issue = f"unreadable:{path}:{exc}"
         logger.warning("Cannot read %s: %s", path, exc)
+        _record_issue(issue, issues=issues, diagnostics=diagnostics)
         return []
 
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
@@ -147,13 +183,22 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             if isinstance(obj, dict):
                 results.append(obj)
             else:
-                logger.debug("Skipping non-dict line %d in %s", lineno, path)
-        except json.JSONDecodeError:
-            logger.debug("Skipping malformed JSON at line %d in %s", lineno, path)
+                issue = f"non_dict_jsonl:{path}:{lineno}"
+                logger.warning("Skipping non-dict line %d in %s", lineno, path)
+                _record_issue(issue, issues=issues, diagnostics=diagnostics)
+        except json.JSONDecodeError as exc:
+            issue = f"invalid_jsonl:{path}:{lineno}:{exc}"
+            logger.warning("Skipping malformed JSON at line %d in %s", lineno, path)
+            _record_issue(issue, issues=issues, diagnostics=diagnostics)
     return results
 
 
-def _read_json(path: Path) -> dict[str, Any]:
+def _read_json(
+    path: Path,
+    *,
+    issues: list[str] | None = None,
+    diagnostics: TraceLoadDiagnostics | None = None,
+) -> dict[str, Any]:
     """Read a single JSON file, returning an empty dict on failure."""
     if not path.exists():
         return {}
@@ -162,9 +207,14 @@ def _read_json(path: Path) -> dict[str, Any]:
         obj = json.loads(text)
         if isinstance(obj, dict):
             return obj
+        issue = f"non_object_json:{path}"
+        logger.warning("Cannot use %s: top-level JSON value must be an object", path)
+        _record_issue(issue, issues=issues, diagnostics=diagnostics)
         return {}
     except (OSError, json.JSONDecodeError) as exc:
-        logger.debug("Cannot read %s: %s", path, exc)
+        issue = f"invalid_json:{path}:{exc}"
+        logger.warning("Cannot read %s: %s", path, exc)
+        _record_issue(issue, issues=issues, diagnostics=diagnostics)
         return {}
 
 
@@ -173,10 +223,14 @@ def _read_json(path: Path) -> dict[str, Any]:
 # ------------------------------------------------------------------
 
 
-def load_index(workspace_root: Path) -> list[TraceEntry]:
+def load_index(
+    workspace_root: Path,
+    *,
+    diagnostics: TraceLoadDiagnostics | None = None,
+) -> list[TraceEntry]:
     """Read ``index.jsonl`` and return a list of :class:`TraceEntry`.
 
-    Malformed lines are silently skipped (logged at DEBUG level).
+    Malformed lines are excluded from results and reported via diagnostics.
 
     Args:
         workspace_root: Root of the PDD workspace.
@@ -185,7 +239,7 @@ def load_index(workspace_root: Path) -> list[TraceEntry]:
         List of trace entries, one per valid index line.
     """
     index_path = _traces_dir(workspace_root) / "index.jsonl"
-    rows = _read_jsonl(index_path)
+    rows = _read_jsonl(index_path, diagnostics=diagnostics)
 
     entries: list[TraceEntry] = []
     for row in rows:
@@ -208,12 +262,21 @@ def load_index(workspace_root: Path) -> list[TraceEntry]:
                 )
             )
         except (TypeError, ValueError) as exc:
-            logger.debug("Skipping malformed index entry: %s", exc)
+            logger.warning("Skipping malformed index entry in %s: %s", index_path, exc)
+            _record_issue(
+                f"malformed_index_entry:{index_path}:{exc}",
+                diagnostics=diagnostics,
+            )
 
     return entries
 
 
-def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
+def load_trace(
+    workspace_root: Path,
+    trace_id: str,
+    *,
+    diagnostics: TraceLoadDiagnostics | None = None,
+) -> LoadedTrace:
     """Load a full trace from disk.
 
     Reads ``request.json``, ``decision.json``, call logs, and all
@@ -233,16 +296,21 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
     if not tdir.is_dir():
         raise FileNotFoundError(f"Trace directory not found: {tdir}")
 
-    request = _read_json(tdir / "request.json")
-    decision = _read_json(tdir / "decision.json")
-    replay = _read_json(tdir / "replay.json")
+    trace_issues: list[str] = []
+    request = _read_json(tdir / "request.json", issues=trace_issues, diagnostics=diagnostics)
+    decision = _read_json(tdir / "decision.json", issues=trace_issues, diagnostics=diagnostics)
+    replay = _read_json(tdir / "replay.json", issues=trace_issues, diagnostics=diagnostics)
     request_path = tdir / "request.json"
     decision_path = tdir / "decision.json"
 
     # Call logs
     calls_dir = tdir / "calls"
-    model_calls = _read_jsonl(calls_dir / "model_calls.jsonl")
-    tool_calls = _read_jsonl(calls_dir / "tool_calls.jsonl")
+    model_calls = _read_jsonl(
+        calls_dir / "model_calls.jsonl", issues=trace_issues, diagnostics=diagnostics
+    )
+    tool_calls = _read_jsonl(
+        calls_dir / "tool_calls.jsonl", issues=trace_issues, diagnostics=diagnostics
+    )
 
     # Artifacts
     artifacts: dict[str, Any] = {}
@@ -251,7 +319,11 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
         for artifact_path in sorted(artifacts_dir.iterdir()):
             if artifact_path.suffix == ".json" and artifact_path.is_file():
                 name = artifact_path.stem
-                artifacts[name] = _read_json(artifact_path)
+                artifacts[name] = _read_json(
+                    artifact_path,
+                    issues=trace_issues,
+                    diagnostics=diagnostics,
+                )
 
     return LoadedTrace(
         trace_id=trace_id,
@@ -269,6 +341,7 @@ def load_trace(workspace_root: Path, trace_id: str) -> LoadedTrace:
         status=decision.get("status", ""),
         overridden=bool(decision.get("overridden", False)),
         planner_version=str(request.get("planner_version", "") or ""),
+        load_issues=trace_issues,
     )
 
 
@@ -309,12 +382,17 @@ def filter_traces(
     return result
 
 
-def load_traces_for_run(workspace_root: Path, run_id: str) -> list[LoadedTrace]:
+def load_traces_for_run(
+    workspace_root: Path,
+    run_id: str,
+    *,
+    diagnostics: TraceLoadDiagnostics | None = None,
+) -> list[LoadedTrace]:
     """Load all traces for a given run.
 
     Convenience function: reads the index, filters by *run_id*, and
-    loads each matching trace.  Traces that fail to load are skipped
-    with a warning.
+    loads each matching trace. Traces that fail to load are skipped with
+    warnings and recorded in diagnostics when provided.
 
     Args:
         workspace_root: Root of the PDD workspace.
@@ -323,15 +401,19 @@ def load_traces_for_run(workspace_root: Path, run_id: str) -> list[LoadedTrace]:
     Returns:
         List of loaded traces for the run.
     """
-    entries = load_index(workspace_root)
+    entries = load_index(workspace_root, diagnostics=diagnostics)
     filtered = filter_traces(entries, run_id=run_id)
 
     traces: list[LoadedTrace] = []
     for entry in filtered:
         try:
-            traces.append(load_trace(workspace_root, entry.trace_id))
+            traces.append(load_trace(workspace_root, entry.trace_id, diagnostics=diagnostics))
         except (FileNotFoundError, OSError) as exc:
             logger.warning("Skipping trace %s: %s", entry.trace_id, exc)
+            _record_issue(
+                f"trace_load_failed:{entry.trace_id}:{exc}",
+                diagnostics=diagnostics,
+            )
     return traces
 
 

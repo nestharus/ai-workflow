@@ -7,7 +7,7 @@ against ground truth expectations.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -33,6 +33,7 @@ class SectionizationResult:
     atoms_emitted: int = 0
     terms_extracted: int = 0
     file_count: int = 0
+    parse_failures: list[str] = field(default_factory=list)
 
 
 def extract_sectionization_outputs(manager: WorkspaceManager) -> SectionizationResult:
@@ -52,6 +53,7 @@ def extract_sectionization_outputs(manager: WorkspaceManager) -> SectionizationR
     atoms_emitted = 0
     terms_extracted = 0
     file_count = 0
+    parse_failures: list[str] = []
 
     # Read sections from manifest
     if sections_dir.exists():
@@ -63,7 +65,11 @@ def extract_sectionization_outputs(manager: WorkspaceManager) -> SectionizationR
                     label = section.get("label") or section.get("section_id")
                     if label:
                         sections_detected.add(label)
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{sections_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{sections_file}:{exc}")
                 continue
 
     # Count atoms
@@ -72,7 +78,8 @@ def extract_sectionization_outputs(manager: WorkspaceManager) -> SectionizationR
             try:
                 content = atoms_file.read_text(encoding="utf-8")
                 atoms_emitted += sum(1 for line in content.splitlines() if line.strip())
-            except OSError:
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{atoms_file}:{exc}")
                 continue
 
     # Count terms
@@ -81,7 +88,11 @@ def extract_sectionization_outputs(manager: WorkspaceManager) -> SectionizationR
             try:
                 data = json.loads(terms_file.read_text(encoding="utf-8"))
                 terms_extracted += len(data.get("terms", []))
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{terms_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{terms_file}:{exc}")
                 continue
 
     return SectionizationResult(
@@ -89,6 +100,7 @@ def extract_sectionization_outputs(manager: WorkspaceManager) -> SectionizationR
         atoms_emitted=atoms_emitted,
         terms_extracted=terms_extracted,
         file_count=file_count,
+        parse_failures=parse_failures,
     )
 
 
@@ -178,4 +190,5 @@ def eval_sectionization(
         duration_ms=duration_ms,
         gaps_open=final_score.expected_count - final_score.matched_count,
         gaps_closed=final_score.matched_count,
+        errors=final_result.parse_failures,
     )

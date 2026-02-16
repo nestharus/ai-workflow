@@ -222,6 +222,10 @@ class PddOrchestrator:
             self.manager.fail_phase(pdd_phase, error=str(exc))
             raise
 
+    def install_phase0_output(self, phase0_dir: Path) -> None:
+        """Install precomputed Phase 0 artifacts into workspace structure."""
+        self._install_phase0_output(phase0_dir)
+
     def run_loop(
         self,
         *,

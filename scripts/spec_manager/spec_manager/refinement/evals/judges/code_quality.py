@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +116,10 @@ class CodeQualityJudge:
         if random_slots > 0:
             run_id = str(digest.get("run_id", ""))
             pool = sorted(
-                remaining_pool, key=lambda file_data: hash(f"{run_id}:{file_data.get('path', '')}")
+                remaining_pool,
+                key=lambda file_data: sha256(
+                    f"{run_id}:{file_data.get('path', '')}".encode()
+                ).hexdigest(),
             )
             for f in pool[:random_slots]:
                 selected[f["path"]] = f

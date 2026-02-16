@@ -410,6 +410,7 @@ class PlannerEvalHarness:
     ) -> EvalResult:
         """Load traces + GT, score each decision, compute scorecard."""
         from spec_manager.refinement.evals.planner.trace_loader import (
+            TraceLoadDiagnostics,
             filter_traces,
             load_index,
             load_trace,
@@ -417,10 +418,11 @@ class PlannerEvalHarness:
 
         workspace = workspace_root or self._workspace
         result = EvalResult(run_id=run_id, mode=mode)
+        trace_diagnostics = TraceLoadDiagnostics()
 
         # Load trace index
         try:
-            entries = load_index(workspace)
+            entries = load_index(workspace, diagnostics=trace_diagnostics)
         except Exception as exc:
             result.errors.append(f"Failed to load trace index: {exc}")
             return result
@@ -446,11 +448,15 @@ class PlannerEvalHarness:
         traces = []
         for entry in run_entries:
             try:
-                traces.append(load_trace(workspace, entry.trace_id))
+                traces.append(load_trace(workspace, entry.trace_id, diagnostics=trace_diagnostics))
             except Exception as exc:
-                logger.warning("Failed to load trace %s: %s", entry.trace_id, exc)
+                message = f"Failed to load trace {entry.trace_id}: {exc}"
+                logger.warning(message)
+                result.errors.append(message)
 
         result.traces_evaluated = len(traces)
+        if trace_diagnostics.issues:
+            result.diagnostics["trace_loader"] = trace_diagnostics.to_dict()
 
         # Score against GT
         verdicts = []
@@ -510,11 +516,17 @@ class PlannerEvalHarness:
                 result.errors.append(f"Failed to compute run scorecard: {exc}")
                 reporter_status["run"] = "error"
         else:
-            existing = self._load_json(workspace / "reports" / "pdd" / run_id / "scores.json")
+            scores_path = workspace / "reports" / "pdd" / run_id / "scores.json"
+            try:
+                existing = self._load_json(scores_path)
+            except ValueError as exc:
+                result.errors.append(str(exc))
+                reporter_status["run"] = "error"
+                existing = None
             if existing is not None:
                 result.pipeline_scorecard = existing
                 reporter_status["run"] = "loaded"
-            else:
+            elif reporter_status.get("run") != "error":
                 reporter_status["run"] = "unavailable"
 
         # Quality scorecard (mechanical + optional judges).
@@ -650,9 +662,13 @@ class PlannerEvalHarness:
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None
-        return payload if isinstance(payload, dict) else None
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Failed to parse JSON at {path}: {exc}") from exc
+        except OSError as exc:
+            raise ValueError(f"Failed to read JSON at {path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise TypeError(f"JSON at {path} must be an object, got {type(payload).__name__}")
+        return payload
 
     def _evaluate_against_gt(self, traces: list[Any], gt: Any) -> list[Any]:
         """Score each trace against matching GT case."""
@@ -793,12 +809,17 @@ class PlannerEvalHarness:
     ) -> dict[str, Any]:
         """Compare downstream failures between baseline and counterfactual reruns."""
         from spec_manager.refinement.evals.planner.trace_loader import (
+            TraceLoadDiagnostics,
             filter_traces,
             load_index,
             load_trace,
         )
 
-        baseline_entries = filter_traces(load_index(baseline_workspace), run_id=baseline_run_id)
+        diagnostics = TraceLoadDiagnostics()
+        baseline_entries = filter_traces(
+            load_index(baseline_workspace, diagnostics=diagnostics),
+            run_id=baseline_run_id,
+        )
         target_index = next(
             (
                 idx
@@ -817,7 +838,11 @@ class PlannerEvalHarness:
         downstream_keys: set[str] = set()
         for entry in baseline_entries[target_index + 1 :]:
             try:
-                trace = load_trace(baseline_workspace, entry.trace_id)
+                trace = load_trace(
+                    baseline_workspace,
+                    entry.trace_id,
+                    diagnostics=diagnostics,
+                )
             except Exception as exc:
                 logger.debug(
                     "Skipping downstream impact trace %s: %s",
@@ -842,7 +867,7 @@ class PlannerEvalHarness:
         resolved = sorted(baseline_failures - counterfactual_failures)
         persistent = sorted(baseline_failures & counterfactual_failures)
         introduced = sorted(counterfactual_failures - baseline_failures)
-        return {
+        payload = {
             "downstream_keys_considered": len(downstream_keys),
             "baseline_failures": len(baseline_failures),
             "counterfactual_failures": len(counterfactual_failures),
@@ -850,6 +875,9 @@ class PlannerEvalHarness:
             "persistent_failures": persistent,
             "introduced_failures": introduced,
         }
+        if diagnostics.issues:
+            payload["trace_loader_diagnostics"] = diagnostics.to_dict()
+        return payload
 
     # ------------------------------------------------------------------
     # Replay helpers
@@ -1226,7 +1254,7 @@ class PlannerEvalHarness:
         run_id = self._resolved_run_id(config)
         manager = WorkspaceManager(run_id=run_id, input_folder=pdd_input)
         manager.initialize(force=True)
-        PddOrchestrator(manager)._install_phase0_output(phase0_output)
+        PddOrchestrator(manager).install_phase0_output(phase0_output)
         return manager, manager.workspace_path, run_id
 
     def _execute_e2e_pipeline(
@@ -1258,7 +1286,7 @@ class PlannerEvalHarness:
         manager, workspace_root, run_id = self._prepare_fixture_workspace(config)
         lifecycle = PddLifecycle(manager, mode="auto")
         layer = config.layer.lower()
-        slice_refs = lifecycle._discover_slices(layer)
+        slice_refs = lifecycle.discover_slices(layer)
         target = next((ref for ref in slice_refs if ref.slice_id == config.slice_id), None)
         if target is None:
             known = ", ".join(sorted({ref.slice_id for ref in slice_refs}))
@@ -1268,7 +1296,7 @@ class PlannerEvalHarness:
             target.worktree_path = str(manager.structure.spec_snapshot_dir)
 
         run_context = RunContext(run_id=run_id, mode="auto", workspace_root=str(workspace_root))
-        planner = lifecycle._build_planner()
+        planner = lifecycle.build_planner()
         loop = PromotionLoop(workspace_root=workspace_root, planner=planner)
         loop.run_slice(target, run_context)
         return workspace_root, run_id

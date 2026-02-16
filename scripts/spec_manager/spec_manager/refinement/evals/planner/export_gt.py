@@ -45,6 +45,7 @@ class ExportedCase:
     observed_outputs: dict[str, Any] = field(default_factory=dict)
     input_fingerprint: dict[str, str] = field(default_factory=dict)
     review_status: str = "TODO"
+    load_error: str = ""
 
 
 class GroundTruthExporter:
@@ -63,12 +64,14 @@ class GroundTruthExporter:
     ) -> Path:
         """Read traces for *run_id* and write a GT template to *out_path*."""
         from spec_manager.refinement.evals.planner.trace_loader import (
+            TraceLoadDiagnostics,
             filter_traces,
             load_index,
             load_trace,
         )
 
-        entries = load_index(self._workspace)
+        diagnostics = TraceLoadDiagnostics()
+        entries = load_index(self._workspace, diagnostics=diagnostics)
         run_entries = filter_traces(entries, run_id=run_id) if run_id else entries
 
         # Group by decision_key (first occurrence wins if duplicates)
@@ -80,13 +83,6 @@ class GroundTruthExporter:
                 continue
             seen_keys.add(entry.decision_key)
 
-            try:
-                trace = load_trace(self._workspace, entry.trace_id)
-            except Exception:
-                logger.warning("Skipping trace %s: load failed", entry.trace_id)
-                continue
-
-            outputs = trace.artifacts.get("outputs", {})
             parts = entry.decision_key.split(":") if entry.decision_key else []
             capability = parts[1] if len(parts) > 1 else entry.capability
             layer = parts[0] if parts else entry.layer
@@ -101,6 +97,29 @@ class GroundTruthExporter:
                         entry.trace_id,
                         parts[3],
                     )
+
+            try:
+                trace = load_trace(self._workspace, entry.trace_id, diagnostics=diagnostics)
+            except Exception as exc:
+                logger.warning("Trace %s could not be loaded: %s", entry.trace_id, exc)
+                cases.append(
+                    ExportedCase(
+                        decision_key=entry.decision_key,
+                        capability=capability,
+                        layer=layer,
+                        slice_id=slice_id,
+                        iteration=iteration,
+                        trace_id=entry.trace_id,
+                        observed_status=entry.status,
+                        observed_outputs={},
+                        input_fingerprint={},
+                        review_status="LOAD_FAILED",
+                        load_error=str(exc),
+                    )
+                )
+                continue
+
+            outputs = trace.artifacts.get("outputs", {})
 
             cases.append(
                 ExportedCase(
@@ -123,6 +142,8 @@ class GroundTruthExporter:
 
         # Build the GT template
         gt_doc = self._build_template(spec_id, cases, phase0_gt_ref=phase0_gt_ref)
+        if diagnostics.issues:
+            gt_doc["load_diagnostics"] = diagnostics.to_dict()
 
         # Write output
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +194,8 @@ class GroundTruthExporter:
                     "soft_signals": [],
                 },
             }
+            if case.load_error:
+                entry["load_error"] = case.load_error
             doc["cases"].append(entry)
 
         return doc

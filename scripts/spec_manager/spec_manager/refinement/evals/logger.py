@@ -214,12 +214,26 @@ class EvalLogger:
 
         entries: list[EvalLogEntry] = []
         with self.log_path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_no, line in enumerate(f, start=1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     data = json.loads(line)
+                    if not isinstance(data, dict):
+                        entries.append(
+                            EvalLogEntry(
+                                timestamp=self._now(),
+                                event_type="parse_error",
+                                spec_id=self.spec_id,
+                                data={
+                                    "line": line_no,
+                                    "reason": "non_object_json",
+                                    "raw_preview": line[:200],
+                                },
+                            )
+                        )
+                        continue
                     entry = EvalLogEntry(
                         timestamp=data.get("timestamp", ""),
                         event_type=data.get("event_type", ""),
@@ -234,7 +248,18 @@ class EvalLogger:
                     )
                     entries.append(entry)
                 except json.JSONDecodeError:
-                    continue
+                    entries.append(
+                        EvalLogEntry(
+                            timestamp=self._now(),
+                            event_type="parse_error",
+                            spec_id=self.spec_id,
+                            data={
+                                "line": line_no,
+                                "reason": "invalid_json",
+                                "raw_preview": line[:200],
+                            },
+                        )
+                    )
         return entries
 
     def get_phase_entries(self, phase: str) -> list[EvalLogEntry]:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -34,6 +34,7 @@ class SummarizationResult:
     key_points_extracted: int = 0
     topics_identified: list[str] = None
     file_count: int = 0
+    parse_failures: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.topics_identified is None:
@@ -55,6 +56,7 @@ def extract_summarization_outputs(manager: WorkspaceManager) -> SummarizationRes
     key_points_extracted = 0
     topics_identified: set[str] = set()
     file_count = 0
+    parse_failures: list[str] = []
 
     # Read summaries from manifest
     if summaries_dir.exists():
@@ -80,7 +82,11 @@ def extract_summarization_outputs(manager: WorkspaceManager) -> SummarizationRes
                         if topic_name:
                             topics_identified.add(topic_name)
 
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{summary_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{summary_file}:{exc}")
                 continue
 
     return SummarizationResult(
@@ -88,6 +94,7 @@ def extract_summarization_outputs(manager: WorkspaceManager) -> SummarizationRes
         key_points_extracted=key_points_extracted,
         topics_identified=sorted(topics_identified),
         file_count=file_count,
+        parse_failures=parse_failures,
     )
 
 
@@ -186,4 +193,5 @@ def eval_summarization(
         duration_ms=duration_ms,
         gaps_open=final_score.expected_count - final_score.matched_count,
         gaps_closed=final_score.matched_count,
+        errors=final_result.parse_failures,
     )

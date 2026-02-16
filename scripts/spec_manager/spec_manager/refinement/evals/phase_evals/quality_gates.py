@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -30,6 +30,7 @@ class QualityGatesResult:
 
     dimension_scores: dict[str, float]
     element_ids_found: list[str] = None
+    parse_failures: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.element_ids_found is None:
@@ -55,6 +56,7 @@ def extract_quality_gates_outputs(
 
     dimension_scores: dict[str, float] = {}
     element_ids_found: list[str] = []
+    parse_failures: list[str] = []
 
     if report_path.exists():
         try:
@@ -92,12 +94,15 @@ def extract_quality_gates_outputs(
                     if eid:
                         element_ids_found.append(eid)
 
-        except (json.JSONDecodeError, OSError):
-            pass
+        except json.JSONDecodeError as exc:
+            parse_failures.append(f"invalid_json:{report_path}:{exc}")
+        except OSError as exc:
+            parse_failures.append(f"unreadable:{report_path}:{exc}")
 
     return QualityGatesResult(
         dimension_scores=dimension_scores,
         element_ids_found=sorted(set(element_ids_found)),
+        parse_failures=parse_failures,
     )
 
 
@@ -196,4 +201,5 @@ def eval_quality_gates(
         duration_ms=duration_ms,
         gaps_open=final_score.expected_count - final_score.matched_count,
         gaps_closed=final_score.matched_count,
+        errors=final_result.parse_failures,
     )

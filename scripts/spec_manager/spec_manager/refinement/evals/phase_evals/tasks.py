@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from spec_manager.refinement.evals.inputs.ground_truth import PhaseGroundTruth
 from spec_manager.refinement.evals.loop_detector import LoopDetector, LoopStatus
@@ -36,6 +36,7 @@ class TasksResult:
     dependencies_mapped: int = 0
     priorities_assigned: int = 0
     file_count: int = 0
+    parse_failures: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.task_ids is None:
@@ -58,6 +59,7 @@ def extract_tasks_outputs(manager: WorkspaceManager) -> TasksResult:
     dependencies_mapped = 0
     priorities_assigned = 0
     file_count = 0
+    parse_failures: list[str] = []
 
     # Read tasks from manifest
     if tasks_dir.exists():
@@ -89,7 +91,11 @@ def extract_tasks_outputs(manager: WorkspaceManager) -> TasksResult:
                         if task.get("priority") is not None:
                             priorities_assigned += 1
 
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{tasks_file}:{exc}")
+                continue
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{tasks_file}:{exc}")
                 continue
 
     # Also check for individual task files
@@ -106,7 +112,11 @@ def extract_tasks_outputs(manager: WorkspaceManager) -> TasksResult:
             if task_id:
                 task_ids.append(task_id)
 
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError as exc:
+            parse_failures.append(f"invalid_json:{task_file}:{exc}")
+            continue
+        except OSError as exc:
+            parse_failures.append(f"unreadable:{task_file}:{exc}")
             continue
 
     return TasksResult(
@@ -115,6 +125,7 @@ def extract_tasks_outputs(manager: WorkspaceManager) -> TasksResult:
         dependencies_mapped=dependencies_mapped,
         priorities_assigned=priorities_assigned,
         file_count=file_count,
+        parse_failures=parse_failures,
     )
 
 
@@ -208,4 +219,5 @@ def eval_tasks(
         duration_ms=duration_ms,
         gaps_open=final_score.expected_count - final_score.matched_count,
         gaps_closed=final_score.matched_count,
+        errors=final_result.parse_failures,
     )

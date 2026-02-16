@@ -161,7 +161,11 @@ def cmd_eval_resume(args: argparse.Namespace) -> int:
     )
 
     runner = EvalRunner(config, fixtures_dir=fixtures_dir)
-    report = runner.resume(run_id)
+    try:
+        report = runner.resume(run_id)
+    except RuntimeError as exc:
+        print(f"Failed to resume checkpoint: {exc}")
+        return 1
 
     if report is None:
         print(f"Could not find checkpoint for run: {run_id}")

@@ -51,6 +51,7 @@ class WorkspaceIntegration:
     cleanup_on_exit: bool = True
     created_workspaces: list[Path] = field(default_factory=list)
     use_pdd: bool = False
+    phase_omissions: dict[str, list[str]] = field(default_factory=dict)
 
     def create_workspace_from_spec(self, spec: SequenceSpec) -> WorkspaceManager:
         """Create a workspace and populate spec_snapshot with spec content.
@@ -156,28 +157,48 @@ class WorkspaceIntegration:
         Returns:
             List of extracted output strings (requirements, sections, etc.).
         """
+        self.phase_omissions[phase] = []
         outputs: list[str] = []
 
         if phase == "sectionization":
-            outputs = self._extract_sectionization_outputs(manager)
+            outputs = self._extract_sectionization_outputs(manager, phase)
         elif phase == "summarization":
-            outputs = self._extract_summarization_outputs(manager)
+            outputs = self._extract_summarization_outputs(manager, phase)
         elif phase == "library_synthesis":
-            outputs = self._extract_library_synthesis_outputs(manager)
+            outputs = self._extract_library_synthesis_outputs(manager, phase)
         elif phase == "evidence_expansion":
-            outputs = self._extract_evidence_expansion_outputs(manager)
+            outputs = self._extract_evidence_expansion_outputs(manager, phase)
         elif phase == "spec_building":
-            outputs = self._extract_spec_building_outputs(manager)
+            outputs = self._extract_spec_building_outputs(manager, phase)
         elif phase == "architecture":
-            outputs = self._extract_architecture_outputs(manager)
+            outputs = self._extract_architecture_outputs(manager, phase)
         elif phase == "interfaces":
-            outputs = self._extract_interfaces_outputs(manager)
+            outputs = self._extract_interfaces_outputs(manager, phase)
         elif phase == "tasks":
-            outputs = self._extract_tasks_outputs(manager)
+            outputs = self._extract_tasks_outputs(manager, phase)
 
         return outputs
 
-    def _extract_sectionization_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def consume_phase_omissions(self, phase: str) -> list[str]:
+        """Return and clear extraction omissions for a phase."""
+        omissions = list(self.phase_omissions.get(phase, []))
+        self.phase_omissions[phase] = []
+        return omissions
+
+    def _record_phase_omission(
+        self,
+        phase: str,
+        *,
+        source: Path,
+        reason: str,
+        detail: str = "",
+    ) -> None:
+        omission = f"{phase}:{reason}:{source}"
+        if detail:
+            omission = f"{omission}: {detail}"
+        self.phase_omissions.setdefault(phase, []).append(omission)
+
+    def _extract_sectionization_outputs(self, manager: WorkspaceManager, phase: str) -> list[str]:
         """Extract section labels from sectionization phase outputs.
 
         Supports two formats:
@@ -203,8 +224,20 @@ class WorkspaceIntegration:
                 for _file_id, section_labels in data.items():
                     if isinstance(section_labels, list):
                         outputs.extend(section_labels)
-            except (json.JSONDecodeError, OSError):
-                pass
+            except json.JSONDecodeError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=sections_json,
+                    reason="invalid_json",
+                    detail=str(exc),
+                )
+            except OSError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=sections_json,
+                    reason="unreadable",
+                    detail=str(exc),
+                )
 
         if outputs:
             return sorted(set(outputs))
@@ -219,7 +252,21 @@ class WorkspaceIntegration:
                         label = section.get("label")
                         if label:
                             outputs.append(label)
-                except (json.JSONDecodeError, OSError):
+                except json.JSONDecodeError as exc:
+                    self._record_phase_omission(
+                        phase,
+                        source=sections_file,
+                        reason="invalid_json",
+                        detail=str(exc),
+                    )
+                    continue
+                except OSError as exc:
+                    self._record_phase_omission(
+                        phase,
+                        source=sections_file,
+                        reason="unreadable",
+                        detail=str(exc),
+                    )
                     continue
 
         if outputs:
@@ -248,7 +295,7 @@ class WorkspaceIntegration:
         }
     )
 
-    def _extract_summarization_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_summarization_outputs(self, manager: WorkspaceManager, phase: str) -> list[str]:
         """Extract summary content from summarization phase outputs.
 
         Supports two formats:
@@ -279,8 +326,20 @@ class WorkspaceIntegration:
                         desc = str(lib.get("description", "")).strip()
                         if desc:
                             outputs.append(desc)
-            except (yaml.YAMLError, OSError):
-                pass
+            except yaml.YAMLError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=libraries_yaml,
+                    reason="invalid_yaml",
+                    detail=str(exc),
+                )
+            except OSError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=libraries_yaml,
+                    reason="unreadable",
+                    detail=str(exc),
+                )
 
         if outputs:
             return outputs
@@ -302,7 +361,13 @@ class WorkspaceIntegration:
                             continue
                         if len(stripped) > 20:
                             outputs.append(stripped)
-                except OSError:
+                except OSError as exc:
+                    self._record_phase_omission(
+                        phase,
+                        source=summary_file,
+                        reason="unreadable",
+                        detail=str(exc),
+                    )
                     continue
 
         if outputs:
@@ -323,12 +388,20 @@ class WorkspaceIntegration:
                                 text = text.split(" | ")[0].strip()
                             if text and len(text) > 5:
                                 outputs.append(text)
-                except OSError:
+                except OSError as exc:
+                    self._record_phase_omission(
+                        phase,
+                        source=summary_file,
+                        reason="unreadable",
+                        detail=str(exc),
+                    )
                     continue
 
         return outputs
 
-    def _extract_library_synthesis_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_library_synthesis_outputs(
+        self, manager: WorkspaceManager, phase: str
+    ) -> list[str]:
         """Extract library definitions from library synthesis phase outputs.
 
         Supports two formats:
@@ -362,8 +435,20 @@ class WorkspaceIntegration:
                         name = str(lib.get("name", "")).strip()
                         if name:
                             outputs.append(name)
-            except (yaml.YAMLError, OSError):
-                pass
+            except yaml.YAMLError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=libraries_yaml,
+                    reason="invalid_yaml",
+                    detail=str(exc),
+                )
+            except OSError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=libraries_yaml,
+                    reason="unreadable",
+                    detail=str(exc),
+                )
 
         # Check if this is Phase 0 format (library dirs contain details/
         # subdirectories, not charter.md)
@@ -386,7 +471,7 @@ class WorkspaceIntegration:
                 # If no library names from libraries.yaml, use dir name
                 if not has_library_names:
                     outputs.append(lib_dir.name)
-                outputs.extend(self._extract_phase0_requirements(lib_dir))
+                outputs.extend(self._extract_phase0_requirements(lib_dir, phase))
         else:
             # Legacy refinement path: charter.md files
             for lib_dir in libraries_dir.iterdir():
@@ -409,7 +494,13 @@ class WorkspaceIntegration:
                                 stripped.startswith("- ") or stripped.startswith("* ")
                             ):
                                 outputs.append(stripped[2:].strip())
-                    except OSError:
+                    except OSError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=charter_path,
+                            reason="unreadable",
+                            detail=str(exc),
+                        )
                         continue
 
         return outputs
@@ -448,7 +539,7 @@ class WorkspaceIntegration:
             cls._SENTENCE_SPLIT_RE = re.compile(r"(?<=\.)\s+(?=[A-Z])")
         return cls._SENTENCE_SPLIT_RE
 
-    def _extract_phase0_requirements(self, lib_dir: Path) -> list[str]:
+    def _extract_phase0_requirements(self, lib_dir: Path, phase: str) -> list[str]:
         """Extract requirement text from Phase 0 assembled markdown files.
 
         Phase 0 produces files with this structure::
@@ -518,12 +609,20 @@ class WorkspaceIntegration:
                                 requirements.append(sentence)
                     elif len(stripped) > 15:
                         requirements.append(stripped)
-            except OSError:
+            except OSError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=md_file,
+                    reason="unreadable",
+                    detail=str(exc),
+                )
                 continue
 
         return requirements
 
-    def _extract_evidence_expansion_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_evidence_expansion_outputs(
+        self, manager: WorkspaceManager, phase: str
+    ) -> list[str]:
         """Extract evidence mappings from evidence expansion phase outputs.
 
         Args:
@@ -554,12 +653,18 @@ class WorkspaceIntegration:
                                 outputs.append(stripped[3:].strip())
                             elif stripped.startswith("- ") or stripped.startswith("* "):
                                 outputs.append(stripped[2:].strip())
-                    except OSError:
+                    except OSError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=evidence_file,
+                            reason="unreadable",
+                            detail=str(exc),
+                        )
                         continue
 
         return outputs
 
-    def _extract_spec_building_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_spec_building_outputs(self, manager: WorkspaceManager, phase: str) -> list[str]:
         """Extract requirements from spec building phase outputs.
 
         Supports two formats:
@@ -595,12 +700,12 @@ class WorkspaceIntegration:
             for lib_dir in libraries_dir.iterdir():
                 if not lib_dir.is_dir():
                     continue
-                outputs.extend(self._extract_phase0_requirements(lib_dir))
+                outputs.extend(self._extract_phase0_requirements(lib_dir, phase))
 
             # Also include system-level constraints (reuse same filtering)
             system_dir = manager.structure.root / "system"
             if system_dir.exists():
-                outputs.extend(self._extract_phase0_requirements(system_dir))
+                outputs.extend(self._extract_phase0_requirements(system_dir, phase))
         else:
             # Legacy refinement path: spec.md files
             for lib_dir in libraries_dir.iterdir():
@@ -618,12 +723,18 @@ class WorkspaceIntegration:
                                 text = citation_re.sub("", text).strip()
                                 if text and len(text) > 10:
                                     outputs.append(text)
-                    except OSError:
+                    except OSError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=spec_path,
+                            reason="unreadable",
+                            detail=str(exc),
+                        )
                         continue
 
         return outputs
 
-    def _extract_architecture_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_architecture_outputs(self, manager: WorkspaceManager, phase: str) -> list[str]:
         """Extract architecture decisions from architecture phase outputs.
 
         Args:
@@ -653,12 +764,18 @@ class WorkspaceIntegration:
                         text = stripped[2:].strip()
                         if len(text) > 10:
                             outputs.append(text)
-            except OSError:
+            except OSError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=arch_file,
+                    reason="unreadable",
+                    detail=str(exc),
+                )
                 continue
 
         return outputs
 
-    def _extract_interfaces_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_interfaces_outputs(self, manager: WorkspaceManager, phase: str) -> list[str]:
         """Extract interface definitions from interfaces phase outputs.
 
         Args:
@@ -694,7 +811,21 @@ class WorkspaceIntegration:
                                     outputs.append(elem)
                                 elif isinstance(elem, dict) and "name" in elem:
                                     outputs.append(elem["name"])
-                    except (json.JSONDecodeError, OSError):
+                    except json.JSONDecodeError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=contract_file,
+                            reason="invalid_json",
+                            detail=str(exc),
+                        )
+                        continue
+                    except OSError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=contract_file,
+                            reason="unreadable",
+                            detail=str(exc),
+                        )
                         continue
 
                 # Extract from markdown contracts
@@ -705,12 +836,18 @@ class WorkspaceIntegration:
                             stripped = line.strip()
                             if stripped.startswith("## "):
                                 outputs.append(stripped[3:].strip())
-                    except OSError:
+                    except OSError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=contract_file,
+                            reason="unreadable",
+                            detail=str(exc),
+                        )
                         continue
 
         return outputs
 
-    def _extract_tasks_outputs(self, manager: WorkspaceManager) -> list[str]:
+    def _extract_tasks_outputs(self, manager: WorkspaceManager, phase: str) -> list[str]:
         """Extract task definitions from tasks phase outputs.
 
         Args:
@@ -734,7 +871,13 @@ class WorkspaceIntegration:
                     if stripped.startswith("# "):
                         outputs.append(stripped[2:].strip())
                         break
-            except OSError:
+            except OSError as exc:
+                self._record_phase_omission(
+                    phase,
+                    source=task_file,
+                    reason="unreadable",
+                    detail=str(exc),
+                )
                 continue
 
         # Also check for task directories
@@ -750,7 +893,13 @@ class WorkspaceIntegration:
                             if stripped.startswith("# "):
                                 outputs.append(stripped[2:].strip())
                                 break
-                    except OSError:
+                    except OSError as exc:
+                        self._record_phase_omission(
+                            phase,
+                            source=task_md,
+                            reason="unreadable",
+                            detail=str(exc),
+                        )
                         continue
 
         return outputs

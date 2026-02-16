@@ -163,6 +163,15 @@ class EvalCheckpoint:
         return [name for name, phase in self.phases.items() if phase.status == "pending"]
 
 
+class CheckpointCorruptedError(RuntimeError):
+    """Raised when a checkpoint file exists but cannot be decoded/validated."""
+
+    def __init__(self, *, path: Path, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"Checkpoint file is corrupted: {path} ({reason})")
+
+
 class CheckpointManager:
     """Manages checkpoint persistence for evaluation runs.
 
@@ -219,6 +228,9 @@ class CheckpointManager:
 
         Returns:
             Loaded checkpoint, or None if not found.
+
+        Raises:
+            CheckpointCorruptedError: If the checkpoint exists but cannot be decoded.
         """
         path = self._checkpoint_path(run_id)
         if not path.exists():
@@ -226,9 +238,20 @@ class CheckpointManager:
 
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise CheckpointCorruptedError(path=path, reason=f"invalid JSON: {exc}") from exc
+        except OSError as exc:
+            raise CheckpointCorruptedError(path=path, reason=f"unreadable: {exc}") from exc
+
+        if not isinstance(data, dict):
+            raise CheckpointCorruptedError(path=path, reason="top-level payload is not an object")
+
+        try:
             return EvalCheckpoint.from_dict(data)
-        except (json.JSONDecodeError, OSError):
-            return None
+        except Exception as exc:
+            raise CheckpointCorruptedError(
+                path=path, reason=f"invalid checkpoint payload: {exc}"
+            ) from exc
 
     def exists(self, run_id: str) -> bool:
         """Check if a checkpoint exists.

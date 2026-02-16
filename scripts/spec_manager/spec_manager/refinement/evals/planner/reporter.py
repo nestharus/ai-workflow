@@ -191,6 +191,7 @@ class PlannerReporter:
         self._reports_dir = workspace_root / "reports" / "pdd" / run_id
         self._last_verdicts: list[Any] = []
         self._last_traces: list[Any] = []
+        self._baseline_load_issue: str = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -212,6 +213,7 @@ class PlannerReporter:
         """
         self._last_verdicts = list(verdicts)
         self._last_traces = list(traces)
+        self._baseline_load_issue = ""
         hard_gates = self._compute_hard_gates(verdicts, traces)
         soft_signals = self._compute_soft_signals(verdicts, traces)
         slice_aggregates = self._compute_slice_aggregates(verdicts, traces)
@@ -957,36 +959,51 @@ class PlannerReporter:
 
         total = 0
         by_slice: dict[str, int] = {}
+        parse_failures: list[str] = []
         for ticket_path in sorted(demotions_root.glob("*.json")):
             try:
                 payload = json.loads(ticket_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except OSError as exc:
+                parse_failures.append(f"unreadable:{ticket_path}:{exc}")
+                logger.warning("Could not read demotion ticket %s: %s", ticket_path, exc)
+                continue
+            except json.JSONDecodeError as exc:
+                parse_failures.append(f"invalid_json:{ticket_path}:{exc}")
+                logger.warning("Could not parse demotion ticket %s: %s", ticket_path, exc)
                 continue
             ticket = payload.get("ticket", {})
             if not isinstance(ticket, dict):
+                parse_failures.append(f"invalid_ticket_payload:{ticket_path}")
                 continue
             slice_id = str(ticket.get("slice_id", "") or "(unknown)")
             by_slice[slice_id] = by_slice.get(slice_id, 0) + 1
             total += 1
 
         if not by_slice:
+            failure_note = f"; parse_failures={len(parse_failures)}" if parse_failures else ""
             return PlannerMetric(
                 name="planner.demotions_per_slice",
                 raw=0.0,
                 score=1.0,
                 status="PASS",
-                detail="No parseable demotion tickets",
+                detail=f"No parseable demotion tickets{failure_note}",
+                evidence_refs=parse_failures[:20],
             )
 
         avg_demotions = total / len(by_slice)
         top_slices = sorted(by_slice.items(), key=lambda item: item[1], reverse=True)[:3]
         top_desc = ", ".join(f"{slice_id}:{count}" for slice_id, count in top_slices)
+        failure_note = f"; parse_failures={len(parse_failures)}" if parse_failures else ""
         return PlannerMetric(
             name="planner.demotions_per_slice",
             raw=avg_demotions,
             score=1.0,
             status="PASS",
-            detail=f"avg={avg_demotions:.2f} across {len(by_slice)} slice(s); top={top_desc}",
+            detail=(
+                f"avg={avg_demotions:.2f} across {len(by_slice)} slice(s); top={top_desc}"
+                f"{failure_note}"
+            ),
+            evidence_refs=parse_failures[:20],
         )
 
     def _signal_iterations_per_slice_delta_vs_baseline(self, traces: list[Any]) -> PlannerMetric:
@@ -995,6 +1012,9 @@ class PlannerReporter:
         current = self._signal_iterations_per_slice(traces).raw
         baseline = self._baseline_metric_raw(traces, "planner.iterations_per_slice")
         if baseline is None:
+            issue_detail = (
+                f"; baseline_error={self._baseline_load_issue}" if self._baseline_load_issue else ""
+            )
             return PlannerMetric(
                 name=metric_name,
                 raw=0.0,
@@ -1002,7 +1022,7 @@ class PlannerReporter:
                 status="PASS",
                 detail=(
                     f"Baseline unavailable; current iterations_per_slice={current:.2f} "
-                    "used as interim reference"
+                    f"used as interim reference{issue_detail}"
                 ),
             )
 
@@ -1021,6 +1041,9 @@ class PlannerReporter:
         current = self._signal_demotions_per_slice().raw
         baseline = self._baseline_metric_raw(traces, "planner.demotions_per_slice")
         if baseline is None:
+            issue_detail = (
+                f"; baseline_error={self._baseline_load_issue}" if self._baseline_load_issue else ""
+            )
             return PlannerMetric(
                 name=metric_name,
                 raw=0.0,
@@ -1028,7 +1051,7 @@ class PlannerReporter:
                 status="PASS",
                 detail=(
                     f"Baseline unavailable; current demotions_per_slice={current:.2f} "
-                    "used as interim reference"
+                    f"used as interim reference{issue_detail}"
                 ),
             )
 
@@ -1304,10 +1327,18 @@ class PlannerReporter:
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError as exc:
+            self._baseline_load_issue = f"unreadable:{path}:{exc}"
+            logger.warning("Unable to read baseline scorecard %s: %s", path, exc)
+            return None
+        except json.JSONDecodeError as exc:
+            self._baseline_load_issue = f"invalid_json:{path}:{exc}"
+            logger.warning("Unable to parse baseline scorecard %s: %s", path, exc)
             return None
         if isinstance(payload, dict):
             return payload
+        self._baseline_load_issue = f"invalid_payload:{path}:top-level is not an object"
+        logger.warning("Baseline scorecard %s is not a JSON object", path)
         return None
 
     @staticmethod
