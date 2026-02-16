@@ -291,7 +291,7 @@ class GeneralPlanner:
             capability=req.capability,
             slice_id=slice_id,
         )
-        state_machine = self._load_state_machine(req)
+        state_machine = PlannerStateMachine()
         executed_actions: list[dict[str, Any]] = []
 
         logger.debug(
@@ -310,6 +310,7 @@ class GeneralPlanner:
         )
         self._capability_router.bind_trace(trace)
         try:
+            state_machine = self._load_state_machine(req)
             # Override hook (for counterfactual testing / ground truth injection)
             if self._override_provider is not None:
                 override_result = self._override_provider(req)

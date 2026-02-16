@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -98,34 +99,93 @@ class PlannerStateMachine:
         return {
             "phase": self.phase.value,
             "status": self.status.value,
-            "history": list(self.history),
+            "history": deepcopy(self.history),
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> PlannerStateMachine:
-        phase_raw = str(payload.get("phase", PlanPhase.INIT.value) or PlanPhase.INIT.value)
-        status_raw = str(
-            payload.get("status", PlanStatus.RUNNING.value) or PlanStatus.RUNNING.value
-        )
-        phase = PlanPhase.INIT
-        status = PlanStatus.RUNNING
-        for candidate in PlanPhase:
-            if candidate.value == phase_raw:
-                phase = candidate
-                break
-        for candidate in PlanStatus:
-            if candidate.value == status_raw:
-                status = candidate
-                break
-        history_raw = payload.get("history", [])
-        history = (
-            [row for row in history_raw if isinstance(row, dict)]
-            if isinstance(history_raw, list)
-            else []
-        )
+        if not isinstance(payload, dict):
+            raise TypeError("PlannerStateMachine payload must be a dict")
+
+        phase = cls._parse_phase(payload)
+        status = cls._parse_status(payload)
+        history = cls._parse_history(payload)
         return cls(phase=phase, status=status, history=history)
 
     # ---- internals ----
+
+    @staticmethod
+    def _parse_phase(payload: dict[str, Any]) -> PlanPhase:
+        if "phase" not in payload:
+            return PlanPhase.INIT
+        phase_raw = payload.get("phase")
+        if not isinstance(phase_raw, str) or not phase_raw.strip():
+            raise ValueError(f"Invalid planner state phase: {phase_raw!r}")
+        try:
+            return PlanPhase(phase_raw.strip())
+        except ValueError as exc:
+            allowed = ", ".join(candidate.value for candidate in PlanPhase)
+            raise ValueError(
+                f"Unknown planner state phase {phase_raw!r}; expected one of: {allowed}"
+            ) from exc
+
+    @staticmethod
+    def _parse_status(payload: dict[str, Any]) -> PlanStatus:
+        if "status" not in payload:
+            return PlanStatus.RUNNING
+        status_raw = payload.get("status")
+        if not isinstance(status_raw, str) or not status_raw.strip():
+            raise ValueError(f"Invalid planner state status: {status_raw!r}")
+        try:
+            return PlanStatus(status_raw.strip())
+        except ValueError as exc:
+            allowed = ", ".join(candidate.value for candidate in PlanStatus)
+            raise ValueError(
+                f"Unknown planner state status {status_raw!r}; expected one of: {allowed}"
+            ) from exc
+
+    @classmethod
+    def _parse_history(cls, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if "history" not in payload:
+            return []
+        history_raw = payload.get("history")
+        if not isinstance(history_raw, list):
+            return [
+                cls._history_deserialization_error(
+                    code="history_not_list",
+                    raw_payload=history_raw,
+                )
+            ]
+
+        history: list[dict[str, Any]] = []
+        for index, entry in enumerate(history_raw):
+            if isinstance(entry, dict):
+                history.append(deepcopy(entry))
+                continue
+            history.append(
+                cls._history_deserialization_error(
+                    code="history_entry_not_dict",
+                    raw_payload=entry,
+                    index=index,
+                )
+            )
+        return history
+
+    @staticmethod
+    def _history_deserialization_error(
+        *,
+        code: str,
+        raw_payload: Any,
+        index: int | None = None,
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "deserialization_error": code,
+            "raw_payload": deepcopy(raw_payload),
+        }
+        if index is not None:
+            entry["history_index"] = index
+        return entry
 
     def _record(self, **kwargs: Any) -> None:
         entry: dict[str, Any] = {
