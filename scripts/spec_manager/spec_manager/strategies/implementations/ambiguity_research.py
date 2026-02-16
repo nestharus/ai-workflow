@@ -125,6 +125,8 @@ class AmbiguityResearchStrategy(Strategy):
             except Exception as exc:
                 issues.append(f"Spec research failed: {exc}")
 
+        research_hits = self._deduplicate_hits(research_hits)
+
         if research_hits:
             actions.append(f"Found {len(research_hits)} relevant spec sections for comment")
             evidence_records.append(
@@ -135,6 +137,8 @@ class AmbiguityResearchStrategy(Strategy):
                     "details": {
                         "comment": tc.comment_text,
                         "hits": len(research_hits),
+                        "inlined_hits": len(research_hits),
+                        "omitted_hits": 0,
                         "key_terms": key_terms,
                     },
                 }
@@ -147,7 +151,7 @@ class AmbiguityResearchStrategy(Strategy):
         for unit in context.units:
             if research_hits and unit.unit_type in (UnitType.PROSE, UnitType.UNKNOWN):
                 augmented_content = (
-                    unit.content + "\n\n[Research context]: " + "; ".join(research_hits[:3])
+                    unit.content + "\n\n[Research context]: " + "; ".join(research_hits)
                 )
                 new_unit = unit.derive(
                     augmented_content,
@@ -243,3 +247,17 @@ class AmbiguityResearchStrategy(Strategy):
                 unique_terms.append(term)
 
         return unique_terms[:10]
+
+    @staticmethod
+    def _deduplicate_hits(research_hits: list[str]) -> list[str]:
+        """Deduplicate research hits while preserving order."""
+        seen: set[str] = set()
+        deduplicated: list[str] = []
+        for hit in research_hits:
+            normalized = hit.strip()
+            if not normalized:
+                continue
+            if normalized not in seen:
+                seen.add(normalized)
+                deduplicated.append(normalized)
+        return deduplicated

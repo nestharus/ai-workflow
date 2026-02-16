@@ -6,6 +6,7 @@ invalid JSON) before downstream parsing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,7 +114,15 @@ class FormatRepairStrategy(Strategy):
                     unit_evidence,
                     location=f"format_repair:{unit.id}",
                 )
+                self._preserve_original_content(unit, original, "json_extraction")
                 unit.content = extracted
+                unit.content_hash = hashlib.sha256(extracted.encode()).hexdigest()
+                unit.add_modification("format_repair")
+                unit.metadata["format_repair"] = {
+                    "method": "json_extraction",
+                    "had_code_fence": had_code_fence,
+                    "had_preamble": had_preamble,
+                }
                 extraction_count += 1
                 issues.append(f"Format repair: extracted JSON payload for {unit.id}")
                 if had_code_fence:
@@ -139,7 +148,15 @@ class FormatRepairStrategy(Strategy):
                     model_override=get_repair_model(),
                     manager=self._build_repair_manager(context),
                 )
+                self._preserve_original_content(unit, original, "repair_agent")
                 unit.content = repaired_output
+                unit.content_hash = hashlib.sha256(repaired_output.encode()).hexdigest()
+                unit.add_modification("format_repair")
+                unit.metadata["format_repair"] = {
+                    "method": "repair_agent",
+                    "had_code_fence": had_code_fence,
+                    "had_preamble": had_preamble,
+                }
                 repair_count += 1
                 issues.append(f"Format repair: normalized JSON for {unit.id}")
                 if evidence_records:
@@ -234,3 +251,17 @@ class FormatRepairStrategy(Strategy):
         else:
             resolved = Path(".")
         return _RepairWorkspaceAdapter(workspace_path=resolved)
+
+    @staticmethod
+    def _preserve_original_content(unit: object, content: str, mode: str) -> None:
+        """Persist pre-repair content so repairs are auditable/replayable."""
+        if not hasattr(unit, "metadata"):
+            return
+        history = unit.metadata.setdefault("content_history", [])
+        history.append(
+            {
+                "strategy": "format_repair",
+                "mode": mode,
+                "content": content,
+            }
+        )

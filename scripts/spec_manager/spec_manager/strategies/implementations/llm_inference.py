@@ -85,7 +85,9 @@ class ProseFragmentInferenceDetector:
             remaining_prose=self._compute_remaining(unit.content, inferences),
         )
 
-    def _heuristic_inference(self, unit: TrackedUnit) -> list[InferenceResult]:
+    def _heuristic_inference(
+        self, unit: TrackedUnit, fallback_reason: str | None = None
+    ) -> list[InferenceResult]:
         """Fallback heuristic-based inference without LLM."""
         inferences: list[InferenceResult] = []
         content = unit.content
@@ -112,7 +114,7 @@ class ProseFragmentInferenceDetector:
                         confidence=base_confidence,
                         source_spans=[unit.source],
                         inference_type="requirement",
-                        rationale=f"Contains requirement keyword: '{match.group()}'",
+                        rationale=self._build_heuristic_rationale(match.group(), fallback_reason),
                     )
                 )
 
@@ -149,8 +151,14 @@ class ProseFragmentInferenceDetector:
                 )
                 for r in results
             ]
-        except Exception:
-            return self._heuristic_inference(unit)
+        except Exception as exc:
+            logger.warning(
+                "LLM inference failed for %s; falling back to heuristics",
+                unit.id,
+                exc_info=True,
+            )
+            fallback_reason = f"LLM inference failed: {type(exc).__name__}: {exc}"
+            return self._heuristic_inference(unit, fallback_reason=fallback_reason)
 
     def _compute_remaining(self, content: str, inferences: list[InferenceResult]) -> str | None:
         """Compute what prose remains after inferences are extracted."""
@@ -209,9 +217,15 @@ class ProseFragmentReductionStrategy:
         }
         unit_type = type_map.get(inference.inference_type, UnitType.CLAIM)
 
+        location_key = (
+            f"{evidence.location.file}:{evidence.location.line_start}:{evidence.location.line_end}"
+        )
+        id_hash = hashlib.sha256(
+            f"{location_key}\0{inference.inferred_content}".encode()
+        ).hexdigest()
         content_hash = hashlib.sha256(inference.inferred_content.encode()).hexdigest()
         return TrackedUnit(
-            id=f"_inferred_{hash(inference.inferred_content) % 10000}",
+            id=f"_inferred_{id_hash[:12]}",
             content=inference.inferred_content,
             unit_type=unit_type,
             source=evidence.location,
@@ -224,9 +238,13 @@ class ProseFragmentReductionStrategy:
     def _create_remainder_unit(self, evidence: ProseFragmentEvidence) -> TrackedUnit:
         """Create a prose unit for remaining content."""
         content = evidence.remaining_prose or ""
+        location_key = (
+            f"{evidence.location.file}:{evidence.location.line_start}:{evidence.location.line_end}"
+        )
+        id_hash = hashlib.sha256(f"{location_key}\0{content}".encode()).hexdigest()
         content_hash = hashlib.sha256(content.encode()).hexdigest()
         return TrackedUnit(
-            id=f"_remainder_{hash(evidence.remaining_prose) % 10000}",
+            id=f"_remainder_{id_hash[:12]}",
             content=content,
             unit_type=UnitType.PROSE,
             source=evidence.location,
@@ -235,6 +253,14 @@ class ProseFragmentReductionStrategy:
             granularity=GranularityLevel.SENTENCE,
             content_hash=content_hash,
         )
+
+    @staticmethod
+    def _build_heuristic_rationale(keyword: str, fallback_reason: str | None) -> str:
+        """Build rationale text for heuristic inferences."""
+        base = f"Contains requirement keyword: '{keyword}'"
+        if fallback_reason:
+            return f"{base}; fallback_reason={fallback_reason}"
+        return base
 
 
 class VagueReferenceResolver:

@@ -5,6 +5,8 @@ Ensures unit content does not exceed the configured maximum length.
 
 from __future__ import annotations
 
+import hashlib
+
 from spec_manager.strategies.base import (
     ProcessingContext,
     Strategy,
@@ -71,7 +73,15 @@ class TruncationGuardStrategy(Strategy):
             if original_length <= cap:
                 continue
 
-            unit.content = unit.content[:cap]
+            original_content = unit.content
+            self._preserve_original_content(unit, original_content)
+            unit.content = original_content[:cap]
+            unit.content_hash = hashlib.sha256(unit.content.encode()).hexdigest()
+            unit.add_modification("truncation_guard")
+            unit.metadata["truncation"] = {
+                "original_length": original_length,
+                "truncated_length": cap,
+            }
             truncation_count += 1
             removed = original_length - cap
             total_chars_removed += removed
@@ -113,3 +123,17 @@ class TruncationGuardStrategy(Strategy):
         if isinstance(cap, int) and cap > 0:
             return cap
         return _DEFAULT_MAX_LENGTH
+
+    @staticmethod
+    def _preserve_original_content(unit: object, content: str) -> None:
+        """Persist pre-truncation content for replay/audit."""
+        if not hasattr(unit, "metadata"):
+            return
+        history = unit.metadata.setdefault("content_history", [])
+        history.append(
+            {
+                "strategy": "truncation_guard",
+                "content": content,
+                "length": len(content),
+            }
+        )

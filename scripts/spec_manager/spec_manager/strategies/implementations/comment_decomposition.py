@@ -98,6 +98,9 @@ class CommentDecompositionStrategy(Strategy):
 
         comment_text = tc.comment_text
         parts = self._splitter(comment_text)
+        parent_units = self._find_parent_units(context.units, comment_text)
+        if not parent_units and context.units:
+            issues.append("Comment decomposition: parent unit could not be uniquely determined")
 
         if len(parts) <= 1:
             return StrategyResult(
@@ -120,19 +123,24 @@ class CommentDecompositionStrategy(Strategy):
                 id=unit_id,
                 content=part,
                 unit_type=UnitType.PROSE,
-                source=context.units[0].source if context.units else None,
+                source=parent_units[0].source
+                if parent_units
+                else (context.units[0].source if context.units else None),
                 introduced_by="comment_decomposition",
                 granularity=GranularityLevel.SENTENCE,
                 content_hash=content_hash,
             )
 
             lineage_table = getattr(context, "lineage_table", None)
-            if lineage_table is not None and context.units:
-                lineage_table.add_edge(
-                    from_unit=context.units[0].id,
-                    to_unit=new_unit.id,
-                    transformation="split",
-                )
+            for parent_unit in parent_units:
+                new_unit.add_parent(parent_unit.id)
+                parent_unit.add_child(new_unit.id)
+                if lineage_table is not None:
+                    lineage_table.add_edge(
+                        from_unit=parent_unit.id,
+                        to_unit=new_unit.id,
+                        transformation="split",
+                    )
 
             output_units.append(new_unit)
 
@@ -176,3 +184,23 @@ class CommentDecompositionStrategy(Strategy):
                 return [f"# {p.strip()}" for p in parts]
 
         return [comment]
+
+    @staticmethod
+    def _find_parent_units(units: list[TrackedUnit], comment_text: str) -> list[TrackedUnit]:
+        """Find units that most directly contain the source comment text."""
+        stripped_comment = comment_text.strip()
+        exact_matches = [u for u in units if u.content.strip() == stripped_comment]
+        if exact_matches:
+            return exact_matches
+
+        overlapping = [
+            u
+            for u in units
+            if stripped_comment in u.content or u.content.strip() in stripped_comment
+        ]
+        if overlapping:
+            return overlapping
+
+        if len(units) == 1:
+            return [units[0]]
+        return []

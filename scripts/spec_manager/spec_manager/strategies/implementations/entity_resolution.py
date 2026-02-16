@@ -11,6 +11,7 @@ Phase 5 (CON-0003/CON-0004 compliance):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from typing import Any
@@ -151,14 +152,32 @@ class EntityResolutionStrategy(Strategy):
 
         existing_ids = {unit.id for unit in context.units}
         declared_ids = {decl for unit in context.units for decl in unit.declarations}
+        lineage_table = getattr(context, "lineage_table", None)
 
         for index, unit in enumerate(context.units):
             # Phase 5: Use structural detection (system ID patterns) instead of regex
             reference_texts = self._find_unresolved_system_refs(unit.content, declared_ids)
+            detection_error: str | None = None
 
             # If LLM available, also ask it to identify vague references
             if self._llm and not reference_texts:
-                reference_texts = self._detect_vague_refs_via_llm(unit, context, index)
+                reference_texts, detection_error = self._detect_vague_refs_via_llm(
+                    unit, context, index
+                )
+
+            if detection_error:
+                issues.append(f"Vague-reference detection failed for {unit.id}: {detection_error}")
+                evidence_records.append(
+                    {
+                        "category": "resolution",
+                        "type": "llm_reference_detection_failed",
+                        "severity": "warning",
+                        "details": {
+                            "unit_id": unit.id,
+                            "error": detection_error,
+                        },
+                    }
+                )
 
             if not reference_texts:
                 output_units.append(unit)
@@ -171,9 +190,6 @@ class EntityResolutionStrategy(Strategy):
                 "source_file": resolution_context.get("source_file"),
                 "nearby_elements": resolution_context.get("nearby_elements", []),
                 "nearby_declarations": resolution_context.get("nearby_declarations", []),
-                "reference_files": sorted(
-                    list(resolution_context.get("reference_files", {}).keys())
-                ),
             }
 
             resolved_content = unit.content
@@ -277,21 +293,12 @@ class EntityResolutionStrategy(Strategy):
                 resolutions.append((target_id, confidence, rationale, method, reference_text))
 
             if resolutions:
-                new_id = f"{unit.id}_resolved"
-                if new_id in existing_ids:
-                    suffix = abs(hash(resolved_content)) % 10000
-                    new_id = f"{unit.id}_resolved_{suffix:04d}"
-                    counter = 1
-                    while new_id in existing_ids:
-                        new_id = f"{unit.id}_resolved_{suffix:04d}_{counter}"
-                        counter += 1
+                new_id = self._build_resolved_unit_id(unit.id, resolved_content, existing_ids)
                 new_unit = unit.derive(
                     resolved_content, new_id=new_id, modifier="entity_resolution"
                 )
-                existing_ids.add(new_id)
                 new_unit.add_parent(unit.id)
                 unit.add_child(new_unit.id)
-                lineage_table = getattr(context, "lineage_table", None)
                 if lineage_table is not None:
                     lineage_table.add_edge(
                         from_unit=unit.id,
@@ -345,14 +352,14 @@ class EntityResolutionStrategy(Strategy):
 
     def _detect_vague_refs_via_llm(
         self, unit: TrackedUnit, context: ProcessingContext, index: int
-    ) -> list[str]:
+    ) -> tuple[list[str], str | None]:
         """Use LLM to detect vague references requiring resolution.
 
         Phase 5 (CON-0003 compliance): LLM determines if resolution is needed,
         not keyword patterns.
         """
         if not self._llm:
-            return []
+            return [], None
 
         prompt = f"""Analyze this text and identify any vague references that need resolution.
 Vague references are phrases like "the algorithm", "this claim", "that proof" that
@@ -371,10 +378,12 @@ Return a JSON array of vague reference phrases found (empty array if none):
             import json
 
             refs = json.loads(response)
-            return refs if isinstance(refs, list) else []
-        except Exception:
+            if not isinstance(refs, list):
+                return [], f"Unexpected detector payload type: {type(refs).__name__}"
+            return refs, None
+        except Exception as exc:
             logger.debug("Entity resolution failed", exc_info=True)
-            return []
+            return [], f"{type(exc).__name__}: {exc}"
 
     def _build_resolution_context(self, context: ProcessingContext, index: int) -> dict[str, Any]:
         """Build resolution context for LLM-based inference."""
@@ -387,8 +396,6 @@ Return a JSON array of vague reference phrases found (empty array if none):
             "patch_chain": context.previous_results.get("patch_chain", []),
             "nearby_elements": [unit.id for unit in nearby_units],
             "nearby_declarations": [decl for unit in nearby_units for decl in unit.declarations],
-            "reference_files": context.reference_files,
-            "previous_results": context.previous_results,
             "patch_id": context.patch_id or context.units[index].source.patch_id,
             "source_file": context.source_file,
         }
@@ -439,3 +446,14 @@ Return a JSON array of vague reference phrases found (empty array if none):
     def _replace_reference(self, text: str, reference_text: str, target_id: str) -> str:
         """Replace a reference phrase with the resolved target ID."""
         return re.sub(re.escape(reference_text), target_id, text)
+
+    def _build_resolved_unit_id(self, base_id: str, content: str, existing_ids: set[str]) -> str:
+        """Build deterministic, collision-safe IDs for resolved units."""
+        suffix = hashlib.sha256(content.encode()).hexdigest()[:8]
+        candidate = f"{base_id}_resolved_{suffix}"
+        counter = 1
+        while candidate in existing_ids:
+            candidate = f"{base_id}_resolved_{suffix}_{counter}"
+            counter += 1
+        existing_ids.add(candidate)
+        return candidate

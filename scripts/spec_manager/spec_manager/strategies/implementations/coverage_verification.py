@@ -8,6 +8,7 @@ It's typically applied after merging or extraction operations.
 
 from __future__ import annotations
 
+import hashlib
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -168,8 +169,12 @@ class CoverageVerificationStrategy(Strategy):
 
         # Calculate coverage using atom counts (not set sizes)
         total_atoms = len(source_atoms)
-        matched_count = len(matched_atoms) + len(fuzzy_matched_atoms)
-        coverage = matched_count / total_atoms if total_atoms > 0 else 1.0
+        exact_matched_count = len(matched_atoms)
+        fuzzy_matched_count = len(fuzzy_matched_atoms)
+        coverage = exact_matched_count / total_atoms if total_atoms > 0 else 1.0
+        fuzzy_screened_coverage = (
+            (exact_matched_count + fuzzy_matched_count) / total_atoms if total_atoms > 0 else 1.0
+        )
         unmatched_severity = "error" if coverage < coverage_threshold else "warning"
 
         for atom in unmatched_atoms:
@@ -233,10 +238,11 @@ class CoverageVerificationStrategy(Strategy):
             metrics={
                 "source_atoms": total_atoms,
                 "target_atoms": len(target_atoms),
-                "exact_matched": len(matched_atoms),
-                "fuzzy_matched": len(fuzzy_matched_atoms),
+                "exact_matched": exact_matched_count,
+                "fuzzy_matched": fuzzy_matched_count,
                 "unmatched": len(unmatched_atoms),
                 "coverage_percent": coverage * 100,
+                "fuzzy_screened_coverage_percent": fuzzy_screened_coverage * 100,
                 "membership_evidence": membership_evidence,
             },
             evidence_records=evidence_records,
@@ -246,10 +252,14 @@ class CoverageVerificationStrategy(Strategy):
         """Convert units to atoms with stable IDs."""
         atoms: list[dict[str, Any]] = []
         for unit in units:
-            unit_id = getattr(unit, "id", str(id(unit)))
+            unit_id = getattr(unit, "id", None)
+            if not unit_id:
+                fallback_basis = getattr(unit, "content", "")
+                unit_id = f"_unit_{hashlib.sha256(str(fallback_basis).encode()).hexdigest()[:12]}"
             for i, line in enumerate(unit.content.split("\n")):
                 if line.strip():
-                    atom_id = f"{unit_id}_L{i + 1}_{hash(line) % 10000:04d}"
+                    line_hash = hashlib.sha256(line.encode()).hexdigest()[:8]
+                    atom_id = f"{unit_id}_L{i + 1}_{line_hash}"
                     atoms.append(
                         {"id": atom_id, "content": line, "unit_id": unit_id, "line_number": i + 1}
                     )

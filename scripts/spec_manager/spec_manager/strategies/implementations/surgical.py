@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -218,16 +219,9 @@ Output your decision as JSON:
 
         try:
             # Call the surgeon agent
+            command = self._build_agent_command(prompt)
             result = subprocess.run(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "scripts.agents",
-                    "spec-manager-surgeon",
-                    prompt,
-                ],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -235,6 +229,22 @@ Output your decision as JSON:
             )
 
             output = result.stdout.strip()
+            if not output:
+                output = result.stderr.strip()
+            if result.returncode != 0:
+                return SurgeonResponse(
+                    operation="agent_error",
+                    success=False,
+                    result={},
+                    raw_output=output or f"Agent exited with status {result.returncode}",
+                )
+            if not output:
+                return SurgeonResponse(
+                    operation="empty_output",
+                    success=False,
+                    result={},
+                    raw_output="Surgeon produced empty output",
+                )
 
             # Parse the response
             # Look for JSON in the output
@@ -254,25 +264,11 @@ Output your decision as JSON:
                         format_repair=format_repair,
                     )
             except json.JSONDecodeError:
-                pass
-
-            # Fallback: try to detect operation from text
-            output_lower = output.lower()
-            if "underspecified" in output_lower or "ambiguous" in output_lower:
                 return SurgeonResponse(
-                    operation="underspecified",
-                    success=True,
-                    result={"reason": "Detected ambiguity"},
-                    raw_output=output,
-                    used_fallback=True,
-                )
-            elif "split" in output_lower:
-                return SurgeonResponse(
-                    operation="split",
-                    success=True,
+                    operation="invalid_json",
+                    success=False,
                     result={},
                     raw_output=output,
-                    used_fallback=True,
                 )
 
             return SurgeonResponse(
@@ -296,6 +292,13 @@ Output your decision as JSON:
                 result={},
                 raw_output=str(e),
             )
+
+    def _build_agent_command(self, prompt: str) -> list[str]:
+        """Build command from configured agent runner contract."""
+        command = [*shlex.split(self.agent_runner), "spec-manager-surgeon", prompt]
+        if not command:
+            return ["uv", "run", "agents", "spec-manager-surgeon", prompt]
+        return command
 
     def _apply_surgeon_response(
         self,

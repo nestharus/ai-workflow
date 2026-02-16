@@ -78,8 +78,9 @@ class SentenceUnitizer(Unitizer):
     Use for semi-structured text.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, language_model: str = "en_core_web_sm") -> None:
         self._nlp: Any = None
+        self._language_model = language_model
 
     @property
     def granularity(self) -> GranularityLevel:
@@ -90,7 +91,7 @@ class SentenceUnitizer(Unitizer):
             try:
                 import spacy
 
-                self._nlp = spacy.load("en_core_web_sm")
+                self._nlp = spacy.load(self._language_model)
             except (ImportError, OSError):
                 # Fallback: simple sentence splitting
                 self._nlp = "fallback"
@@ -147,8 +148,9 @@ class ClauseUnitizer(Unitizer):
     Use for complex compound statements.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, language_model: str = "en_core_web_sm") -> None:
         self._nlp: Any = None
+        self._language_model = language_model
 
     @property
     def granularity(self) -> GranularityLevel:
@@ -159,7 +161,7 @@ class ClauseUnitizer(Unitizer):
             try:
                 import spacy
 
-                self._nlp = spacy.load("en_core_web_sm")
+                self._nlp = spacy.load(self._language_model)
             except (ImportError, OSError):
                 self._nlp = "fallback"
         return self._nlp
@@ -220,8 +222,9 @@ class LLMUnitizer(Unitizer):
     - Logical units that span multiple sentences
     """
 
-    def __init__(self, llm_client: Any = None) -> None:
+    def __init__(self, llm_client: Any = None, language_model: str = "en_core_web_sm") -> None:
         self._llm = llm_client
+        self._language_model = language_model
 
     @property
     def granularity(self) -> GranularityLevel:
@@ -236,7 +239,7 @@ class LLMUnitizer(Unitizer):
         """
         if not self._llm:
             # Fallback to sentence unitizer
-            return SentenceUnitizer().unitize(content, file_path, patch_id)
+            return SentenceUnitizer(self._language_model).unitize(content, file_path, patch_id)
 
         # Prompt LLM for clause extraction
         prompt = (
@@ -255,7 +258,7 @@ class LLMUnitizer(Unitizer):
             clauses = json.loads(response)
         except Exception:
             # Fallback on error
-            return SentenceUnitizer().unitize(content, file_path, patch_id)
+            return SentenceUnitizer(self._language_model).unitize(content, file_path, patch_id)
 
         units = []
         for i, clause in enumerate(clauses):
@@ -271,13 +274,14 @@ class LLMUnitizer(Unitizer):
                     unit_type=UnitType.PROSE,
                     source=SourceLocation(
                         file=file_path,
-                        line_start=1,  # LLM doesn't track line numbers
-                        line_end=1,
+                        line_start=0,
+                        line_end=0,
                         patch_id=patch_id,
                     ),
                     introduced_by=patch_id or "unknown",
                     granularity=self.granularity,
                     content_hash=content_hash,
+                    metadata={"source_span_unknown": True},
                 )
             )
 
@@ -309,6 +313,9 @@ class UnitizationSelector:
     Key principle: When annotations are sparse, emit FINE atoms.
     """
 
+    def __init__(self, language_model: str = "en_core_web_sm") -> None:
+        self._language_model = language_model
+
     def select_unitizer(self, content: str) -> Unitizer:
         """Select unitizer based on content characteristics."""
         # Count annotation density
@@ -328,10 +335,10 @@ class UnitizationSelector:
             return SectionUnitizer()
         elif has_complex:
             # Complex statements: clause-level
-            return ClauseUnitizer()
+            return ClauseUnitizer(self._language_model)
         elif has_sentences:
             # Clear sentences: sentence-level
-            return SentenceUnitizer()
+            return SentenceUnitizer(self._language_model)
         else:
             # Messy prose: line-level for maximum tracking
             return LineUnitizer()
