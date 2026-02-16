@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -23,14 +22,9 @@ class PhaseStatus(Enum):
 
 
 class Phase(Enum):
-    """PDD execution phases and legacy refinement phases.
+    """Workspace phases used across refinement and PDD workflows."""
 
-    The PDD phases (0-10) are the primary execution model.  The legacy
-    refinement phases are retained for backward compatibility with
-    persisted workspace state files.
-    """
-
-    # ── PDD execution phases (primary) ──────────────────────────────
+    # ── PDD execution phases (explicit orchestration) ───────────────
     EXTRACTION = "extraction"  # Phase 0
     STRUCTURE_DISCOVERY = "structure"  # Phase 1
     DECOMPOSITION = "decomposition"  # Phase 2
@@ -43,7 +37,7 @@ class Phase(Enum):
     IMPLEMENTATION = "implementation"  # Phase 9
     CONTINUOUS_QA = "continuous_qa"  # Phase 10
 
-    # ── Legacy refinement phases (kept for state migration) ─────────
+    # ── Refinement workflow phases (auto-sequenced) ─────────────────
     INIT = "init"
     SECTIONIZATION = "sectionization"
     SUMMARIZATION = "summarization"
@@ -68,6 +62,30 @@ class Phase(Enum):
     BRANCH_GAPS = "branch_gaps"
     BRANCH_PROMOTE = "branch_promote"
     BRANCH_ANALYZE = "branch_analyze"
+
+
+AUTO_SEQUENCE_PHASES: tuple[Phase, ...] = (
+    Phase.INIT,
+    Phase.SECTIONIZATION,
+    Phase.SUMMARIZATION,
+    Phase.LIBRARY_SYNTHESIS,
+    Phase.EVIDENCE_EXPANSION,
+    Phase.SPEC_BUILDING,
+    Phase.SPEC_STABILIZATION,
+    Phase.ALIGNMENT_CHECK,
+    Phase.OVERVIEW_GENERATION,
+    Phase.QA_EVALUATION,
+    Phase.SUBLIBRARY_DETECTION,
+    Phase.ARCHITECTURE_PROPOSAL,
+    Phase.ARCHITECTURE_SELECTION,
+    Phase.ARCHITECTURE_MAPPING,
+    Phase.LIBRARY_STRUCTURE_REVIEW,
+    Phase.INTERFACES,
+    Phase.QUALITY_GATES,
+    Phase.TASKS,
+    Phase.IMPLEMENTATION,
+    Phase.AUDIT,
+)
 
 
 LIBRARY_ID_PATTERN = re.compile(r"^LIB-(\d{4})$")
@@ -141,7 +159,7 @@ def _ensure_synthetic_library_event(workspace_dir: Path, lib_id: str) -> None:
         lib_dir.mkdir(parents=True, exist_ok=True)
         events_path.write_text(json.dumps(event_payload) + "\n", encoding="utf-8")
     except OSError as exc:
-        print(f"Warning: Failed to write synthetic library event: {exc}", file=sys.stderr)
+        raise RuntimeError(f"Failed to write synthetic library event for {lib_id}: {exc}") from exc
 
 
 @dataclass
@@ -212,7 +230,67 @@ class WorkspaceState:
             with migration_log.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry) + "\n")
         except OSError as e:
-            print(f"Warning: Failed to write migration log: {e}", file=sys.stderr)
+            raise RuntimeError(f"Failed to write migration log at {workspace_dir}: {e}") from e
+
+    @staticmethod
+    def _persist_pre_migration_snapshot(
+        workspace_dir: Path,
+        schema_version: str,
+        data: dict[str, Any],
+    ) -> Path:
+        """Persist raw state payload before migration for audit/replay."""
+        snapshots_dir = workspace_dir / "audits" / "migration_snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        normalized_version = schema_version.replace("/", "_")
+        snapshot_path = snapshots_dir / f"state_v{normalized_version}_{timestamp}.json"
+        snapshot_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return snapshot_path
+
+    @staticmethod
+    def _coerce_file_manifest(raw: Any) -> dict[str, dict[str, str]]:
+        if not isinstance(raw, dict):
+            return {}
+        manifest: dict[str, dict[str, str]] = {}
+        for file_id, file_data in raw.items():
+            if not isinstance(file_id, str):
+                continue
+            if isinstance(file_data, dict):
+                relpath = file_data.get("relpath")
+                sha256 = file_data.get("sha256", "")
+                if not isinstance(relpath, str) or not relpath:
+                    continue
+                manifest[file_id] = {
+                    "relpath": relpath,
+                    "sha256": sha256 if isinstance(sha256, str) else "",
+                }
+                continue
+            if isinstance(file_data, str) and file_data:
+                manifest[file_id] = {"relpath": file_data, "sha256": ""}
+        return manifest
+
+    @staticmethod
+    def _coerce_section_manifest(raw: Any) -> dict[str, list[str]]:
+        if not isinstance(raw, dict):
+            return {}
+        section_manifest: dict[str, list[str]] = {}
+        for file_id, sections in raw.items():
+            if not isinstance(file_id, str):
+                continue
+            if isinstance(sections, list):
+                section_manifest[file_id] = [
+                    item for item in sections if isinstance(item, str) and item
+                ]
+                continue
+            if isinstance(sections, str) and sections:
+                section_manifest[file_id] = [sections]
+        return section_manifest
+
+    @staticmethod
+    def _coerce_history(raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
 
     def __post_init__(self) -> None:
         """Initialize phase results for all phases not explicitly set."""
@@ -250,30 +328,7 @@ class WorkspaceState:
 
     def get_next_phase(self) -> Phase | None:
         """Get the next phase to execute."""
-        phase_order = [
-            Phase.INIT,
-            Phase.SECTIONIZATION,
-            Phase.SUMMARIZATION,
-            Phase.LIBRARY_SYNTHESIS,
-            Phase.EVIDENCE_EXPANSION,
-            Phase.SPEC_BUILDING,
-            Phase.SPEC_STABILIZATION,
-            Phase.ALIGNMENT_CHECK,
-            Phase.OVERVIEW_GENERATION,
-            Phase.QA_EVALUATION,
-            Phase.SUBLIBRARY_DETECTION,
-            Phase.ARCHITECTURE_PROPOSAL,
-            Phase.ARCHITECTURE_SELECTION,
-            Phase.ARCHITECTURE_MAPPING,
-            Phase.LIBRARY_STRUCTURE_REVIEW,
-            Phase.INTERFACES,
-            Phase.QUALITY_GATES,
-            Phase.TASKS,
-            Phase.IMPLEMENTATION,
-            Phase.AUDIT,
-        ]
-
-        for phase in phase_order:
+        for phase in AUTO_SEQUENCE_PHASES:
             status = self.phases[phase.value].status
             if status == PhaseStatus.NOT_STARTED:
                 return phase
@@ -284,7 +339,10 @@ class WorkspaceState:
 
     def is_complete(self) -> bool:
         """Check if all phases are completed."""
-        return all(self.phases[phase.value].status == PhaseStatus.COMPLETED for phase in Phase)
+        return all(
+            self.phases[phase.value].status == PhaseStatus.COMPLETED
+            for phase in AUTO_SEQUENCE_PHASES
+        )
 
     def _log_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Log an event to history."""
@@ -332,11 +390,16 @@ class WorkspaceState:
     @classmethod
     def from_dict(cls, data: dict[str, Any], workspace_dir: Path | None = None) -> WorkspaceState:
         """Create state from dictionary with optional migration logging."""
-        schema_version = data.get("schema_version", "1.0")
+        raw_schema_version = data.get("schema_version", "1.0")
+        schema_version = raw_schema_version if isinstance(raw_schema_version, str) else "1.0"
 
         if schema_version != "1.0":
             migration_timestamp = datetime.now().isoformat()
+            snapshot_path: str | None = None
             if workspace_dir is not None:
+                snapshot_path = str(
+                    cls._persist_pre_migration_snapshot(workspace_dir, schema_version, data)
+                )
                 cls._log_migration_event(
                     workspace_dir,
                     "migration_details",
@@ -344,26 +407,11 @@ class WorkspaceState:
                         "schema_version_from": schema_version,
                         "schema_version_to": "1.0",
                         "migration_timestamp": migration_timestamp,
-                        "phase_reset": True,
-                        "data_discarded": [
-                            "phases",
-                            "file_manifest",
-                            "section_manifest",
-                            "history",
-                        ],
+                        "snapshot_path": snapshot_path,
+                        "preserved_raw_state": True,
                     },
                 )
-
-            return cls(
-                run_id=data.get("run_id", workspace_dir.name if workspace_dir else "unknown"),
-                input_folder=data.get("input_folder", ""),
-                schema_version="1.0",
-                created_at=datetime.now().isoformat(),
-                current_phase=Phase.INIT,
-                file_manifest={},
-                section_manifest={},
-                history=[],
-            )
+            schema_version = "1.0"
 
         raw_phase = data.get("current_phase", Phase.INIT.value)
         try:
@@ -418,21 +466,32 @@ class WorkspaceState:
             next_library_number = max_allocated
 
         state = cls(
-            run_id=data["run_id"],
-            input_folder=data["input_folder"],
+            run_id=(
+                data.get("run_id")
+                if isinstance(data.get("run_id"), str)
+                else (workspace_dir.name if workspace_dir else "unknown")
+            ),
+            input_folder=data.get("input_folder", ""),
             schema_version=schema_version,
             created_at=data.get("created_at", datetime.now().isoformat()),
             current_phase=current_phase,
             mode=mode,
-            file_manifest=data.get("file_manifest", {}),
-            section_manifest=data.get("section_manifest", {}),
+            file_manifest=cls._coerce_file_manifest(data.get("file_manifest", {})),
+            section_manifest=cls._coerce_section_manifest(data.get("section_manifest", {})),
             spec_snapshot_baseline=baseline,
-            history=data.get("history", []),
+            history=cls._coerce_history(data.get("history", [])),
             allocated_library_ids=allocated_library_ids,
             next_library_number=next_library_number,
         )
 
-        for name, phase_data in data.get("phases", {}).items():
+        raw_phases = data.get("phases", {})
+        if not isinstance(raw_phases, dict):
+            raise TypeError(
+                "Invalid phases payload: expected object mapping phase names to results."
+            )
+        for name, phase_data in raw_phases.items():
+            if not isinstance(name, str) or not isinstance(phase_data, dict):
+                raise TypeError("Invalid phase entry: expected string key with object payload.")
             raw_result_phase = phase_data["phase"]
             try:
                 result_phase = Phase(raw_result_phase)
@@ -473,6 +532,15 @@ class WorkspaceState:
                     **migration_details,
                 }
             )
+        if raw_schema_version != "1.0":
+            state.history.append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event": "schema_migration",
+                    "schema_version_from": raw_schema_version,
+                    "schema_version_to": "1.0",
+                }
+            )
 
         return state
 
@@ -504,59 +572,57 @@ class WorkspaceState:
         """Load state from file with automatic migration and logging."""
         workspace_dir = path.parent
 
+        detected_version = cls.detect_schema_version(path)
+        cls._log_migration_event(
+            workspace_dir,
+            "schema_detected",
+            {
+                "schema_version_detected": detected_version,
+                "state_file": str(path),
+            },
+        )
+
         try:
-            detected_version = cls.detect_schema_version(path)
-            cls._log_migration_event(
-                workspace_dir,
-                "schema_detected",
-                {
-                    "schema_version_detected": detected_version,
-                    "state_file": str(path),
-                },
-            )
-
             data = json.loads(path.read_text(encoding="utf-8"))
-
-            if detected_version != "1.0":
-                cls._log_migration_event(
-                    workspace_dir,
-                    "migration_started",
-                    {
-                        "schema_version_from": detected_version,
-                        "schema_version_to": "1.0",
-                    },
-                )
-                state = cls.from_dict(data, workspace_dir=workspace_dir)
-                cls._log_migration_event(
-                    workspace_dir,
-                    "migration_completed",
-                    {
-                        "schema_version_from": detected_version,
-                        "schema_version_to": "1.0",
-                    },
-                )
-            else:
-                cls._log_migration_event(
-                    workspace_dir,
-                    "migration_skipped",
-                    {
-                        "schema_version": detected_version,
-                        "reason": "Already at 1.0",
-                    },
-                )
-                state = cls.from_dict(data, workspace_dir=workspace_dir)
-
-            return state
         except (json.JSONDecodeError, OSError) as e:
-            run_id = path.parent.name
             cls._log_migration_event(
                 workspace_dir,
-                "parse_error_ignored",
+                "parse_error",
                 {
                     "error": str(e),
                     "error_type": type(e).__name__,
                     "state_file": str(path),
-                    "action": "Reinitialized to fresh 1.0 state",
+                    "action": "load_aborted",
                 },
             )
-            return cls(run_id=run_id, input_folder="", schema_version="1.0")
+            raise RuntimeError(f"Failed to load workspace state from {path}: {e}") from e
+
+        if detected_version != "1.0":
+            cls._log_migration_event(
+                workspace_dir,
+                "migration_started",
+                {
+                    "schema_version_from": detected_version,
+                    "schema_version_to": "1.0",
+                },
+            )
+            state = cls.from_dict(data, workspace_dir=workspace_dir)
+            cls._log_migration_event(
+                workspace_dir,
+                "migration_completed",
+                {
+                    "schema_version_from": detected_version,
+                    "schema_version_to": "1.0",
+                },
+            )
+            return state
+
+        cls._log_migration_event(
+            workspace_dir,
+            "migration_skipped",
+            {
+                "schema_version": detected_version,
+                "reason": "Already at 1.0",
+            },
+        )
+        return cls.from_dict(data, workspace_dir=workspace_dir)

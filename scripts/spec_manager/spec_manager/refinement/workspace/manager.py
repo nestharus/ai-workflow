@@ -118,8 +118,8 @@ class WorkspaceManager:
         """Initialize the workspace.
 
         Creates an immutable spec snapshot in `spec_snapshot/`. Setting
-        `force=True` deletes and recreates the entire run directory,
-        including the snapshot. Subsequent phases must not modify the
+        `force=True` archives and recreates the entire run directory.
+        Subsequent phases must not modify the
         snapshot.
         """
         issues: list[str] = []
@@ -128,7 +128,9 @@ class WorkspaceManager:
             return [f"Input folder does not exist: {self.input_folder}"]
 
         if self.structure.root.exists() and force:
-            shutil.rmtree(self.structure.root)
+            self._archive_existing_run("force_initialize")
+            self.state = WorkspaceState(run_id=self.run_id, input_folder=str(self.input_folder))
+            self._branch_manager = None
 
         self.structure.root.mkdir(parents=True, exist_ok=True)
         for subdir in [
@@ -214,19 +216,18 @@ class WorkspaceManager:
         return issues
 
     def cleanup(self, keep_audits: bool = True) -> None:
-        """Clean up the workspace, keeping manifest and state."""
+        """Archive workspace artifacts and reset the run state."""
         if not self.structure.root.exists():
             return
 
+        cleanup_archive_dir = self._create_cleanup_archive_dir()
         for item in self.structure.root.iterdir():
-            if item.name in {"manifest", "state.json"}:
+            if item.name in {"manifest", "state.json", "archive"}:
                 continue
             if keep_audits and item.name == "audits":
                 continue
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
+            destination = cleanup_archive_dir / item.name
+            shutil.move(str(item), str(destination))
 
         self.state = WorkspaceState(run_id=self.run_id, input_folder=str(self.input_folder))
         if self.structure.files_json.exists():
@@ -236,6 +237,24 @@ class WorkspaceManager:
         section_manifest, _ = self._load_section_manifest(self.state.file_manifest)
         self.state.section_manifest = section_manifest
         self._save_state()
+
+    def _archive_existing_run(self, reason: str) -> Path:
+        """Move the current run directory to durable archive storage."""
+        archive_root = self.structure.root.parent / "_archive" / self.run_id
+        archive_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        archive_target = archive_root / f"{timestamp}_{reason}"
+        shutil.move(str(self.structure.root), str(archive_target))
+        return archive_target
+
+    def _create_cleanup_archive_dir(self) -> Path:
+        """Create a per-cleanup archive directory inside the run root."""
+        archive_root = self.structure.root / "archive" / "cleanup"
+        archive_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        archive_dir = archive_root / timestamp
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        return archive_dir
 
     def finalize(self) -> Path:
         """Finalize the workspace after successful processing."""
@@ -612,6 +631,9 @@ class WorkspaceManager:
         section_files = sorted(self.structure.manifest_sections_dir.glob("*.sections.json"))
         if not section_files:
             return False
+        parsed_sections: dict[str, list[str]] = {}
+        has_malformed = False
+        loaded_any = False
         for section_file in section_files:
             file_id = section_file.stem.replace(".sections", "")
             if file_id not in section_manifest:
@@ -621,19 +643,53 @@ class WorkspaceManager:
             except (json.JSONDecodeError, OSError) as exc:
                 if issues is not None:
                     issues.append(f"Failed to read sections manifest {section_file}: {exc}")
+                has_malformed = True
                 continue
             if not isinstance(sections_data, dict) or "sections" not in sections_data:
                 if issues is not None:
                     issues.append(f"Invalid sections manifest format in {section_file}")
+                has_malformed = True
                 continue
-            try:
-                section_manifest[file_id] = [
-                    section["section_id"] for section in sections_data["sections"]
-                ]
-            except (KeyError, TypeError) as exc:
+            raw_sections = sections_data.get("sections")
+            if not isinstance(raw_sections, list):
                 if issues is not None:
-                    issues.append(f"Invalid section entries in {section_file}: {exc}")
+                    issues.append(
+                        f"Invalid section entries in {section_file}: sections must be a list"
+                    )
+                has_malformed = True
                 continue
+            file_sections: list[str] = []
+            invalid_entry = False
+            for section in raw_sections:
+                if not isinstance(section, dict):
+                    invalid_entry = True
+                    break
+                section_id = section.get("section_id")
+                if not isinstance(section_id, str) or not section_id:
+                    invalid_entry = True
+                    break
+                file_sections.append(section_id)
+            if invalid_entry:
+                if issues is not None:
+                    issues.append(
+                        f"Invalid section entries in {section_file}: missing section_id values"
+                    )
+                has_malformed = True
+                continue
+            parsed_sections[file_id] = file_sections
+            loaded_any = True
+
+        if has_malformed:
+            if issues is not None:
+                issues.append(
+                    "Per-file sections manifests were partially invalid; "
+                    "ignored all per-file manifests."
+                )
+            return False
+        if not loaded_any:
+            return False
+
+        section_manifest.update(parsed_sections)
         return True
 
     def _load_legacy_section_manifest(
@@ -671,53 +727,8 @@ class WorkspaceManager:
         *,
         issues: list[str] | None = None,
     ) -> dict[str, list[str]]:
-        fallback_manifest: dict[str, list[str]] = {}
-        for file_id, file_data in file_manifest.items():
-            relpath: str | None
-            if isinstance(file_data, dict):
-                relpath = file_data.get("relpath")
-            elif isinstance(file_data, str):
-                relpath = file_data
-            else:
-                relpath = None
-            if not relpath:
-                continue
-            file_path = self.structure.spec_snapshot_dir / relpath
-            if not file_path.exists():
-                continue
-            try:
-                content = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                if issues is not None:
-                    issues.append(
-                        f"Failed to read snapshot file {relpath} for section fallback: {exc}"
-                    )
-                continue
-            labels = self._extract_section_labels(content)
-            if labels:
-                fallback_manifest[file_id] = labels
-        return fallback_manifest
-
-    @staticmethod
-    def _extract_section_labels(content: str) -> list[str]:
-        import re
-
-        labels: list[str] = []
-        for line in content.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            label: str | None = None
-            match = re.search(r"\[([A-Z_]+)\]", stripped)
-            if match:
-                label = match.group(1).strip()
-            elif stripped.startswith("## "):
-                heading = stripped[3:].strip()
-                if heading:
-                    label = heading.upper().replace(" ", "_")
-            if label:
-                labels.append(label)
-        return labels
+        _ = file_manifest, issues
+        return {}
 
     # --- Agent Interface ---
 
@@ -733,14 +744,29 @@ class WorkspaceManager:
 
     def read_agent_output(self, phase: Phase) -> dict[str, Any] | None:
         """Read output data from an agent."""
-        from typing import cast
-
         import yaml
 
         output_file = self.structure.root / phase.value / "agent_output.yaml"
         if not output_file.exists():
             return None
-        return cast("dict[str, Any]", yaml.safe_load(output_file.read_text(encoding="utf-8")))
+        try:
+            parsed = yaml.safe_load(output_file.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(
+                f"Invalid YAML in agent output for phase '{phase.value}': {exc}"
+            ) from exc
+        if parsed is None:
+            raise ValueError(f"Agent output for phase '{phase.value}' is empty.")
+        if not isinstance(parsed, dict):
+            raise TypeError(
+                f"Invalid agent output for phase '{phase.value}': "
+                f"expected mapping, got {type(parsed).__name__}"
+            )
+        if not all(isinstance(key, str) for key in parsed):
+            raise TypeError(
+                f"Invalid agent output for phase '{phase.value}': all keys must be strings."
+            )
+        return cast("dict[str, Any]", parsed)
 
     def write_agent_output(self, phase: Phase, data: dict[str, Any]) -> Path:
         """Write output data from an agent."""
