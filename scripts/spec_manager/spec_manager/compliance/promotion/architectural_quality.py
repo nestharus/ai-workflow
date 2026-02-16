@@ -359,6 +359,7 @@ def check_function_recomposition(
         pin_names_by_id[pf.pin_func_id] = pf.function_name
 
     findings: list[dict[str, Any]] = []
+    unreadable_file_count = 0
 
     # Group pin-consumption edges by architecture file.
     imports_by_file: dict[str, set[str]] = {}
@@ -394,7 +395,15 @@ def check_function_recomposition(
         else:
             try:
                 source = arch_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as exc:
+                unreadable_file_count += 1
+                findings.append(
+                    {
+                        "arch_file": file_str,
+                        "issue_type": "file_unreadable",
+                        "reason": f"read_error:{type(exc).__name__}",
+                    }
+                )
                 continue
             analysis = analyze_source(source, file_str)
         lines = source.splitlines()
@@ -461,21 +470,33 @@ def check_function_recomposition(
                 }
             )
 
-    passed = len(findings) == 0
     duration = (time.monotonic() - start_time) * 1000
+    if unreadable_file_count > 0:
+        status = GateStatus.STALE_EVIDENCE
+        score = 0.0
+        passed = False
+        summary = (
+            "Function recomposition evidence is incomplete: "
+            f"{unreadable_file_count} architectural file(s) were unreadable"
+        )
+    else:
+        passed = len(findings) == 0
+        status = GateStatus.PASSED if passed else GateStatus.FAILED
+        score = 1.0 if passed else max(0.0, 1.0 - len(findings) * 0.1)
+        summary = (
+            "Architectural functions correctly recompose atoms"
+            if passed
+            else f"Found {len(findings)} recomposition issue(s)"
+        )
 
     return GateCheckResult(
         gate_id=GateId.FUNCTION_RECOMPOSITION.value,
         passed=passed,
         mode=gate_spec.mode.value,
-        status=GateStatus.PASSED if passed else GateStatus.FAILED,
-        score=1.0 if passed else max(0.0, 1.0 - len(findings) * 0.1),
+        status=status,
+        score=score,
         findings=findings,
-        summary=(
-            "Architectural functions correctly recompose atoms"
-            if passed
-            else f"Found {len(findings)} recomposition issue(s)"
-        ),
+        summary=summary,
         duration_ms=duration,
     )
 
@@ -690,8 +711,9 @@ def check_config_externalization(
         for af in analyzed_arch:
             analyzed_lookup[af.path] = af
 
-    findings: list[dict[str, Any]] = []
-    uncertain_files: list[str] = []
+    hardcoded_findings: list[dict[str, Any]] = []
+    ambiguous_findings: list[dict[str, Any]] = []
+    stale_findings: list[dict[str, Any]] = []
     for file_path in architectural_files:
         af = analyzed_lookup.get(str(file_path))
         if af is not None:
@@ -699,7 +721,13 @@ def check_config_externalization(
         else:
             try:
                 source = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as exc:
+                stale_findings.append(
+                    {
+                        "file_path": str(file_path),
+                        "reason": f"file_unreadable:{type(exc).__name__}",
+                    }
+                )
                 continue
         payload = _llm_detect_hardcoded_config(
             workspace=workspace,
@@ -708,45 +736,82 @@ def check_config_externalization(
             source=source,
         )
         if payload is None:
-            uncertain_files.append(str(file_path))
+            ambiguous_findings.append(
+                {
+                    "file_path": str(file_path),
+                    "reason": "semantic_evaluator_failed",
+                }
+            )
             continue
 
         rows = payload.get("findings", [])
         if not isinstance(rows, list):
-            uncertain_files.append(str(file_path))
-            continue
-
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            findings.append(
+            ambiguous_findings.append(
                 {
                     "file_path": str(file_path),
-                    "line": int(row.get("line", 0) or 0),
+                    "reason": "semantic_evaluator_invalid_payload",
+                }
+            )
+            continue
+
+        for row_idx, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                ambiguous_findings.append(
+                    {
+                        "file_path": str(file_path),
+                        "reason": "semantic_evaluator_invalid_row",
+                        "row_index": row_idx,
+                    }
+                )
+                continue
+
+            raw_line = row.get("line", 0)
+            try:
+                line = int(raw_line or 0)
+            except (TypeError, ValueError):
+                ambiguous_findings.append(
+                    {
+                        "file_path": str(file_path),
+                        "reason": "semantic_evaluator_invalid_line",
+                        "row_index": row_idx,
+                        "raw_line": repr(raw_line),
+                    }
+                )
+                continue
+
+            hardcoded_findings.append(
+                {
+                    "file_path": str(file_path),
+                    "line": line,
                     "snippet": str(row.get("snippet", "")).strip()[:200],
                     "reason": str(row.get("reason", "")).strip(),
                 }
             )
 
-    passed = not findings and not uncertain_files
     duration = (time.monotonic() - start) * 1000
-    if findings:
+    findings: list[dict[str, Any]]
+    if hardcoded_findings:
+        findings = hardcoded_findings + stale_findings + ambiguous_findings
         status = GateStatus.FAILED
         score = 0.0
-        summary = f"Found {len(findings)} potential hardcoded config assignment(s)"
-    elif uncertain_files:
+        summary = f"Found {len(hardcoded_findings)} potential hardcoded config assignment(s)"
+    elif stale_findings:
+        findings = stale_findings + ambiguous_findings
+        status = GateStatus.STALE_EVIDENCE
+        score = 0.0
+        summary = "Config externalization evidence is incomplete (unreadable architectural files)"
+    elif ambiguous_findings:
+        findings = ambiguous_findings
         status = GateStatus.AMBIGUOUS
         score = 0.5
         summary = "Semantic config externalization check was inconclusive for some files"
-        findings = findings + [
-            {"file_path": file_path, "reason": "semantic_evaluator_failed"}
-            for file_path in uncertain_files
-        ]
     else:
+        findings = []
         status = GateStatus.PASSED
         score = 1.0
         summary = "No semantic hardcoded runtime config values detected"
 
+    passed = status == GateStatus.PASSED
     return GateCheckResult(
         gate_id=GateId.CONFIG_EXTERNALIZATION.value,
         passed=passed,

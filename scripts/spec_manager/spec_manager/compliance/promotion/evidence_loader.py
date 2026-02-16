@@ -25,10 +25,31 @@ class AnalyzedFile:
     content: str
 
 
+@dataclass(frozen=True)
+class EvidenceLoadFailure:
+    """One unreadable file encountered during evidence loading."""
+
+    path: str
+    reason: str
+
+
+class AnalyzedFileLoadResult(list[AnalyzedFile]):
+    """Loaded analyzed files plus explicit read/decode failures."""
+
+    def __init__(
+        self,
+        files: list[AnalyzedFile] | None = None,
+        *,
+        load_failures: list[EvidenceLoadFailure] | None = None,
+    ) -> None:
+        super().__init__(files or [])
+        self.load_failures = load_failures or []
+
+
 def load_analyzed_files(
     file_paths: list[Path],
     source_cache: SourceAnalysisCache | None = None,
-) -> list[AnalyzedFile]:
+) -> AnalyzedFileLoadResult:
     """Load files and their pre-computed analyses.
 
     When *source_cache* is provided, uses cached analyses.
@@ -39,14 +60,21 @@ def load_analyzed_files(
         source_cache: Optional persistent cache for analysis results.
 
     Returns:
-        List of ``AnalyzedFile`` instances (files that can't be read are
-        silently skipped).
+        ``AnalyzedFileLoadResult`` containing successfully loaded files and
+        explicit unreadable-file failures.
     """
     results: list[AnalyzedFile] = []
+    load_failures: list[EvidenceLoadFailure] = []
     for fp in file_paths:
         try:
             content = fp.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            load_failures.append(
+                EvidenceLoadFailure(
+                    path=str(fp),
+                    reason=f"read_error:{type(exc).__name__}",
+                )
+            )
             continue
 
         if source_cache is not None:
@@ -55,4 +83,4 @@ def load_analyzed_files(
             analysis = analyze_source(content, str(fp))
 
         results.append(AnalyzedFile(path=str(fp), analysis=analysis, content=content))
-    return results
+    return AnalyzedFileLoadResult(files=results, load_failures=load_failures)

@@ -41,6 +41,7 @@ class PinCoverageReport:
     coverage_ratio: float
     items: list[PinCoverageItem] = field(default_factory=list)
     missing_changed_files: list[str] = field(default_factory=list)
+    evidence_issues: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_pin_coverage_report(
@@ -61,7 +62,7 @@ def build_pin_coverage_report(
     known_files.update(_normalize_path(path) for path in architectural_files)
     known_files.update(_normalize_path(pin.file_path) for pin in registry.pin_functions)
 
-    spans_by_file, missing_changed_files = _resolve_changed_spans(
+    spans_by_file, missing_changed_files, evidence_issues = _resolve_changed_spans(
         changed_files=changed_files,
         changed_line_spans=changed_line_spans,
         analyzed_lookup=analyzed_lookup,
@@ -113,7 +114,7 @@ def build_pin_coverage_report(
             )
 
     total = len(items)
-    pinned = sum(1 for item in items if item.has_pin)
+    pinned = sum(1 for item in items if item.has_pin and not item.is_introduction)
     introductions = sum(1 for item in items if item.is_introduction)
     unpinned = sum(1 for item in items if not item.has_pin and not item.is_introduction)
 
@@ -128,6 +129,7 @@ def build_pin_coverage_report(
         coverage_ratio=coverage_ratio,
         items=items,
         missing_changed_files=sorted(set(missing_changed_files)),
+        evidence_issues=evidence_issues,
     )
 
 
@@ -153,23 +155,16 @@ def check_pin_coverage(
     )
 
     duration = (time.monotonic() - start) * 1000
-    if report.missing_changed_files:
-        findings = [
-            {
-                "reason": "missing_changed_file",
-                "file_path": file_path,
-            }
-            for file_path in report.missing_changed_files
-        ]
+    if report.evidence_issues:
         return GateCheckResult(
             gate_id=GateId.PIN_COVERAGE.value,
             mode=gate_spec.mode.value,
             status=GateStatus.STALE_EVIDENCE,
             score=0.0,
-            findings=findings,
+            findings=report.evidence_issues,
             summary=(
-                "Diff-span evidence missing for one or more changed files; "
-                "pin coverage requires changed span inputs."
+                "Changed-span evidence is incomplete or malformed; "
+                "pin coverage requires valid changed span inputs."
             ),
             duration_ms=duration,
         )
@@ -223,48 +218,115 @@ def _resolve_changed_spans(
     changed_line_spans: dict[str, list[tuple[int, int]]] | None,
     analyzed_lookup: dict[str, AnalyzedFile],
     known_files: set[str],
-) -> tuple[dict[str, list[tuple[int, int]]], list[str]]:
+) -> tuple[dict[str, list[tuple[int, int]]], list[str], list[dict[str, Any]]]:
     spans_by_file: dict[str, list[tuple[int, int]]] = {}
     missing: list[str] = []
+    evidence_issues: list[dict[str, Any]] = []
 
     if changed_line_spans:
         for raw_file, raw_spans in changed_line_spans.items():
-            resolved = _resolve_known_file(raw_file, known_files)
+            file_path = str(raw_file)
+            resolved, resolution_issue = _resolve_known_file(file_path, known_files)
+            if resolution_issue is not None:
+                evidence_issues.append(resolution_issue)
+                if resolution_issue.get("reason") == "missing_changed_file":
+                    missing.append(file_path)
+                continue
             if resolved is None:
-                missing.append(str(raw_file))
+                missing.append(file_path)
+                continue
+            if not isinstance(raw_spans, list):
+                evidence_issues.append(
+                    {
+                        "reason": "invalid_changed_spans_payload",
+                        "file_path": file_path,
+                        "spans": repr(raw_spans),
+                    }
+                )
                 continue
             valid_spans: list[tuple[int, int]] = []
-            for span in raw_spans:
+            for span_idx, span in enumerate(raw_spans, start=1):
                 if not isinstance(span, (tuple, list)) or len(span) != 2:
+                    evidence_issues.append(
+                        {
+                            "reason": "invalid_changed_span_shape",
+                            "file_path": file_path,
+                            "span_index": span_idx,
+                            "span": repr(span),
+                        }
+                    )
                     continue
                 try:
                     start = int(span[0])
                     end = int(span[1])
                 except (TypeError, ValueError):
+                    evidence_issues.append(
+                        {
+                            "reason": "invalid_changed_span_value",
+                            "file_path": file_path,
+                            "span_index": span_idx,
+                            "span": repr(span),
+                        }
+                    )
                     continue
                 if start <= 0:
+                    evidence_issues.append(
+                        {
+                            "reason": "invalid_changed_span_start",
+                            "file_path": file_path,
+                            "span_index": span_idx,
+                            "span": repr(span),
+                        }
+                    )
                     continue
                 if end < start:
+                    evidence_issues.append(
+                        {
+                            "reason": "changed_span_end_before_start",
+                            "file_path": file_path,
+                            "span_index": span_idx,
+                            "span": repr(span),
+                        }
+                    )
                     end = start
                 valid_spans.append((start, end))
             if valid_spans:
                 spans_by_file[resolved] = valid_spans
-        return spans_by_file, missing
+            else:
+                evidence_issues.append(
+                    {
+                        "reason": "no_valid_changed_spans",
+                        "file_path": file_path,
+                    }
+                )
+        return spans_by_file, missing, evidence_issues
 
     for raw_file in changed_files or []:
-        resolved = _resolve_known_file(raw_file, known_files)
+        file_path = str(raw_file)
+        resolved, resolution_issue = _resolve_known_file(file_path, known_files)
+        if resolution_issue is not None:
+            evidence_issues.append(resolution_issue)
+            if resolution_issue.get("reason") == "missing_changed_file":
+                missing.append(file_path)
+            continue
         if resolved is None:
-            missing.append(str(raw_file))
+            missing.append(file_path)
             continue
 
         line_count = _line_count_for_file(resolved, analyzed_lookup)
         if line_count <= 0:
-            missing.append(str(raw_file))
+            evidence_issues.append(
+                {
+                    "reason": "unreadable_changed_file",
+                    "file_path": file_path,
+                }
+            )
+            missing.append(file_path)
             continue
 
         spans_by_file[resolved] = [(1, line_count)]
 
-    return spans_by_file, missing
+    return spans_by_file, missing, evidence_issues
 
 
 def _line_count_for_file(file_path: str, analyzed_lookup: dict[str, AnalyzedFile]) -> int:
@@ -281,16 +343,29 @@ def _line_count_for_file(file_path: str, analyzed_lookup: dict[str, AnalyzedFile
         return 0
 
 
-def _resolve_known_file(raw_file: str, known_files: set[str]) -> str | None:
+def _resolve_known_file(
+    raw_file: str,
+    known_files: set[str],
+) -> tuple[str | None, dict[str, Any] | None]:
     candidate = _normalize_path(raw_file)
     if candidate in known_files:
-        return candidate
+        return candidate, None
 
-    for known in known_files:
-        if known.endswith(candidate) or candidate.endswith(known):
-            return known
+    suffix_matches = sorted(
+        known for known in known_files if known.endswith(candidate) or candidate.endswith(known)
+    )
+    if len(suffix_matches) == 1:
+        return suffix_matches[0], None
+    if len(suffix_matches) > 1:
+        return None, {
+            "reason": "ambiguous_changed_file",
+            "file_path": str(raw_file),
+            "matches": suffix_matches,
+        }
 
-    return candidate if Path(candidate).exists() else None
+    if Path(candidate).exists():
+        return candidate, None
+    return None, {"reason": "missing_changed_file", "file_path": str(raw_file)}
 
 
 def _ranges_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:

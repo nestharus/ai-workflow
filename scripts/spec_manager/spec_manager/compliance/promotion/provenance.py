@@ -18,6 +18,18 @@ from spec_manager.compliance.promotion.result import GateCheckResult
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 
+def _default_source_location(file_path: str, line_start: int, line_end: int) -> str:
+    """Build a deterministic source location from function file/line span."""
+    normalized_path = str(file_path).strip()
+    if not normalized_path:
+        return ""
+    if line_start > 0 and line_end >= line_start:
+        return f"{normalized_path}:{line_start}-{line_end}"
+    if line_start > 0:
+        return f"{normalized_path}:{line_start}"
+    return normalized_path
+
+
 @dataclass
 class AtomProvenance:
     """Provenance record for a single atom function.
@@ -173,7 +185,11 @@ def update_provenance_from_registry(
                     file_path=pin_func.file_path,
                     introduced_by=modifier,
                     modified_by=[],
-                    source_location="",
+                    source_location=_default_source_location(
+                        pin_func.file_path,
+                        pin_func.line_start,
+                        pin_func.line_end,
+                    ),
                     content_hash=pin_func.content_hash,
                     created_at=now,
                     last_modified_at=now,
@@ -186,6 +202,12 @@ def update_provenance_from_registry(
             existing.last_modified_at = now
             existing.file_path = pin_func.file_path
             existing.function_name = pin_func.function_name
+            if not existing.source_location:
+                existing.source_location = _default_source_location(
+                    pin_func.file_path,
+                    pin_func.line_start,
+                    pin_func.line_end,
+                )
         # If unchanged, keep existing record as-is
 
     return updated
@@ -203,7 +225,7 @@ def check_provenance_complete(
     source_location.
 
     gate_spec.params:
-        - require_source_location (bool, default False): Whether
+        - require_source_location (bool, default True): Whether
             source_location must be non-empty.
 
     Args:
@@ -215,7 +237,7 @@ def check_provenance_complete(
         GateCheckResult with findings for functions missing provenance.
     """
     start = time.monotonic()
-    require_source = gate_spec.params.get("require_source_location", False)
+    require_source = bool(gate_spec.params.get("require_source_location", True))
 
     findings: list[dict[str, Any]] = []
 

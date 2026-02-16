@@ -59,9 +59,6 @@ class CallGraphBuildResult:
     provenance: list[dict[str, Any]] = field(default_factory=list)
 
 
-_DEFAULT_REGISTRY = StrategyRegistry()
-
-
 def _function_spans(analysis: SourceAnalysis) -> list[dict[str, Any]]:
     """Build span payload for adjacency inference from known functions."""
     spans: list[dict[str, Any]] = []
@@ -121,7 +118,7 @@ def build_call_graph(
     Edges are inferred from LLM-produced adjacency evidence rather than
     language-specific AST parsing.
     """
-    registry = registry or _DEFAULT_REGISTRY
+    registry = registry or StrategyRegistry()
     analyzed_by_path: dict[str, AnalyzedFile] = {}
     if analyzed is not None:
         analyzed_by_path = {Path(item.path).resolve().as_posix(): item for item in analyzed}

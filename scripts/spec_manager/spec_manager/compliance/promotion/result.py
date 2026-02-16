@@ -55,7 +55,7 @@ class GateCheckResult:
             try:
                 status = GateStatus(self.status)
             except ValueError:
-                status = GateStatus.PASSED
+                status = GateStatus.AMBIGUOUS
         elif self.passed is False:
             status = GateStatus.FAILED
         else:
@@ -106,9 +106,8 @@ class GateCheckResult:
     @staticmethod
     def _status_counts_as_pass(status: GateStatus, mode: str) -> bool:
         """Map rich status to compatibility boolean for report plumbing."""
-        return status == GateStatus.PASSED or (
-            status == GateStatus.AMBIGUOUS and mode == "advisory"
-        )
+        del mode
+        return status == GateStatus.PASSED
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""

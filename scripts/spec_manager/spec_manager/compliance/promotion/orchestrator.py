@@ -84,10 +84,12 @@ class LayerPromotionGate:
         self._algorithmic_analyzed = algorithmic_analyzed
         self._architectural_analyzed = architectural_analyzed
         self._component_manifest_path_override = component_manifest_path
+        self._snapshot_load_failures: list[dict[str, Any]] = []
 
     def run_all_checks(self) -> PromotionReport:
         """Run all enabled gate checks and produce a promotion report."""
         start = time.monotonic()
+        self._snapshot_load_failures = []
         algorithmic_files = self._resolve_algorithmic_files()
         architectural_files = self._resolve_architectural_files()
 
@@ -99,15 +101,18 @@ class LayerPromotionGate:
             gate_spec = self._config.get_gate(gate_id)
             if not gate_spec.enabled:
                 continue
-            result, pin_coverage_report = self._execute_gate(
-                gate_id=gate_id,
-                gate_spec=gate_spec,
-                algorithmic_files=algorithmic_files,
-                architectural_files=architectural_files,
-                component_manifest_path=component_manifest_path,
-                component_manifest=component_manifest,
-                pin_coverage_report=pin_coverage_report,
-            )
+            try:
+                result, pin_coverage_report = self._execute_gate(
+                    gate_id=gate_id,
+                    gate_spec=gate_spec,
+                    algorithmic_files=algorithmic_files,
+                    architectural_files=architectural_files,
+                    component_manifest_path=component_manifest_path,
+                    component_manifest=component_manifest,
+                    pin_coverage_report=pin_coverage_report,
+                )
+            except Exception as exc:
+                result = self._gate_execution_exception(gate_id, gate_spec, exc)
             results.append(result)
 
         total_duration = (time.monotonic() - start) * 1000
@@ -116,6 +121,7 @@ class LayerPromotionGate:
     def run_single_check(self, gate_id: GateId) -> GateCheckResult:
         """Run a single gate check by ID."""
         gate_spec = self._config.get_gate(gate_id)
+        self._snapshot_load_failures = []
         algorithmic_files = self._resolve_algorithmic_files()
         architectural_files = self._resolve_architectural_files()
         component_manifest_path, component_manifest = self._load_component_manifest()
@@ -148,6 +154,25 @@ class LayerPromotionGate:
             for path in (self._bundle.diff.changed_files or [])
             if isinstance(path, str) and str(path).strip()
         ]
+
+        graph_snapshot_failures = self._snapshot_failures_for("graph_snapshot")
+        pins_snapshot_failures = self._snapshot_failures_for("pins_snapshot")
+        if graph_snapshot_failures and gate_id in {
+            GateId.PIN_COVERAGE,
+            GateId.INTRODUCED_ALGORITHM_SPECS,
+            GateId.NO_INLINED_ATOM_LOGIC,
+            GateId.FUNCTION_RECOMPOSITION,
+            GateId.CONFIG_EXTERNALIZATION,
+        }:
+            return (
+                self._snapshot_failure_gate(gate_id, gate_spec, graph_snapshot_failures),
+                pin_coverage_report,
+            )
+        if pins_snapshot_failures and gate_id == GateId.NO_INLINED_ATOM_LOGIC:
+            return (
+                self._snapshot_failure_gate(gate_id, gate_spec, pins_snapshot_failures),
+                pin_coverage_report,
+            )
 
         if gate_id == GateId.NO_REMAINING_COMMENTS:
             return (
@@ -420,7 +445,7 @@ class LayerPromotionGate:
 
     def _collect_files_from_pins_snapshot(self) -> list[Path]:
         """Collect algorithmic file paths from a pins snapshot payload."""
-        payload = self._load_snapshot_payload(self._bundle.pins_snapshot.path)
+        payload = self._load_snapshot_payload(self._bundle.pins_snapshot.path, "pins_snapshot")
         pins = payload.get("pins")
         if not isinstance(pins, list):
             return []
@@ -437,7 +462,7 @@ class LayerPromotionGate:
 
     def _collect_files_from_graph_snapshot(self) -> list[Path]:
         """Collect architectural file paths from a graph snapshot payload."""
-        payload = self._load_snapshot_payload(self._bundle.graph_snapshot.path)
+        payload = self._load_snapshot_payload(self._bundle.graph_snapshot.path, "graph_snapshot")
         edges = payload.get("edges")
         if not isinstance(edges, list):
             return []
@@ -472,15 +497,55 @@ class LayerPromotionGate:
                 files.append(self._as_project_path(file_path))
         return files
 
-    def _load_snapshot_payload(self, relative_path: str) -> dict[str, Any]:
+    def _load_snapshot_payload(self, relative_path: str, artifact: str) -> dict[str, Any]:
         if not isinstance(relative_path, str) or not relative_path.strip():
+            self._record_snapshot_failure(
+                artifact=artifact,
+                relative_path=str(relative_path),
+                reason="missing_snapshot_path",
+            )
             return {}
         snapshot_path = self._evidence_iteration_dir() / relative_path
         try:
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError as exc:
+            self._record_snapshot_failure(
+                artifact=artifact,
+                relative_path=relative_path,
+                reason=f"snapshot_read_error:{type(exc).__name__}",
+            )
             return {}
-        return payload if isinstance(payload, dict) else {}
+        except json.JSONDecodeError:
+            self._record_snapshot_failure(
+                artifact=artifact,
+                relative_path=relative_path,
+                reason="snapshot_decode_error:JSONDecodeError",
+            )
+            return {}
+        if not isinstance(payload, dict):
+            self._record_snapshot_failure(
+                artifact=artifact,
+                relative_path=relative_path,
+                reason=f"snapshot_invalid_payload_type:{type(payload).__name__}",
+            )
+            return {}
+        return payload
+
+    def _record_snapshot_failure(self, *, artifact: str, relative_path: str, reason: str) -> None:
+        record = {
+            "artifact": artifact,
+            "path": relative_path,
+            "reason": reason,
+        }
+        if record not in self._snapshot_load_failures:
+            self._snapshot_load_failures.append(record)
+
+    def _snapshot_failures_for(self, artifact: str) -> list[dict[str, Any]]:
+        return [
+            failure
+            for failure in self._snapshot_load_failures
+            if str(failure.get("artifact", "")).strip() == artifact
+        ]
 
     def _evidence_iteration_dir(self) -> Path:
         evidence_root = Path(
@@ -519,20 +584,16 @@ class LayerPromotionGate:
         return ProvenanceRegistry()
 
     def _load_component_manifest(self) -> tuple[Path | None, dict[str, Any] | None]:
-        """Load component manifest from explicit path or run reports."""
+        """Load component manifest from explicit path, current iteration, or project root."""
         path = self._component_manifest_path_override
         if path is None:
-            direct = self._project_root / "component_manifest.json"
-            if direct.exists():
-                path = direct
+            iteration_manifest = self._evidence_iteration_dir() / "component_manifest.json"
+            if iteration_manifest.exists():
+                path = iteration_manifest
             else:
-                report_candidates = sorted(
-                    (self._project_root / "reports" / "pdd").glob("*/component_manifest.json"),
-                    key=lambda item: item.stat().st_mtime,
-                    reverse=True,
-                )
-                if report_candidates:
-                    path = report_candidates[0]
+                direct = self._project_root / "component_manifest.json"
+                if direct.exists():
+                    path = direct
 
         if path is None or not path.exists():
             return None, None
@@ -554,7 +615,7 @@ class LayerPromotionGate:
     ) -> GateCheckResult:
         return GateCheckResult(
             gate_id=gate_id.value,
-            mode=GateMode.ADVISORY.value,
+            mode=gate_spec.mode.value,
             status=GateStatus.STALE_EVIDENCE,
             score=0.0,
             findings=[{"reason": reason, "configured_mode": gate_spec.mode.value}],
@@ -566,11 +627,54 @@ class LayerPromotionGate:
     def _not_implemented_gate(gate_id: GateId, gate_spec: GateSpec) -> GateCheckResult:
         return GateCheckResult(
             gate_id=gate_id.value,
-            mode=GateMode.ADVISORY.value,
+            mode=gate_spec.mode.value,
             status=GateStatus.AMBIGUOUS,
             score=0.0,
             findings=[{"reason": "gate_not_implemented", "configured_mode": gate_spec.mode.value}],
             summary=f"Gate '{gate_id.value}' is not implemented",
+            duration_ms=0.0,
+        )
+
+    @staticmethod
+    def _gate_execution_exception(
+        gate_id: GateId,
+        gate_spec: GateSpec,
+        exc: Exception,
+    ) -> GateCheckResult:
+        return GateCheckResult(
+            gate_id=gate_id.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.AMBIGUOUS,
+            score=0.0,
+            findings=[
+                {
+                    "reason": "gate_execution_exception",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            ],
+            summary=(
+                f"Gate '{gate_id.value}' raised {type(exc).__name__}; "
+                "continuing with remaining gates"
+            ),
+            duration_ms=0.0,
+        )
+
+    @staticmethod
+    def _snapshot_failure_gate(
+        gate_id: GateId,
+        gate_spec: GateSpec,
+        snapshot_failures: list[dict[str, Any]],
+    ) -> GateCheckResult:
+        findings = [dict(item) for item in snapshot_failures]
+        findings.append({"configured_mode": gate_spec.mode.value})
+        return GateCheckResult(
+            gate_id=gate_id.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=findings,
+            summary="Gate blocked by snapshot evidence load failure",
             duration_ms=0.0,
         )
 
