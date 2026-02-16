@@ -16,11 +16,11 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
     ConstraintFact,
     ConstraintIndexEntry,
 )
+from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +309,7 @@ def bootstrap_constraints_from_intake(
     parsing remains as fallback when the index is unavailable.
 
     Args:
-        workspace_root: Workspace root (for :class:`ConstraintStoreAdapter`).
+        workspace_root: Workspace root (for :class:`ConstraintsTool`).
         libraries_dir: Directory containing per-library sub-directories,
             each potentially holding ``constraints_index.json`` and/or
             ``constraints.md``.
@@ -318,7 +318,7 @@ def bootstrap_constraints_from_intake(
     Returns:
         Mapping of slice_id -> number of constraints bootstrapped.
     """
-    adapter = ConstraintStoreAdapter(workspace_root)
+    adapter = ConstraintsTool(workspace_root=workspace_root)
     result: dict[str, int] = {}
 
     # System-level constraints

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
-from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
     ConflictReport,
     ConstraintContext,
@@ -22,7 +21,6 @@ __all__ = [
     "ConstraintFact",
     "ConstraintHypothesis",
     "ConstraintIndexEntry",
-    "ConstraintStoreAdapter",
     "ConstraintsStore",
     "DecisionRequirement",
     "ImpactClassification",

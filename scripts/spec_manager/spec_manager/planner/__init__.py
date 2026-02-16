@@ -22,7 +22,6 @@ from spec_manager.planner.api import (
     PlanningRequest,
     PlanningResult,
 )
-from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
     ConstraintFact,
     DecisionRequirement,
@@ -31,10 +30,11 @@ from spec_manager.planner.constraints.types import (
 from spec_manager.planner.layers.l1 import L1Planner
 from spec_manager.planner.layers.l2 import L2Planner
 from spec_manager.planner.layers.l3 import L3Planner
+from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 
 __all__ = [
     "ConstraintFact",
-    "ConstraintStoreAdapter",
+    "ConstraintsTool",
     "DecisionRequirement",
     "GeneralPlanner",
     "ImpactClassification",

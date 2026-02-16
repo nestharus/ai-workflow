@@ -28,6 +28,8 @@ from spec_manager.planner.router import (
     ModelRouter,
     ReviewPack,
 )
+from spec_manager.planner.tools.constraints_tool import ConstraintsTool
+from spec_manager.planner.trace import ReplayBundle
 
 logger = logging.getLogger(__name__)
 PLANNER_VERSION = "1"
@@ -107,42 +109,6 @@ class PromotionLoopAdapters:
     )
 
 
-@dataclass
-class ReplayBundle:
-    """Replay payload for deterministic QA/eval re-execution."""
-
-    trace_id: str
-    decision_key: str
-    request: dict[str, Any]
-    next_actions: list[dict[str, Any]]
-    model_route: dict[str, Any]
-    planner_state: dict[str, Any]
-    final_result: dict[str, Any]
-    model_calls: list[dict[str, Any]]
-    tool_calls: list[dict[str, Any]]
-    snapshot_files: dict[str, str] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = {
-            "trace_id": self.trace_id,
-            "decision_key": self.decision_key,
-            "request": _safe_deepcopy(self.request),
-            "request_snapshot": _safe_deepcopy(self.request),
-            "next_actions": [_safe_deepcopy(row) for row in self.next_actions],
-            "model_route": _safe_deepcopy(self.model_route),
-            "planner_state": _safe_deepcopy(self.planner_state),
-            "final_result": _safe_deepcopy(self.final_result),
-            "model_calls": [_safe_deepcopy(row) for row in self.model_calls],
-            "tool_calls": [_safe_deepcopy(row) for row in self.tool_calls],
-            "snapshot_files": _safe_deepcopy(self.snapshot_files),
-        }
-        if isinstance(self.final_result, dict):
-            payload["status"] = str(self.final_result.get("status", "") or "")
-            payload["outputs"] = _safe_deepcopy(self.final_result.get("outputs", {}))
-            payload["error"] = str(self.final_result.get("error", "") or "")
-        return payload
-
-
 # ---------------------------------------------------------------------------
 # General Planner
 # ---------------------------------------------------------------------------
@@ -183,10 +149,9 @@ class GeneralPlanner:
         self._mode = mode
         self._default_model_id = str(model_id).strip()
         self._model_id = self._default_model_id
-        self._constraints_tool = constraints_tool
         self._layer_router = LayerRouter()
         self._model_router = ModelRouter(default_model_id=self._default_model_id)
-        self._capability_router = CapabilityRouter()
+        self._capability_router = CapabilityRouter(integration_tool=integration_tool)
         self._override_provider = override_provider
         self._work_item_store = work_item_store
         self._wait_graph = wait_graph
@@ -194,20 +159,25 @@ class GeneralPlanner:
         self._promotion_adapters = (
             promotion_adapters if promotion_adapters is not None else PromotionLoopAdapters()
         )
-
-        # Build a shared ConstraintStoreAdapter for L1/L2 planners
-        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
-
-        self._constraints_adapter = ConstraintStoreAdapter(
-            self._workspace_root,
-            on_constraint_saved=on_constraint_saved,
-        )
+        if constraints_tool is None:
+            constraints_tool = ConstraintsTool(
+                workspace_root=self._workspace_root,
+                on_constraint_saved=on_constraint_saved,
+            )
+        self._constraints_tool = constraints_tool
+        if hasattr(constraints_tool, "load_merged") and hasattr(constraints_tool, "save_facts"):
+            self._constraints_store_tool = constraints_tool
+        else:
+            self._constraints_store_tool = ConstraintsTool(
+                workspace_root=self._workspace_root,
+                on_constraint_saved=on_constraint_saved,
+            )
 
         if register_defaults:
             self._register_default_planners(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
-                constraints_tool=constraints_tool,
+                constraints_tool=self._constraints_tool,
             )
 
     def _register_default_planners(
@@ -227,7 +197,7 @@ class GeneralPlanner:
                 research_tool=research_tool,
                 integration_tool=integration_tool,
                 constraints_tool=constraints_tool,
-                constraints_store_adapter=self._constraints_adapter,
+                constraints_store_adapter=self._constraints_store_tool,
             ),
         )
         self._layer_router.register(
@@ -236,7 +206,7 @@ class GeneralPlanner:
                 research_tool=research_tool,
                 integration_tool=integration_tool,
                 constraints_tool=constraints_tool,
-                constraints_store_adapter=self._constraints_adapter,
+                constraints_store_adapter=self._constraints_store_tool,
                 work_item_store=self._work_item_store,
                 wait_graph=self._wait_graph,
             ),
@@ -333,9 +303,7 @@ class GeneralPlanner:
             slice_id,
         )
 
-        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
-
-        context_token = ConstraintStoreAdapter.push_planner_update_context(
+        context_token = ConstraintsTool.push_planner_update_context(
             run_id=run_id,
             layer=str(layer),
             capability=req.capability,
@@ -519,7 +487,7 @@ class GeneralPlanner:
                 except Exception:
                     logger.debug("Failed to clear layer trace binding", exc_info=True)
             self._capability_router.bind_trace(None)
-            ConstraintStoreAdapter.pop_planner_update_context(context_token)
+            ConstraintsTool.pop_planner_update_context(context_token)
 
     def _route_request_with_gates(
         self,
@@ -1614,7 +1582,7 @@ class GeneralPlanner:
 
     def _constraint_answer_lookup(self, *, target_slice: str) -> dict[str, str]:
         answers: dict[str, str] = {}
-        for fact in self._constraints_adapter.load_merged(target_slice):
+        for fact in self._constraints_store_tool.load_merged(target_slice):
             question = self._normalize_for_compare(getattr(fact, "question", ""))
             answer = str(getattr(fact, "answer", "")).strip()
             if question and answer and question not in answers:
@@ -2218,7 +2186,7 @@ class GeneralPlanner:
             or "__system__"
         )
 
-        authoritative_facts = self._constraints_adapter.load_merged(target_slice_id)
+        authoritative_facts = self._constraints_store_tool.load_merged(target_slice_id)
         existing_by_canonical: dict[str, list[Any]] = {}
         existing_by_question: dict[str, list[Any]] = {}
         for fact in authoritative_facts:
@@ -2506,7 +2474,7 @@ class GeneralPlanner:
         persisted_path = ""
         if accepted_facts:
             persisted_path = str(
-                self._constraints_adapter.save_facts(target_slice_id, accepted_facts)
+                self._constraints_store_tool.save_facts(target_slice_id, accepted_facts)
             )
 
         decision_ids = self._dedupe_preserve(
@@ -2811,7 +2779,6 @@ class GeneralPlanner:
         constraints: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Persist validated under-spec constraints through Planner authority."""
-        from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
         from spec_manager.planner.constraints.types import ConstraintFact
 
         facts: list[ConstraintFact] = []
@@ -2821,7 +2788,7 @@ class GeneralPlanner:
         layer_token = str(layer or "any").strip().lower()
         default_layers = [layer_token.upper()] if layer_token in {"l1", "l2", "l3"} else []
         run_token = str(run_id or "").strip()
-        authoritative_facts = self._constraints_adapter.load_merged(target_slice)
+        authoritative_facts = self._constraints_store_tool.load_merged(target_slice)
 
         existing_active_by_canonical: dict[str, list[ConstraintFact]] = {}
         existing_active_by_question: dict[str, list[ConstraintFact]] = {}
@@ -2932,15 +2899,15 @@ class GeneralPlanner:
         if not facts:
             return {"constraints_path": "", "constraint_ids": [], "canonical_keys": []}
 
-        context_token = ConstraintStoreAdapter.push_planner_update_context(
+        context_token = ConstraintsTool.push_planner_update_context(
             run_id=run_token,
             layer=layer_token,
             capability="UNDER_SPEC",
         )
         try:
-            saved_path = self._constraints_adapter.save_facts(target_slice, facts)
+            saved_path = self._constraints_store_tool.save_facts(target_slice, facts)
         finally:
-            ConstraintStoreAdapter.pop_planner_update_context(context_token)
+            ConstraintsTool.pop_planner_update_context(context_token)
 
         return {
             "constraints_path": str(saved_path),

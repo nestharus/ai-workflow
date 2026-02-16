@@ -65,6 +65,184 @@ class RiskAssessment:
     rationale: str = ""
 
 
+class IntegrationAnalyzer:
+    """Compute integration diffs and risk profiles from discovery/request payloads."""
+
+    def analyze(self, *, req: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        baseline_graph = self._extract_graph(discovery)
+        proposed_graph = self._extract_proposed_graph(req, baseline_graph)
+
+        baseline_nodes = self._node_ids(baseline_graph)
+        proposed_nodes = self._node_ids(proposed_graph)
+        baseline_edges = self._edge_ids(baseline_graph)
+        proposed_edges = self._edge_ids(proposed_graph)
+
+        added_nodes = sorted(proposed_nodes - baseline_nodes)
+        removed_nodes = sorted(baseline_nodes - proposed_nodes)
+        added_edges = sorted(proposed_edges - baseline_edges)
+        removed_edges = sorted(baseline_edges - proposed_edges)
+
+        changed_targets = set(added_nodes + removed_nodes)
+        changed_targets.update(self._collect_changed_targets(req))
+
+        impacted_nodes = self._estimate_impacted_nodes(
+            graph=proposed_graph,
+            changed_nodes=changed_targets,
+        )
+        impacted_files = sorted(
+            {
+                str(node.get("file", "")).strip()
+                for node in proposed_graph.get("nodes", [])
+                if isinstance(node, dict)
+                and str(node.get("id", "")).strip() in impacted_nodes
+                and str(node.get("file", "")).strip()
+            }
+        )
+
+        blast_radius = len(impacted_nodes)
+        if blast_radius >= 10:
+            risk_level = "high"
+        elif blast_radius >= 4:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        return {
+            "integration_diff": {
+                "added_nodes": added_nodes,
+                "removed_nodes": removed_nodes,
+                "added_edges": [self._edge_tuple_to_dict(edge) for edge in added_edges],
+                "removed_edges": [self._edge_tuple_to_dict(edge) for edge in removed_edges],
+            },
+            "risk_profile": {
+                "blast_radius": blast_radius,
+                "risk_level": risk_level,
+                "impacted_nodes": sorted(impacted_nodes),
+                "impacted_files": impacted_files,
+                "rationale": (
+                    f"{len(changed_targets)} changed targets affect {blast_radius} reachable nodes"
+                ),
+            },
+        }
+
+    @staticmethod
+    def _extract_graph(payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {"nodes": [], "edges": []}
+        if isinstance(payload.get("nodes"), list) and isinstance(payload.get("edges"), list):
+            return {
+                "nodes": [row for row in payload.get("nodes", []) if isinstance(row, dict)],
+                "edges": [row for row in payload.get("edges", []) if isinstance(row, dict)],
+            }
+        quality_graph = payload.get("quality_graph")
+        if isinstance(quality_graph, dict):
+            return {
+                "nodes": [row for row in quality_graph.get("nodes", []) if isinstance(row, dict)],
+                "edges": [row for row in quality_graph.get("edges", []) if isinstance(row, dict)],
+            }
+        return {"nodes": [], "edges": []}
+
+    def _extract_proposed_graph(self, req: Any, baseline_graph: dict[str, Any]) -> dict[str, Any]:
+        inputs = getattr(req, "inputs", {})
+        if not isinstance(inputs, dict):
+            return baseline_graph
+        for key in (
+            "proposed_graph",
+            "integration_graph",
+            "topology",
+            "integration_analysis",
+        ):
+            payload = inputs.get(key)
+            if isinstance(payload, dict):
+                graph = self._extract_graph(payload)
+                if graph["nodes"] or graph["edges"]:
+                    return graph
+        return baseline_graph
+
+    @staticmethod
+    def _node_ids(graph: dict[str, Any]) -> set[str]:
+        node_ids: set[str] = set()
+        for node in graph.get("nodes", []):
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id", "")).strip()
+            if node_id:
+                node_ids.add(node_id)
+        return node_ids
+
+    @staticmethod
+    def _edge_ids(graph: dict[str, Any]) -> set[tuple[str, str, str]]:
+        edge_ids: set[tuple[str, str, str]] = set()
+        for edge in graph.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            source = str(edge.get("source", "")).strip()
+            target = str(edge.get("target", "")).strip()
+            edge_type = (
+                str(edge.get("type", edge.get("kind", "depends_on"))).strip() or "depends_on"
+            )
+            if source and target:
+                edge_ids.add((source, target, edge_type))
+        return edge_ids
+
+    @staticmethod
+    def _edge_tuple_to_dict(edge: tuple[str, str, str]) -> dict[str, str]:
+        return {"source": edge[0], "target": edge[1], "type": edge[2]}
+
+    @staticmethod
+    def _collect_changed_targets(req: Any) -> list[str]:
+        inputs = getattr(req, "inputs", {})
+        if not isinstance(inputs, dict):
+            return []
+        changed: list[str] = []
+        for key in ("changed_nodes", "impacted_nodes"):
+            rows = inputs.get(key)
+            if isinstance(rows, list):
+                for row in rows:
+                    token = str(row).strip()
+                    if token:
+                        changed.append(token)
+        for key in ("gaps", "raw_gaps"):
+            rows = inputs.get(key)
+            if not isinstance(rows, list):
+                continue
+            for gap in rows:
+                if not isinstance(gap, dict):
+                    continue
+                for attr in ("component_id", "target", "file"):
+                    token = str(gap.get(attr, "")).strip()
+                    if token:
+                        changed.append(token)
+        return changed
+
+    @staticmethod
+    def _estimate_impacted_nodes(
+        *,
+        graph: dict[str, Any],
+        changed_nodes: set[str],
+    ) -> set[str]:
+        adjacency: dict[str, set[str]] = {}
+        for edge in graph.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            source = str(edge.get("source", "")).strip()
+            target = str(edge.get("target", "")).strip()
+            if not source or not target:
+                continue
+            adjacency.setdefault(source, set()).add(target)
+
+        visited: set[str] = set(changed_nodes)
+        frontier = list(changed_nodes)
+        while frontier:
+            current = frontier.pop(0)
+            for nxt in adjacency.get(current, set()):
+                if nxt in visited:
+                    continue
+                visited.add(nxt)
+                frontier.append(nxt)
+        return visited
+
+
 class IntegrationTool:
     """Planner-facing integration analysis tool.
 
@@ -82,6 +260,11 @@ class IntegrationTool:
     ) -> None:
         self._source_cache = source_cache
         self._workspace = workspace
+        self._analyzer = IntegrationAnalyzer()
+
+    def analyze(self, *, req: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        """Compute integration-diff and risk payloads for planner routing."""
+        return self._analyzer.analyze(req=req, discovery=discovery)
 
     def build_graph(self, file_paths: list[str]) -> IntegrationGraph:
         """Build an integration graph from the given files.

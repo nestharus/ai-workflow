@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
-from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
+from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 
 logger = logging.getLogger(__name__)
 
@@ -518,7 +518,7 @@ class UnderSpecManager:
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
-        self._constraints_adapter = ConstraintStoreAdapter(workspace_root)
+        self._constraints_adapter = ConstraintsTool(workspace_root=workspace_root)
         self._planner = planner
         if self._mode == "auto" and planner is not None:
             if resolver is not None:

@@ -15,6 +15,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from spec_manager.planner.jit.actions import ActionType, NextAction
 from spec_manager.planner.jit.state_machine import PlanPhase
+from spec_manager.planner.tools.integration_tool import IntegrationAnalyzer, IntegrationTool
 from spec_manager.planner.trace import ModelCallRecord, ToolCallRecord, canonical_json, content_hash
 
 logger = logging.getLogger(__name__)
@@ -87,184 +88,6 @@ class ReviewPack:
             "merge_strategy": self.merge_strategy,
             "acceptance_checks": list(self.acceptance_checks),
         }
-
-
-class IntegrationAnalyzer:
-    """Compute integration graph diffs and risk profiles for planner requests."""
-
-    def analyze(self, *, req: Any, discovery: dict[str, Any]) -> dict[str, Any]:
-        baseline_graph = self._extract_graph(discovery)
-        proposed_graph = self._extract_proposed_graph(req, baseline_graph)
-
-        baseline_nodes = self._node_ids(baseline_graph)
-        proposed_nodes = self._node_ids(proposed_graph)
-        baseline_edges = self._edge_ids(baseline_graph)
-        proposed_edges = self._edge_ids(proposed_graph)
-
-        added_nodes = sorted(proposed_nodes - baseline_nodes)
-        removed_nodes = sorted(baseline_nodes - proposed_nodes)
-        added_edges = sorted(proposed_edges - baseline_edges)
-        removed_edges = sorted(baseline_edges - proposed_edges)
-
-        changed_targets = set(added_nodes + removed_nodes)
-        changed_targets.update(self._collect_changed_targets(req))
-
-        impacted_nodes = self._estimate_impacted_nodes(
-            graph=proposed_graph,
-            changed_nodes=changed_targets,
-        )
-        impacted_files = sorted(
-            {
-                str(node.get("file", "")).strip()
-                for node in proposed_graph.get("nodes", [])
-                if isinstance(node, dict)
-                and str(node.get("id", "")).strip() in impacted_nodes
-                and str(node.get("file", "")).strip()
-            }
-        )
-
-        blast_radius = len(impacted_nodes)
-        if blast_radius >= 10:
-            risk_level = "high"
-        elif blast_radius >= 4:
-            risk_level = "medium"
-        else:
-            risk_level = "low"
-
-        return {
-            "integration_diff": {
-                "added_nodes": added_nodes,
-                "removed_nodes": removed_nodes,
-                "added_edges": [self._edge_tuple_to_dict(edge) for edge in added_edges],
-                "removed_edges": [self._edge_tuple_to_dict(edge) for edge in removed_edges],
-            },
-            "risk_profile": {
-                "blast_radius": blast_radius,
-                "risk_level": risk_level,
-                "impacted_nodes": sorted(impacted_nodes),
-                "impacted_files": impacted_files,
-                "rationale": (
-                    f"{len(changed_targets)} changed targets affect {blast_radius} reachable nodes"
-                ),
-            },
-        }
-
-    @staticmethod
-    def _extract_graph(payload: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(payload, dict):
-            return {"nodes": [], "edges": []}
-        if isinstance(payload.get("nodes"), list) and isinstance(payload.get("edges"), list):
-            return {
-                "nodes": [row for row in payload.get("nodes", []) if isinstance(row, dict)],
-                "edges": [row for row in payload.get("edges", []) if isinstance(row, dict)],
-            }
-        quality_graph = payload.get("quality_graph")
-        if isinstance(quality_graph, dict):
-            return {
-                "nodes": [row for row in quality_graph.get("nodes", []) if isinstance(row, dict)],
-                "edges": [row for row in quality_graph.get("edges", []) if isinstance(row, dict)],
-            }
-        return {"nodes": [], "edges": []}
-
-    def _extract_proposed_graph(self, req: Any, baseline_graph: dict[str, Any]) -> dict[str, Any]:
-        inputs = getattr(req, "inputs", {})
-        if not isinstance(inputs, dict):
-            return baseline_graph
-        for key in (
-            "proposed_graph",
-            "integration_graph",
-            "topology",
-            "integration_analysis",
-        ):
-            payload = inputs.get(key)
-            if isinstance(payload, dict):
-                graph = self._extract_graph(payload)
-                if graph["nodes"] or graph["edges"]:
-                    return graph
-        return baseline_graph
-
-    @staticmethod
-    def _node_ids(graph: dict[str, Any]) -> set[str]:
-        node_ids: set[str] = set()
-        for node in graph.get("nodes", []):
-            if not isinstance(node, dict):
-                continue
-            node_id = str(node.get("id", "")).strip()
-            if node_id:
-                node_ids.add(node_id)
-        return node_ids
-
-    @staticmethod
-    def _edge_ids(graph: dict[str, Any]) -> set[tuple[str, str, str]]:
-        edge_ids: set[tuple[str, str, str]] = set()
-        for edge in graph.get("edges", []):
-            if not isinstance(edge, dict):
-                continue
-            source = str(edge.get("source", "")).strip()
-            target = str(edge.get("target", "")).strip()
-            edge_type = (
-                str(edge.get("type", edge.get("kind", "depends_on"))).strip() or "depends_on"
-            )
-            if source and target:
-                edge_ids.add((source, target, edge_type))
-        return edge_ids
-
-    @staticmethod
-    def _edge_tuple_to_dict(edge: tuple[str, str, str]) -> dict[str, str]:
-        return {"source": edge[0], "target": edge[1], "type": edge[2]}
-
-    @staticmethod
-    def _collect_changed_targets(req: Any) -> list[str]:
-        inputs = getattr(req, "inputs", {})
-        if not isinstance(inputs, dict):
-            return []
-        changed: list[str] = []
-        for key in ("changed_nodes", "impacted_nodes"):
-            rows = inputs.get(key)
-            if isinstance(rows, list):
-                for row in rows:
-                    token = str(row).strip()
-                    if token:
-                        changed.append(token)
-        for key in ("gaps", "raw_gaps"):
-            rows = inputs.get(key)
-            if not isinstance(rows, list):
-                continue
-            for gap in rows:
-                if not isinstance(gap, dict):
-                    continue
-                for attr in ("component_id", "target", "file"):
-                    token = str(gap.get(attr, "")).strip()
-                    if token:
-                        changed.append(token)
-        return changed
-
-    @staticmethod
-    def _estimate_impacted_nodes(
-        *,
-        graph: dict[str, Any],
-        changed_nodes: set[str],
-    ) -> set[str]:
-        adjacency: dict[str, set[str]] = {}
-        for edge in graph.get("edges", []):
-            if not isinstance(edge, dict):
-                continue
-            source = str(edge.get("source", "")).strip()
-            target = str(edge.get("target", "")).strip()
-            if not source or not target:
-                continue
-            adjacency.setdefault(source, set()).add(target)
-
-        visited: set[str] = set(changed_nodes)
-        frontier = list(changed_nodes)
-        while frontier:
-            current = frontier.pop(0)
-            for nxt in adjacency.get(current, set()):
-                if nxt in visited:
-                    continue
-                visited.add(nxt)
-                frontier.append(nxt)
-        return visited
 
 
 # ---------------------------------------------------------------------------
@@ -452,11 +275,404 @@ class ModelRouter:
 # ---------------------------------------------------------------------------
 
 
+@runtime_checkable
+class CapabilityActionStrategy(Protocol):
+    """Protocol for capability-level action planning."""
+
+    capability: str
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]: ...
+
+
+class ResolveSignalCapabilityStrategy:
+    capability = "RESOLVE_SIGNAL"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        actions: list[NextAction] = []
+        if requires_external_facts:
+            actions.append(
+                NextAction(
+                    action=ActionType.RUN_TOOL,
+                    tool="web_research",
+                    inputs={"phase": PlanPhase.RESEARCH.value},
+                )
+            )
+        actions.extend(
+            [
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="resolve_signal",
+                    inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
+                ),
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="decide",
+                    inputs={"phase": PlanPhase.DECIDE.value},
+                ),
+                NextAction(
+                    action=ActionType.COMPLETE,
+                    inputs={"phase": PlanPhase.VALIDATE.value},
+                ),
+            ]
+        )
+        return actions
+
+
+class GapCapabilityStrategy:
+    capability = "GAP"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        return [
+            NextAction(
+                action=ActionType.RUN_TOOL,
+                tool="discover",
+                inputs={"phase": PlanPhase.DISCOVER.value},
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="gap_understanding",
+                inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="decide",
+                inputs={"phase": PlanPhase.DECIDE.value},
+            ),
+            NextAction(
+                action=ActionType.COMPLETE,
+                inputs={"phase": PlanPhase.VALIDATE.value},
+            ),
+        ]
+
+
+class PlanCapabilityStrategy:
+    capability = "PLAN"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        return [
+            NextAction(
+                action=ActionType.RUN_TOOL,
+                tool="discover",
+                inputs={"phase": PlanPhase.DISCOVER.value},
+            ),
+            NextAction(
+                action=ActionType.RUN_TOOL,
+                tool="extract_layer_skeleton",
+                inputs={"phase": PlanPhase.DISCOVER.value},
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="decide",
+                inputs={"phase": PlanPhase.DECIDE.value},
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="build_plan",
+                inputs={"phase": PlanPhase.DESIGN.value},
+            ),
+            NextAction(
+                action=ActionType.COMPLETE,
+                inputs={"phase": PlanPhase.VALIDATE.value},
+            ),
+        ]
+
+
+class UnderSpecCapabilityStrategy:
+    capability = "UNDER_SPEC"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        actions = [
+            NextAction(
+                action=ActionType.RUN_TOOL,
+                tool="discover",
+                inputs={"phase": PlanPhase.DISCOVER.value},
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="resolve_under_spec",
+                inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
+            ),
+        ]
+        if requires_external_facts:
+            actions.append(
+                NextAction(
+                    action=ActionType.RUN_TOOL,
+                    tool="web_research",
+                    inputs={"phase": PlanPhase.RESEARCH.value},
+                )
+            )
+        actions.extend(
+            [
+                NextAction(
+                    action=ActionType.CALL_AGENT,
+                    agent="decide",
+                    inputs={"phase": PlanPhase.DECIDE.value},
+                ),
+                NextAction(
+                    action=ActionType.USER_INPUT,
+                    prompt="Planner needs user input to resolve under-spec questions.",
+                    inputs={"phase": PlanPhase.VALIDATE.value},
+                ),
+                NextAction(
+                    action=ActionType.COMPLETE,
+                    inputs={"phase": PlanPhase.VALIDATE.value},
+                ),
+            ]
+        )
+        return actions
+
+
+class IntegrationAnalysisCapabilityStrategy:
+    capability = "INTEGRATION_ANALYSIS"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        return [
+            NextAction(
+                action=ActionType.RUN_TOOL,
+                tool="discover",
+                inputs={"phase": PlanPhase.DISCOVER.value},
+            ),
+            NextAction(
+                action=ActionType.RUN_TOOL,
+                tool="integration_analyzer",
+                inputs={"phase": PlanPhase.INTEGRATION_ANALYSIS.value},
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="decide",
+                inputs={"phase": PlanPhase.DECIDE.value},
+            ),
+            NextAction(
+                action=ActionType.COMPLETE,
+                inputs={"phase": PlanPhase.VALIDATE.value},
+            ),
+        ]
+
+
+class TriageSignalCapabilityStrategy:
+    capability = "TRIAGE_SIGNAL"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        return [
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="triage_signal",
+                inputs={
+                    "phase": (
+                        PlanPhase.RESEARCH.value
+                        if requires_external_facts
+                        else PlanPhase.GAP_UNDERSTANDING.value
+                    )
+                },
+            ),
+            NextAction(
+                action=ActionType.CALL_AGENT,
+                agent="decide",
+                inputs={"phase": PlanPhase.DECIDE.value},
+            ),
+            NextAction(
+                action=ActionType.COMPLETE,
+                inputs={"phase": PlanPhase.VALIDATE.value},
+            ),
+        ]
+
+
+class IngestUserAnswerCapabilityStrategy:
+    capability = "INGEST_USER_ANSWER"
+
+    def plan_actions(self, *, requires_external_facts: bool = False) -> list[NextAction]:
+        return [
+            NextAction(
+                action=ActionType.ERROR,
+                prompt="INGEST_USER_ANSWER must be handled by GeneralPlanner",
+            )
+        ]
+
+
+@runtime_checkable
+class AgentExecutionStrategy(Protocol):
+    """Protocol for agent-level execution handlers."""
+
+    agent_name: str
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any: ...
+
+
+class ResolveSignalAgentStrategy:
+    agent_name = "resolve_signal"
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any:
+        signal = req.inputs.get("signal") if isinstance(req.inputs, dict) else None
+        output_payload = planner.resolve_signal(req.context, signal)
+        interim["resolve_signal_response"] = output_payload
+        return output_payload
+
+
+class GapUnderstandingAgentStrategy:
+    agent_name = "gap_understanding"
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any:
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        raw_gaps = inputs.get("raw_gaps", [])
+        normalized_raw_gaps = (
+            [dict(gap) for gap in raw_gaps if isinstance(gap, dict)]
+            if isinstance(raw_gaps, list)
+            else []
+        )
+        deduped_gaps = CapabilityRouter._dedupe_gaps(normalized_raw_gaps)
+        prioritized_gaps = CapabilityRouter._prioritize_gaps(deduped_gaps)
+        integration_notes, decision_requirements = CapabilityRouter._derive_gap_artifacts(
+            prioritized_gaps
+        )
+        output_payload = {
+            "gaps": prioritized_gaps,
+            "clustered_gaps": deduped_gaps,
+            "prioritized_gaps": prioritized_gaps,
+            "integration_notes": integration_notes,
+            "decision_requirements": decision_requirements,
+        }
+        interim["gap_outputs"] = output_payload
+        return output_payload
+
+
+class DecideAgentStrategy:
+    agent_name = "decide"
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any:
+        output_payload = CapabilityRouter._build_decision_payload(req=req, interim=interim)
+        interim["decision"] = output_payload
+        return output_payload
+
+
+class BuildPlanAgentStrategy:
+    agent_name = "build_plan"
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any:
+        ctx = req.context
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        discovery = interim.get("discovery")
+        if not isinstance(discovery, dict):
+            discovery = planner.discover(ctx)
+            interim["discovery"] = discovery
+        gaps = inputs.get("gaps", [])
+        gap_analysis = inputs.get("gap_analysis", {})
+        prior_artifacts = inputs.get("prior_artifacts", {})
+        metadata = getattr(ctx, "metadata", {}) if hasattr(ctx, "metadata") else {}
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        if isinstance(gap_analysis, dict) and gap_analysis:
+            metadata["gap_analysis"] = dict(gap_analysis)
+        if isinstance(prior_artifacts, dict) and prior_artifacts:
+            metadata["prior_artifacts"] = dict(prior_artifacts)
+        if hasattr(ctx, "metadata"):
+            ctx.metadata = metadata
+        output_payload = planner.build_plan(ctx, gaps, discovery)
+        interim["plan"] = output_payload
+        return output_payload
+
+
+class ResolveUnderSpecAgentStrategy:
+    agent_name = "resolve_under_spec"
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any:
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        discovery = interim.get("discovery")
+        if not isinstance(discovery, dict):
+            discovery = planner.discover(req.context)
+            interim["discovery"] = discovery
+        events = inputs.get("events", [])
+        output_payload = planner.resolve_under_spec(req.context, events, discovery)
+        interim["under_spec_result"] = output_payload
+        return output_payload
+
+
+class TriageSignalAgentStrategy:
+    agent_name = "triage_signal"
+
+    def run(
+        self,
+        *,
+        router: CapabilityRouter,
+        planner: LayerPlanner,
+        req: Any,
+        interim: dict[str, Any],
+    ) -> Any:
+        inputs = req.inputs if isinstance(req.inputs, dict) else {}
+        signal = inputs.get("signal", {})
+        output_payload = planner.triage_signal(req.context, signal)
+        interim["triage_result"] = output_payload
+        return output_payload
+
+
 class CapabilityRouter:
     """Express capability flow as NextAction steps for executor consumption."""
 
-    def __init__(self, *, integration_analyzer: IntegrationAnalyzer | None = None) -> None:
-        self._integration_analyzer = integration_analyzer or IntegrationAnalyzer()
+    def __init__(self, *, integration_tool: Any | None = None) -> None:
+        self._integration_tool = integration_tool or IntegrationTool()
+        self._capability_strategies: dict[str, CapabilityActionStrategy] = {
+            strategy.capability: strategy
+            for strategy in (
+                ResolveSignalCapabilityStrategy(),
+                GapCapabilityStrategy(),
+                PlanCapabilityStrategy(),
+                UnderSpecCapabilityStrategy(),
+                IntegrationAnalysisCapabilityStrategy(),
+                TriageSignalCapabilityStrategy(),
+                IngestUserAnswerCapabilityStrategy(),
+            )
+        }
+        self._agent_strategies: dict[str, AgentExecutionStrategy] = {
+            strategy.agent_name: strategy
+            for strategy in (
+                ResolveSignalAgentStrategy(),
+                GapUnderstandingAgentStrategy(),
+                DecideAgentStrategy(),
+                BuildPlanAgentStrategy(),
+                ResolveUnderSpecAgentStrategy(),
+                TriageSignalAgentStrategy(),
+            )
+        }
         self._trace: Any | None = None
 
     def bind_trace(self, trace: Any | None) -> None:
@@ -469,191 +685,15 @@ class CapabilityRouter:
         requires_external_facts: bool = False,
     ) -> list[NextAction]:
         capability = str(getattr(req, "capability", "")).strip().upper()
-
-        if capability == "RESOLVE_SIGNAL":
-            actions: list[NextAction] = []
-            if requires_external_facts:
-                actions.append(
-                    NextAction(
-                        action=ActionType.RUN_TOOL,
-                        tool="web_research",
-                        inputs={"phase": PlanPhase.RESEARCH.value},
-                    ),
-                )
-            actions.extend(
-                [
-                    NextAction(
-                        action=ActionType.CALL_AGENT,
-                        agent="resolve_signal",
-                        inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
-                    ),
-                    NextAction(
-                        action=ActionType.CALL_AGENT,
-                        agent="decide",
-                        inputs={"phase": PlanPhase.DECIDE.value},
-                    ),
-                    NextAction(
-                        action=ActionType.COMPLETE,
-                        inputs={"phase": PlanPhase.VALIDATE.value},
-                    ),
-                ]
-            )
-            return actions
-
-        if capability == "GAP":
-            return [
-                NextAction(
-                    action=ActionType.RUN_TOOL,
-                    tool="discover",
-                    inputs={"phase": PlanPhase.DISCOVER.value},
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="gap_understanding",
-                    inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="decide",
-                    inputs={"phase": PlanPhase.DECIDE.value},
-                ),
-                NextAction(
-                    action=ActionType.COMPLETE,
-                    inputs={"phase": PlanPhase.VALIDATE.value},
-                ),
-            ]
-
-        if capability == "PLAN":
-            return [
-                NextAction(
-                    action=ActionType.RUN_TOOL,
-                    tool="discover",
-                    inputs={"phase": PlanPhase.DISCOVER.value},
-                ),
-                NextAction(
-                    action=ActionType.RUN_TOOL,
-                    tool="extract_layer_skeleton",
-                    inputs={"phase": PlanPhase.DISCOVER.value},
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="decide",
-                    inputs={"phase": PlanPhase.DECIDE.value},
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="build_plan",
-                    inputs={"phase": PlanPhase.DESIGN.value},
-                ),
-                NextAction(
-                    action=ActionType.COMPLETE,
-                    inputs={"phase": PlanPhase.VALIDATE.value},
-                ),
-            ]
-
-        if capability == "UNDER_SPEC":
-            actions = [
-                NextAction(
-                    action=ActionType.RUN_TOOL,
-                    tool="discover",
-                    inputs={"phase": PlanPhase.DISCOVER.value},
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="resolve_under_spec",
-                    inputs={"phase": PlanPhase.GAP_UNDERSTANDING.value},
-                ),
-            ]
-            if requires_external_facts:
-                actions.append(
-                    NextAction(
-                        action=ActionType.RUN_TOOL,
-                        tool="web_research",
-                        inputs={"phase": PlanPhase.RESEARCH.value},
-                    )
-                )
-            actions.extend(
-                [
-                    NextAction(
-                        action=ActionType.CALL_AGENT,
-                        agent="decide",
-                        inputs={"phase": PlanPhase.DECIDE.value},
-                    ),
-                    NextAction(
-                        action=ActionType.USER_INPUT,
-                        prompt="Planner needs user input to resolve under-spec questions.",
-                        inputs={"phase": PlanPhase.VALIDATE.value},
-                    ),
-                    NextAction(
-                        action=ActionType.COMPLETE,
-                        inputs={"phase": PlanPhase.VALIDATE.value},
-                    ),
-                ]
-            )
-            return actions
-
-        if capability == "INTEGRATION_ANALYSIS":
-            return [
-                NextAction(
-                    action=ActionType.RUN_TOOL,
-                    tool="discover",
-                    inputs={"phase": PlanPhase.DISCOVER.value},
-                ),
-                NextAction(
-                    action=ActionType.RUN_TOOL,
-                    tool="integration_analyzer",
-                    inputs={"phase": PlanPhase.INTEGRATION_ANALYSIS.value},
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="decide",
-                    inputs={"phase": PlanPhase.DECIDE.value},
-                ),
-                NextAction(
-                    action=ActionType.COMPLETE,
-                    inputs={"phase": PlanPhase.VALIDATE.value},
-                ),
-            ]
-
-        if capability == "TRIAGE_SIGNAL":
-            actions = [
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="triage_signal",
-                    inputs={
-                        "phase": (
-                            PlanPhase.RESEARCH.value
-                            if requires_external_facts
-                            else PlanPhase.GAP_UNDERSTANDING.value
-                        )
-                    },
-                ),
-                NextAction(
-                    action=ActionType.CALL_AGENT,
-                    agent="decide",
-                    inputs={"phase": PlanPhase.DECIDE.value},
-                ),
-                NextAction(
-                    action=ActionType.COMPLETE,
-                    inputs={"phase": PlanPhase.VALIDATE.value},
-                ),
-            ]
-            return actions
-
-        if capability == "INGEST_USER_ANSWER":
+        strategy = self._capability_strategies.get(capability)
+        if strategy is None:
             return [
                 NextAction(
                     action=ActionType.ERROR,
-                    prompt="INGEST_USER_ANSWER must be handled by GeneralPlanner",
+                    prompt=f"Unknown capability: {capability!r}",
                 )
             ]
-
-        return [
-            NextAction(
-                action=ActionType.ERROR,
-                prompt=f"Unknown capability: {capability!r}",
-            )
-        ]
+        return strategy.plan_actions(requires_external_facts=requires_external_facts)
 
     def run_tool(
         self,
@@ -698,7 +738,7 @@ class CapabilityRouter:
 
         if tool_name == "integration_analyzer":
             discovery = self._ensure_discovery(planner=planner, ctx=ctx, interim=interim)
-            output_payload = self._integration_analyzer.analyze(
+            output_payload = self._run_integration_analysis(
                 req=req,
                 discovery=discovery,
             )
@@ -727,6 +767,38 @@ class CapabilityRouter:
 
         raise ValueError(f"Unknown tool action: {tool_name}")
 
+    def _run_integration_analysis(self, *, req: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        tool = self._integration_tool
+        payload: Any = None
+        try:
+            if hasattr(tool, "analyze"):
+                payload = tool.analyze(req=req, discovery=discovery)
+            elif callable(tool):
+                for kwargs in (
+                    {"req": req, "discovery": discovery},
+                    {"payload": {"req": req, "discovery": discovery}},
+                ):
+                    try:
+                        payload = tool(**kwargs)
+                        break
+                    except TypeError:
+                        continue
+                if payload is None:
+                    payload = tool(req, discovery)
+            else:
+                payload = IntegrationAnalyzer().analyze(req=req, discovery=discovery)
+        except Exception:
+            logger.warning("integration analysis tool invocation failed", exc_info=True)
+            return {}
+
+        if isinstance(payload, dict):
+            return payload
+        if hasattr(payload, "to_dict") and callable(payload.to_dict):
+            candidate = payload.to_dict()
+            if isinstance(candidate, dict):
+                return candidate
+        return {}
+
     def run_agent(
         self,
         *,
@@ -736,123 +808,23 @@ class CapabilityRouter:
         action_inputs: dict[str, Any] | None = None,
         interim: dict[str, Any],
     ) -> None:
-        ctx = req.context
-        inputs = req.inputs if isinstance(req.inputs, dict) else {}
         started = time.perf_counter()
-        output_payload: Any = None
-
-        if agent_name == "resolve_signal":
-            signal = inputs.get("signal")
-            output_payload = planner.resolve_signal(ctx, signal)
-            interim["resolve_signal_response"] = output_payload
-            self._record_agent_invocation(
-                req=req,
-                agent_name=agent_name,
-                action_inputs=action_inputs,
-                output_payload=output_payload,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            return
-
-        if agent_name == "gap_understanding":
-            raw_gaps = inputs.get("raw_gaps", [])
-            normalized_raw_gaps = (
-                [dict(gap) for gap in raw_gaps if isinstance(gap, dict)]
-                if isinstance(raw_gaps, list)
-                else []
-            )
-            deduped_gaps = CapabilityRouter._dedupe_gaps(normalized_raw_gaps)
-            prioritized_gaps = CapabilityRouter._prioritize_gaps(deduped_gaps)
-            integration_notes, decision_requirements = CapabilityRouter._derive_gap_artifacts(
-                prioritized_gaps
-            )
-            output_payload = {
-                "gaps": prioritized_gaps,
-                "clustered_gaps": deduped_gaps,
-                "prioritized_gaps": prioritized_gaps,
-                "integration_notes": integration_notes,
-                "decision_requirements": decision_requirements,
-            }
-            interim["gap_outputs"] = output_payload
-            self._record_agent_invocation(
-                req=req,
-                agent_name=agent_name,
-                action_inputs=action_inputs,
-                output_payload=output_payload,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            return
-
-        if agent_name == "decide":
-            output_payload = self._build_decision_payload(req=req, interim=interim)
-            interim["decision"] = output_payload
-            self._record_agent_invocation(
-                req=req,
-                agent_name=agent_name,
-                action_inputs=action_inputs,
-                output_payload=output_payload,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            return
-
-        if agent_name == "build_plan":
-            discovery = interim.get("discovery")
-            if not isinstance(discovery, dict):
-                discovery = planner.discover(ctx)
-                interim["discovery"] = discovery
-            gaps = inputs.get("gaps", [])
-            gap_analysis = inputs.get("gap_analysis", {})
-            prior_artifacts = inputs.get("prior_artifacts", {})
-            metadata = getattr(ctx, "metadata", {}) if hasattr(ctx, "metadata") else {}
-            metadata = dict(metadata) if isinstance(metadata, dict) else {}
-            if isinstance(gap_analysis, dict) and gap_analysis:
-                metadata["gap_analysis"] = dict(gap_analysis)
-            if isinstance(prior_artifacts, dict) and prior_artifacts:
-                metadata["prior_artifacts"] = dict(prior_artifacts)
-            if hasattr(ctx, "metadata"):
-                ctx.metadata = metadata
-            output_payload = planner.build_plan(ctx, gaps, discovery)
-            interim["plan"] = output_payload
-            self._record_agent_invocation(
-                req=req,
-                agent_name=agent_name,
-                action_inputs=action_inputs,
-                output_payload=output_payload,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            return
-
-        if agent_name == "resolve_under_spec":
-            events = inputs.get("events", [])
-            discovery = interim.get("discovery")
-            if not isinstance(discovery, dict):
-                discovery = planner.discover(ctx)
-                interim["discovery"] = discovery
-            output_payload = planner.resolve_under_spec(ctx, events, discovery)
-            interim["under_spec_result"] = output_payload
-            self._record_agent_invocation(
-                req=req,
-                agent_name=agent_name,
-                action_inputs=action_inputs,
-                output_payload=output_payload,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            return
-
-        if agent_name == "triage_signal":
-            signal = inputs.get("signal", {})
-            output_payload = planner.triage_signal(ctx, signal)
-            interim["triage_result"] = output_payload
-            self._record_agent_invocation(
-                req=req,
-                agent_name=agent_name,
-                action_inputs=action_inputs,
-                output_payload=output_payload,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            return
-
-        raise ValueError(f"Unknown agent action: {agent_name}")
+        strategy = self._agent_strategies.get(agent_name)
+        if strategy is None:
+            raise ValueError(f"Unknown agent action: {agent_name}")
+        output_payload = strategy.run(
+            router=self,
+            planner=planner,
+            req=req,
+            interim=interim,
+        )
+        self._record_agent_invocation(
+            req=req,
+            agent_name=agent_name,
+            action_inputs=action_inputs,
+            output_payload=output_payload,
+            duration_ms=(time.perf_counter() - started) * 1000.0,
+        )
 
     @staticmethod
     def _build_decision_payload(*, req: Any, interim: dict[str, Any]) -> dict[str, Any]:

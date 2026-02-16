@@ -26,6 +26,7 @@ Usage::
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -146,6 +147,13 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _safe_deepcopy(value: Any) -> Any:
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        return value
+
+
 # ---------------------------------------------------------------------------
 # Record types
 # ---------------------------------------------------------------------------
@@ -202,6 +210,42 @@ class DecisionRecord:
     evidence_refs: list[str] = field(default_factory=list)
     alternatives_considered: list[str] = field(default_factory=list)
     discriminative_checks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ReplayBundle:
+    """Replay payload for deterministic QA/eval re-execution."""
+
+    trace_id: str
+    decision_key: str
+    request: dict[str, Any]
+    next_actions: list[dict[str, Any]]
+    model_route: dict[str, Any]
+    planner_state: dict[str, Any]
+    final_result: dict[str, Any]
+    model_calls: list[dict[str, Any]]
+    tool_calls: list[dict[str, Any]]
+    snapshot_files: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "trace_id": self.trace_id,
+            "decision_key": self.decision_key,
+            "request": _safe_deepcopy(self.request),
+            "request_snapshot": _safe_deepcopy(self.request),
+            "next_actions": [_safe_deepcopy(row) for row in self.next_actions],
+            "model_route": _safe_deepcopy(self.model_route),
+            "planner_state": _safe_deepcopy(self.planner_state),
+            "final_result": _safe_deepcopy(self.final_result),
+            "model_calls": [_safe_deepcopy(row) for row in self.model_calls],
+            "tool_calls": [_safe_deepcopy(row) for row in self.tool_calls],
+            "snapshot_files": _safe_deepcopy(self.snapshot_files),
+        }
+        if isinstance(self.final_result, dict):
+            payload["status"] = str(self.final_result.get("status", "") or "")
+            payload["outputs"] = _safe_deepcopy(self.final_result.get("outputs", {}))
+            payload["error"] = str(self.final_result.get("error", "") or "")
+        return payload
 
 
 # ---------------------------------------------------------------------------

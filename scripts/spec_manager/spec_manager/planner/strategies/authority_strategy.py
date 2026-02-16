@@ -11,8 +11,8 @@ import logging
 from pathlib import Path
 
 from spec_manager.planner.constraints.authority import check_authority
-from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import ConstraintFact
+from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 
 from .protocol import PlanningSession
 
@@ -32,7 +32,7 @@ class AuthorityDeciderStrategy:
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
-        self._adapter = ConstraintStoreAdapter(workspace_root)
+        self._adapter = ConstraintsTool(workspace_root=workspace_root)
 
     def run(self, session: PlanningSession) -> PlanningSession:
         if session.impact is None:

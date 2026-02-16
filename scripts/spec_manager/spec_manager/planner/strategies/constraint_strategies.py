@@ -17,7 +17,6 @@ from spec_manager.planner.constraints.impact import classify_impact
 from spec_manager.planner.constraints.non_software import (
     build_non_software_checklist_requirements,
 )
-from spec_manager.planner.constraints.store_adapter import ConstraintStoreAdapter
 from spec_manager.planner.constraints.types import (
     ConflictReport,
     ConstraintContext,
@@ -25,6 +24,7 @@ from spec_manager.planner.constraints.types import (
     DecisionRequirement,
     ProblemFrame,
 )
+from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 
 from .protocol import PlanningSession
 
@@ -92,7 +92,7 @@ class ConstraintBootstrapStrategy:
         return "constraint_bootstrap"
 
     def __init__(self, workspace_root: Path) -> None:
-        self._adapter = ConstraintStoreAdapter(workspace_root)
+        self._adapter = ConstraintsTool(workspace_root=workspace_root)
 
     def run(self, session: PlanningSession) -> PlanningSession:
         slice_id = session.ctx.get("slice_id", "__system__")
