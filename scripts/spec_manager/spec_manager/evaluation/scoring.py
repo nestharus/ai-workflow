@@ -10,7 +10,7 @@ Hard gates block the pipeline:
 - ``alignment.no_high`` — no HIGH-severity POWER drift/reward hacking
 - ``l3.no_behavior_change`` — L3 diff-impact classifier = refactor_only
 
-Soft signals (11 total) provide diagnostics:
+Soft signals provide diagnostics:
 - ``l1.gap_closure`` — 1 - (final_open_gaps / initial_open_gaps); PASS=1.0, WARN>=0.99, FAIL<0.99
 - ``l1.gate_first_attempt_rate`` — first-attempt pass / slices;
   PASS>=0.6, WARN>=0.4
@@ -25,6 +25,8 @@ Soft signals (11 total) provide diagnostics:
 - ``pipeline.ci_first_pass_rate`` — first-attempt dirty->clean pass;
   PASS>=0.8, WARN>=0.6
 - ``pipeline.stagnation_rate`` — stagnated_slices / total_slices; PASS=0, WARN<=0.05
+- ``pipeline.governance_compliance`` — governance FAIL/WARN findings + missing receipts
+- ``pipeline.blocking_under_spec_rate`` — under-spec BLOCKED events / total slices
 
 Usage::
 
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -101,6 +104,14 @@ class SliceArtifact:
     changed_loc: int
     total_loc: int
     behavior_change_findings: int
+    governance_fail_findings: int
+    governance_warn_findings: int
+    governance_receipts_missing: int
+    under_spec_blocker_events: int
+    stagnation_detected: bool
+    max_iterations_hit: bool
+    l3_first_review_total_files: int
+    l3_first_review_passed_files: int
     bundle_path: str
 
 
@@ -233,16 +244,16 @@ class RunReporter:
         bundles: list[tuple[int, dict[str, Any], Path]],
     ) -> SliceArtifact:
         """Build normalized per-slice metrics from bundle history."""
-        first_iter, first_bundle, _ = bundles[0]
+        first_iter, first_bundle, first_path = bundles[0]
         latest_iter, latest_bundle, latest_path = bundles[-1]
 
+        layer = self._slice_layer(slice_id)
         latest_gaps = (latest_bundle.get("gaps") or {}).get("open_gaps") or []
         first_gaps = (first_bundle.get("gaps") or {}).get("open_gaps") or []
         demotions = (latest_bundle.get("demotions") or {}).get("emitted") or []
         pin_proposals = (latest_bundle.get("implementation") or {}).get("pin_proposals") or []
-        changed_files = (latest_bundle.get("diff") or {}).get("changed_files") or []
-        manifest_files = (latest_bundle.get("manifest") or {}).get("files") or []
         status = str(latest_bundle.get("status", ""))
+        iterations = max(1, int(latest_bundle.get("iteration", latest_iter) or latest_iter or 1))
         behavior_change_findings = sum(
             1
             for gap in latest_gaps
@@ -253,12 +264,35 @@ class RunReporter:
             and str(first_bundle.get("status", "")) == "COMPLETE"
             and self._bundle_passed_gates(first_bundle)
         )
+        changed_loc, total_loc = self._compute_loc_metrics(
+            layer=layer,
+            bundle=latest_bundle,
+            bundle_path=latest_path,
+        )
+        governance_fail, governance_warn, governance_missing = self._governance_findings(
+            latest_bundle,
+            latest_path,
+        )
+        under_spec_blockers = self._under_spec_blocker_events(latest_bundle)
+        stagnation_detected, max_iterations_hit = self._stagnation_flags(
+            layer=layer,
+            bundle=latest_bundle,
+            iterations=iterations,
+            remaining_gaps=len(latest_gaps),
+        )
+        l3_review_total = 0
+        l3_review_passed = 0
+        if layer == "l3":
+            l3_review_total, l3_review_passed = self._l3_first_review_file_counts(
+                first_bundle,
+                first_path,
+            )
 
         return SliceArtifact(
             slice_id=slice_id,
-            layer=self._slice_layer(slice_id),
+            layer=layer,
             status=status,
-            iterations=max(1, int(latest_bundle.get("iteration", latest_iter) or latest_iter or 1)),
+            iterations=iterations,
             remaining_gaps=len(latest_gaps),
             initial_gaps=len(first_gaps),
             demotion_count=len(demotions),
@@ -266,11 +300,285 @@ class RunReporter:
             first_attempt_pass=first_attempt_pass,
             promoted_pins=len(pin_proposals),
             consumed_pins=len(pin_proposals) if status == "COMPLETE" else 0,
-            changed_loc=len(changed_files),
-            total_loc=max(1, len(manifest_files)),
+            changed_loc=changed_loc,
+            total_loc=total_loc,
             behavior_change_findings=behavior_change_findings,
+            governance_fail_findings=governance_fail,
+            governance_warn_findings=governance_warn,
+            governance_receipts_missing=governance_missing,
+            under_spec_blocker_events=under_spec_blockers,
+            stagnation_detected=stagnation_detected,
+            max_iterations_hit=max_iterations_hit,
+            l3_first_review_total_files=l3_review_total,
+            l3_first_review_passed_files=l3_review_passed,
             bundle_path=str(latest_path),
         )
+
+    @staticmethod
+    def _read_json_dict(path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _as_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _ci_receipt_passed(receipt: dict[str, Any]) -> bool:
+        failed = receipt.get("failed")
+        if isinstance(failed, bool):
+            return not failed
+        failure_evidence = receipt.get("failure_evidence")
+        if isinstance(failure_evidence, dict):
+            if not bool(failure_evidence.get("batch_success", True)):
+                return False
+            if not bool(failure_evidence.get("gates_passed", True)):
+                return False
+            if not bool(failure_evidence.get("tests_passed", True)):
+                return False
+            propagation_failures = failure_evidence.get("propagation_failures", [])
+            if isinstance(propagation_failures, list) and any(propagation_failures):
+                return False
+        return True
+
+    def _compute_loc_metrics(
+        self,
+        *,
+        layer: str,
+        bundle: dict[str, Any],
+        bundle_path: Path,
+    ) -> tuple[int, int]:
+        # L3 has file-level structural metrics + patch artifacts; prefer those.
+        if layer == "l3":
+            changed_loc = self._patch_changed_loc(bundle=bundle, bundle_path=bundle_path)
+            total_loc = 0
+            touched_total_loc = 0
+            touched_files: set[str] = set()
+            diff_changed = (bundle.get("diff") or {}).get("changed_files") or []
+            for path in diff_changed if isinstance(diff_changed, list) else []:
+                if isinstance(path, str) and path.strip():
+                    touched_files.add(path.strip())
+
+            source_entries = (bundle.get("source_index") or {}).get("entries") or []
+            for entry in source_entries if isinstance(source_entries, list) else []:
+                if not isinstance(entry, dict):
+                    continue
+                rel_path = str(entry.get("path", "")).strip()
+                if not rel_path or rel_path.startswith("__"):
+                    continue
+                analysis = entry.get("analysis", {})
+                if not isinstance(analysis, dict):
+                    continue
+                metrics = analysis.get("metrics", {})
+                if not isinstance(metrics, dict):
+                    continue
+                line_count = max(self._as_int(metrics.get("lines"), 0), 0)
+                if line_count <= 0:
+                    continue
+                total_loc += line_count
+
+                diff_summary = analysis.get("diff_summary", {})
+                changed_from_previous = False
+                present_in_manifest_diff = False
+                if isinstance(diff_summary, dict):
+                    changed_from_previous = bool(
+                        diff_summary.get("changed_from_previous_iteration", False)
+                    )
+                    present_in_manifest_diff = bool(
+                        diff_summary.get("present_in_manifest_diff", False)
+                    )
+                if changed_from_previous or present_in_manifest_diff or rel_path in touched_files:
+                    touched_total_loc += line_count
+
+            if total_loc <= 0:
+                manifest_files = (bundle.get("manifest") or {}).get("files") or []
+                total_loc = max(1, len(manifest_files) if isinstance(manifest_files, list) else 1)
+            if touched_total_loc > 0:
+                total_loc = touched_total_loc
+            if changed_loc <= 0 and touched_total_loc > 0:
+                changed_loc = touched_total_loc
+            return max(changed_loc, 0), max(total_loc, 1)
+
+        changed_files = (bundle.get("diff") or {}).get("changed_files") or []
+        manifest_files = (bundle.get("manifest") or {}).get("files") or []
+        return (
+            len(changed_files) if isinstance(changed_files, list) else 0,
+            max(1, len(manifest_files) if isinstance(manifest_files, list) else 1),
+        )
+
+    def _patch_changed_loc(self, *, bundle: dict[str, Any], bundle_path: Path) -> int:
+        patch_ref = str((bundle.get("implementation") or {}).get("patch_path", "")).strip()
+        if not patch_ref:
+            return 0
+        patch_path = bundle_path.parent / patch_ref
+        if not patch_path.exists():
+            return 0
+        try:
+            lines = patch_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return 0
+        changed = 0
+        for line in lines:
+            if line.startswith("+++ ") or line.startswith("--- "):
+                continue
+            if line.startswith("+") or line.startswith("-"):
+                changed += 1
+        return changed
+
+    def _governance_findings(
+        self, bundle: dict[str, Any], bundle_path: Path
+    ) -> tuple[int, int, int]:
+        fail_messages: set[str] = set()
+        warn_messages: set[str] = set()
+        iteration_dir = bundle_path.parent
+
+        verification_ref = str((bundle.get("verification") or {}).get("path", "")).strip()
+        if verification_ref:
+            verification_payload = self._read_json_dict(iteration_dir / verification_ref)
+            rows = verification_payload.get("findings", [])
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                category = str(row.get("category", "")).strip().lower()
+                dimension = str(row.get("dimension", "")).strip().upper()
+                if category != "governance" and dimension != "GOVERNANCE":
+                    continue
+                severity = str(row.get("severity", "MINOR")).strip().upper()
+                message = str(row.get("evidence") or row.get("description") or "governance finding")
+                if severity in {"BLOCKER", "MAJOR"}:
+                    fail_messages.add(f"verification:{message}")
+                else:
+                    warn_messages.add(f"verification:{message}")
+
+        quality_path = iteration_dir / "quality.receipts.json"
+        missing_receipts = 0
+        quality_payload = self._read_json_dict(quality_path)
+        receipt_rows = quality_payload.get("receipts", []) if quality_payload else []
+        governance_receipts_seen = False
+        for receipt in receipt_rows if isinstance(receipt_rows, list) else []:
+            if not isinstance(receipt, dict):
+                continue
+            dimension = str(receipt.get("dimension", "")).strip().upper()
+            if dimension != "GOVERNANCE":
+                continue
+            governance_receipts_seen = True
+            status = str(receipt.get("status", "")).strip().upper()
+            reviewer = str(receipt.get("reviewer_id", "governance-reviewer")).strip()
+            if status == "FAIL":
+                fail_messages.add(f"quality:{reviewer}")
+        if not quality_path.exists() or not governance_receipts_seen:
+            missing_receipts = 1
+
+        promotion_ref = str((bundle.get("promotion") or {}).get("path", "")).strip()
+        if promotion_ref:
+            promotion_payload = self._read_json_dict(iteration_dir / promotion_ref)
+            dirty_clean = (
+                promotion_payload.get("dirty_clean_governance", {})
+                if isinstance(promotion_payload, dict)
+                else {}
+            )
+            if isinstance(dirty_clean, dict):
+                failures = dirty_clean.get("failures", [])
+                warnings = dirty_clean.get("warnings", [])
+                for failure in failures if isinstance(failures, list) else []:
+                    failure_text = str(failure).strip()
+                    if failure_text:
+                        fail_messages.add(f"promotion:{failure_text}")
+                for warning in warnings if isinstance(warnings, list) else []:
+                    warning_text = str(warning).strip()
+                    if warning_text:
+                        warn_messages.add(f"promotion:{warning_text}")
+
+        return len(fail_messages), len(warn_messages), missing_receipts
+
+    def _under_spec_blocker_events(self, bundle: dict[str, Any]) -> int:
+        blockers = (bundle.get("under_spec") or {}).get("blockers") or []
+        blocker_count = len(blockers) if isinstance(blockers, list) else 0
+        status = str(bundle.get("status", "")).strip().upper()
+        if blocker_count == 0 and status == "BLOCKED":
+            blocker_count = 1
+        return blocker_count
+
+    @staticmethod
+    def _layer_max_iterations(layer: str) -> int:
+        limits = {"l1": 20, "l2": 30, "l3": 15}
+        return limits.get(layer, 20)
+
+    def _stagnation_flags(
+        self,
+        *,
+        layer: str,
+        bundle: dict[str, Any],
+        iterations: int,
+        remaining_gaps: int,
+    ) -> tuple[bool, bool]:
+        stagnation = (bundle.get("gaps") or {}).get("stagnation") or {}
+        stagnant = (
+            bool(stagnation.get("is_stagnant", False)) if isinstance(stagnation, dict) else False
+        )
+        status = str(bundle.get("status", "")).strip().upper()
+        max_hit = (
+            status == "FAILED"
+            and remaining_gaps > 0
+            and iterations >= self._layer_max_iterations(layer)
+            and not stagnant
+        )
+        return stagnant or max_hit, max_hit
+
+    def _l3_first_review_file_counts(
+        self,
+        first_bundle: dict[str, Any],
+        first_path: Path,
+    ) -> tuple[int, int]:
+        candidate_files: set[str] = set()
+        source_entries = (first_bundle.get("source_index") or {}).get("entries") or []
+        for entry in source_entries if isinstance(source_entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            rel_path = str(entry.get("path", "")).strip()
+            if rel_path and not rel_path.startswith("__"):
+                candidate_files.add(rel_path)
+        if not candidate_files:
+            manifest_files = (first_bundle.get("manifest") or {}).get("files") or []
+            for item in manifest_files if isinstance(manifest_files, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                rel_path = str(item.get("path", "")).strip()
+                if rel_path:
+                    candidate_files.add(rel_path)
+
+        by_file: dict[str, list[str]] = defaultdict(list)
+        for file_path in sorted(candidate_files):
+            by_file[file_path] = []
+
+        quality_payload = self._read_json_dict(first_path.parent / "quality.receipts.json")
+        receipts = quality_payload.get("receipts", [])
+        for receipt in receipts if isinstance(receipts, list) else []:
+            if not isinstance(receipt, dict):
+                continue
+            rel_path = str(receipt.get("file") or receipt.get("target_file") or "").strip()
+            if not rel_path:
+                continue
+            if candidate_files and rel_path not in candidate_files:
+                continue
+            status = str(receipt.get("status", "")).strip().upper()
+            by_file[rel_path].append("PASS" if status == "PASS" else "FAIL")
+
+        total_files = len(by_file)
+        passed_files = sum(
+            1
+            for statuses in by_file.values()
+            if statuses and all(status == "PASS" for status in statuses)
+        )
+        return total_files, passed_files
 
     def _load_ci_receipts(self) -> list[dict[str, Any]]:
         """Load all run-scoped CI batch receipts."""
@@ -279,7 +587,7 @@ class RunReporter:
         if not ci_dir.exists():
             return receipts
 
-        for receipt_path in sorted(ci_dir.glob("*/batches/*.json")):
+        for order, receipt_path in enumerate(sorted(ci_dir.glob("*/batches/*.json"))):
             try:
                 payload = json.loads(receipt_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
@@ -287,6 +595,7 @@ class RunReporter:
                 continue
             if isinstance(payload, dict):
                 payload["_path"] = str(receipt_path)
+                payload["_order"] = order
                 receipts.append(payload)
         return receipts
 
@@ -460,12 +769,22 @@ class RunReporter:
             )
         )
 
-        # 2. ci.final_pass: no CI failures at end
-        if artifacts.ci_receipts:
-            ci_passed = all(bool(r.get("main_updated")) for r in artifacts.ci_receipts)
-        else:
-            # No explicit CI receipts: rely on complete passing slices.
-            ci_passed = all_slices_passed
+        # 2. ci.final_pass: latest dirty->clean CI receipt per slice/layer must PASS
+        expected_keys = {(s.layer, s.slice_id) for s in all_slices}
+        latest_ci: dict[tuple[str, str], bool] = {}
+        for receipt in artifacts.ci_receipts:
+            layer = str(receipt.get("layer", "")).strip().lower()
+            slice_id = str(receipt.get("slice_id", "")).strip()
+            key = (layer, slice_id)
+            if key not in expected_keys:
+                continue
+            latest_ci[key] = self._ci_receipt_passed(receipt)
+        missing_ci_keys = sorted(expected_keys - set(latest_ci.keys()))
+        ci_passed = (
+            all(latest_ci.get(key, False) for key in expected_keys) if expected_keys else True
+        )
+        if not artifacts.ci_receipts and expected_keys:
+            ci_passed = False
         gates.append(
             ScorecardMetric(
                 name="ci.final_pass",
@@ -476,14 +795,19 @@ class RunReporter:
                 evidence_refs=[
                     str(r.get("_path", "")) for r in artifacts.ci_receipts[:20] if r.get("_path")
                 ],
+                detail=(
+                    "latest_passed="
+                    f"{sum(1 for ok in latest_ci.values() if ok)}/{len(expected_keys)}"
+                    f"; missing_receipts={len(missing_ci_keys)}"
+                ),
             )
         )
 
         # 3. governance.no_fail: no governance FAIL findings
-        if artifacts.approvals:
-            governance_ok = all(bool(a.get("approved")) for a in artifacts.approvals)
-        else:
-            governance_ok = True
+        governance_fail_count = sum(s.governance_fail_findings for s in all_slices)
+        governance_warn_count = sum(s.governance_warn_findings for s in all_slices)
+        governance_missing_receipts = sum(s.governance_receipts_missing for s in all_slices)
+        governance_ok = governance_fail_count == 0
         gates.append(
             ScorecardMetric(
                 name="governance.no_fail",
@@ -491,9 +815,11 @@ class RunReporter:
                 score=1.0 if governance_ok else 0.0,
                 status="PASS" if governance_ok else "FAIL",
                 hard_gate=True,
-                evidence_refs=[
-                    str(a.get("_path", "")) for a in artifacts.approvals[:20] if a.get("_path")
-                ],
+                evidence_refs=[s.bundle_path for s in all_slices[:20]],
+                detail=(
+                    f"fail={governance_fail_count}; warn={governance_warn_count}; "
+                    f"missing_receipts={governance_missing_receipts}"
+                ),
             )
         )
 
@@ -530,15 +856,7 @@ class RunReporter:
         return gates
 
     def _compute_soft_signals(self, artifacts: ArtifactSnapshot) -> list[ScorecardMetric]:
-        """Compute 11 soft signal metrics from persisted artifacts.
-
-        Signals computed (exact names from E2E pipeline spec):
-          l1.gap_closure, l1.gate_first_attempt_rate,
-          l2.pin_consumption_rate, l2.component_coverage, l2.gate_first_attempt_rate,
-          l3.reviewer_first_pass_rate, l3.refactor_churn,
-          pipeline.total_demotions, pipeline.iteration_efficiency,
-          pipeline.ci_first_pass_rate, pipeline.stagnation_rate
-        """
+        """Compute run diagnostics from persisted artifacts."""
         signals: list[ScorecardMetric] = []
 
         # ------------------------------------------------------------------
@@ -556,11 +874,11 @@ class RunReporter:
         total_iterations = sum(s.iterations for s in all_slices)
         slice_demotions = sum(s.demotion_count for s in all_slices)
         total_demotions = max(slice_demotions, artifacts.demotion_count)
-        stagnated_count = sum(
-            1
-            for s in all_slices
-            if s.status in {"STAGNATED", "FAILED", "BLOCKED"} or s.remaining_gaps > 0
-        )
+        stagnated_count = sum(1 for s in all_slices if s.stagnation_detected)
+        governance_fail_count = sum(s.governance_fail_findings for s in all_slices)
+        governance_warn_count = sum(s.governance_warn_findings for s in all_slices)
+        governance_missing_receipts = sum(s.governance_receipts_missing for s in all_slices)
+        under_spec_blocked_events = sum(s.under_spec_blocker_events for s in all_slices)
 
         # ------------------------------------------------------------------
         # 1. l1.gap_closure — 1 - (final_open_gaps / initial_open_gaps)
@@ -709,9 +1027,9 @@ class RunReporter:
         #    first review / total L3 files.
         #    PASS >= 0.4, WARN >= 0.2, FAIL < 0.2
         # ------------------------------------------------------------------
-        l3_total = max(len(l3_slices), 1)
-        l3_first_pass = sum(1 for s in l3_slices if s.first_attempt_pass)
-        l3_first_rate = l3_first_pass / l3_total
+        l3_file_total = sum(s.l3_first_review_total_files for s in l3_slices)
+        l3_first_pass = sum(s.l3_first_review_passed_files for s in l3_slices)
+        l3_first_rate = l3_first_pass / l3_file_total if l3_file_total > 0 else 0.0
 
         if l3_first_rate >= 0.4:
             l3_first_status = "PASS"
@@ -726,6 +1044,7 @@ class RunReporter:
                 raw=l3_first_rate,
                 score=l3_first_rate,
                 status=l3_first_status,
+                detail=f"files={l3_first_pass}/{l3_file_total}",
             )
         )
 
@@ -814,25 +1133,48 @@ class RunReporter:
         # ------------------------------------------------------------------
         ci_total = 0
         ci_first_pass = 0
+        ci_detail = ""
         if artifacts.ci_receipts:
+            known_slice_ids = {s.slice_id for s in all_slices}
+            ordered_receipts = sorted(
+                artifacts.ci_receipts,
+                key=lambda receipt: self._as_int(receipt.get("_order"), 0),
+            )
             first_seen: dict[tuple[str, str], bool] = {}
-            for receipt in artifacts.ci_receipts:
-                layer = str(receipt.get("layer", ""))
-                slice_id = str(receipt.get("slice_id", ""))
-                key = (layer, slice_id)
-                if key in first_seen:
+            latest_seen: dict[tuple[str, str], bool] = {}
+            for receipt in ordered_receipts:
+                layer = str(receipt.get("layer", "")).strip().lower()
+                slice_id = str(receipt.get("slice_id", "")).strip()
+                if not layer or slice_id not in known_slice_ids:
                     continue
-                first_seen[key] = bool(receipt.get("main_updated"))
+                key = (layer, slice_id)
+                passed = self._ci_receipt_passed(receipt)
+                if key not in first_seen:
+                    first_seen[key] = passed
+                latest_seen[key] = passed
+
             ci_total = len(first_seen)
             ci_first_pass = sum(1 for ok in first_seen.values() if ok)
+            ci_rate = ci_first_pass / ci_total if ci_total > 0 else 0.0
 
-        if ci_total > 0:
-            ci_rate = ci_first_pass / ci_total
+            layer_parts: list[str] = []
+            for layer_name in ("l1", "l2", "l3"):
+                keys = [key for key in first_seen if key[0] == layer_name]
+                layer_total = len(keys)
+                if layer_total == 0:
+                    layer_parts.append(f"{layer_name}:first=n/a,eventual=n/a,n=0")
+                    continue
+                first_rate = sum(1 for key in keys if first_seen.get(key, False)) / layer_total
+                eventual_rate = sum(1 for key in keys if latest_seen.get(key, False)) / layer_total
+                layer_parts.append(
+                    f"{layer_name}:first={first_rate:.2f},eventual={eventual_rate:.2f},n={layer_total}"
+                )
+            ci_detail = "; ".join(layer_parts)
         else:
-            # No CI data — use completion rate as proxy: completed slices
-            # that finished in 1 iteration are assumed to have clean CI
+            # No CI data — use completion ratio as coarse fallback.
             completed = sum(1 for s in all_slices if s.status == "COMPLETE")
             ci_rate = completed / safe_total if total_slices > 0 else 1.0
+            ci_detail = "ci_receipts_missing_fallback=completion_ratio"
 
         if ci_rate >= 0.8:
             ci_status = "PASS"
@@ -847,6 +1189,7 @@ class RunReporter:
                 raw=ci_rate,
                 score=ci_rate,
                 status=ci_status,
+                detail=ci_detail,
             )
         )
 
@@ -866,9 +1209,58 @@ class RunReporter:
         signals.append(
             ScorecardMetric(
                 name="pipeline.stagnation_rate",
-                raw=float(stagnated_count),
+                raw=stag_rate,
                 score=1.0 - stag_rate,
                 status=stag_status,
+                detail=f"stagnated_slices={stagnated_count}; total_slices={total_slices}",
+            )
+        )
+
+        # ------------------------------------------------------------------
+        # 12. pipeline.governance_compliance — governance FAIL/WARN findings
+        #     plus missing governance receipts.
+        # ------------------------------------------------------------------
+        governance_incidents = (
+            governance_fail_count + governance_warn_count + governance_missing_receipts
+        )
+        if governance_fail_count > 0:
+            governance_status = "FAIL"
+        elif governance_warn_count > 0 or governance_missing_receipts > 0:
+            governance_status = "WARN"
+        else:
+            governance_status = "PASS"
+        governance_score = 1.0 / (1.0 + float(governance_incidents))
+        signals.append(
+            ScorecardMetric(
+                name="pipeline.governance_compliance",
+                raw=float(governance_incidents),
+                score=governance_score,
+                status=governance_status,
+                detail=(
+                    f"fail={governance_fail_count}; warn={governance_warn_count}; "
+                    f"missing_receipts={governance_missing_receipts}"
+                ),
+            )
+        )
+
+        # ------------------------------------------------------------------
+        # 13. pipeline.blocking_under_spec_rate — under-spec BLOCKED events
+        #     per slice.
+        # ------------------------------------------------------------------
+        under_spec_rate = under_spec_blocked_events / safe_total
+        if under_spec_rate == 0.0:
+            under_spec_status = "PASS"
+        elif under_spec_rate <= 0.10:
+            under_spec_status = "WARN"
+        else:
+            under_spec_status = "FAIL"
+        signals.append(
+            ScorecardMetric(
+                name="pipeline.blocking_under_spec_rate",
+                raw=under_spec_rate,
+                score=max(0.0, 1.0 - under_spec_rate),
+                status=under_spec_status,
+                detail=f"blocked_events={under_spec_blocked_events}; total_slices={total_slices}",
             )
         )
 

@@ -1184,7 +1184,8 @@ class PddLifecycle:
             return results
         if not bool((results["release_signoff"] or {}).get("approved", False)):
             results["release_blocked"] = True
-            results["release_blocked_reason"] = "Release signoff rejected"
+            release_reason = str((results["release_signoff"] or {}).get("reason", "")).strip()
+            results["release_blocked_reason"] = release_reason or "Release signoff rejected"
             state_mgr.update_state(phase="blocked_release_signoff")
             return results
 
@@ -1769,9 +1770,23 @@ class PddLifecycle:
             except (OSError, json.JSONDecodeError):
                 failing_receipts.append(str(receipt_path))
                 continue
-            demotions = int(payload.get("demotions", 0) or 0)
-            main_updated = bool(payload.get("main_updated", True))
-            if demotions > 0 or not main_updated:
+            failed = payload.get("failed")
+            if isinstance(failed, bool):
+                ci_passed = not failed
+            else:
+                failure_evidence = payload.get("failure_evidence", {})
+                ci_passed = True
+                if isinstance(failure_evidence, dict):
+                    if not bool(failure_evidence.get("batch_success", True)):
+                        ci_passed = False
+                    if not bool(failure_evidence.get("gates_passed", True)):
+                        ci_passed = False
+                    if not bool(failure_evidence.get("tests_passed", True)):
+                        ci_passed = False
+                    propagation_failures = failure_evidence.get("propagation_failures", [])
+                    if isinstance(propagation_failures, list) and any(propagation_failures):
+                        ci_passed = False
+            if not ci_passed:
                 failing_receipts.append(str(receipt_path))
         return {
             "passed": len(failing_receipts) == 0,
@@ -4152,13 +4167,45 @@ class PddLifecycle:
 
     def _request_release_signoff(self, results: dict[str, Any]) -> dict[str, Any]:
         """Release signoff via VALIDATION signal and planner-recorded answer."""
+        checkpoint = "release_signoff"
+        scorecard = results.get("scorecard", {})
+        hard_gates = scorecard.get("hard_gates", []) if isinstance(scorecard, dict) else []
+        failing_hard_gates = [
+            str(gate.get("name", "")).strip() or "unnamed_gate"
+            for gate in hard_gates
+            if isinstance(gate, dict) and str(gate.get("status", "")).strip().upper() == "FAIL"
+        ]
+        if (
+            not failing_hard_gates
+            and isinstance(scorecard, dict)
+            and scorecard
+            and not bool(scorecard.get("overall_pass", True))
+        ):
+            failing_hard_gates = ["unknown_hard_gate_failure"]
+        if failing_hard_gates:
+            reason = "Scorecard hard gates failed: " + ", ".join(failing_hard_gates)
+            self._write_approval_artifact(
+                "l3",
+                approved=False,
+                checkpoint=checkpoint,
+                status="REJECTED",
+                hard_gate_failures=failing_hard_gates,
+                reason=reason,
+            )
+            return {
+                "approved": False,
+                "status": "REJECTED",
+                "checkpoint": checkpoint,
+                "mode": self.mode,
+                "hard_gate_failures": failing_hard_gates,
+                "reason": reason,
+            }
+
         if self.mode in ("auto", "steering"):
-            self._write_approval_artifact("l3", approved=True, checkpoint="release_signoff")
+            self._write_approval_artifact("l3", approved=True, checkpoint=checkpoint)
             return {"approved": True, "mode": self.mode}
 
-        checkpoint = "release_signoff"
         canonical_key = "pdd.lifecycle.release.signoff"
-        scorecard = results.get("scorecard", {})
         pending = not self._planner_has_canonical_resolution(canonical_key)
         if pending:
             emitted = int(
