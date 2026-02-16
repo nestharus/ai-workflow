@@ -256,9 +256,9 @@ def get_staged_from_path(staging_file: Path) -> str | None:
     content = staging_file.read_text()
     for line in content.split("\n")[:10]:
         if line.startswith("<!-- STAGED FROM:"):
-            return line.split("STAGED FROM:", 1)[1].strip().rstrip("-->").strip()
+            return line.split("STAGED FROM:", 1)[1].strip().removesuffix("-->").strip()
         if line.startswith("<!-- ORIGINAL FROM:"):
-            return line.split("ORIGINAL FROM:", 1)[1].strip().rstrip("-->").strip()
+            return line.split("ORIGINAL FROM:", 1)[1].strip().removesuffix("-->").strip()
     return None
 
 

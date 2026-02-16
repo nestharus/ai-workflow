@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -90,9 +91,8 @@ class ComparisonRunner:
 
         # Canonical responsibility alignment
         spec_payload = manifest.get("spec", {})
-        spec_summary = spec_payload.get("path", "") if isinstance(spec_payload, dict) else ""
         responsibility_alignment = self._align_responsibilities(
-            list(run_data.values()), spec_summary
+            list(run_data.values()), spec_payload if isinstance(spec_payload, dict) else {}
         )
 
         # Pairwise comparisons
@@ -168,24 +168,10 @@ class ComparisonRunner:
     def _align_responsibilities(
         self,
         runs: list[dict[str, Any]],
-        spec_summary: str,
+        spec_payload: Any,
     ) -> dict[str, Any]:
-        """Build canonical responsibility set and map each run to it.
-
-        Mechanical v1: unions all ``topology.components[].responsibilities``
-        across runs, then checks which runs cover each responsibility.
-
-        Args:
-            runs: List of per-run data dicts (from ``run_data.values()``).
-            spec_summary: Spec summary text (unused in v1, reserved for
-                future LLM-based canonicalization).
-
-        Returns:
-            Dict with ``canonical_responsibilities``, per-run
-            ``responsibility_mapping``, ``responsibility_coverage_rate``,
-            ``duplication_rate``, and ``missing_responsibilities``.
-        """
-        # Collect per-run responsibility → component_id mappings
+        """Build source-anchored responsibility set and map each run to it."""
+        normalized_spec_payload = spec_payload if isinstance(spec_payload, dict) else {}
         per_run: list[dict[str, list[str]]] = []
         for run in runs:
             resp_map: dict[str, list[str]] = {}
@@ -199,23 +185,38 @@ class ComparisonRunner:
                         resp_map.setdefault(normed, []).append(comp_id)
             per_run.append(resp_map)
 
-        # Build union set (canonical vocabulary)
-        canonical: list[str] = sorted({r for run_map in per_run for r in run_map})
-        total = len(canonical) if canonical else 1  # avoid division-by-zero
+        canonical = self._source_defined_responsibilities(
+            spec_payload=normalized_spec_payload,
+            runs=runs,
+        )
+        if not canonical:
+            canonical = sorted({r for run_map in per_run for r in run_map})
+            if canonical:
+                logger.warning(
+                    "Spec-defined responsibilities unavailable; "
+                    "using run-derived fallback for comparison."
+                )
+        if not canonical:
+            return {
+                "canonical_responsibilities": [],
+                "responsibility_mapping": [],
+                "responsibility_coverage_rate": 0.0,
+                "duplication_rate": 0.0,
+                "missing_responsibilities": [],
+            }
+        total = len(canonical)
 
-        # Per-run mapping and metrics
         run_mappings: list[dict[str, list[str]]] = []
         coverage_rates: list[float] = []
         duplication_counts: list[int] = []
 
         for run_map in per_run:
-            mapped = {r: run_map.get(r, []) for r in canonical}
+            mapped = {r: self._match_components_for_responsibility(r, run_map) for r in canonical}
             run_mappings.append(mapped)
 
             covered = sum(1 for ids in mapped.values() if ids)
             coverage_rates.append(covered / total)
 
-            # Duplication: responsibility mapped to >1 component
             duplication_counts.append(sum(1 for ids in mapped.values() if len(ids) > 1))
 
         avg_coverage = sum(coverage_rates) / len(coverage_rates) if coverage_rates else 0.0
@@ -225,10 +226,11 @@ class ComparisonRunner:
             else 0.0
         )
 
-        # Missing: responsibilities not covered by any run
         all_covered: set[str] = set()
         for run_map in per_run:
-            all_covered.update(r for r, ids in run_map.items() if ids)
+            for responsibility in canonical:
+                if self._match_components_for_responsibility(responsibility, run_map):
+                    all_covered.add(responsibility)
         missing = sorted(set(canonical) - all_covered)
 
         return {
@@ -238,6 +240,128 @@ class ComparisonRunner:
             "duplication_rate": round(avg_duplication, 4),
             "missing_responsibilities": missing,
         }
+
+    def _source_defined_responsibilities(
+        self,
+        *,
+        spec_payload: dict[str, Any],
+        runs: list[dict[str, Any]],
+    ) -> list[str]:
+        """Resolve canonical responsibilities from source-oriented spec artifacts."""
+        requirements: list[str] = []
+
+        spec_path = str(spec_payload.get("path", "")).strip()
+        if spec_path:
+            requirements.extend(self._load_spec_requirements(self._workspace_path(spec_path)))
+
+        for run in runs:
+            digest = run.get("arch_digest") or {}
+            spec_section = digest.get("spec", {})
+            if not isinstance(spec_section, dict):
+                continue
+            rows = spec_section.get("requirements", [])
+            if isinstance(rows, list):
+                for item in rows:
+                    if isinstance(item, str) and item.strip():
+                        requirements.append(item.strip())
+                    elif isinstance(item, dict):
+                        text = str(
+                            item.get("requirement")
+                            or item.get("text")
+                            or item.get("description")
+                            or ""
+                        ).strip()
+                        if text:
+                            requirements.append(text)
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for requirement in requirements:
+            normed = self._normalize_responsibility_text(requirement)
+            if normed and normed not in seen:
+                seen.add(normed)
+                normalized.append(normed)
+        return sorted(normalized)
+
+    def _load_spec_requirements(self, path: Path) -> list[str]:
+        """Load requirements directly from source spec path when possible."""
+        if not path.exists():
+            logger.warning("Spec path missing for responsibility alignment: %s", path)
+            return []
+
+        candidates: list[Path]
+        if path.is_file():
+            candidates = [path]
+        else:
+            candidates = [
+                path / "spec_summary.json",
+                path / "spec.json",
+                path / "requirements.json",
+            ]
+
+        for candidate in candidates:
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            payload = self._load_json(str(candidate))
+            if not isinstance(payload, dict):
+                continue
+            rows = payload.get("requirements", payload.get("top_requirements", []))
+            if not isinstance(rows, list):
+                continue
+            requirements: list[str] = []
+            for item in rows:
+                if isinstance(item, str) and item.strip():
+                    requirements.append(item.strip())
+                elif isinstance(item, dict):
+                    text = str(
+                        item.get("requirement")
+                        or item.get("text")
+                        or item.get("description")
+                        or item.get("summary")
+                        or ""
+                    ).strip()
+                    if text:
+                        requirements.append(text)
+            if requirements:
+                return requirements
+
+        return []
+
+    def _match_components_for_responsibility(
+        self,
+        responsibility: str,
+        run_map: dict[str, list[str]],
+    ) -> list[str]:
+        """Map one canonical responsibility to component IDs from a run."""
+        if responsibility in run_map:
+            return list(run_map.get(responsibility, []))
+
+        matches: set[str] = set()
+        for candidate, component_ids in run_map.items():
+            if not candidate:
+                continue
+            if responsibility in candidate or candidate in responsibility:
+                matches.update(component_ids)
+                continue
+            if self._token_overlap(responsibility, candidate) >= 0.6:
+                matches.update(component_ids)
+        return sorted(matches)
+
+    @staticmethod
+    def _normalize_responsibility_text(text: str) -> str:
+        return " ".join(str(text).strip().lower().split())
+
+    def _token_overlap(self, left: str, right: str) -> float:
+        left_tokens = self._tokenize(left)
+        right_tokens = self._tokenize(right)
+        if not left_tokens or not right_tokens:
+            return 0.0
+        overlap = len(left_tokens & right_tokens)
+        return overlap / float(max(len(left_tokens), len(right_tokens)))
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        return {token for token in re.split(r"[^a-z0-9]+", text.lower()) if token}
 
     def _build_summary(self, run_data: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         """Build summary table entries for each run."""
@@ -400,8 +524,10 @@ class ComparisonRunner:
             return None
         path = Path(path_str)
         if not path.exists():
+            logger.warning("Comparison artifact missing: %s", path)
             return None
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to read comparison artifact: %s", path, exc_info=True)
             return None

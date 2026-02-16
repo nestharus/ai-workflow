@@ -76,7 +76,7 @@ def build_architecture_digest(
     if not spec_summary_data:
         logger.warning("Run-scoped spec summary missing or unreadable: %s", spec_summary_path)
     spec_requirements = _normalize_requirement_items(
-        spec_summary.get("top_requirements", spec_summary.get("requirements", []))
+        spec_summary.get("requirements", spec_summary.get("top_requirements", []))
     )
     if not spec_requirements:
         spec_requirements = _normalize_requirement_items(
@@ -142,12 +142,18 @@ def build_code_digest(
     # Build file list from run snapshot only (no workspace/global fallback).
     snapshot_dir = run_dir / "snapshot" / "files" / "spec_snapshot"
     if snapshot_dir.exists():
-        files_info, duplication_ratio, long_line_ratio = _build_file_inventory(snapshot_dir, run_id)
+        (
+            files_info,
+            duplication_ratio,
+            long_line_ratio,
+            inventory_read_errors,
+        ) = _build_file_inventory(snapshot_dir, run_id)
     else:
         logger.warning("Run snapshot missing for code digest: %s", snapshot_dir)
         files_info = []
         duplication_ratio = 0.0
         long_line_ratio = 0.0
+        inventory_read_errors = []
 
     # Load run-scoped L3 / code quality findings.
     quality_data = _load_json(quality_report_path)
@@ -185,6 +191,7 @@ def build_code_digest(
                 "duplication_ratio": duplication_ratio,
                 "long_line_ratio": long_line_ratio,
             },
+            "read_errors": inventory_read_errors,
         },
         "l3_review": {
             "final_findings": l3_severity,
@@ -259,7 +266,7 @@ def _extract_spec_summary_text(spec_summary: dict[str, Any]) -> str:
     return ""
 
 
-def _normalize_requirement_items(requirements: Any, *, limit: int = 25) -> list[str]:
+def _normalize_requirement_items(requirements: Any) -> list[str]:
     """Normalize requirement entries (strings/dicts) into concise text items."""
     if not isinstance(requirements, list):
         return []
@@ -277,8 +284,6 @@ def _normalize_requirement_items(requirements: Any, *, limit: int = 25) -> list[
                     break
         if text:
             normalized.append(text)
-        if len(normalized) >= limit:
-            break
 
     return normalized
 
@@ -302,11 +307,12 @@ def _top_files_by_findings(findings: list[dict], k: int = 5) -> list[dict]:
 
 def _build_file_inventory(
     directory: Path, run_id: str
-) -> tuple[list[dict[str, Any]], float, float]:
+) -> tuple[list[dict[str, Any]], float, float, list[dict[str, str]]]:
     """Build code file list plus text-level mechanical metrics."""
     files: list[dict[str, Any]] = []
+    read_errors: list[dict[str, str]] = []
     if not directory.exists():
-        return files, 0.0, 0.0
+        return files, 0.0, 0.0, read_errors
 
     shingle_size = 5
     shingle_counts: dict[str, int] = {}
@@ -347,10 +353,20 @@ def _build_file_inventory(
                     shingle_counts[shingle_hash] = shingle_counts.get(shingle_hash, 0) + 1
                     total_shingles += 1
         except OSError:
+            relative_path = fp.relative_to(directory).as_posix()
+            logger.warning(
+                "Failed to read snapshot file for digest inventory: %s", fp, exc_info=True
+            )
+            read_errors.append(
+                {
+                    "path": relative_path,
+                    "error": "os_error",
+                }
+            )
             continue
 
     duplicated_occurrences = sum(count - 1 for count in shingle_counts.values() if count > 1)
     duplication_ratio = duplicated_occurrences / total_shingles if total_shingles > 0 else 0.0
     long_line_ratio = long_lines / total_lines if total_lines > 0 else 0.0
 
-    return files, duplication_ratio, long_line_ratio
+    return files, duplication_ratio, long_line_ratio, read_errors

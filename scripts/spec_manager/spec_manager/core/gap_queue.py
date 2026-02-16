@@ -99,12 +99,11 @@ class GapQueue:
     def _retire_gap(gap: Gap) -> Gap:
         """Carry forward an unobserved gap pending explicit resolution evidence."""
         retired = replace(gap)
-        if retired.status == "open":
-            if not retired.resolution_notes:
-                retired.resolution_notes = (
-                    "Not observed in latest gap snapshot; "
-                    "kept open until explicit resolution evidence is recorded."
-                )
+        if retired.status == "open" and not retired.resolution_notes:
+            retired.resolution_notes = (
+                "Not observed in latest gap snapshot; "
+                "kept open until explicit resolution evidence is recorded."
+            )
         return retired
 
     def _reconcile(self, current_gaps: list[Gap]) -> list[Gap]:

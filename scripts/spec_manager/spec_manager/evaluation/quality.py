@@ -742,7 +742,7 @@ class QualityReporter:
         code_metrics = code_scorer.compute(code_digest, refactor_churn=refactor_churn)
         code_mechanical = code_scorer.mechanical_score(code_metrics)
 
-        code_judge_score = 0.5  # default middle
+        code_judge_score: float | None = None
         code_sampled_files: list[dict[str, Any]] = []
         code_risks: list[dict[str, Any] | str] = []
         if code_judge_output:
@@ -775,7 +775,10 @@ class QualityReporter:
             if isinstance(risks, list):
                 code_risks = [risk for risk in risks if risk]
 
-        code_quality = 0.40 * code_mechanical + 0.60 * code_judge_score
+        if code_judge_score is None:
+            code_quality = code_mechanical
+        else:
+            code_quality = 0.40 * code_mechanical + 0.60 * code_judge_score
 
         code_has_critical = False
         code_has_major = False
@@ -788,13 +791,16 @@ class QualityReporter:
                     code_has_major = True
 
         code_status = _quality_status(code_quality, code_has_critical, code_has_major)
+        if code_judge_score is None and code_status == "PASS":
+            code_status = "WARN"
+        code_judge_detail = "missing" if code_judge_score is None else f"{code_judge_score:.3f}"
         code_metrics.append(
             QualityMetric(
                 name="code.quality_score",
                 raw=code_quality,
                 score=code_quality,
                 status=code_status,
-                detail=f"mechanical={code_mechanical:.3f}, judge={code_judge_score:.3f}",
+                detail=f"mechanical={code_mechanical:.3f}, judge={code_judge_detail}",
             )
         )
 
@@ -832,24 +838,38 @@ class QualityReporter:
         spec_fidelity_for_composite = spec_fidelity_score  # 0.0 if no judge
         if pipeline_efficiency is None:
             pipeline_efficiency = self._pipeline_efficiency_from_scorecard(pipeline_scorecard)
-        if pipeline_efficiency is None:
-            pipeline_efficiency = 1.0
 
         if planner_quality is None:
             planner_quality = self._planner_quality_from_scorecard(planner_scorecard)
+
+        composite_inputs: list[tuple[float, float]] = [
+            (quality_overall, 0.45),
+            (spec_fidelity_for_composite, 0.20),
+        ]
+        missing_composite_inputs: list[str] = []
+
+        if pipeline_efficiency is None:
+            missing_composite_inputs.append("pipeline_efficiency")
+        else:
+            composite_inputs.append((_clamp01(float(pipeline_efficiency)), 0.20))
+
         if planner_quality is None:
-            planner_quality = 1.0
+            missing_composite_inputs.append("planner_quality")
+        else:
+            composite_inputs.append((_clamp01(float(planner_quality)), 0.15))
 
-        pipeline_efficiency = _clamp01(float(pipeline_efficiency))
-        planner_quality = _clamp01(float(planner_quality))
-
-        composite_score = (
-            0.45 * quality_overall
-            + 0.20 * spec_fidelity_for_composite
-            + 0.20 * pipeline_efficiency
-            + 0.15 * planner_quality
-        )
+        total_weight = sum(weight for _, weight in composite_inputs)
+        if total_weight > 0:
+            composite_score = (
+                sum(value * weight for value, weight in composite_inputs) / total_weight
+            )
+        else:
+            composite_score = 0.0
         composite_status = _threshold_status(composite_score)
+        if missing_composite_inputs and composite_status == "PASS":
+            composite_status = "WARN"
+        if missing_composite_inputs and overall_status == "PASS":
+            overall_status = "WARN"
 
         summary_parts = [
             f"arch={arch_quality:.2f}({arch_status})",
@@ -857,6 +877,8 @@ class QualityReporter:
             f"spec={spec_fidelity_score:.2f}",
             f"composite={composite_score:.2f}({composite_status})",
         ]
+        if missing_composite_inputs:
+            summary_parts.append(f"missing_inputs={','.join(sorted(missing_composite_inputs))}")
 
         return QualityScorecard(
             run_id=self.run_id,

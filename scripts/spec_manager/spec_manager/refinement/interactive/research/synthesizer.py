@@ -63,7 +63,7 @@ Return JSON with:
             data = extract_json_from_llm_output(output, allow_object=True, location="synthesizer")
             if isinstance(data, dict):
                 return data
-        except (ValueError, TypeError) as exc:
-            logger.exception("Failed to parse synthesizer output: %s", exc)
+        except (ValueError, TypeError):
+            logger.exception("Failed to parse synthesizer output")
 
         return {"decision": "", "confidence": 0.0, "reasoning": ""}

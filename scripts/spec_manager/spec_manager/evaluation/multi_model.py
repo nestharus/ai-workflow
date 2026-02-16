@@ -368,17 +368,21 @@ class MultiModelRunner:
             try:
                 return hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
-                return ""
+                logger.warning("Failed to read input file for hashing: %s", path, exc_info=True)
+                unreadable_marker = f"unreadable_file:{path.as_posix()}"
+                return hashlib.sha256(unreadable_marker.encode("utf-8")).hexdigest()
 
         records: list[str] = []
         for fp in sorted(path.rglob("*")):
             if not fp.is_file():
                 continue
+            rel_path = fp.relative_to(path).as_posix()
             try:
                 digest = hashlib.sha256(fp.read_bytes()).hexdigest()
             except OSError:
+                logger.warning("Failed to read input file for hashing: %s", fp, exc_info=True)
+                records.append(f"{rel_path}:<UNREADABLE>")
                 continue
-            rel_path = fp.relative_to(path).as_posix()
             records.append(f"{rel_path}:{digest}")
 
         if not records:

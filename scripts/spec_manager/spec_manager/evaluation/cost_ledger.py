@@ -14,27 +14,27 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _as_int(value: Any) -> int:
-    """Convert value to int with safe fallback."""
+def _as_int(value: Any, *, field_name: str) -> tuple[int, str | None]:
+    """Convert value to int, returning parse error metadata when invalid."""
     try:
-        return int(value)
+        return int(value), None
     except (TypeError, ValueError):
-        return 0
+        return 0, field_name
 
 
-def _as_float(value: Any) -> float:
-    """Convert value to float with safe fallback."""
+def _as_float(value: Any, *, field_name: str) -> tuple[float, str | None]:
+    """Convert value to float, returning parse error metadata when invalid."""
     try:
-        return float(value)
+        return float(value), None
     except (TypeError, ValueError):
-        return 0.0
+        return 0.0, field_name
 
 
 @dataclass
@@ -51,23 +51,46 @@ class LLMCallRecord:
     run_id: str = ""
     slice_id: str = ""
     layer: str = ""
+    validation_errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LLMCallRecord:
+        tokens_in, tokens_in_error = _as_int(data.get("tokens_in", 0), field_name="tokens_in")
+        tokens_out, tokens_out_error = _as_int(data.get("tokens_out", 0), field_name="tokens_out")
+        duration_ms, duration_ms_error = _as_float(
+            data.get("duration_ms", 0.0), field_name="duration_ms"
+        )
+        timestamp, timestamp_error = _as_float(data.get("timestamp", 0.0), field_name="timestamp")
+        validation_errors = [
+            error
+            for error in (
+                tokens_in_error,
+                tokens_out_error,
+                duration_ms_error,
+                timestamp_error,
+            )
+            if error
+        ]
+        if validation_errors:
+            logger.warning(
+                "Invalid numeric fields in cost ledger record: %s",
+                ", ".join(validation_errors),
+            )
         return cls(
             agent_name=data.get("agent_name", ""),
             role=data.get("role", ""),
             model_id=data.get("model_id", ""),
-            tokens_in=_as_int(data.get("tokens_in", 0)),
-            tokens_out=_as_int(data.get("tokens_out", 0)),
-            duration_ms=_as_float(data.get("duration_ms", 0.0)),
-            timestamp=_as_float(data.get("timestamp", 0.0)),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            duration_ms=duration_ms,
+            timestamp=timestamp,
             run_id=data.get("run_id", ""),
             slice_id=data.get("slice_id", ""),
             layer=data.get("layer", ""),
+            validation_errors=validation_errors,
         )
 
 

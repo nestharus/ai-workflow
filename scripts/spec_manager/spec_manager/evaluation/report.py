@@ -1160,6 +1160,7 @@ class FinalReportGenerator:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to read JSON artifact: %s", path, exc_info=True)
             return {}
         return payload if isinstance(payload, dict) else {}
 

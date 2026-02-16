@@ -59,6 +59,8 @@ def snapshot_run(
     produced_tree = workspace_root / "spec_snapshot"
 
     if snapshot_dir.exists():
+        archived_snapshot = _archive_existing_snapshot(run_dir=run_dir, snapshot_dir=snapshot_dir)
+        logger.info("Archived previous snapshot: %s", archived_snapshot)
         shutil.rmtree(snapshot_dir)
     files_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,6 +132,16 @@ def snapshot_run(
 
     logger.info("Snapshot complete: %d files → %s", len(manifest_entries), snapshot_dir)
     return manifest_path
+
+
+def _archive_existing_snapshot(*, run_dir: Path, snapshot_dir: Path) -> Path:
+    """Preserve the previous snapshot under a timestamped history directory."""
+    archive_root = run_dir / "snapshot_history"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    archive_name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    archive_dir = archive_root / archive_name
+    shutil.copytree(snapshot_dir, archive_dir)
+    return archive_dir
 
 
 def _copy_tree(

@@ -56,7 +56,7 @@ Return JSON with:
             )
             if isinstance(data, dict):
                 return data
-        except (ValueError, TypeError) as exc:
-            logger.exception("Failed to parse signal extractor output: %s", exc)
+        except (ValueError, TypeError):
+            logger.exception("Failed to parse signal extractor output")
 
         return {"search_queries": [], "relevance_reasons": []}

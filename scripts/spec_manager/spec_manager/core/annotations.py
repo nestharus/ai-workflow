@@ -14,6 +14,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar
 
 
 class AnnotationType(Enum):
@@ -64,7 +65,7 @@ class AnnotationParser:
     PIN_PATTERN = re.compile(r"\(@pin\s+([^:]+):([^\)]+)\)")  # (@pin path:symbol)
 
     # Legacy patterns to detect and normalize
-    LEGACY_PATTERNS = [
+    LEGACY_PATTERNS: ClassVar[list[tuple[re.Pattern[str], str]]] = [
         (re.compile(r"\[\(=([^\]]+)\)\]"), "[(=ID)]"),  # Legacy format
         (re.compile(r"\(=\[([^\]]+)\]\)"), "(=[ID])"),  # Legacy format
         (re.compile(r"\(\+\[([^\]]+)\]\)"), "(+[ID])"),  # Legacy format

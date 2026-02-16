@@ -130,6 +130,27 @@ class ArtifactSnapshot:
     implemented_components: int = 0
 
 
+@dataclass
+class BundleProjection:
+    """Stable projection of bundle fields consumed by scoring."""
+
+    status: str
+    iteration: int
+    gate_pass_states: list[bool]
+    has_gate_records: bool
+    open_gaps: list[dict[str, Any]]
+    demotions_emitted: list[dict[str, Any]]
+    pin_proposals: list[dict[str, Any]]
+    changed_files: list[str]
+    manifest_files: list[dict[str, Any]]
+    source_entries: list[dict[str, Any]]
+    patch_path: str
+    verification_path: str
+    promotion_path: str
+    under_spec_blockers: list[dict[str, Any]]
+    stagnation_is_stagnant: bool
+
+
 class RunReporter:
     """Aggregates evidence and computes scorecard."""
 
@@ -232,11 +253,118 @@ class RunReporter:
         return "l1"
 
     @staticmethod
-    def _bundle_passed_gates(bundle: dict[str, Any]) -> bool:
-        gates = (bundle.get("gates") or {}).get("gates") or []
-        if not gates:
-            return str(bundle.get("status", "")) == "COMPLETE"
-        return all(bool(g.get("passed", True)) for g in gates if isinstance(g, dict))
+    def _project_bundle(bundle: dict[str, Any]) -> BundleProjection:
+        gates_section = bundle.get("gates")
+        gates_rows = (gates_section or {}).get("gates") if isinstance(gates_section, dict) else []
+        gate_pass_states = [
+            bool(row.get("passed", False)) for row in gates_rows if isinstance(row, dict)
+        ]
+
+        gaps_section = bundle.get("gaps")
+        open_gaps = (gaps_section or {}).get("open_gaps") if isinstance(gaps_section, dict) else []
+        stagnation = (
+            (gaps_section or {}).get("stagnation") if isinstance(gaps_section, dict) else {}
+        )
+
+        demotions_section = bundle.get("demotions")
+        demotions_emitted = (
+            (demotions_section or {}).get("emitted") if isinstance(demotions_section, dict) else []
+        )
+
+        implementation_section = bundle.get("implementation")
+        pin_proposals = (
+            (implementation_section or {}).get("pin_proposals")
+            if isinstance(implementation_section, dict)
+            else []
+        )
+        patch_path = str(
+            (implementation_section or {}).get("patch_path", "")
+            if isinstance(implementation_section, dict)
+            else ""
+        ).strip()
+
+        diff_section = bundle.get("diff")
+        changed_files_raw = (
+            (diff_section or {}).get("changed_files") if isinstance(diff_section, dict) else []
+        )
+        changed_files = [
+            str(path).strip()
+            for path in changed_files_raw
+            if isinstance(path, str) and str(path).strip()
+        ]
+
+        manifest_section = bundle.get("manifest")
+        manifest_files = (
+            (manifest_section or {}).get("files") if isinstance(manifest_section, dict) else []
+        )
+
+        source_index = bundle.get("source_index")
+        source_entries = (
+            (source_index or {}).get("entries") if isinstance(source_index, dict) else []
+        )
+
+        verification_section = bundle.get("verification")
+        verification_path = str(
+            (verification_section or {}).get("path", "")
+            if isinstance(verification_section, dict)
+            else ""
+        ).strip()
+
+        promotion_section = bundle.get("promotion")
+        promotion_path = str(
+            (promotion_section or {}).get("path", "") if isinstance(promotion_section, dict) else ""
+        ).strip()
+
+        under_spec_section = bundle.get("under_spec")
+        under_spec_blockers = (
+            (under_spec_section or {}).get("blockers")
+            if isinstance(under_spec_section, dict)
+            else []
+        )
+
+        iteration_raw = bundle.get("iteration", 0)
+        try:
+            iteration = int(iteration_raw)
+        except (TypeError, ValueError):
+            iteration = 0
+
+        return BundleProjection(
+            status=str(bundle.get("status", "")).strip().upper(),
+            iteration=max(iteration, 0),
+            gate_pass_states=gate_pass_states,
+            has_gate_records=bool(gate_pass_states),
+            open_gaps=[gap for gap in open_gaps if isinstance(gap, dict)]
+            if isinstance(open_gaps, list)
+            else [],
+            demotions_emitted=[item for item in demotions_emitted if isinstance(item, dict)]
+            if isinstance(demotions_emitted, list)
+            else [],
+            pin_proposals=[item for item in pin_proposals if isinstance(item, dict)]
+            if isinstance(pin_proposals, list)
+            else [],
+            changed_files=changed_files,
+            manifest_files=[item for item in manifest_files if isinstance(item, dict)]
+            if isinstance(manifest_files, list)
+            else [],
+            source_entries=[item for item in source_entries if isinstance(item, dict)]
+            if isinstance(source_entries, list)
+            else [],
+            patch_path=patch_path,
+            verification_path=verification_path,
+            promotion_path=promotion_path,
+            under_spec_blockers=[item for item in under_spec_blockers if isinstance(item, dict)]
+            if isinstance(under_spec_blockers, list)
+            else [],
+            stagnation_is_stagnant=bool(stagnation.get("is_stagnant", False))
+            if isinstance(stagnation, dict)
+            else False,
+        )
+
+    @staticmethod
+    def _bundle_passed_gates(bundle: BundleProjection) -> bool:
+        if not bundle.has_gate_records:
+            return False
+        return all(bundle.gate_pass_states)
 
     def _slice_artifact_from_history(
         self,
@@ -246,14 +374,16 @@ class RunReporter:
         """Build normalized per-slice metrics from bundle history."""
         first_iter, first_bundle, first_path = bundles[0]
         latest_iter, latest_bundle, latest_path = bundles[-1]
+        first_projection = self._project_bundle(first_bundle)
+        latest_projection = self._project_bundle(latest_bundle)
 
         layer = self._slice_layer(slice_id)
-        latest_gaps = (latest_bundle.get("gaps") or {}).get("open_gaps") or []
-        first_gaps = (first_bundle.get("gaps") or {}).get("open_gaps") or []
-        demotions = (latest_bundle.get("demotions") or {}).get("emitted") or []
-        pin_proposals = (latest_bundle.get("implementation") or {}).get("pin_proposals") or []
-        status = str(latest_bundle.get("status", ""))
-        iterations = max(1, int(latest_bundle.get("iteration", latest_iter) or latest_iter or 1))
+        latest_gaps = latest_projection.open_gaps
+        first_gaps = first_projection.open_gaps
+        demotions = latest_projection.demotions_emitted
+        pin_proposals = latest_projection.pin_proposals
+        status = latest_projection.status
+        iterations = max(1, latest_projection.iteration or latest_iter or 1)
         behavior_change_findings = sum(
             1
             for gap in latest_gaps
@@ -261,22 +391,22 @@ class RunReporter:
         )
         first_attempt_pass = (
             first_iter == 1
-            and str(first_bundle.get("status", "")) == "COMPLETE"
-            and self._bundle_passed_gates(first_bundle)
+            and first_projection.status == "COMPLETE"
+            and self._bundle_passed_gates(first_projection)
         )
         changed_loc, total_loc = self._compute_loc_metrics(
             layer=layer,
-            bundle=latest_bundle,
+            bundle=latest_projection,
             bundle_path=latest_path,
         )
         governance_fail, governance_warn, governance_missing = self._governance_findings(
-            latest_bundle,
+            latest_projection,
             latest_path,
         )
-        under_spec_blockers = self._under_spec_blocker_events(latest_bundle)
+        under_spec_blockers = self._under_spec_blocker_events(latest_projection)
         stagnation_detected, max_iterations_hit = self._stagnation_flags(
             layer=layer,
-            bundle=latest_bundle,
+            bundle=latest_projection,
             iterations=iterations,
             remaining_gaps=len(latest_gaps),
         )
@@ -284,7 +414,7 @@ class RunReporter:
         l3_review_passed = 0
         if layer == "l3":
             l3_review_total, l3_review_passed = self._l3_first_review_file_counts(
-                first_bundle,
+                first_projection,
                 first_path,
             )
 
@@ -296,7 +426,7 @@ class RunReporter:
             remaining_gaps=len(latest_gaps),
             initial_gaps=len(first_gaps),
             demotion_count=len(demotions),
-            gate_passed=self._bundle_passed_gates(latest_bundle),
+            gate_passed=self._bundle_passed_gates(latest_projection),
             first_attempt_pass=first_attempt_pass,
             promoted_pins=len(pin_proposals),
             consumed_pins=len(pin_proposals) if status == "COMPLETE" else 0,
@@ -353,7 +483,7 @@ class RunReporter:
         self,
         *,
         layer: str,
-        bundle: dict[str, Any],
+        bundle: BundleProjection,
         bundle_path: Path,
     ) -> tuple[int, int]:
         # L3 has file-level structural metrics + patch artifacts; prefer those.
@@ -362,15 +492,10 @@ class RunReporter:
             total_loc = 0
             touched_total_loc = 0
             touched_files: set[str] = set()
-            diff_changed = (bundle.get("diff") or {}).get("changed_files") or []
-            for path in diff_changed if isinstance(diff_changed, list) else []:
-                if isinstance(path, str) and path.strip():
-                    touched_files.add(path.strip())
+            for path in bundle.changed_files:
+                touched_files.add(path)
 
-            source_entries = (bundle.get("source_index") or {}).get("entries") or []
-            for entry in source_entries if isinstance(source_entries, list) else []:
-                if not isinstance(entry, dict):
-                    continue
+            for entry in bundle.source_entries:
                 rel_path = str(entry.get("path", "")).strip()
                 if not rel_path or rel_path.startswith("__"):
                     continue
@@ -399,23 +524,20 @@ class RunReporter:
                     touched_total_loc += line_count
 
             if total_loc <= 0:
-                manifest_files = (bundle.get("manifest") or {}).get("files") or []
-                total_loc = max(1, len(manifest_files) if isinstance(manifest_files, list) else 1)
+                total_loc = max(1, len(bundle.manifest_files))
             if touched_total_loc > 0:
                 total_loc = touched_total_loc
             if changed_loc <= 0 and touched_total_loc > 0:
                 changed_loc = touched_total_loc
             return max(changed_loc, 0), max(total_loc, 1)
 
-        changed_files = (bundle.get("diff") or {}).get("changed_files") or []
-        manifest_files = (bundle.get("manifest") or {}).get("files") or []
         return (
-            len(changed_files) if isinstance(changed_files, list) else 0,
-            max(1, len(manifest_files) if isinstance(manifest_files, list) else 1),
+            len(bundle.changed_files),
+            max(1, len(bundle.manifest_files)),
         )
 
-    def _patch_changed_loc(self, *, bundle: dict[str, Any], bundle_path: Path) -> int:
-        patch_ref = str((bundle.get("implementation") or {}).get("patch_path", "")).strip()
+    def _patch_changed_loc(self, *, bundle: BundleProjection, bundle_path: Path) -> int:
+        patch_ref = bundle.patch_path
         if not patch_ref:
             return 0
         patch_path = bundle_path.parent / patch_ref
@@ -434,13 +556,13 @@ class RunReporter:
         return changed
 
     def _governance_findings(
-        self, bundle: dict[str, Any], bundle_path: Path
+        self, bundle: BundleProjection, bundle_path: Path
     ) -> tuple[int, int, int]:
         fail_messages: set[str] = set()
         warn_messages: set[str] = set()
         iteration_dir = bundle_path.parent
 
-        verification_ref = str((bundle.get("verification") or {}).get("path", "")).strip()
+        verification_ref = bundle.verification_path
         if verification_ref:
             verification_payload = self._read_json_dict(iteration_dir / verification_ref)
             rows = verification_payload.get("findings", [])
@@ -477,7 +599,7 @@ class RunReporter:
         if not quality_path.exists() or not governance_receipts_seen:
             missing_receipts = 1
 
-        promotion_ref = str((bundle.get("promotion") or {}).get("path", "")).strip()
+        promotion_ref = bundle.promotion_path
         if promotion_ref:
             promotion_payload = self._read_json_dict(iteration_dir / promotion_ref)
             dirty_clean = (
@@ -499,10 +621,9 @@ class RunReporter:
 
         return len(fail_messages), len(warn_messages), missing_receipts
 
-    def _under_spec_blocker_events(self, bundle: dict[str, Any]) -> int:
-        blockers = (bundle.get("under_spec") or {}).get("blockers") or []
-        blocker_count = len(blockers) if isinstance(blockers, list) else 0
-        status = str(bundle.get("status", "")).strip().upper()
+    def _under_spec_blocker_events(self, bundle: BundleProjection) -> int:
+        blocker_count = len(bundle.under_spec_blockers)
+        status = bundle.status
         if blocker_count == 0 and status == "BLOCKED":
             blocker_count = 1
         return blocker_count
@@ -516,15 +637,12 @@ class RunReporter:
         self,
         *,
         layer: str,
-        bundle: dict[str, Any],
+        bundle: BundleProjection,
         iterations: int,
         remaining_gaps: int,
     ) -> tuple[bool, bool]:
-        stagnation = (bundle.get("gaps") or {}).get("stagnation") or {}
-        stagnant = (
-            bool(stagnation.get("is_stagnant", False)) if isinstance(stagnation, dict) else False
-        )
-        status = str(bundle.get("status", "")).strip().upper()
+        stagnant = bundle.stagnation_is_stagnant
+        status = bundle.status
         max_hit = (
             status == "FAILED"
             and remaining_gaps > 0
@@ -535,22 +653,16 @@ class RunReporter:
 
     def _l3_first_review_file_counts(
         self,
-        first_bundle: dict[str, Any],
+        first_bundle: BundleProjection,
         first_path: Path,
     ) -> tuple[int, int]:
         candidate_files: set[str] = set()
-        source_entries = (first_bundle.get("source_index") or {}).get("entries") or []
-        for entry in source_entries if isinstance(source_entries, list) else []:
-            if not isinstance(entry, dict):
-                continue
+        for entry in first_bundle.source_entries:
             rel_path = str(entry.get("path", "")).strip()
             if rel_path and not rel_path.startswith("__"):
                 candidate_files.add(rel_path)
         if not candidate_files:
-            manifest_files = (first_bundle.get("manifest") or {}).get("files") or []
-            for item in manifest_files if isinstance(manifest_files, list) else []:
-                if not isinstance(item, dict):
-                    continue
+            for item in first_bundle.manifest_files:
                 rel_path = str(item.get("path", "")).strip()
                 if rel_path:
                     candidate_files.add(rel_path)
@@ -950,14 +1062,20 @@ class RunReporter:
             total_promoted_pins += promoted
             total_consumed_pins += consumed
 
-        pin_rate = total_consumed_pins / total_promoted_pins if total_promoted_pins > 0 else 1.0
-
-        if pin_rate >= 1.0:
-            pin_status = "PASS"
-        elif pin_rate >= 0.95:
-            pin_status = "WARN"
+        pin_detail = ""
+        if total_promoted_pins > 0:
+            pin_rate = total_consumed_pins / total_promoted_pins
+            if pin_rate >= 1.0:
+                pin_status = "PASS"
+            elif pin_rate >= 0.95:
+                pin_status = "WARN"
+            else:
+                pin_status = "FAIL"
+            pin_detail = f"consumed={total_consumed_pins}; promoted={total_promoted_pins}"
         else:
-            pin_status = "FAIL"
+            pin_rate = 0.0
+            pin_status = "WARN"
+            pin_detail = "missing_pin_evidence=promoted_pins"
 
         signals.append(
             ScorecardMetric(
@@ -965,6 +1083,7 @@ class RunReporter:
                 raw=pin_rate,
                 score=min(pin_rate, 1.0),
                 status=pin_status,
+                detail=pin_detail,
             )
         )
 
@@ -978,16 +1097,17 @@ class RunReporter:
 
         if manifest_components > 0:
             comp_coverage = implemented_components / manifest_components
+            comp_detail = f"implemented={implemented_components}; manifest={manifest_components}"
+            if comp_coverage >= 1.0:
+                comp_status = "PASS"
+            elif comp_coverage >= 0.98:
+                comp_status = "WARN"
+            else:
+                comp_status = "FAIL"
         else:
-            # No manifest data — default to 1.0 (all components accounted for)
-            comp_coverage = 1.0
-
-        if comp_coverage >= 1.0:
-            comp_status = "PASS"
-        elif comp_coverage >= 0.98:
+            comp_coverage = 0.0
             comp_status = "WARN"
-        else:
-            comp_status = "FAIL"
+            comp_detail = "missing_component_manifest=true"
 
         signals.append(
             ScorecardMetric(
@@ -995,6 +1115,7 @@ class RunReporter:
                 raw=comp_coverage,
                 score=min(comp_coverage, 1.0),
                 status=comp_status,
+                detail=comp_detail,
             )
         )
 
@@ -1171,17 +1292,19 @@ class RunReporter:
                 )
             ci_detail = "; ".join(layer_parts)
         else:
-            # No CI data — use completion ratio as coarse fallback.
-            completed = sum(1 for s in all_slices if s.status == "COMPLETE")
-            ci_rate = completed / safe_total if total_slices > 0 else 1.0
-            ci_detail = "ci_receipts_missing_fallback=completion_ratio"
-
-        if ci_rate >= 0.8:
-            ci_status = "PASS"
-        elif ci_rate >= 0.6:
+            ci_rate = 0.0
             ci_status = "WARN"
+            ci_detail = "ci_receipts_missing=true"
+
+        if artifacts.ci_receipts:
+            if ci_rate >= 0.8:
+                ci_status = "PASS"
+            elif ci_rate >= 0.6:
+                ci_status = "WARN"
+            else:
+                ci_status = "FAIL"
         else:
-            ci_status = "FAIL"
+            ci_status = "WARN"
 
         signals.append(
             ScorecardMetric(
@@ -1268,6 +1391,15 @@ class RunReporter:
 
     @staticmethod
     def _render_markdown(scorecard: Scorecard) -> str:
+        """Back-compat wrapper delegating rendering to ScorecardRenderer."""
+        return ScorecardRenderer.render_markdown(scorecard)
+
+
+class ScorecardRenderer:
+    """Render scorecards into human-readable formats."""
+
+    @staticmethod
+    def render_markdown(scorecard: Scorecard) -> str:
         """Render scorecard as markdown."""
         lines = [
             f"# Scorecard — Run {scorecard.run_id}",

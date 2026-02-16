@@ -82,7 +82,8 @@ class LibsRegistry:
         """Reject non-authoritative content-only construction."""
         del content
         raise RuntimeError(
-            "LibsRegistry.from_content() is unsupported: authoritative input is the libraries directory."
+            "LibsRegistry.from_content() is unsupported: "
+            "authoritative input is the libraries directory."
         )
 
     def _scan_libraries(self) -> None:
@@ -206,7 +207,8 @@ class LibsRegistry:
         for id_value, entry in self.entries.items():
             source_lib = entry.primary
             for related_lib in entry.related:
-                pair = tuple(sorted([source_lib, related_lib]))
+                lib_a, lib_b = sorted([source_lib, related_lib])
+                pair = lib_a, lib_b
                 cross_refs.setdefault(pair, set()).add(id_value)
 
         candidates = []

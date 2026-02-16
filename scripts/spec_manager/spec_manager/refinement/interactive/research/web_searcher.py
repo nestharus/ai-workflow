@@ -54,7 +54,7 @@ Return JSON with:
             data = extract_json_from_llm_output(output, allow_object=True, location="web_searcher")
             if isinstance(data, dict):
                 return data
-        except (ValueError, TypeError) as exc:
-            logger.exception("Failed to parse web searcher output: %s", exc)
+        except (ValueError, TypeError):
+            logger.exception("Failed to parse web searcher output")
 
         return {"findings": [], "overall_summary": ""}
