@@ -7,6 +7,7 @@ manages WaitGraph edges for blocked decisions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -791,7 +792,10 @@ class ArchitecturePlannerStrategy:
 
         # Add WaitGraph edges for blocked decisions
         if self._wait_graph is not None and not outcome.committed and outcome.decision_requirements:
-            from spec_manager.orchestration.coordination.wait_graph import WaitEdge
+            from spec_manager.orchestration.coordination.wait_graph import (
+                CyclicDependencyError,
+                WaitEdge,
+            )
 
             existing_edges = {
                 (edge.waiting_slice, edge.provider_slice)
@@ -802,24 +806,39 @@ class ArchitecturePlannerStrategy:
                 constraint_id = self._normalize_constraint_dependency_id(requirement)
                 if not constraint_id:
                     continue
-                if (slice_id, constraint_id) in existing_edges:
+                provider_slice = self._resolve_constraint_owner_slice(requirement, constraint_id)
+                if not provider_slice:
+                    logger.debug(
+                        "Skipped wait edge for %s; unresolved owner for requirement %s",
+                        slice_id,
+                        constraint_id,
+                    )
+                    continue
+                if (slice_id, provider_slice) in existing_edges:
                     continue
                 try:
                     self._wait_graph.add_edge(
                         WaitEdge(
                             waiting_slice=slice_id,
-                            provider_slice=constraint_id,
+                            provider_slice=provider_slice,
                             artifact_key=f"constraint:{constraint_id}",
-                            signal_id=f"constraint_wait:{slice_id}:{constraint_id}:{dp.decision_id}",
+                            signal_id=f"constraint_wait:{slice_id}:{provider_slice}:{constraint_id}:{dp.decision_id}",
                         )
                     )
-                    existing_edges.add((slice_id, constraint_id))
+                    existing_edges.add((slice_id, provider_slice))
+                except CyclicDependencyError as exc:
+                    self._handle_wait_cycle(
+                        waiting_slice=slice_id,
+                        provider_slice=provider_slice,
+                        constraint_id=constraint_id,
+                        decision_id=str(getattr(dp, "decision_id", "")).strip(),
+                        cycle=exc.cycle,
+                    )
                 except Exception:
-                    # CyclicDependencyError or other — log and continue
                     logger.debug(
                         "Could not add wait edge %s -> %s",
                         slice_id,
-                        constraint_id,
+                        provider_slice,
                         exc_info=True,
                     )
 
@@ -836,3 +855,119 @@ class ArchitecturePlannerStrategy:
         if not candidate or any(char.isspace() for char in candidate):
             return ""
         return candidate
+
+    def _resolve_constraint_owner_slice(self, requirement: Any, constraint_id: str) -> str:
+        if isinstance(requirement, dict):
+            for key in ("owner_slice_id", "provider_slice", "slice_id", "owner_slice"):
+                candidate = str(requirement.get(key, "")).strip()
+                if candidate:
+                    return candidate
+
+        if self._work_item_store is not None:
+            try:
+                item = self._work_item_store.get(constraint_id)
+            except Exception:
+                item = None
+            owner_slice_id = str(getattr(item, "owner_slice_id", "")).strip() if item else ""
+            if owner_slice_id:
+                return owner_slice_id
+
+        return ""
+
+    def _handle_wait_cycle(
+        self,
+        *,
+        waiting_slice: str,
+        provider_slice: str,
+        constraint_id: str,
+        decision_id: str,
+        cycle: list[str],
+    ) -> None:
+        cycle_path = [str(node).strip() for node in cycle if str(node).strip()]
+        if not cycle_path:
+            cycle_path = [waiting_slice, provider_slice, waiting_slice]
+
+        stub_owner_slice = self._choose_cycle_stub_owner(
+            cycle_path=cycle_path,
+            fallback_slice=provider_slice,
+        )
+        logger.warning(
+            "Wait-graph cycle detected while adding %s -> %s for %s: %s",
+            waiting_slice,
+            provider_slice,
+            constraint_id,
+            " -> ".join(cycle_path),
+        )
+
+        if self._work_item_store is None:
+            logger.warning(
+                "Cannot create cycle-breaking work item for %s: work_item_store unavailable",
+                constraint_id,
+            )
+            return
+
+        from spec_manager.orchestration.coordination.work_items import WorkItem
+
+        work_item_id = self._cycle_break_work_item_id(
+            waiting_slice=waiting_slice,
+            provider_slice=provider_slice,
+            constraint_id=constraint_id,
+            cycle_path=cycle_path,
+        )
+        if self._work_item_store.get(work_item_id) is not None:
+            return
+
+        stub_work_item = WorkItem(
+            work_item_id=work_item_id,
+            spec_text=(
+                f"Define a minimal interface-first stub for constraint '{constraint_id}' "
+                f"to break cycle {' -> '.join(cycle_path)}."
+            ),
+            owner_slice_id=stub_owner_slice,
+            status="NEW",
+            kind="SPEC_WORK",
+            tags=["cycle_breaking", "interface_stub"],
+            required_constraints=[constraint_id],
+            metadata={
+                "source": "wait_graph_cycle",
+                "decision_id": decision_id,
+                "waiting_slice": waiting_slice,
+                "provider_slice": provider_slice,
+                "cycle_path": cycle_path,
+                "monitor_required_status": "MERGED",
+                "monitor_kind": "work_item_status",
+            },
+        )
+        try:
+            self._work_item_store.add(stub_work_item)
+        except Exception:
+            logger.warning(
+                "Failed to create cycle-breaking work item %s",
+                work_item_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _choose_cycle_stub_owner(*, cycle_path: list[str], fallback_slice: str) -> str:
+        if len(cycle_path) >= 2 and cycle_path[1]:
+            return cycle_path[1]
+        return fallback_slice
+
+    @staticmethod
+    def _cycle_break_work_item_id(
+        *,
+        waiting_slice: str,
+        provider_slice: str,
+        constraint_id: str,
+        cycle_path: list[str],
+    ) -> str:
+        seed = "|".join(
+            [
+                waiting_slice,
+                provider_slice,
+                constraint_id,
+                "->".join(cycle_path),
+            ]
+        )
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+        return f"cycle-break:{digest}"

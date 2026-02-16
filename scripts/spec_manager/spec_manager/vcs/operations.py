@@ -59,6 +59,14 @@ class VcsOperations(Protocol):
         """
         ...
 
+    def fetch(self, worktree: Path, remote: str = "origin") -> tuple[bool, str]:
+        """Fetch updates from *remote* into *worktree*.
+
+        Returns:
+            ``(success, error_message)``.
+        """
+        ...
+
     def rebase(self, worktree: Path, onto: str) -> tuple[bool, str]:
         """Rebase *worktree*'s branch onto *onto*.
 
@@ -217,6 +225,12 @@ class GitVcs:
             # Abort on failure
             self._run(["cherry-pick", "--abort"], cwd=worktree)
             return False, result.stderr.strip()
+        return True, ""
+
+    def fetch(self, worktree: Path, remote: str = "origin") -> tuple[bool, str]:
+        result = self._run(["fetch", remote], cwd=worktree)
+        if result.returncode != 0:
+            return False, (result.stderr or result.stdout).strip()
         return True, ""
 
     def rebase(self, worktree: Path, onto: str) -> tuple[bool, str]:

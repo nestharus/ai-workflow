@@ -3948,12 +3948,26 @@ class CoordinateStep:
             payload["layer"] = str(payload.get("layer") or ctx.layer)
             payload["slice_id"] = str(payload.get("slice_id") or ctx.slice_id)
             payload["iteration"] = int(payload.get("iteration") or bundle.iteration or 0)
+            payload = self._enrich_interface_mismatch_signal(
+                ctx=ctx,
+                bundle=bundle,
+                signal_payload=payload,
+            )
             signals.append(payload)
         if signals:
             return signals
 
         synthesized = [
-            self._signal_from_under_spec_event(ctx=ctx, bundle=bundle, event=event, event_index=idx)
+            self._enrich_interface_mismatch_signal(
+                ctx=ctx,
+                bundle=bundle,
+                signal_payload=self._signal_from_under_spec_event(
+                    ctx=ctx,
+                    bundle=bundle,
+                    event=event,
+                    event_index=idx,
+                ),
+            )
             for idx, event in enumerate(raw_events)
         ]
         try:
@@ -4015,7 +4029,26 @@ class CoordinateStep:
         artifact_key = str(event.get("needed_for") or context_needed_for or "").strip()
         if not artifact_key:
             artifact_key = str(event.get("source_file", "")).strip()
+        interface_mismatch = {}
+        if classification == "MISSING_INTERFACE":
+            interface_mismatch = CoordinateStep._interface_mismatch_evidence(
+                bundle=bundle,
+                slice_root=ctx.slice_root,
+                artifact_key=artifact_key,
+            )
+            if interface_mismatch:
+                classification = "INTERFACE_MISMATCH"
         signal_id = f"{ctx.slice_id}:{bundle.iteration}:{event_id}:{event_index}"
+        signal_payload: dict[str, Any] = {"under_spec_event": event}
+        expected_shape: dict[str, Any] = {}
+        if interface_mismatch:
+            signal_payload["interface_mismatch"] = interface_mismatch
+            expected_shape = {
+                "kind": "callable",
+                "signature_hint": str(
+                    interface_mismatch.get("expected_signature_hint", "")
+                ).strip(),
+            }
         return {
             "signal_version": 1,
             "signal_id": signal_id,
@@ -4028,6 +4061,7 @@ class CoordinateStep:
             "need": {
                 "summary": question,
                 "artifact_key": artifact_key,
+                "expected_shape": expected_shape,
             },
             "spec_refs": [
                 {
@@ -4041,14 +4075,153 @@ class CoordinateStep:
                 "keywords": [token for token in re.split(r"[^a-zA-Z0-9]+", artifact_key) if token],
                 "possible_owner_slices": [],
             },
-            "payload": {"under_spec_event": event},
+            "payload": signal_payload,
         }
+
+    @staticmethod
+    def _enrich_interface_mismatch_signal(
+        *,
+        ctx: SliceContext,
+        bundle: EvidenceBundle,
+        signal_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = dict(signal_payload)
+        classification = str(payload.get("classification", "")).strip().upper()
+        if classification != "MISSING_INTERFACE":
+            return payload
+
+        need_payload = payload.get("need")
+        need = dict(need_payload) if isinstance(need_payload, dict) else {}
+        artifact_key = str(need.get("artifact_key", "")).strip()
+        interface_mismatch = CoordinateStep._interface_mismatch_evidence(
+            bundle=bundle,
+            slice_root=ctx.slice_root,
+            artifact_key=artifact_key,
+        )
+        if not interface_mismatch:
+            return payload
+
+        payload["classification"] = "INTERFACE_MISMATCH"
+        expected_shape_raw = need.get("expected_shape")
+        expected_shape = dict(expected_shape_raw) if isinstance(expected_shape_raw, dict) else {}
+        expected_shape["signature_hint"] = str(
+            interface_mismatch.get("expected_signature_hint", "")
+        ).strip()
+        if "kind" not in expected_shape:
+            expected_shape["kind"] = "callable"
+        need["expected_shape"] = expected_shape
+        payload["need"] = need
+
+        inner_payload_raw = payload.get("payload")
+        inner_payload = dict(inner_payload_raw) if isinstance(inner_payload_raw, dict) else {}
+        inner_payload["interface_mismatch"] = interface_mismatch
+        payload["payload"] = inner_payload
+        return payload
+
+    @staticmethod
+    def _interface_mismatch_evidence(
+        *,
+        bundle: EvidenceBundle,
+        slice_root: str,
+        artifact_key: str,
+    ) -> dict[str, Any]:
+        wake_payload = CoordinateStep._latest_symbol_wake_payload(bundle)
+        expected_signature_hint = str(wake_payload.get("expected_signature_hint", "")).strip()
+        if not expected_signature_hint:
+            return {}
+        symbol_fqn = str(wake_payload.get("symbol_fqn", "")).strip() or artifact_key
+        observed_signature_snippet = CoordinateStep._extract_symbol_signature_snippet(
+            slice_root=slice_root,
+            symbol_fqn=symbol_fqn,
+        )
+        if not observed_signature_snippet:
+            return {}
+        if CoordinateStep._signature_hint_matches(
+            expected_hint=expected_signature_hint,
+            observed_snippet=observed_signature_snippet,
+        ):
+            return {}
+        return {
+            "expected_signature_hint": expected_signature_hint,
+            "observed_signature_snippet": observed_signature_snippet,
+            "symbol_fqn": symbol_fqn,
+            "artifact_key": artifact_key,
+        }
+
+    @staticmethod
+    def _latest_symbol_wake_payload(bundle: EvidenceBundle) -> dict[str, Any]:
+        decisions = bundle.under_spec.decisions or []
+        for item in reversed(decisions):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("source", "")).strip().upper() != "WAKE_EVENT":
+                continue
+            wake_payload = item.get("wake_payload")
+            if not isinstance(wake_payload, dict):
+                continue
+            if str(wake_payload.get("kind", "")).strip().lower() != "symbol_available":
+                continue
+            return dict(wake_payload)
+        return {}
+
+    @staticmethod
+    def _extract_symbol_signature_snippet(*, slice_root: str, symbol_fqn: str) -> str:
+        root_text = str(slice_root).strip()
+        if not root_text:
+            return ""
+        root = Path(root_text)
+        if not root.exists():
+            return ""
+        symbol_leaf = str(symbol_fqn).strip()
+        if "." in symbol_leaf:
+            symbol_leaf = symbol_leaf.split(".")[-1]
+        if "::" in symbol_leaf:
+            symbol_leaf = symbol_leaf.split("::")[-1]
+        symbol_leaf = symbol_leaf.strip()
+        if not symbol_leaf:
+            return ""
+
+        for path in root.rglob("*.py"):
+            if ".git" in path.parts:
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line_no, line in enumerate(lines, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if f"def {symbol_leaf}(" in stripped or f"class {symbol_leaf}" in stripped:
+                    rel = path.relative_to(root)
+                    return f"{rel}:{line_no}:{stripped[:240]}"
+        return ""
+
+    @staticmethod
+    def _signature_hint_matches(*, expected_hint: str, observed_snippet: str) -> bool:
+        expected = str(expected_hint).strip().lower()
+        observed = str(observed_snippet).strip().lower()
+        if not expected or not observed:
+            return False
+        if expected in observed:
+            return True
+        tokens = [token for token in re.split(r"[^a-zA-Z0-9_]+", expected) if token]
+        if not tokens:
+            return False
+        significant_tokens = [token for token in tokens if len(token) >= 3]
+        required_tokens = significant_tokens if significant_tokens else tokens
+        return all(token in observed for token in required_tokens)
 
     @staticmethod
     def _is_needs_decision_signal(signal: dict[str, Any]) -> bool:
         """True when a signal represents unresolved decision-level ambiguity."""
         classification = str(signal.get("classification", "")).strip().upper()
-        if classification in {"AMBIGUOUS_SPEC", "CONFLICTING_REQUIREMENTS", "MISSING_INTERFACE"}:
+        if classification in {
+            "AMBIGUOUS_SPEC",
+            "CONFLICTING_REQUIREMENTS",
+            "MISSING_INTERFACE",
+            "INTERFACE_MISMATCH",
+        }:
             return True
 
         payload = signal.get("payload")
@@ -4333,6 +4506,11 @@ class CoordinateStep:
                         "layer": ctx.layer,
                         "signal_id": normalized_signal_id,
                         "kind": str(payload.get("kind", "")).strip(),
+                        "artifact_key": str(payload.get("artifact_key", "")).strip(),
+                        "symbol_fqn": str(payload.get("symbol_fqn", "")).strip(),
+                        "expected_signature_hint": str(
+                            payload.get("expected_signature_hint", "")
+                        ).strip(),
                     },
                 ),
             )
@@ -7711,7 +7889,18 @@ class IntegrateStep:
         ci_tick_error = ""
         ci_tick_receipt: dict[str, Any] = {}
         ci_tick_triggered = True
-        ci_tick_receipt, ci_tick_error = run_pipeline_tick()
+        if ctx.ci_tick_callback is not None:
+            try:
+                callback_receipt = run_with_integration_lock(
+                    lambda: ctx.ci_tick_callback(ctx.slice_id)
+                )
+            except Exception as exc:
+                ci_tick_error = str(exc)
+                logger.exception("Post-merge CI callback failed for slice '%s'", ctx.slice_id)
+            else:
+                ci_tick_receipt = callback_receipt if isinstance(callback_receipt, dict) else {}
+        else:
+            ci_tick_receipt, ci_tick_error = run_pipeline_tick()
 
         ci_failed = bool(ci_tick_error)
         if isinstance(ci_tick_receipt, dict):

@@ -1054,6 +1054,14 @@ def _build_git_symbol_monitor(
         return None
     file_glob = item_file or str(need.get("file_glob", "")).strip() or "**/*.py"
     symbol_leaf = symbol_fqn.split(".")[-1] if "." in symbol_fqn else symbol_fqn
+    expected_shape = need.get("expected_shape", {})
+    expected_signature_hint = (
+        str(expected_shape.get("signature_hint", "")).strip()
+        if isinstance(expected_shape, dict)
+        else ""
+    )
+    if not expected_signature_hint:
+        expected_signature_hint = symbol_fqn
     return {
         "type": "git_symbol_exists",
         "symbol_fqn": symbol_fqn,
@@ -1061,6 +1069,7 @@ def _build_git_symbol_monitor(
         "ref": "HEAD",
         "file_glob": file_glob,
         "signature_regex": rf"\b{re.escape(symbol_leaf)}\b",
+        "expected_signature_hint": expected_signature_hint,
         "kind": "symbol_available",
         "signal_id": signal.get("signal_id", ""),
         "run_id": getattr(ctx, "run_id", ""),

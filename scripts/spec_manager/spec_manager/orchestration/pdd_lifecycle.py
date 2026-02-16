@@ -3398,14 +3398,16 @@ class PddLifecycle:
             if not normalized:
                 return None
             receipt = record_ci_tick(normalized, trigger="post_merge")
-            try:
-                monitor_executor.on_event("SLICE_MERGED")
-            except Exception:
-                logger.warning(
-                    "Failed to emit coordination event SLICE_MERGED for %s",
-                    normalized,
-                    exc_info=True,
-                )
+            for event_type in ("SLICE_MERGED", "GIT_DIRTY_ADVANCED"):
+                try:
+                    monitor_executor.on_event(event_type)
+                except Exception:
+                    logger.warning(
+                        "Failed to emit coordination event %s for %s",
+                        event_type,
+                        normalized,
+                        exc_info=True,
+                    )
             return receipt
 
         def on_periodic_tick() -> None:
@@ -3555,7 +3557,7 @@ class PddLifecycle:
                 "source_slice_id": str(slice_id or "").strip(),
             }
 
-            waiting_edges = list(wait_graph.get_providers_for(normalized_constraint_id))
+            waiting_edges = list(wait_graph.get_waiting_for_artifact(artifact_key))
             for edge in waiting_edges:
                 wake_queue.enqueue(
                     WakeEvent(

@@ -31,7 +31,6 @@ Usage::
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -644,23 +643,6 @@ class ReactivePromotionScheduler:
         metadata["wake_events"] = [*wake_events, merge_event]
         return replace(ref, metadata=metadata)
 
-    @staticmethod
-    def _git_fetch_origin(worktree: Path) -> tuple[bool, str]:
-        """Best-effort fetch to refresh remote-tracking refs before wake rebase."""
-        try:
-            proc = subprocess.run(
-                ["git", "fetch", "origin"],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except OSError as exc:
-            return False, str(exc)
-        if proc.returncode != 0:
-            return False, (proc.stderr or proc.stdout).strip()
-        return True, ""
-
     def _sync_slice_for_resume(
         self,
         *,
@@ -686,7 +668,10 @@ class ReactivePromotionScheduler:
         if not worktree_path.exists():
             return False, f"Slice worktree path does not exist: {worktree_path}"
 
-        fetched, fetch_error = self._git_fetch_origin(worktree_path)
+        try:
+            fetched, fetch_error = wm.vcs.fetch(worktree_path, remote="origin")
+        except Exception as exc:
+            fetched, fetch_error = False, str(exc)
         if not fetched and fetch_error:
             logger.warning(
                 "git fetch origin failed before wake rebase for slice '%s': %s",

@@ -198,6 +198,13 @@ class WaitGraph:
         """Get all edges where *slice_id* is the provider slice."""
         return [e for e in self._edges if e.provider_slice == slice_id]
 
+    def get_waiting_for_artifact(self, artifact_key: str) -> list[WaitEdge]:
+        """Get all edges waiting on an artifact key."""
+        target = str(artifact_key).strip()
+        if not target:
+            return []
+        return [e for e in self._edges if str(e.artifact_key).strip() == target]
+
     def to_dict(self) -> dict[str, Any]:
         return {"edges": [e.to_dict() for e in self._edges]}
 
