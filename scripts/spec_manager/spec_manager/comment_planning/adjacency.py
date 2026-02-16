@@ -7,9 +7,12 @@ or shared events.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from spec_manager.comment_planning.models import AdjacentDetail, CodeFile
+
+logger = logging.getLogger(__name__)
 
 # Heuristic patterns for store-touch detection
 _DB_PATTERNS = frozenset(
@@ -88,8 +91,8 @@ class StoreTouchEdge:
 
     function_name: str
     store_name: str  # Inferred store identifier
-    access_type: str  # "read", "write", "read_write"
-    line_no: int
+    access_type: str | None  # "read", "write", "read_write" (None = unknown)
+    line_no: int | None
     file_path: str
 
 
@@ -231,18 +234,45 @@ def find_store_touches_from_relationship_edges(
         if not src or not dst:
             continue
         operation = str(edge.get("operation") or "").strip().lower()
-        access_type = operation if operation in {"read", "write", "read_write"} else "read_write"
-        line_no_raw = edge.get("line") or edge.get("line_no") or edge.get("arch_line") or 0
-        try:
-            line_no = int(line_no_raw)
-        except (TypeError, ValueError):
-            line_no = 0
+        access_type: str | None
+        if operation in {"read", "write", "read_write"}:
+            access_type = operation
+        else:
+            access_type = None
+            logger.warning(
+                "STORE_TOUCH edge for %s -> %s has unknown operation: %r",
+                src,
+                dst,
+                edge.get("operation"),
+            )
+
+        line_no_raw = edge.get("line") or edge.get("line_no") or edge.get("arch_line")
+        line_no: int | None = None
+        if line_no_raw not in (None, ""):
+            try:
+                parsed_line = int(line_no_raw)
+                if parsed_line > 0:
+                    line_no = parsed_line
+                else:
+                    logger.warning(
+                        "STORE_TOUCH edge for %s -> %s has non-positive line metadata: %r",
+                        src,
+                        dst,
+                        line_no_raw,
+                    )
+            except (TypeError, ValueError):
+                logger.warning(
+                    "STORE_TOUCH edge for %s -> %s has invalid line metadata: %r",
+                    src,
+                    dst,
+                    line_no_raw,
+                )
         touches.append(
             StoreTouchEdge(
                 function_name=src,
                 store_name=dst,
                 access_type=access_type,
-                line_no=max(line_no, 0),
+                line_no=line_no,
                 file_path=str(edge.get("file_path") or edge.get("arch_file_path") or ""),
             )
         )
@@ -252,7 +282,7 @@ def find_store_touches_from_relationship_edges(
 def discover_adjacent_details_from_relationship_edges(
     modified_function: str,
     relationship_edges: list[dict[str, object]],
-    test_coverage: dict[str, bool] | None = None,
+    test_coverage: dict[str, bool | None] | None = None,
 ) -> list[AdjacentDetail]:
     """Discover adjacencies by consuming canonical relationship evidence."""
     call_graph = build_call_graph_from_relationship_edges(relationship_edges)
@@ -281,7 +311,7 @@ def build_call_graph(code_files: list[CodeFile]) -> CallGraph:
     name_map: dict[str, list[str]] = {}
 
     for code_file in code_files:
-        module = _module_name_from_path(code_file.file_path)
+        module = module_name_from_path(code_file.file_path)
         for func in code_file.functions:
             if func.class_name:
                 qualified = f"{module}.{func.class_name}.{func.name}"
@@ -292,14 +322,14 @@ def build_call_graph(code_files: list[CodeFile]) -> CallGraph:
 
     # Build edges
     for code_file in code_files:
-        module = _module_name_from_path(code_file.file_path)
+        module = module_name_from_path(code_file.file_path)
         for func in code_file.functions:
             if func.class_name:
                 caller = f"{module}.{func.class_name}.{func.name}"
             else:
                 caller = f"{module}.{func.name}"
 
-            for call_name in func.calls:
+            for call_name in func.calls or []:
                 # Try to resolve to qualified name
                 candidates = name_map.get(call_name, [])
                 if len(candidates) == 1:
@@ -337,14 +367,14 @@ def find_store_touches(code_files: list[CodeFile]) -> list[StoreTouchEdge]:
     touches: list[StoreTouchEdge] = []
 
     for code_file in code_files:
-        module = _module_name_from_path(code_file.file_path)
+        module = module_name_from_path(code_file.file_path)
         for func in code_file.functions:
             if func.class_name:
                 qualified = f"{module}.{func.class_name}.{func.name}"
             else:
                 qualified = f"{module}.{func.name}"
 
-            for call_name in func.calls:
+            for call_name in func.calls or []:
                 touch = _classify_store_touch(call_name)
                 if touch is not None:
                     store_name, access_type = touch
@@ -413,7 +443,7 @@ def discover_adjacent_details(
     modified_function: str,
     call_graph: CallGraph,
     store_touches: list[StoreTouchEdge],
-    test_coverage: dict[str, bool] | None = None,
+    test_coverage: dict[str, bool | None] | None = None,
 ) -> list[AdjacentDetail]:
     """Discover adjacent details that interact with the modified function.
 
@@ -431,14 +461,11 @@ def discover_adjacent_details(
         call_graph: Built call graph.
         store_touches: List of store touch edges.
         test_coverage: Optional dict of function_name -> has_tests.
-            When not provided, has_test_coverage defaults to False.
+            When missing, has_test_coverage is None (unknown).
 
     Returns:
         List of AdjacentDetail objects.
     """
-    if test_coverage is None:
-        test_coverage = {}
-
     adjacencies: list[AdjacentDetail] = []
     seen: set[str] = set()
 
@@ -446,7 +473,7 @@ def discover_adjacent_details(
     for callee in call_graph.callees(modified_function):
         if callee not in seen:
             seen.add(callee)
-            has_tests = test_coverage.get(callee, False)
+            has_tests = _coverage_state(test_coverage, callee)
             adjacencies.append(
                 AdjacentDetail(
                     source_function=modified_function,
@@ -454,7 +481,7 @@ def discover_adjacent_details(
                     relationship="calls",
                     store_or_event=None,
                     has_test_coverage=has_tests,
-                    needs_plan=not has_tests,
+                    needs_plan=has_tests is not True,
                 )
             )
 
@@ -462,7 +489,7 @@ def discover_adjacent_details(
     for caller in call_graph.callers(modified_function):
         if caller not in seen:
             seen.add(caller)
-            has_tests = test_coverage.get(caller, False)
+            has_tests = _coverage_state(test_coverage, caller)
             adjacencies.append(
                 AdjacentDetail(
                     source_function=modified_function,
@@ -470,7 +497,7 @@ def discover_adjacent_details(
                     relationship="called_by",
                     store_or_event=None,
                     has_test_coverage=has_tests,
-                    needs_plan=not has_tests,
+                    needs_plan=has_tests is not True,
                 )
             )
 
@@ -487,7 +514,7 @@ def discover_adjacent_details(
             continue
         if touch.store_name in modified_stores and touch.function_name not in seen:
             seen.add(touch.function_name)
-            has_tests = test_coverage.get(touch.function_name, False)
+            has_tests = _coverage_state(test_coverage, touch.function_name)
             relationship = "shared_event" if touch.store_name == "event_bus" else "shared_store"
             adjacencies.append(
                 AdjacentDetail(
@@ -496,14 +523,27 @@ def discover_adjacent_details(
                     relationship=relationship,
                     store_or_event=touch.store_name,
                     has_test_coverage=has_tests,
-                    needs_plan=not has_tests,
+                    needs_plan=has_tests is not True,
                 )
             )
 
     return adjacencies
 
 
-def _module_name_from_path(file_path: str) -> str:
+def _coverage_state(
+    test_coverage: dict[str, bool | None] | None,
+    function_name: str,
+) -> bool | None:
+    """Return tri-state coverage (True/False/None)."""
+    if test_coverage is None or function_name not in test_coverage:
+        return None
+    value = test_coverage.get(function_name)
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def module_name_from_path(file_path: str) -> str:
     """Extract a module-like name from a file path.
 
     Args:

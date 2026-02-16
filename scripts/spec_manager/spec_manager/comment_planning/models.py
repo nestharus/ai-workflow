@@ -77,7 +77,7 @@ class FunctionInfo:
     return_annotation: str | None
     docstring: str | None
     body_lines: list[str]  # Raw body lines
-    calls: list[str]  # Function names called within this function
+    calls: list[str] | None  # Called function identifiers (None when unknown)
     comments: list[PseudocodeComment]  # Existing comments in the body
     class_name: str | None  # Enclosing class, if any
     decorators: list[str]
@@ -90,8 +90,8 @@ class CodeFile:
     file_path: str
     functions: list[FunctionInfo]
     top_level_comments: list[PseudocodeComment]
-    imports: list[str]
-    classes: list[str]
+    imports: list[str] | None
+    classes: list[str] | None
 
 
 @dataclass
@@ -102,6 +102,10 @@ class InsertionPlan:
     insertions: list[tuple[InsertionPoint, str]]  # (where, comment_text)
     source_intention: str  # The high-level intention being decomposed
     evidence_refs: list[str]  # References to spec evidence used
+    ambiguity_gaps: list[str]
+    decomposition_strategy: str = "agent"
+    decomposition_failure_kind: str | None = None
+    decomposition_failure_reason: str | None = None
 
 
 @dataclass
@@ -124,7 +128,7 @@ class AdjacentDetail:
     related_function: str  # The adjacent function
     relationship: str  # "calls", "called_by", "shared_store", "shared_event"
     store_or_event: str | None  # Name of shared store/event if applicable
-    has_test_coverage: bool  # Whether the related function has tests
+    has_test_coverage: bool | None  # Whether the related function has tests (None = unknown)
     needs_plan: bool  # Whether this needs its own planning pass
 
 
@@ -285,10 +289,111 @@ def _parse_qualified_name(qualified_name: str) -> tuple[str | None, str]:
     return None, parts[0]
 
 
+def _normalize_signal_type(edge: dict[str, Any]) -> str:
+    """Normalize relationship signal labels."""
+    signal = str(edge.get("signal_type") or edge.get("type") or "").strip().upper()
+    if signal in {"CALL", "CALLS"}:
+        return "CALL"
+    return signal
+
+
+def _relationship_endpoints(edge: dict[str, Any]) -> tuple[str, str]:
+    """Return canonical relationship endpoints."""
+    src = str(edge.get("src_id") or edge.get("src") or edge.get("caller") or "").strip()
+    dst = str(edge.get("dst_id") or edge.get("dst") or edge.get("callee") or "").strip()
+    return src, dst
+
+
+def _raw_function_identifiers(raw: RawFunctionInfo) -> list[str]:
+    """Build stable identifier candidates for one function."""
+    qualified = str(raw.qualified_name or "").strip()
+    identifiers = [item for item in [qualified, raw.name] if item]
+    if qualified and "." in qualified:
+        _, simple = _parse_qualified_name(qualified)
+        if simple and simple not in identifiers:
+            identifiers.append(simple)
+    return identifiers
+
+
+def _extract_calls_by_qualified_name(
+    analysis: SourceAnalysis,
+    relationship_edges: list[dict[str, Any]] | None,
+) -> dict[str, list[str] | None]:
+    """Map function qualified names to outbound call targets."""
+    if relationship_edges is None:
+        return {
+            str(raw.qualified_name or raw.name).strip(): None
+            for raw in analysis.functions
+            if str(raw.qualified_name or raw.name).strip()
+        }
+
+    calls_by_src: dict[str, list[str]] = {}
+    for edge in relationship_edges:
+        if not isinstance(edge, dict):
+            continue
+        if _normalize_signal_type(edge) != "CALL":
+            continue
+        src, dst = _relationship_endpoints(edge)
+        if not src or not dst:
+            continue
+        calls_by_src.setdefault(src, []).append(dst)
+
+    mapped: dict[str, list[str] | None] = {}
+    for raw in analysis.functions:
+        qualified = str(raw.qualified_name or raw.name).strip()
+        if not qualified:
+            continue
+        collected: list[str] = []
+        for identifier in _raw_function_identifiers(raw):
+            for dst in calls_by_src.get(identifier, []):
+                if dst not in collected:
+                    collected.append(dst)
+        if not collected:
+            for src, targets in calls_by_src.items():
+                if src.endswith("." + qualified) or qualified.endswith("." + src):
+                    for dst in targets:
+                        if dst not in collected:
+                            collected.append(dst)
+        mapped[qualified] = collected
+    return mapped
+
+
+def _extract_imports_from_facets(facets: dict[str, Any]) -> list[str] | None:
+    """Extract import strings from analysis facets when available."""
+    for key in ("imports", "import_statements", "import_lines"):
+        raw = facets.get(key)
+        if not isinstance(raw, list):
+            continue
+        imports = [str(item).strip() for item in raw if str(item).strip()]
+        if imports:
+            return sorted(set(imports))
+        return []
+    return None
+
+
+def _extract_classes(
+    *,
+    functions: list[FunctionInfo],
+    facets: dict[str, Any],
+) -> list[str] | None:
+    """Extract class names from function projections and optional facets."""
+    classes = {str(func.class_name).strip() for func in functions if str(func.class_name).strip()}
+    facets_classes = facets.get("classes")
+    if isinstance(facets_classes, list):
+        for item in facets_classes:
+            name = str(item).strip()
+            if name:
+                classes.add(name)
+    if not classes and not isinstance(facets_classes, list):
+        return None
+    return sorted(classes)
+
+
 def _raw_func_to_function_info(
     raw: RawFunctionInfo,
     file_path: str,
     lines: list[str],
+    calls: list[str] | None = None,
 ) -> FunctionInfo:
     """Convert a RawFunctionInfo to a FunctionInfo.
 
@@ -322,7 +427,7 @@ def _raw_func_to_function_info(
         return_annotation=raw.return_annotation,
         docstring=raw.docstring,
         body_lines=body_lines,
-        calls=[],  # Adjacency module is being deprecated
+        calls=list(calls) if calls is not None else None,
         comments=[],  # Filled in by _assign_comments_to_functions
         class_name=class_name,
         decorators=list(raw.decorators),
@@ -440,7 +545,12 @@ def parse_source(source: str, file_path: str) -> CodeFile:
     file_facts = analyze_file_facts(source, file_path_str, workspace=workspace_root)
     analysis: SourceAnalysis = file_facts.source_analysis
     lines = source.splitlines()
-    return _code_file_from_analysis(analysis=analysis, file_path=file_path_str, lines=lines)
+    return _code_file_from_analysis(
+        analysis=analysis,
+        file_path=file_path_str,
+        lines=lines,
+        relationship_edges=file_facts.relationship_edges,
+    )
 
 
 def _code_file_from_analysis(
@@ -448,12 +558,21 @@ def _code_file_from_analysis(
     analysis: SourceAnalysis,
     file_path: str,
     lines: list[str],
+    relationship_edges: list[dict[str, Any]] | None = None,
 ) -> CodeFile:
     """Convert canonical SourceAnalysis into the planning CodeFile view."""
 
+    calls_by_function = _extract_calls_by_qualified_name(analysis, relationship_edges)
     functions: list[FunctionInfo] = []
     for raw_func in analysis.functions:
-        functions.append(_raw_func_to_function_info(raw_func, file_path, lines))
+        functions.append(
+            _raw_func_to_function_info(
+                raw_func,
+                file_path,
+                lines,
+                calls=calls_by_function.get(str(raw_func.qualified_name or raw_func.name)),
+            )
+        )
 
     all_comments: list[PseudocodeComment] = []
     for raw_comment in analysis.comments:
@@ -492,8 +611,8 @@ def _code_file_from_analysis(
         file_path=file_path,
         functions=enriched_functions,
         top_level_comments=top_level_comments,
-        imports=[],  # Deprecated: only used for counting in orchestrator
-        classes=[],  # Deprecated: only used for counting in orchestrator
+        imports=_extract_imports_from_facets(analysis.facets),
+        classes=_extract_classes(functions=enriched_functions, facets=analysis.facets),
     )
 
 
@@ -515,12 +634,18 @@ def parse_source_index_entry(entry: dict[str, Any], source_root: Path) -> CodeFi
     raw_comments = analysis_block.get("comments", [])
     if not isinstance(raw_functions, list) or not isinstance(raw_comments, list):
         raise TypeError(f"source-index entry for {rel_path} has invalid analysis lists")
+    file_facts_block = analysis_block.get("file_facts")
+    relationship_edges: list[dict[str, Any]] | None = None
+    if isinstance(file_facts_block, dict):
+        raw_relationship_edges = file_facts_block.get("relationship_edges")
+        if isinstance(raw_relationship_edges, list):
+            relationship_edges = [edge for edge in raw_relationship_edges if isinstance(edge, dict)]
 
     source_path = source_root / rel_path
     try:
         source_text = source_path.read_text(encoding="utf-8")
-    except OSError:
-        source_text = ""
+    except OSError as exc:
+        raise OSError(f"unable to read source-index file {source_path}: {exc}") from exc
     lines = source_text.splitlines()
 
     analysis = SourceAnalysis(
@@ -534,7 +659,12 @@ def parse_source_index_entry(entry: dict[str, Any], source_root: Path) -> CodeFi
         if isinstance(analysis_block.get("facets", {}), dict)
         else {},
     )
-    return _code_file_from_analysis(analysis=analysis, file_path=str(source_path), lines=lines)
+    return _code_file_from_analysis(
+        analysis=analysis,
+        file_path=str(source_path),
+        lines=lines,
+        relationship_edges=relationship_edges,
+    )
 
 
 def _dict_to_raw_function_info(data: dict[str, Any]) -> RawFunctionInfo:

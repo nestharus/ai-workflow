@@ -13,6 +13,7 @@ from typing import Any
 
 from spec_manager.comment_planning.adjacency import (
     discover_adjacent_details_from_relationship_edges,
+    module_name_from_path,
 )
 from spec_manager.comment_planning.evidence_store import EvidenceStore
 from spec_manager.comment_planning.gap_bridge import adjacencies_to_gaps
@@ -55,14 +56,17 @@ def run_planning_v2_phase(
     Returns:
         Dict with results including plans, gaps, and adjacency info.
     """
-    bundle = _load_latest_bundle(evidence_dir)
+    bundle, load_error = _load_latest_bundle(evidence_dir)
     bootstrap_errors: list[str] = []
+    if load_error:
+        bootstrap_errors.append(load_error)
     if bundle is None:
-        bundle, bootstrap_errors = _bootstrap_bundle_from_targets(
+        bundle, bootstrap_failures = _bootstrap_bundle_from_targets(
             run_id=run_id,
             target_files=target_files,
             evidence_dir=evidence_dir,
         )
+        bootstrap_errors.extend(bootstrap_failures)
     if bundle is None:
         return {
             "success": False,
@@ -107,10 +111,13 @@ def run_planning_v2_phase(
         for code_file in code_files:
             for func in code_file.functions:
                 try:
+                    function_selector = (
+                        f"{func.class_name}.{func.name}" if func.class_name else func.name
+                    )
                     plan = plan_insertions(
                         intention=intention,
                         code_file=code_file,
-                        function_name=func.name,
+                        function_name=function_selector,
                         evidence_store=evidence_store,
                     )
                     if plan.insertions:
@@ -123,11 +130,13 @@ def run_planning_v2_phase(
 
     all_adjacencies = []
     for code_file in code_files:
-        from spec_manager.comment_planning.adjacency import _module_name_from_path
-
-        module = _module_name_from_path(code_file.file_path)
+        module = module_name_from_path(code_file.file_path)
         for func in code_file.functions:
-            qualified = f"{module}.{func.name}"
+            qualified = (
+                f"{module}.{func.class_name}.{func.name}"
+                if func.class_name
+                else f"{module}.{func.name}"
+            )
             adjacencies = discover_adjacent_details_from_relationship_edges(
                 qualified,
                 relationship_edges,
@@ -160,6 +169,10 @@ def run_planning_v2_phase(
                 "intention": p.source_intention,
                 "insertions": len(p.insertions),
                 "evidence_refs": p.evidence_refs,
+                "ambiguity_gaps": p.ambiguity_gaps,
+                "decomposition_strategy": p.decomposition_strategy,
+                "decomposition_failure_kind": p.decomposition_failure_kind,
+                "decomposition_failure_reason": p.decomposition_failure_reason,
             }
             for p in plans
         ],
@@ -182,10 +195,10 @@ def run_planning_v2_phase(
     }
 
 
-def _load_latest_bundle(evidence_dir: Path | None) -> EvidenceBundle | None:
+def _load_latest_bundle(evidence_dir: Path | None) -> tuple[EvidenceBundle | None, str | None]:
     """Load the latest available canonical evidence bundle."""
     if evidence_dir is None:
-        return None
+        return None, None
     root = evidence_dir.resolve()
     candidates: list[Path] = []
     direct = root / "bundle.json"
@@ -193,12 +206,12 @@ def _load_latest_bundle(evidence_dir: Path | None) -> EvidenceBundle | None:
         candidates.append(direct)
     candidates.extend(root.glob(".pdd_runs/*/slices/*/iter_*/bundle.json"))
     if not candidates:
-        return None
+        return None, None
     latest = max(candidates, key=lambda path: path.stat().st_mtime)
     try:
-        return EvidenceBundle.load(latest)
-    except Exception:
-        return None
+        return EvidenceBundle.load(latest), None
+    except Exception as exc:
+        return None, f"failed to load canonical bundle {latest}: {type(exc).__name__}: {exc}"
 
 
 def _resolve_source_root(bundle: EvidenceBundle, evidence_dir: Path | None) -> Path:
@@ -409,6 +422,33 @@ def _merge_bundle_facts(bundle: EvidenceBundle, payload: dict[str, Any]) -> None
                 "schema": details.get("schema", existing.get("schema", {})),
             }
 
+    store_owners = payload.get("store_owners", {})
+    if isinstance(store_owners, dict):
+        for store_id_raw, owners in store_owners.items():
+            store_id = str(store_id_raw).strip()
+            if not store_id:
+                continue
+            if not isinstance(owners, list):
+                continue
+            normalized = sorted(
+                {
+                    str(owner).strip()
+                    for owner in owners
+                    if isinstance(owner, str) and str(owner).strip()
+                }
+            )
+            existing = bundle.facts.store_owners.get(store_id, [])
+            merged = sorted(set(existing + normalized))
+            bundle.facts.store_owners[store_id] = merged
+            existing_store = bundle.facts.stores.get(store_id, {})
+            if not isinstance(existing_store, dict):
+                existing_store = {}
+            owner_atoms = sorted(set(existing_store.get("owner_atoms", []) + merged))
+            bundle.facts.stores[store_id] = {
+                "owner_atoms": owner_atoms,
+                "schema": existing_store.get("schema", {}),
+            }
+
     for row in payload.get("remaining_gap_pins", []):
         if isinstance(row, dict):
             bundle.facts.remaining_gap_pins.append(dict(row))
@@ -457,6 +497,10 @@ def _write_artifacts(
                     for point, text in plan.insertions
                 ],
                 "evidence_refs": plan.evidence_refs,
+                "ambiguity_gaps": plan.ambiguity_gaps,
+                "decomposition_strategy": plan.decomposition_strategy,
+                "decomposition_failure_kind": plan.decomposition_failure_kind,
+                "decomposition_failure_reason": plan.decomposition_failure_reason,
             }
         )
 

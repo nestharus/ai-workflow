@@ -66,6 +66,8 @@ class EvidenceStore:
         self._libraries_dir = libraries_dir
         self._section_index: dict[str, _SectionEntry] = {}
         self._content_cache: dict[str, str] = {}
+        self._index_failures: list[str] = []
+        self._content_failures: list[str] = []
         self._build_index()
 
     def _build_index(self) -> None:
@@ -93,7 +95,10 @@ class EvidenceStore:
         """
         try:
             content = file_path.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as exc:
+            message = f"{file_path}: {exc}"
+            self._index_failures.append(message)
+            logger.warning("Failed to index evidence markdown file %s: %s", file_path, exc)
             return
 
         lib_id = file_path.stem
@@ -210,7 +215,10 @@ class EvidenceStore:
         if file_path not in self._content_cache:
             try:
                 self._content_cache[file_path] = Path(file_path).read_text(encoding="utf-8")
-            except OSError:
+            except OSError as exc:
+                message = f"{file_path}: {exc}"
+                self._content_failures.append(message)
+                logger.warning("Failed to read evidence content %s: %s", file_path, exc)
                 return ""
 
         content = self._content_cache[file_path]
@@ -282,20 +290,24 @@ class EvidenceStore:
                 gap_description=None,
                 refined_comments=refined,
             )
-        except Exception:
-            logger.debug("LLM synthesis not available", exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "LLM ambiguity synthesis failed for '%s': %s", comment_text, exc, exc_info=True
+            )
             # LLM not available - return evidence refs without synthesis
             excerpts = [hit.excerpt for hit in hits if hit.excerpt]
             combined = "; ".join(excerpts[:3])
+            gap_description = (
+                f"Evidence found but synthesis failed for: {comment_text}. "
+                f"Reason: {type(exc).__name__}: {exc}"
+            )
+            if not combined:
+                gap_description += " (No fallback excerpt content available.)"
             return AmbiguityResolution(
-                resolved=bool(combined),
+                resolved=False,
                 answer=combined if combined else None,
                 evidence_refs=evidence_refs,
-                gap_description=(
-                    None
-                    if combined
-                    else f"Evidence found but could not synthesize answer for: {comment_text}"
-                ),
+                gap_description=gap_description,
                 refined_comments=[comment_text],
             )
 

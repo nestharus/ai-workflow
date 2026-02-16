@@ -27,7 +27,6 @@ def scan_for_gaps(code_files: list[CodeFile]) -> list[Gap]:
     Detects:
     1. Pseudocode comments (every PLAN comment = unimplemented spec element)
     2. Stub functions (pass, raise NotImplementedError, Ellipsis)
-    3. Functions with no test coverage (if coverage data available)
 
     Args:
         code_files: List of parsed CodeFile objects.
@@ -49,10 +48,15 @@ def scan_for_gaps(code_files: list[CodeFile]) -> list[Gap]:
 
         # Detect and convert stubs
         stubs: list[FunctionInfo] = []
+        unknown_stub_status: list[tuple[FunctionInfo, str]] = []
         for func in code_file.functions:
-            if _is_stub_from_info(func):
+            is_stub, reason = _is_stub_from_info(func)
+            if is_stub is True:
                 stubs.append(func)
+            elif is_stub is None:
+                unknown_stub_status.append((func, reason or "unknown classification failure"))
         gaps.extend(stubs_to_gaps(stubs))
+        gaps.extend(stub_classification_unknowns_to_gaps(unknown_stub_status))
 
     return gaps
 
@@ -173,6 +177,47 @@ def stubs_to_gaps(stubs: list[FunctionInfo]) -> list[Gap]:
     return gaps
 
 
+def stub_classification_unknowns_to_gaps(
+    unknowns: list[tuple[FunctionInfo, str]],
+) -> list[Gap]:
+    """Convert unknown stub classifications into explicit diagnostic gaps."""
+    gaps: list[Gap] = []
+    for func, reason in unknowns:
+        gap_id = _generate_gap_id("STUB-UNKNOWN", func.file_path, func.start_line, func.name)
+        location = f"{func.file_path}:{func.start_line}"
+        description = f"Stub status unknown for function {func.name}: {reason}"
+        evidence = GapEvidence(
+            invariant_family="planning",
+            description=description,
+            details={
+                "file_path": func.file_path,
+                "start_line": func.start_line,
+                "end_line": func.end_line,
+                "function_name": func.name,
+                "class_name": func.class_name,
+                "reason": reason,
+                "severity": Severity.WARNING.value,
+            },
+            confidence=0.2,
+            location=location,
+            detector="planning.gap_bridge",
+        )
+        gaps.append(
+            Gap(
+                id=gap_id,
+                gap_type=GapType.missing_detail,
+                severity=Severity.WARNING,
+                source=[func.file_path],
+                derived_artifact_target=func.file_path,
+                description=description,
+                evidence=[evidence],
+                status="open",
+                created_at=datetime.now().isoformat(),
+            )
+        )
+    return gaps
+
+
 def adjacencies_to_gaps(adjacencies: list[AdjacentDetail]) -> list[Gap]:
     """Convert adjacent details needing plans to Gap objects.
 
@@ -251,7 +296,7 @@ def _generate_gap_id(prefix: str, file_or_func: str, line_no: int, text: str) ->
     return f"GAP-{prefix}-{digest}"
 
 
-def _is_stub_from_info(func: FunctionInfo) -> bool:
+def _is_stub_from_info(func: FunctionInfo) -> tuple[bool | None, str | None]:
     """Check if a FunctionInfo represents a stub function.
 
     Uses language-agnostic LLM-based analysis to determine if a function
@@ -261,20 +306,35 @@ def _is_stub_from_info(func: FunctionInfo) -> bool:
         func: FunctionInfo to check.
 
     Returns:
-        True if the function is a stub.
+        Tuple of (is_stub, reason). ``is_stub`` is None when classification failed.
     """
     if not func.body_lines:
-        return False
+        return False, None
 
     # Reconstruct source from body_lines and analyze
     source = "\n".join(func.body_lines)
-    analysis = analyze_source(source, func.file_path)
+    try:
+        analysis = analyze_source(source, func.file_path)
+    except Exception as exc:
+        return None, f"analysis failed: {type(exc).__name__}: {exc}"
 
     # The reconstructed source should contain exactly this function;
-    # match by name, take first match
+    # match by name/class to avoid silent first-match selection.
+    matches = []
     for raw_func in analysis.functions:
-        if raw_func.name == func.name:
-            return raw_func.is_stub
+        if raw_func.name != func.name:
+            continue
+        qualified = str(raw_func.qualified_name or raw_func.name)
+        if (
+            func.class_name
+            and not qualified.endswith(f".{func.class_name}.{func.name}")
+            and not qualified.endswith(f".{func.name}")
+        ):
+            continue
+        matches.append(raw_func)
 
-    # If we couldn't find the function in the analysis, assume it's not a stub
-    return False
+    if not matches:
+        return None, "function not found in reconstructed analysis"
+    if len(matches) > 1:
+        return None, "multiple matching functions in reconstructed analysis"
+    return matches[0].is_stub, None

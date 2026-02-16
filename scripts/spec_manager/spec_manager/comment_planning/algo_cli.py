@@ -126,9 +126,19 @@ def cmd_insert(args: argparse.Namespace) -> int:
     print(f"Insertion plan for {args.function} in {file_path}:")
     print(f"  Intention: {args.intention}")
     print(f"  Comments to insert: {len(plan.insertions)}")
+    print(f"  Decomposition strategy: {plan.decomposition_strategy}")
+    if plan.decomposition_failure_kind:
+        print(f"  Decomposition failure kind: {plan.decomposition_failure_kind}")
+    if plan.decomposition_failure_reason:
+        print(f"  Decomposition failure: {plan.decomposition_failure_reason}")
 
     for point, text in plan.insertions:
         print(f"    Line {point.line_no}: # {text}")
+
+    if plan.ambiguity_gaps:
+        print("  Unresolved ambiguity gaps:")
+        for gap in plan.ambiguity_gaps:
+            print(f"    - {gap}")
 
     if args.apply:
         modified = apply_insertion_plan(plan)
@@ -160,18 +170,30 @@ def cmd_scan(args: argparse.Namespace) -> int:
     from spec_manager.core.language import source_rglob
 
     code_files = []
+    scan_errors: list[dict[str, str]] = []
     for py_file in source_rglob(directory):
+        py_path = str(py_file)
         try:
-            code_files.append(parse_file(str(py_file)))
-        except (SyntaxError, OSError):
+            code_files.append(parse_file(py_path))
+        except (SyntaxError, OSError, ValueError, TypeError) as exc:
+            scan_errors.append({"file": py_path, "error": f"{type(exc).__name__}: {exc}"})
             continue
 
     gaps = scan_for_gaps(code_files)
 
     if hasattr(args, "json") and args.json:
-        print(json.dumps([g.to_dict() for g in gaps], indent=2))
+        payload = {
+            "files_scanned": len(code_files),
+            "scan_errors": scan_errors,
+            "gaps": [g.to_dict() for g in gaps],
+        }
+        print(json.dumps(payload, indent=2))
     else:
         print(f"Scanned {len(code_files)} files, found {len(gaps)} gaps:")
+        if scan_errors:
+            print(f"  Skipped {len(scan_errors)} files due to parse/read failures:")
+            for row in scan_errors:
+                print(f"    - {row['file']}: {row['error']}")
         for gap in gaps:
             severity = gap.severity.value.upper()
             print(f"  [{severity}] {gap.id}: {gap.description}")
@@ -189,11 +211,10 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
         Exit code.
     """
     from spec_manager.comment_planning.adjacency import (
-        build_call_graph,
-        discover_adjacent_details,
-        find_store_touches,
+        discover_adjacent_details_from_relationship_edges,
+        module_name_from_path,
     )
-    from spec_manager.comment_planning.models import parse_file
+    from spec_manager.core.code_analysis import analyze_file_facts
 
     file_path = str(Path(args.file).resolve())
     directory = Path(args.directory).resolve()
@@ -204,57 +225,152 @@ def cmd_adjacency(args: argparse.Namespace) -> int:
 
     from spec_manager.core.language import source_rglob
 
-    # Parse all files for call graph
-    code_files = []
+    relationship_edges: list[dict[str, object]] = []
+    scan_errors: list[dict[str, str]] = []
+    target_functions: list[Any] = []
+
     for py_file in source_rglob(directory):
+        py_path = py_file.resolve()
+        py_path_str = str(py_path)
         try:
-            code_files.append(parse_file(str(py_file)))
-        except (SyntaxError, OSError):
+            source = py_path.read_text(encoding="utf-8")
+            facts = analyze_file_facts(source, py_path_str, workspace=directory)
+            relationship_edges.extend(
+                edge for edge in facts.relationship_edges if isinstance(edge, dict)
+            )
+            if py_path_str == file_path:
+                target_functions = list(facts.source_analysis.functions)
+        except (SyntaxError, OSError, ValueError, TypeError) as exc:
+            scan_errors.append({"file": py_path_str, "error": f"{type(exc).__name__}: {exc}"})
             continue
 
-    # Build call graph and store touches
-    call_graph = build_call_graph(code_files)
-    store_touches = find_store_touches(code_files)
-
-    # Find the qualified function name
-    target_code_file = None
-    for cf in code_files:
-        if cf.file_path == file_path:
-            target_code_file = cf
-            break
-
-    if target_code_file is None:
+    if not target_functions:
         print(f"File not found in scanned directory: {file_path}", file=sys.stderr)
+        if scan_errors:
+            print("Scan failures:", file=sys.stderr)
+            for row in scan_errors:
+                print(f"  - {row['file']}: {row['error']}", file=sys.stderr)
         return 1
 
-    # Build qualified name
-    from spec_manager.comment_planning.adjacency import _module_name_from_path
-
-    module = _module_name_from_path(file_path)
-    qualified = f"{module}.{args.function}"
-
-    # Check if function exists in file
-    func_found = any(f.name == args.function for f in target_code_file.functions)
-    if not func_found:
+    target_raw = _resolve_target_raw_function(target_functions, args.function)
+    if target_raw is None:
         print(
             f"Function '{args.function}' not found in {file_path}",
             file=sys.stderr,
         )
         return 1
+    if isinstance(target_raw, list):
+        options = ", ".join(
+            f"{fn.qualified_name or fn.name}@{fn.start_line}-{fn.end_line}" for fn in target_raw
+        )
+        print(
+            f"Function selector '{args.function}' is ambiguous in {file_path}: {options}",
+            file=sys.stderr,
+        )
+        return 1
 
-    adjacencies = discover_adjacent_details(qualified, call_graph, store_touches)
+    module = module_name_from_path(file_path)
+    try:
+        qualified = _resolve_relationship_function_id(target_raw, module, relationship_edges)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    adjacencies = discover_adjacent_details_from_relationship_edges(qualified, relationship_edges)
 
-    print(f"Adjacent details for {args.function}:")
+    print(f"Adjacent details for {args.function} ({qualified}):")
+    if scan_errors:
+        print(f"  Note: skipped {len(scan_errors)} files due to parse/read failures.")
     if not adjacencies:
         print("  No adjacent details found.")
     else:
         for adj in adjacencies:
             store_info = f" via {adj.store_or_event}" if adj.store_or_event else ""
-            coverage = "tested" if adj.has_test_coverage else "UNTESTED"
+            coverage = (
+                "tested"
+                if adj.has_test_coverage is True
+                else "UNTESTED"
+                if adj.has_test_coverage is False
+                else "UNKNOWN"
+            )
             needs = " [NEEDS PLAN]" if adj.needs_plan else ""
             print(f"  {adj.relationship}: {adj.related_function}{store_info} ({coverage}){needs}")
 
     return 0
+
+
+def _resolve_target_raw_function(
+    functions: list[Any],
+    selector: str,
+) -> Any | list[Any] | None:
+    """Resolve CLI function selector against raw analysis functions."""
+    target = selector.strip()
+    if not target:
+        return None
+
+    exact: list[Any] = []
+    fallback: list[Any] = []
+    for func in functions:
+        name = str(getattr(func, "name", "") or "").strip()
+        qualified = str(getattr(func, "qualified_name", "") or name).strip()
+        if target == qualified:
+            exact.append(func)
+        if name == target or qualified.endswith("." + target):
+            fallback.append(func)
+
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return exact
+    if len(fallback) == 1:
+        return fallback[0]
+    if len(fallback) > 1:
+        return fallback
+    return None
+
+
+def _resolve_relationship_function_id(
+    raw_func: Any,
+    module_name: str,
+    relationship_edges: list[dict[str, object]],
+) -> str:
+    """Resolve function identifier as it appears in relationship edges."""
+    qualified = str(
+        getattr(raw_func, "qualified_name", "") or getattr(raw_func, "name", "")
+    ).strip()
+    name = str(getattr(raw_func, "name", "")).strip()
+    preferred = [qualified, f"{module_name}.{qualified}", name, f"{module_name}.{name}"]
+
+    endpoints: set[str] = set()
+    for edge in relationship_edges:
+        if not isinstance(edge, dict):
+            continue
+        src = str(edge.get("src") or edge.get("src_id") or "").strip()
+        dst = str(edge.get("dst") or edge.get("dst_id") or "").strip()
+        if src:
+            endpoints.add(src)
+        if dst:
+            endpoints.add(dst)
+
+    for candidate in preferred:
+        if candidate and candidate in endpoints:
+            return candidate
+
+    suffixes = [f".{qualified}", f".{name}"]
+    matched = sorted(
+        endpoint
+        for endpoint in endpoints
+        if endpoint and any(endpoint.endswith(suffix) for suffix in suffixes)
+    )
+    if len(matched) == 1:
+        return matched[0]
+    if len(matched) > 1:
+        raise ValueError(
+            f"Ambiguous relationship identifier for {qualified or name}: {', '.join(matched)}"
+        )
+
+    if qualified:
+        return f"{module_name}.{qualified}"
+    return f"{module_name}.{name}"
 
 
 def cmd_decompose(args: argparse.Namespace) -> int:
@@ -280,19 +396,33 @@ def cmd_decompose(args: argparse.Namespace) -> int:
         print(f"Syntax error in {file_path}: {e}", file=sys.stderr)
         return 1
 
-    # Find the target function
-    func = None
+    matches = []
+    selector = str(args.function).strip()
     for f in code_file.functions:
-        if f.name == args.function:
-            func = f
-            break
+        if f.name == selector:
+            matches.append(f)
+            continue
+        if f.class_name and f"{f.class_name}.{f.name}" == selector:
+            matches.append(f)
 
-    if func is None:
+    if not matches:
         print(
             f"Function '{args.function}' not found in {file_path}",
             file=sys.stderr,
         )
         return 1
+    if len(matches) > 1:
+        options = ", ".join(
+            f"{f.class_name + '.' if f.class_name else ''}{f.name}@{f.start_line}-{f.end_line}"
+            for f in matches
+        )
+        print(
+            f"Function selector '{args.function}' is ambiguous in {file_path}: {options}",
+            file=sys.stderr,
+        )
+        return 1
+
+    func = matches[0]
 
     micro_units = decompose_intention(args.intention, func)
 

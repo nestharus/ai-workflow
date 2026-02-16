@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,16 @@ if TYPE_CHECKING:
     from spec_manager.comment_planning.evidence_store import EvidenceStore
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DecompositionResult:
+    """Structured decomposition result with provenance metadata."""
+
+    micro_units: list[str]
+    strategy: str  # "agent" or "heuristic"
+    failure_kind: str | None = None  # "transient" or "systematic"
+    failure_reason: str | None = None
 
 
 def plan_insertions(
@@ -52,32 +63,51 @@ def plan_insertions(
     Raises:
         ValueError: If function_name is not found in the code file.
     """
-    func = next((f for f in code_file.functions if f.name == function_name), None)
-    if func is None:
-        raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
+    func = _resolve_target_function(code_file, function_name)
 
     # Step 1: Decompose intention into micro-units
-    micro_units = decompose_intention(intention, func)
+    decomposition = decompose_intention_with_metadata(intention, func)
+    micro_units = decomposition.micro_units
 
     # Step 2: Find valid insertion points
-    insertion_points = _find_insertion_points(code_file, function_name)
+    insertion_points = _find_insertion_points(code_file, func)
 
     # Step 3: Match comments to insertion points
     matched = match_comments_to_insertion_points(micro_units, insertion_points, func)
 
     # Step 4: Resolve ambiguities via evidence store
     evidence_refs: list[str] = []
+    ambiguity_gaps: list[str] = []
+    resolved_insertions: list[tuple[InsertionPoint, str]] = []
     if evidence_store is not None:
-        for _, comment_text in matched:
+        for point, comment_text in matched:
             resolution = evidence_store.resolve_ambiguity(comment_text, func)
+            evidence_refs.extend(resolution.evidence_refs)
+            final_text = comment_text
             if resolution.resolved:
-                evidence_refs.extend(resolution.evidence_refs)
+                final_text = _choose_refined_comment(
+                    refined_comments=resolution.refined_comments,
+                    answer=resolution.answer,
+                    fallback=comment_text,
+                )
+            elif resolution.gap_description:
+                ambiguity_gaps.append(resolution.gap_description)
+            resolved_insertions.append((point, final_text))
+    else:
+        resolved_insertions = list(matched)
+
+    evidence_refs = list(dict.fromkeys(evidence_refs))
+    ambiguity_gaps = list(dict.fromkeys(ambiguity_gaps))
 
     return InsertionPlan(
         file_path=code_file.file_path,
-        insertions=matched,
+        insertions=resolved_insertions,
         source_intention=intention,
         evidence_refs=evidence_refs,
+        ambiguity_gaps=ambiguity_gaps,
+        decomposition_strategy=decomposition.strategy,
+        decomposition_failure_kind=decomposition.failure_kind,
+        decomposition_failure_reason=decomposition.failure_reason,
     )
 
 
@@ -149,11 +179,33 @@ def decompose_intention(
     Returns:
         List of comment text strings (without '# ' prefix).
     """
+    result = decompose_intention_with_metadata(intention, function_context, agent_name)
+    return result.micro_units
+
+
+def decompose_intention_with_metadata(
+    intention: str,
+    function_context: FunctionInfo,
+    agent_name: str = "opus-plan-decomposer",
+) -> DecompositionResult:
+    """Decompose intention and expose fallback diagnostics for downstream gates."""
     try:
-        return _decompose_via_agent(intention, function_context, agent_name)
-    except Exception:
-        logger.debug("LLM comment decomposition failed, using heuristic", exc_info=True)
-        return _decompose_heuristic(intention, function_context)
+        micro_units = _decompose_via_agent(intention, function_context, agent_name)
+        return DecompositionResult(micro_units=micro_units, strategy="agent")
+    except Exception as exc:
+        failure_kind = _classify_decomposition_failure(exc)
+        logger.warning(
+            "LLM comment decomposition failed (%s), using heuristic decomposition: %s",
+            failure_kind,
+            exc,
+            exc_info=True,
+        )
+        return DecompositionResult(
+            micro_units=_decompose_heuristic(intention, function_context),
+            strategy="heuristic",
+            failure_kind=failure_kind,
+            failure_reason=f"{type(exc).__name__}: {exc}",
+        )
 
 
 def _decompose_via_agent(
@@ -292,6 +344,44 @@ def _decompose_heuristic(
     return parts
 
 
+def _classify_decomposition_failure(exc: Exception) -> str:
+    """Classify decomposition failure for retry policy."""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return "transient"
+    lower = str(exc).lower()
+    transient_markers = (
+        "timeout",
+        "temporar",
+        "rate limit",
+        "connection",
+        "429",
+        "502",
+        "503",
+        "504",
+        "unavailable",
+    )
+    if any(marker in lower for marker in transient_markers):
+        return "transient"
+    return "systematic"
+
+
+def _choose_refined_comment(
+    *,
+    refined_comments: list[str],
+    answer: str | None,
+    fallback: str,
+) -> str:
+    """Select the best available ambiguity-refined comment text."""
+    for item in refined_comments:
+        candidate = str(item).strip()
+        if candidate:
+            return candidate
+    answer_text = str(answer or "").strip()
+    if answer_text:
+        return answer_text
+    return fallback
+
+
 def match_comments_to_insertion_points(
     comments: list[str],
     insertion_points: list[InsertionPoint],
@@ -387,7 +477,7 @@ def _find_best_insertion_point(
 # ---------------------------------------------------------------------------
 
 
-def _find_insertion_points(code_file: CodeFile, function_name: str) -> list[InsertionPoint]:
+def _find_insertion_points(code_file: CodeFile, function: FunctionInfo) -> list[InsertionPoint]:
     """Find valid insertion points within a function.
 
     Insertion points are between statements, respecting control flow.
@@ -395,20 +485,14 @@ def _find_insertion_points(code_file: CodeFile, function_name: str) -> list[Inse
 
     Args:
         code_file: Parsed code file.
-        function_name: Name of the target function.
+        function: Target function.
 
     Returns:
         List of InsertionPoint objects.
 
-    Raises:
-        ValueError: If function_name is not found in the code file.
     """
-    func = next((f for f in code_file.functions if f.name == function_name), None)
-    if func is None:
-        raise ValueError(f"Function '{function_name}' not found in {code_file.file_path}")
-
     source = Path(code_file.file_path).read_text(encoding="utf-8")
-    return _find_insertion_points_from_source(source, func, code_file.file_path)
+    return _find_insertion_points_from_source(source, function, code_file.file_path)
 
 
 def _find_insertion_points_from_source(
@@ -434,13 +518,21 @@ def _find_insertion_points_from_source(
 
     # Use analyze_source to locate the function
     analysis = analyze_source(source, file_path)
-    raw_func = None
-    for rf in analysis.functions:
-        if rf.name == func.name:
-            raw_func = rf
-            break
-    if raw_func is None:
-        return points
+    candidates = [rf for rf in analysis.functions if _raw_function_matches_target(rf, func)]
+    if not candidates:
+        raise ValueError(
+            f"Could not map function '{_format_function_identity(func)}' "
+            f"to parsed source in {file_path}"
+        )
+    if len(candidates) > 1:
+        options = ", ".join(
+            f"{rf.qualified_name or rf.name}@{rf.start_line}-{rf.end_line}" for rf in candidates
+        )
+        raise ValueError(
+            f"Ambiguous parsed function match for '{_format_function_identity(func)}' "
+            f"in {file_path}: {options}"
+        )
+    raw_func = candidates[0]
 
     from spec_manager.core.language import INDENT_SIZE
 
@@ -519,6 +611,87 @@ def _find_insertion_points_from_source(
     )
 
     return points
+
+
+def _resolve_target_function(code_file: CodeFile, function_name: str) -> FunctionInfo:
+    """Resolve a function selector to a unique function within one file."""
+    selector = function_name.strip()
+    if not selector:
+        raise ValueError("Target function name is empty")
+
+    requested_class: str | None = None
+    requested_name = selector
+    if "." in selector:
+        requested_class, requested_name = selector.rsplit(".", 1)
+
+    candidates: list[FunctionInfo] = []
+    for func in code_file.functions:
+        if func.name != requested_name:
+            continue
+        if requested_class is None:
+            candidates.append(func)
+            continue
+        class_name = str(func.class_name or "")
+        if class_name == requested_class or requested_class.endswith("." + class_name):
+            candidates.append(func)
+
+    if not candidates:
+        available = ", ".join(
+            sorted(_format_function_identity(func) for func in code_file.functions)
+        )
+        raise ValueError(
+            f"Function '{function_name}' not found in {code_file.file_path}. "
+            f"Available: {available or '<none>'}"
+        )
+
+    if len(candidates) > 1:
+        options = ", ".join(
+            f"{_format_function_identity(func)}@{func.start_line}-{func.end_line}"
+            for func in candidates
+        )
+        raise ValueError(
+            f"Function selector '{function_name}' is ambiguous in {code_file.file_path}: {options}"
+        )
+
+    return candidates[0]
+
+
+def _raw_function_matches_target(raw_func: object, target: FunctionInfo) -> bool:
+    """Return whether a raw analysis function corresponds to target identity."""
+    raw_name = str(getattr(raw_func, "name", "") or "").strip()
+    if raw_name != target.name:
+        return False
+
+    raw_start = int(getattr(raw_func, "start_line", 0) or 0)
+    raw_end = int(getattr(raw_func, "end_line", 0) or 0)
+    if raw_start and raw_end and raw_start == target.start_line and raw_end == target.end_line:
+        return True
+
+    raw_class, _ = _split_qualified_name(str(getattr(raw_func, "qualified_name", "") or raw_name))
+    target_class = str(target.class_name or "").strip() or None
+    if target_class:
+        if not raw_class:
+            return False
+        if raw_class != target_class and not raw_class.endswith("." + target_class):
+            return False
+
+    return True
+
+
+def _split_qualified_name(qualified_name: str) -> tuple[str | None, str]:
+    """Split a qualified name into (class_path_or_none, function_name)."""
+    value = str(qualified_name or "").strip()
+    parts = value.split(".")
+    if len(parts) <= 1:
+        return None, value
+    return ".".join(parts[:-1]), parts[-1]
+
+
+def _format_function_identity(func: FunctionInfo) -> str:
+    """Render function identity for diagnostics."""
+    if func.class_name:
+        return f"{func.class_name}.{func.name}"
+    return func.name
 
 
 def _find_statement_ranges(
