@@ -320,129 +320,6 @@ class LayerPlanner(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Stub layer planners (NOOP — filled in by layer modules later)
-# ---------------------------------------------------------------------------
-
-
-class _StubPlanner:
-    """Placeholder layer planner that returns NOOP for every operation."""
-
-    def __init__(self, layer: Layer) -> None:
-        self.layer: Layer = layer
-        self.discovery_router = _StubDiscoveryRouter(layer)
-        self.skeleton_planner = _StubSkeletonPlanner(layer)
-        self.layer_research_adapter = _StubResearchAdapter()
-        self._trace: Any | None = None
-
-    def bind_trace(self, trace: Any | None) -> None:
-        self._trace = trace
-
-    def discover(self, ctx: Any) -> dict[str, Any]:
-        return self.discovery_router.discover(ctx)
-
-    def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
-        return self.skeleton_planner.extract_skeleton(discovery)
-
-    def build_plan(
-        self, ctx: Any, gaps: list[dict[str, Any]], discovery: dict[str, Any]
-    ) -> dict[str, Any]:
-        return self.skeleton_planner.build_plan(ctx, gaps, discovery)
-
-    def resolve_under_spec(
-        self, ctx: Any, events: list[dict[str, Any]], discovery: dict[str, Any]
-    ) -> dict[str, Any]:
-        return self.layer_research_adapter.resolve_under_spec(ctx, events, discovery)
-
-    def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
-        return self.layer_research_adapter.resolve_signal(ctx, signal)
-
-    def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
-        return {"action": "NOOP", "monitors": []}
-
-
-class _StubDiscoveryRouter:
-    def __init__(self, layer: Layer) -> None:
-        self._layer = layer
-
-    def discover(self, ctx: Any) -> dict[str, Any]:
-        if self._layer == "l1":
-            return {"nodes": [], "edges": []}
-        if self._layer == "l2":
-            return {"nodes": [], "edges": [], "arch_files": []}
-        if self._layer == "l3":
-            return {"quality_graph": {"nodes": [], "edges": []}}
-        return {}
-
-
-class _StubSkeletonPlanner:
-    def __init__(self, layer: Layer) -> None:
-        self._layer = layer
-
-    def extract_skeleton(self, discovery: dict[str, Any]) -> dict[str, Any]:
-        if self._layer == "l1":
-            return {
-                "code_skeleton_graph": {
-                    "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
-                    "edges": [row for row in discovery.get("edges", []) if isinstance(row, dict)],
-                }
-            }
-        if self._layer == "l2":
-            return {
-                "architecture_topology_graph": {
-                    "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
-                    "edges": [row for row in discovery.get("edges", []) if isinstance(row, dict)],
-                    "arch_files": [
-                        str(path) for path in discovery.get("arch_files", []) if str(path).strip()
-                    ],
-                }
-            }
-        if self._layer == "l3":
-            quality_graph = discovery.get("quality_graph", {})
-            if not isinstance(quality_graph, dict):
-                quality_graph = {}
-            return {
-                "quality_graph": {
-                    "nodes": [
-                        row for row in quality_graph.get("nodes", []) if isinstance(row, dict)
-                    ],
-                    "edges": [
-                        row for row in quality_graph.get("edges", []) if isinstance(row, dict)
-                    ],
-                }
-            }
-        return {"layer_skeleton": {"nodes": [], "edges": []}}
-
-    def build_plan(
-        self,
-        ctx: Any,
-        gaps: list[dict[str, Any]],
-        discovery: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {
-            "intentions": [],
-            **self.extract_skeleton(discovery),
-        }
-
-
-class _StubResearchAdapter:
-    def resolve_under_spec(
-        self,
-        ctx: Any,
-        events: list[dict[str, Any]],
-        discovery: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {
-            "blocked": bool(events),
-            "constraints": {},
-            "questions": [],
-            "resolved": [],
-        }
-
-    def resolve_signal(self, ctx: Any, signal: Any) -> dict[str, Any] | None:
-        return None
-
-
-# ---------------------------------------------------------------------------
 # LayerRouter
 # ---------------------------------------------------------------------------
 
@@ -455,14 +332,10 @@ class LayerRouter:
     """
 
     def __init__(self) -> None:
-        self._planners: dict[Layer, LayerPlanner] = {
-            "l1": _StubPlanner("l1"),
-            "l2": _StubPlanner("l2"),
-            "l3": _StubPlanner("l3"),
-        }
+        self._planners: dict[Layer, LayerPlanner] = {}
 
     def register(self, layer: Layer, planner: LayerPlanner) -> None:
-        """Replace the stub planner for *layer* with a real implementation."""
+        """Register a planner for *layer*."""
         if layer == "any":
             raise ValueError("Cannot register a planner for 'any'; use a concrete layer.")
         self._planners[layer] = planner
@@ -470,7 +343,10 @@ class LayerRouter:
     def select(self, layer: Layer) -> LayerPlanner:
         """Return the planner for *layer*.  ``"any"`` resolves to L1."""
         if layer == "any":
-            return self._planners["l1"]
+            planner = self._planners.get("l1")
+            if planner is None:
+                raise ValueError("No planner registered for layer 'l1'")
+            return planner
         planner = self._planners.get(layer)
         if planner is None:
             raise ValueError(f"No planner registered for layer {layer!r}")

@@ -12,7 +12,7 @@ State machine (per slice)::
       ↓
     GAP_EXPLORATION    (P3 + GapQueue view)
       ↓
-    PLAN               (P8, L2/L3 only)
+    PLAN               (P8, planner-authoritative for all layers)
       ↓
     IMPLEMENT          (P9) ← emits patch + pin/edge proposals + evidence
       ↓
@@ -1673,50 +1673,51 @@ class GapExplorationStep:
         return loaded, len(ordered_paths)
 
     def _discover_l2_topology(self, ctx: SliceContext, bundle: EvidenceBundle) -> dict[str, Any]:
-        """Resolve L2 topology via planner discovery (or local fallback)."""
-        from types import SimpleNamespace
-
-        if self._planner is not None:
-            try:
-                from spec_manager.planner.api import PlanningContext, PlanningRequest
-
-                planning_ctx = PlanningContext(
-                    run_id=ctx.run_id,
-                    slice_id=ctx.slice_id,
-                    iteration=bundle.iteration,
-                    layer="l2",
-                    mode=ctx.mode,
-                    workspace_root=ctx.workspace_root,
-                    slice_root=ctx.slice_root,
-                    metadata={
-                        "changed_files": list(bundle.diff.changed_files or []),
-                    },
-                )
-                result = self._planner.plan(
-                    PlanningRequest(
-                        capability="GAP",
-                        context=planning_ctx,
-                        inputs={},
-                    )
-                )
-                outputs = getattr(result, "outputs", {})
-                discovery = outputs.get("discovery", {}) if isinstance(outputs, dict) else {}
-                if isinstance(discovery, dict):
-                    return discovery
-            except Exception as exc:
-                logger.debug("Planner L2 discovery failed: %s", exc, exc_info=True)
+        """Resolve L2 topology via planner GAP discovery only."""
+        if self._planner is None:
+            return {
+                "nodes": [],
+                "edges": [],
+                "arch_files": [],
+                "discovery_status": "incomplete",
+                "discovery_issues": ["L2 topology discovery requires planner wiring."],
+            }
 
         try:
-            from spec_manager.planner.layers.l2 import L2Planner
+            from spec_manager.planner.api import PlanningContext, PlanningRequest
 
-            fallback_ctx = SimpleNamespace(
+            planning_ctx = PlanningContext(
+                run_id=ctx.run_id,
+                slice_id=ctx.slice_id,
+                iteration=bundle.iteration,
+                layer="l2",
+                mode=ctx.mode,
                 workspace_root=ctx.workspace_root,
                 slice_root=ctx.slice_root,
-                metadata={"changed_files": list(bundle.diff.changed_files or [])},
+                metadata={
+                    "changed_files": list(bundle.diff.changed_files or []),
+                },
             )
-            return L2Planner().discover(fallback_ctx)
+            result = self._planner.plan(
+                PlanningRequest(
+                    capability="GAP",
+                    context=planning_ctx,
+                    inputs={},
+                )
+            )
+            outputs = getattr(result, "outputs", {})
+            discovery = outputs.get("discovery", {}) if isinstance(outputs, dict) else {}
+            if isinstance(discovery, dict):
+                return discovery
+            return {
+                "nodes": [],
+                "edges": [],
+                "arch_files": [],
+                "discovery_status": "incomplete",
+                "discovery_issues": ["Planner GAP response did not include a discovery payload."],
+            }
         except Exception as exc:
-            logger.warning("L2 topology discovery fallback failed: %s", exc, exc_info=True)
+            logger.warning("Planner L2 discovery failed: %s", exc, exc_info=True)
             return {
                 "nodes": [],
                 "edges": [],
@@ -2735,7 +2736,7 @@ class GapExplorationStep:
 class PlanStep:
     """Generate implementation plan from gaps — layer-aware.
 
-    - L1: No-op. Spec comments are authoritative and drive implementation directly.
+    - L1: Planner emits direct-implementation intentions from spec-comment authority.
     - L2: Convert architecture gaps into a wiring plan (which component
       to adjust, how to connect pins, handlers/routes to add)
     - L3: Convert quality findings into a refactor plan (group by
@@ -2746,7 +2747,7 @@ class PlanStep:
     the constraints store.  Uncovered decisions become under-spec events
     that block the slice before implementation begins.
 
-    PLAN is planner-authoritative for L2/L3. Legacy static planning
+    PLAN is planner-authoritative for all layers. Legacy static planning
     fallbacks are intentionally removed.
     """
 
@@ -2875,12 +2876,6 @@ class PlanStep:
         """Generate layer-appropriate implementation plan from gaps."""
         from spec_manager.orchestration.evidence import PlanRef
 
-        # SEC-067 invariant: L1 PLAN is a no-op; implementation works directly from
-        # gap/spec-comment authority without intermediate planning intentions.
-        if ctx.layer == "l1":
-            bundle.plan = PlanRef(path="plan.json", intentions=[], plan_artifacts={})
-            return StepResult(status="OK")
-
         if not bundle.gaps.open_gaps:
             bundle.plan = PlanRef(path="plan.json", intentions=[], plan_artifacts={})
             return StepResult(status="OK")
@@ -2888,7 +2883,7 @@ class PlanStep:
         if self._planner is None:
             return StepResult(
                 status="FAIL",
-                error="Planner is required for PLAN step in L2/L3.",
+                error="Planner is required for PLAN step execution.",
             )
 
         plan_outputs = self._plan_via_planner(ctx, bundle)
@@ -4348,7 +4343,6 @@ class CoordinateStep:
             workspace_root=workspace,
             mode=ctx.mode,
             planner=self._planner,
-            resolver=self._resolver,
             run_id=ctx.run_id,
         )
         outcome = manager.resolve(slice_id=ctx.slice_id, events=events, layer=ctx.layer)
@@ -8551,6 +8545,7 @@ DEFAULT_BUILD_STEPS: tuple[type, ...] = (
 L1_REACTIVE_BUILD_STEPS: tuple[type, ...] = (
     CollectBaselineStep,
     GapExplorationStep,
+    PlanStep,
     ImplementStep,
     CoordinateStep,
     AnalyzeStep,
@@ -8640,6 +8635,7 @@ class PromotionLoop:
         self._gap_queue = GapQueue()
         self._steps_override = steps
         self._step_cache: dict[tuple[LifecycleRunMode, Layer], list[Any]] = {}
+        self._phase0_quality_gate_cache: dict[tuple[str, str], tuple[bool, str]] = {}
 
     @staticmethod
     def _normalize_lifecycle_mode(value: str) -> LifecycleRunMode:
@@ -8680,6 +8676,91 @@ class PromotionLoop:
         instances = self._instantiate_steps(step_types)
         self._step_cache[key] = instances
         return instances
+
+    def _resolve_phase0_quality_gate(self, run_context: RunContext) -> tuple[bool, str]:
+        """Resolve and cache pre-loop Phase 0 library-quality gate status."""
+        run_id = str(run_context.run_id or "").strip()
+        workspace_token = str(run_context.workspace_root or "").strip()
+        cache_key = (run_id, workspace_token)
+        cached = self._phase0_quality_gate_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        config = run_context.config if isinstance(run_context.config, dict) else {}
+        configured_gate = config.get("phase0_library_quality")
+        if isinstance(configured_gate, dict):
+            configured_passed = configured_gate.get("gate_passed")
+            if isinstance(configured_passed, bool):
+                if configured_passed:
+                    resolved = (True, "")
+                else:
+                    failed_dims = configured_gate.get("failed_gate_dimensions", [])
+                    failed = (
+                        ", ".join(str(dim).strip() for dim in failed_dims if str(dim).strip())
+                        if isinstance(failed_dims, list)
+                        else ""
+                    )
+                    detail = f" Failed dimensions: {failed}." if failed else ""
+                    resolved = (
+                        False,
+                        "Phase 0 library quality gate failed before PromotionLoop start." + detail,
+                    )
+                self._phase0_quality_gate_cache[cache_key] = resolved
+                return resolved
+
+        workspace_root = (
+            Path(run_context.workspace_root)
+            if str(run_context.workspace_root or "").strip()
+            else self._workspace_root
+        )
+        phase0_output_dir = workspace_root / "phase0_output"
+        if not phase0_output_dir.exists():
+            resolved = (True, "")
+            self._phase0_quality_gate_cache[cache_key] = resolved
+            return resolved
+
+        report_path = phase0_output_dir / "library_quality.report.json"
+        report_payload = _read_json_file(report_path)
+        if isinstance(report_payload, dict):
+            gate_passed = report_payload.get("gate_passed")
+            if isinstance(gate_passed, bool):
+                if gate_passed:
+                    resolved = (True, "")
+                else:
+                    failed_dims = report_payload.get("failed_gate_dimensions", [])
+                    failed = (
+                        ", ".join(str(dim).strip() for dim in failed_dims if str(dim).strip())
+                        if isinstance(failed_dims, list)
+                        else ""
+                    )
+                    detail = f" Failed dimensions: {failed}." if failed else ""
+                    resolved = (
+                        False,
+                        "Phase 0 library quality gate failed before PromotionLoop start." + detail,
+                    )
+                self._phase0_quality_gate_cache[cache_key] = resolved
+                return resolved
+
+        try:
+            from spec_manager.intake.quality.library_quality_validator import validate_libraries
+
+            report = validate_libraries(workspace_root, phase0_output_dir=phase0_output_dir)
+            if report.gate_passed:
+                resolved = (True, "")
+            else:
+                failed = ", ".join(report.failed_gate_dimensions)
+                detail = f" Failed dimensions: {failed}." if failed else ""
+                resolved = (
+                    False,
+                    "Phase 0 library quality gate failed before PromotionLoop start." + detail,
+                )
+        except Exception as exc:
+            resolved = (
+                False,
+                f"Phase 0 library quality validation failed before PromotionLoop start: {exc}",
+            )
+        self._phase0_quality_gate_cache[cache_key] = resolved
+        return resolved
 
     def _record_provenance(
         self,
@@ -9206,6 +9287,22 @@ class PromotionLoop:
         Returns:
             SliceResult with final status.
         """
+        gate_passed, gate_error = self._resolve_phase0_quality_gate(run_context)
+        if not gate_passed:
+            logger.warning(
+                "Slice '%s' blocked before iteration start: %s",
+                slice_ref.slice_id,
+                gate_error,
+            )
+            return SliceResult(
+                slice_id=slice_ref.slice_id,
+                status="FAILED",
+                iterations=0,
+                remaining_gaps=0,
+                demotion_tickets=[],
+                error=gate_error,
+            )
+
         slice_config = dict(run_context.config) if isinstance(run_context.config, dict) else {}
         raw_focus_targets = {}
         slice_focus_targets = slice_config.pop("slice_focus_targets", None)

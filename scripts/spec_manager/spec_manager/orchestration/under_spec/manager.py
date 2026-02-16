@@ -494,8 +494,8 @@ class UnderSpecManager:
     Args:
         workspace_root: Repository root path.
         mode: Resolution mode (interactive or auto).
-        planner: Optional planner instance for resolution.
-        resolver: Optional injected resolver implementation.
+        planner: Optional planner instance for auto-mode resolution.
+        resolver: Optional injected resolver implementation (interactive mode only).
         run_id: PDD run identifier (used for signal store path).
     """
 
@@ -520,9 +520,15 @@ class UnderSpecManager:
         self._store = ConstraintsStore(workspace_root)
         self._constraints_adapter = ConstraintStoreAdapter(workspace_root)
         self._planner = planner
-        self._resolver: UnderSpecResolver | None = resolver
-        if self._resolver is None and planner is not None:
-            self._resolver = PlannerUnderSpecResolver(planner)
+        if self._mode == "auto" and planner is not None:
+            if resolver is not None:
+                logger.debug(
+                    "Ignoring injected resolver for auto mode; "
+                    "planner-backed resolver is authoritative."
+                )
+            self._resolver: UnderSpecResolver | None = PlannerUnderSpecResolver(planner)
+        else:
+            self._resolver = resolver
         self._run_id = normalized_run_id
         self._interactive_questions_emitted = False
 
