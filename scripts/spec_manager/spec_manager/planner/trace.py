@@ -43,13 +43,9 @@ logger = logging.getLogger(__name__)
 
 _TRACE_REL = Path("analysis") / "planner_traces"
 _DEFAULT_CAPABILITY_INPUT_FIELDS: dict[str, list[str]] = {
-    "RESOLVE_SIGNAL": ["signal"],
-    "GAP": ["gaps"],
-    "PLAN": ["gaps"],
-    "UNDER_SPEC": ["events"],
-    "INTEGRATION_ANALYSIS": ["topology"],
-    "TRIAGE_SIGNAL": ["signal"],
+    # Empty by default: identity hashes include the full request input payload.
 }
+_INPUT_IDENTITY_SCHEMA_VERSION = "v2_full_inputs"
 
 
 def content_hash(data: str) -> str:
@@ -69,8 +65,10 @@ def identity_inputs_subset(
 ) -> dict[str, Any]:
     """Return capability-scoped inputs used for decision identity."""
     field_map = capability_input_fields or _DEFAULT_CAPABILITY_INPUT_FIELDS
-    keys = field_map.get(capability, sorted(inputs.keys()))
-    return {k: inputs.get(k) for k in keys if k in inputs}
+    keys = field_map.get(capability)
+    if keys is None:
+        return {key: inputs.get(key) for key in sorted(inputs.keys())}
+    return {key: inputs.get(key) for key in keys if key in inputs}
 
 
 def compute_input_hash(
@@ -80,7 +78,12 @@ def compute_input_hash(
 ) -> str:
     """Compute normalized full SHA-256 hash for identity input subset."""
     subset = identity_inputs_subset(capability, inputs, capability_input_fields)
-    return hashlib.sha256(canonical_json(subset).encode("utf-8")).hexdigest()
+    identity_payload = {
+        "schema_version": _INPUT_IDENTITY_SCHEMA_VERSION,
+        "capability": capability,
+        "inputs": subset,
+    }
+    return hashlib.sha256(canonical_json(identity_payload).encode("utf-8")).hexdigest()
 
 
 def compute_decision_key(
@@ -126,25 +129,34 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not path.exists():
-        return []
+        return [], []
     rows: list[dict[str, Any]] = []
+    parse_errors: list[dict[str, Any]] = []
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return rows
-    for raw_line in text.splitlines():
+        return rows, parse_errors
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
             continue
         try:
             payload = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            parse_errors.append(
+                {
+                    "line_number": line_number,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "line_preview": line[:240],
+                }
+            )
             continue
         if isinstance(payload, dict):
             rows.append(payload)
-    return rows
+    return rows, parse_errors
 
 
 def _safe_deepcopy(value: Any) -> Any:
@@ -517,12 +529,18 @@ class PlannerDebugView:
         return []
 
     def which_models_touched_this(self) -> list[str]:
-        rows = _read_jsonl(self._trace_dir / "calls" / "model_calls.jsonl")
+        rows, parse_errors = _read_jsonl(self._trace_dir / "calls" / "model_calls.jsonl")
         touched: list[str] = []
         for row in rows:
             agent = str(row.get("agent_name", "")).strip() or "<unknown-agent>"
             model = str(row.get("model", "")).strip() or "<unknown-model>"
             touched.append(f"{agent}:{model}")
+        if parse_errors:
+            line_numbers = ",".join(str(item.get("line_number", "?")) for item in parse_errors[:5])
+            touched.append(
+                f"<trace-corruption:model_calls.jsonl parse_errors={len(parse_errors)} "
+                f"lines={line_numbers}>"
+            )
         deduped: list[str] = []
         seen: set[str] = set()
         for token in touched:

@@ -546,6 +546,11 @@ class GeneralPlanner:
             )
             executed_actions.extend(integration_actions)
             gates["integration_analysis_status"] = integration_result.status
+            if integration_result.status == "ERROR":
+                self._notify_gate_hook(
+                    "after_step", "integration_gate", integration_req, gates, integration_result
+                )
+                return integration_result, integration_route, gates, executed_actions
             if isinstance(integration_result.outputs, dict):
                 merged_inputs = dict(req.inputs) if isinstance(req.inputs, dict) else {}
                 merged_inputs.setdefault("integration_analysis", integration_result.outputs)
@@ -635,6 +640,18 @@ class GeneralPlanner:
                     action_inputs=action.inputs if isinstance(action.inputs, dict) else None,
                     interim=interim,
                 )
+                if action.tool == "web_research":
+                    pending_research = self._pending_research_dependency(interim)
+                    if pending_research is not None:
+                        state_machine.block("Waiting for external web research evidence")
+                        outputs = self._build_waiting_dependency_outputs(
+                            req=req,
+                            interim=interim,
+                            dependency_name="web_research",
+                            dependency_payload=pending_research,
+                            planner_state=state_machine.to_dict(),
+                        )
+                        return PlanningResult(status="WAITING", outputs=outputs), executed_actions
                 continue
 
             if action.action == ActionType.CALL_AGENT:
@@ -877,6 +894,37 @@ class GeneralPlanner:
             questions = [prompt, *questions]
         outputs["questions"] = [str(item).strip() for item in questions if str(item).strip()]
         outputs["prompt"] = prompt
+        outputs["planner_state"] = planner_state
+        outputs["capability"] = req.capability
+        return outputs
+
+    @staticmethod
+    def _pending_research_dependency(interim: dict[str, Any]) -> dict[str, Any] | None:
+        research = interim.get("research")
+        if not isinstance(research, dict):
+            return None
+        status = str(research.get("status", "")).strip().lower()
+        if status in {"pending", "requested", "waiting"}:
+            return dict(research)
+        return None
+
+    @staticmethod
+    def _build_waiting_dependency_outputs(
+        *,
+        req: PlanningRequest,
+        interim: dict[str, Any],
+        dependency_name: str,
+        dependency_payload: dict[str, Any],
+        planner_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        outputs: dict[str, Any] = {}
+        if str(req.capability).strip().upper() == "UNDER_SPEC":
+            under_spec = interim.get("under_spec_result")
+            if isinstance(under_spec, dict):
+                outputs.update(under_spec)
+        outputs["blocked"] = bool(outputs.get("blocked", True))
+        outputs["waiting_on"] = dependency_name
+        outputs["dependency"] = dict(dependency_payload)
         outputs["planner_state"] = planner_state
         outputs["capability"] = req.capability
         return outputs
@@ -2053,11 +2101,18 @@ class GeneralPlanner:
         )
 
     def _append_planner_update(self, run_id: str, event: dict[str, Any]) -> None:
+        event_payload = dict(event) if isinstance(event, dict) else {}
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
-            logger.debug(
-                "Planner update not written because run_id is missing (event_kind=%s)",
-                event.get("event_kind", ""),
+            fallback_event = dict(event_payload)
+            fallback_event["planner_update_persistence"] = {
+                "status": "fallback",
+                "reason": "missing_run_id",
+            }
+            self._append_planner_update_fallback(
+                self._workspace_root / "analysis" / "planner_updates" / "unattributed.jsonl",
+                fallback_event,
+                log_label="missing_run_id",
             )
             return
         updates_path = (
@@ -2070,12 +2125,48 @@ class GeneralPlanner:
         try:
             updates_path.parent.mkdir(parents=True, exist_ok=True)
             with updates_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
-        except OSError:
+                handle.write(
+                    json.dumps(event_payload, sort_keys=True, separators=(",", ":")) + "\n"
+                )
+        except OSError as exc:
             logger.warning(
                 "Failed to append planner update event_kind=%s run_id=%s",
-                event.get("event_kind", ""),
+                event_payload.get("event_kind", ""),
                 normalized_run_id,
+                exc_info=True,
+            )
+            fallback_event = dict(event_payload)
+            fallback_event["planner_update_persistence"] = {
+                "status": "fallback",
+                "reason": "primary_write_failed",
+                "run_id": normalized_run_id,
+                "primary_path": str(updates_path),
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            }
+            self._append_planner_update_fallback(
+                self._workspace_root / "analysis" / "planner_updates" / "dead_letter.jsonl",
+                fallback_event,
+                log_label="primary_write_failed",
+            )
+
+    def _append_planner_update_fallback(
+        self,
+        path: Path,
+        event: dict[str, Any],
+        *,
+        log_label: str,
+    ) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+        except OSError:
+            logger.error(
+                "Failed to append planner update fallback (%s) path=%s event_kind=%s",
+                log_label,
+                path,
+                event.get("event_kind", ""),
                 exc_info=True,
             )
 
@@ -2764,11 +2855,14 @@ class GeneralPlanner:
         )
         result = self.plan(req)
         outputs = result.outputs if isinstance(result.outputs, dict) else {}
-        return self._normalize_under_spec_outputs(
-            context=context,
-            events=events,
+        normalized = self._normalize_under_spec_outputs(
             outputs=outputs,
             status=result.status,
+        )
+        return self._augment_under_spec_outputs_with_triage_expansion(
+            context=context,
+            events=events,
+            normalized_outputs=normalized,
         )
 
     def emits_constraint_saved_notifications(self) -> bool:
@@ -2803,6 +2897,7 @@ class GeneralPlanner:
         facts: list[ConstraintFact] = []
         canonical_keys: list[str] = []
         constraint_ids: list[str] = []
+        dropped_constraints: list[dict[str, Any]] = []
         target_slice = str(slice_id or "__system__").strip() or "__system__"
         layer_token = str(layer or "any").strip().lower()
         default_layers = [layer_token.upper()] if layer_token in {"l1", "l2", "l3"} else []
@@ -2830,13 +2925,35 @@ class GeneralPlanner:
                     existing_fact
                 )
 
-        for row in constraints:
+        for index, row in enumerate(constraints):
             if not isinstance(row, dict):
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "constraint_not_dict",
+                        "payload_type": type(row).__name__,
+                    }
+                )
                 continue
             constraint_id = str(row.get("constraint_id", "")).strip()
             question = str(row.get("question", "")).strip()
             answer = str(row.get("answer", "")).strip()
             if not (constraint_id and question and answer):
+                missing_fields: list[str] = []
+                if not constraint_id:
+                    missing_fields.append("constraint_id")
+                if not question:
+                    missing_fields.append("question")
+                if not answer:
+                    missing_fields.append("answer")
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "missing_required_fields",
+                        "missing_fields": missing_fields,
+                        "constraint_id": constraint_id,
+                    }
+                )
                 continue
             raw_trace = row.get("trace", [])
             trace = [str(item).strip() for item in raw_trace if str(item).strip()]
@@ -2851,16 +2968,65 @@ class GeneralPlanner:
             if authority_required == "user_required":
                 authority_required = "human_required"
             if authority_required not in {"planner_ok", "human_required"}:
-                authority_required = "planner_ok"
-            if authority_required != "planner_ok":
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "invalid_authority_required",
+                        "constraint_id": constraint_id,
+                        "value": authority_required,
+                    }
+                )
                 continue
+            if authority_required != "planner_ok":
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "authority_not_planner_ok",
+                        "constraint_id": constraint_id,
+                        "value": authority_required,
+                    }
+                )
+                continue
+
             dimension = str(row.get("dimension", "software")).strip().lower()
+            if "dimension" in row and dimension not in _VALID_UNDER_SPEC_DIMENSIONS:
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "invalid_dimension",
+                        "constraint_id": constraint_id,
+                        "value": dimension,
+                    }
+                )
+                continue
             if dimension not in _VALID_UNDER_SPEC_DIMENSIONS:
                 dimension = "software"
+
             decision_type = str(row.get("decision_type", "performance")).strip().lower()
+            if "decision_type" in row and decision_type not in _VALID_UNDER_SPEC_DECISION_TYPES:
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "invalid_decision_type",
+                        "constraint_id": constraint_id,
+                        "value": decision_type,
+                    }
+                )
+                continue
             if decision_type not in _VALID_UNDER_SPEC_DECISION_TYPES:
                 decision_type = "performance"
+
             status = str(row.get("status", "ACTIVE")).strip().upper() or "ACTIVE"
+            if "status" in row and status not in {"ACTIVE", "SUPERSEDED"}:
+                dropped_constraints.append(
+                    {
+                        "input_index": index,
+                        "reason": "invalid_status",
+                        "constraint_id": constraint_id,
+                        "value": status,
+                    }
+                )
+                continue
             if status not in {"ACTIVE", "SUPERSEDED"}:
                 status = "ACTIVE"
             raw_supersedes = row.get("supersedes", [])
@@ -2916,7 +3082,12 @@ class GeneralPlanner:
             canonical_keys.append(canonical_key)
 
         if not facts:
-            return {"constraints_path": "", "constraint_ids": [], "canonical_keys": []}
+            return {
+                "constraints_path": "",
+                "constraint_ids": [],
+                "canonical_keys": [],
+                "dropped_constraints": dropped_constraints,
+            }
 
         context_token = ConstraintsTool.push_planner_update_context(
             run_id=run_token,
@@ -2932,13 +3103,12 @@ class GeneralPlanner:
             "constraints_path": str(saved_path),
             "constraint_ids": self._dedupe_preserve(constraint_ids),
             "canonical_keys": self._dedupe_preserve(canonical_keys),
+            "dropped_constraints": dropped_constraints,
         }
 
     def _normalize_under_spec_outputs(
         self,
         *,
-        context: PlanningContext,
-        events: list[dict[str, Any]],
         outputs: dict[str, Any],
         status: str,
     ) -> dict[str, Any]:
@@ -2946,7 +3116,7 @@ class GeneralPlanner:
         constraints_raw = outputs.get("constraints", {})
         constraints = constraints_raw if isinstance(constraints_raw, dict) else {}
         questions_raw = outputs.get("questions", [])
-        questions = self._normalize_under_spec_questions(questions_raw)
+        questions, dropped_questions = self._normalize_under_spec_questions(questions_raw)
         resolved_raw = outputs.get("resolved", [])
         resolved = (
             [row for row in resolved_raw if isinstance(row, dict)]
@@ -2974,15 +3144,6 @@ class GeneralPlanner:
         if isinstance(single_expansion, dict):
             expansions.append(single_expansion)
 
-        # When UNDER_SPEC remains blocked with no routable payload, synthesize
-        # spec expansion work-items via TRIAGE_SIGNAL so callers can route
-        # provider work and register monitors explicitly.
-        if blocked and not routing and events:
-            triage_payload = self._expand_under_spec_via_triage(context=context, events=events)
-            routing.extend(triage_payload["routing"])
-            monitors.extend(triage_payload["monitors"])
-            expansions.extend(triage_payload["expansions"])
-
         contradictions_raw = outputs.get("contradictions", [])
         contradictions = (
             [str(item) for item in contradictions_raw if str(item).strip()]
@@ -3006,19 +3167,64 @@ class GeneralPlanner:
             "expansions": expansions,
             "confidence": max(0.0, min(1.0, confidence)),
             "contradictions": contradictions,
+            "normalization_diagnostics": {
+                "dropped_questions": dropped_questions,
+            },
         }
 
+    def _augment_under_spec_outputs_with_triage_expansion(
+        self,
+        *,
+        context: PlanningContext,
+        events: list[dict[str, Any]],
+        normalized_outputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        outputs = dict(normalized_outputs)
+        blocked = bool(outputs.get("blocked", False))
+        routing = outputs.get("routing", [])
+        if not isinstance(routing, list):
+            routing = []
+        monitors = outputs.get("monitors", [])
+        if not isinstance(monitors, list):
+            monitors = []
+        expansions = outputs.get("expansions", [])
+        if not isinstance(expansions, list):
+            expansions = []
+        if blocked and not routing and events:
+            triage_payload = self._expand_under_spec_via_triage(context=context, events=events)
+            routing.extend(row for row in triage_payload["routing"] if isinstance(row, dict))
+            monitors.extend(row for row in triage_payload["monitors"] if isinstance(row, dict))
+            expansions.extend(row for row in triage_payload["expansions"] if isinstance(row, dict))
+        outputs["routing"] = routing
+        outputs["monitors"] = monitors
+        outputs["expansions"] = expansions
+        return outputs
+
     @staticmethod
-    def _normalize_under_spec_questions(raw_questions: Any) -> list[dict[str, Any]]:
+    def _normalize_under_spec_questions(
+        raw_questions: Any,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Normalize blocked-question payloads without flattening away decision structure."""
         if not isinstance(raw_questions, list):
-            return []
+            return [], [
+                {
+                    "reason": "questions_not_list",
+                    "payload_type": type(raw_questions).__name__,
+                }
+            ]
 
         questions: list[dict[str, Any]] = []
-        for raw_question in raw_questions:
+        dropped_questions: list[dict[str, Any]] = []
+        for index, raw_question in enumerate(raw_questions):
             if isinstance(raw_question, str):
                 text = raw_question.strip()
                 if not text:
+                    dropped_questions.append(
+                        {
+                            "input_index": index,
+                            "reason": "empty_question_string",
+                        }
+                    )
                     continue
                 questions.append(
                     {
@@ -3030,6 +3236,13 @@ class GeneralPlanner:
                 continue
 
             if not isinstance(raw_question, dict):
+                dropped_questions.append(
+                    {
+                        "input_index": index,
+                        "reason": "question_not_dict_or_string",
+                        "payload_type": type(raw_question).__name__,
+                    }
+                )
                 continue
 
             text = str(
@@ -3039,6 +3252,12 @@ class GeneralPlanner:
                 or ""
             ).strip()
             if not text:
+                dropped_questions.append(
+                    {
+                        "input_index": index,
+                        "reason": "missing_question_text",
+                    }
+                )
                 continue
 
             options_raw = raw_question.get("options", raw_question.get("choices", []))
@@ -3077,7 +3296,7 @@ class GeneralPlanner:
 
             questions.append(normalized)
 
-        return questions
+        return questions, dropped_questions
 
     @staticmethod
     def _coerce_under_spec_constraint_source(

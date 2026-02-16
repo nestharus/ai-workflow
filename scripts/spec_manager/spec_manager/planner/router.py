@@ -753,9 +753,24 @@ class CapabilityRouter:
             return
 
         if tool_name == "web_research":
-            interim.setdefault("research", {})
-            interim["research"]["status"] = "requested"
-            output_payload = {"status": "requested"}
+            research_state = interim.get("research")
+            if not isinstance(research_state, dict):
+                research_state = {}
+                interim["research"] = research_state
+            research_state.update(
+                {
+                    "status": "pending",
+                    "dependency": "web_research",
+                    "requested": True,
+                    "reason": "External evidence has not been fetched yet.",
+                }
+            )
+            output_payload = {
+                "status": "pending",
+                "dependency": "web_research",
+                "dependency_status": "waiting",
+                "reason": research_state["reason"],
+            }
             self._record_tool_invocation(
                 req=req,
                 tool_name=tool_name,
@@ -787,9 +802,15 @@ class CapabilityRouter:
                     payload = tool(req, discovery)
             else:
                 payload = IntegrationAnalyzer().analyze(req=req, discovery=discovery)
-        except Exception:
+        except Exception as exc:
             logger.warning("integration analysis tool invocation failed", exc_info=True)
-            return {}
+            return {
+                "status": "error",
+                "error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            }
 
         if isinstance(payload, dict):
             return payload
@@ -797,7 +818,14 @@ class CapabilityRouter:
             candidate = payload.to_dict()
             if isinstance(candidate, dict):
                 return candidate
-        return {}
+        return {
+            "status": "error",
+            "error": {
+                "type": "InvalidIntegrationPayload",
+                "message": f"Unsupported integration analyzer payload type: "
+                f"{type(payload).__name__}",
+            },
+        }
 
     def run_agent(
         self,
@@ -834,6 +862,14 @@ class CapabilityRouter:
             "decision": "proceed",
             "decision_text": f"{capability} advanced through DECIDE phase",
         }
+        research = interim.get("research")
+        if isinstance(research, dict):
+            status = str(research.get("status", "")).strip().lower()
+            if status in {"pending", "requested", "waiting"}:
+                decision["decision"] = "wait"
+                decision["dependency"] = "web_research"
+                decision["decision_text"] = "Waiting for web research evidence before proceeding"
+                return decision
 
         under_spec = interim.get("under_spec_result")
         if isinstance(under_spec, dict):
@@ -1108,7 +1144,18 @@ class CapabilityRouter:
             integration_analysis = interim.get("integration_analysis")
             if not isinstance(integration_analysis, dict):
                 integration_analysis = {}
+            integration_status = str(integration_analysis.get("status", "")).strip().lower()
             outputs = {"discovery": discovery, **integration_analysis}
+            if integration_status == "error":
+                error_payload = integration_analysis.get("error", {})
+                error_message = ""
+                if isinstance(error_payload, dict):
+                    error_message = str(error_payload.get("message", "")).strip()
+                return PlanningResult(
+                    status="ERROR",
+                    outputs=outputs,
+                    error=error_message or "Integration analysis failed",
+                )
             return PlanningResult(status="OK", outputs=outputs)
 
         if capability == "TRIAGE_SIGNAL":
@@ -1154,38 +1201,31 @@ class CapabilityRouter:
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
         if hasattr(planner, "extract_skeleton") and callable(planner.extract_skeleton):
-            extracted = planner.extract_skeleton(ctx, discovery)
+            try:
+                extracted = planner.extract_skeleton(ctx, discovery)
+            except Exception as exc:
+                return {
+                    "layer_skeleton_unavailable": {
+                        "reason": "extract_skeleton_failed",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    }
+                }
             if isinstance(extracted, dict):
                 return extracted
-
+            return {
+                "layer_skeleton_unavailable": {
+                    "reason": "invalid_extract_skeleton_payload",
+                    "payload_type": type(extracted).__name__,
+                }
+            }
         layer = str(getattr(ctx, "layer", "") or getattr(planner, "layer", "")).strip().lower()
-        if layer == "l1":
-            return {
-                "code_skeleton_graph": {
-                    "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
-                    "edges": [row for row in discovery.get("edges", []) if isinstance(row, dict)],
-                }
+        return {
+            "layer_skeleton_unavailable": {
+                "reason": "extract_skeleton_not_implemented",
+                "layer": layer,
             }
-        if layer == "l2":
-            return {
-                "architecture_topology_graph": {
-                    "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
-                    "edges": [row for row in discovery.get("edges", []) if isinstance(row, dict)],
-                }
-            }
-        quality_graph = discovery.get("quality_graph")
-        if isinstance(quality_graph, dict):
-            return {
-                "quality_graph": {
-                    "nodes": [
-                        row for row in quality_graph.get("nodes", []) if isinstance(row, dict)
-                    ],
-                    "edges": [
-                        row for row in quality_graph.get("edges", []) if isinstance(row, dict)
-                    ],
-                }
-            }
-        return {"layer_skeleton": {"nodes": [], "edges": []}}
+        }
 
     @staticmethod
     def _dedupe_gaps(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
