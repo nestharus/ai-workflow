@@ -77,6 +77,9 @@ class GapInventoryItem:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GapInventoryItem:
         """Deserialize from dictionary."""
+        confidence_raw = data.get("confidence", 1.0)
+        if confidence_raw is None:
+            confidence_raw = 1.0
         return cls(
             kind=str(data.get("kind", "comment_gap")),
             file=str(data.get("file", "")),
@@ -85,7 +88,7 @@ class GapInventoryItem:
             span=_normalize_span(data.get("span", {})),
             severity=str(data.get("severity", "MAJOR")),
             required_change_type=str(data.get("required_change_type", "behavior_change")),
-            confidence=float(data.get("confidence", 1.0) or 1.0),
+            confidence=float(confidence_raw),
             detector=str(data.get("detector", "gap_detection")),
             metadata=data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {},
         )

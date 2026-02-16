@@ -195,9 +195,8 @@ class DownwardFlowEngine:
                 # Extract file path portion from architectural_location
                 location_file = pin_fn.architectural_location.split(":")[0]
                 arch_file = arch_dir / location_file
-                # A pin is valid if the architectural directory exists
-                # (file-level check; method-level would require parsing)
-                if not arch_file.exists() and not arch_dir.exists():
+                # A pin is valid only when the referenced file exists.
+                if not arch_file.exists():
                     all_valid = False
                     break
             result["architectural"] = all_valid

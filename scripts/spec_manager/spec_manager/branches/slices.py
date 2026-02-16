@@ -142,6 +142,14 @@ class SliceNavigator:
             return []
         return [self._slices[cid] for cid in parent.children if cid in self._slices]
 
+    def list_all_slices(self) -> list[VerticalSlice]:
+        """Return all known slices.
+
+        This is the public projection for callers that need global
+        slice context without depending on internal storage layout.
+        """
+        return list(self._slices.values())
+
     def add_atom_to_slice(self, slice_id: str, atom_id: str) -> None:
         """Add an atom to a vertical slice.
 

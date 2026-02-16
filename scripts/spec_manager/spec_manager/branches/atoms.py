@@ -92,6 +92,10 @@ class AtomRegistry:
         for atom in self._atoms.values():
             file_path = self._layout.atoms_dir / atom.file_path
             if not file_path.exists():
+                # Missing files are explicit drift when the stored hash
+                # came from real content identity.
+                if _looks_like_sha256(atom.content_hash):
+                    changes.append((atom.atom_id, atom.content_hash, "__missing__"))
                 continue
             new_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
             if new_hash != atom.content_hash:
@@ -122,3 +126,8 @@ class AtomRegistry:
         for atom_data in raw.get("atoms", {}).values():
             registry.register(AtomDescriptor.from_dict(atom_data))
         return registry
+
+
+def _looks_like_sha256(value: str) -> bool:
+    """Return True when value appears to be a SHA-256 hex digest."""
+    return len(value) == 64 and all(ch in "0123456789abcdefABCDEF" for ch in value)

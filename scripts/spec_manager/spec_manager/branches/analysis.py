@@ -114,7 +114,7 @@ class AnalysisReport:
 
 def _build_adjacency_graph(
     atoms: list[Any],
-    slices: dict[str, Any],
+    slices: list[Any],
     store_atom_map: dict[str, set[str]],
 ) -> AdjacencyGraph:
     """Build a canonical AdjacencyGraph from branches data structures.
@@ -128,7 +128,7 @@ def _build_adjacency_graph(
         graph.add_node(atom.atom_id)
 
     # Add co-occurrence edges from slices
-    for vs in slices.values():
+    for vs in slices:
         for i, aid_a in enumerate(vs.atom_ids):
             for aid_b in vs.atom_ids[i + 1 :]:
                 graph.add_edge(
@@ -180,17 +180,21 @@ class AnalysisGenerator:
         """
         all_atoms = self._atom_registry.list_all()
         artifacts: list[AnalysisArtifact] = []
+        slices = self._slice_navigator.list_all_slices()
 
         # Build store-touch map: store_id -> set of atom_ids
         store_atom_map: dict[str, set[str]] = {}
         for atom in all_atoms:
             if atom.kind == AtomKind.STORE:
                 store_atom_map.setdefault(atom.atom_id, set())
+        for vs in slices:
+            for store_id in vs.store_ids:
+                store_atom_map.setdefault(store_id, set()).update(vs.atom_ids)
 
         # Build the canonical adjacency graph
         adj_graph = _build_adjacency_graph(
             all_atoms,
-            self._slice_navigator._slices,
+            slices,
             store_atom_map,
         )
 

@@ -18,6 +18,7 @@ O(n) scans are acceptable.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -90,6 +91,7 @@ class PinRegistry:
     def __init__(self, layout: BranchLayout) -> None:
         self._layout = layout
         self._pins: dict[str, PinProjection] = {}
+        self._projection_edges: list[dict[str, Any]] = []
         self._next_pin_number: int = 1
 
     # ---- Registration ----
@@ -126,6 +128,28 @@ class PinRegistry:
     def list_all(self) -> list[PinProjection]:
         """Return all registered pins."""
         return list(self._pins.values())
+
+    def register_projection_edge(
+        self,
+        *,
+        source_pin: str,
+        target_location: str,
+        projection_type: ProjectionType,
+        confidence: float = 1.0,
+    ) -> None:
+        """Record a projection edge as explicit branch-registry state."""
+        self._projection_edges.append(
+            {
+                "source_pin": source_pin,
+                "target_location": target_location,
+                "projection_type": projection_type.value,
+                "confidence": max(0.0, min(1.0, float(confidence))),
+            }
+        )
+
+    def list_projection_edges(self) -> list[dict[str, Any]]:
+        """Return projection edges recorded through the registry API."""
+        return [dict(edge) for edge in self._projection_edges]
 
     # ---- Forward trace (design doc Section 11) ----
     # Note: For O(1) forward trace see core.pin_registry.PinRegistryIndex
@@ -213,13 +237,10 @@ class PinRegistry:
                             details=f"Atom hash changed: {old_hash[:8]}.. -> {new_hash[:8]}..",
                         )
                     )
-                elif pin.projection_type in (
-                    ProjectionType.SLICE,
-                    ProjectionType.AGGREGATION,
-                ):
+                elif pin.projection_type in (ProjectionType.AGGREGATION, ProjectionType.SMEAR):
                     drift_type = (
                         "aggregation_invalidated"
-                        if pin.projection_type == ProjectionType.AGGREGATION
+                        if pin.projection_type in (ProjectionType.AGGREGATION, ProjectionType.SMEAR)
                         else "atom_changed"
                     )
                     reports.append(
@@ -232,6 +253,85 @@ class PinRegistry:
                             details=f"Atom hash changed: {old_hash[:8]}.. -> {new_hash[:8]}..",
                         )
                     )
+                else:
+                    reports.append(
+                        DriftReport(
+                            pin_id=pin.pin_id,
+                            atom_id=pin.atom_id,
+                            drift_type="wrapper_changed",
+                            architectural_location=pin.architectural_location,
+                            projection_type=pin.projection_type,
+                            details=(
+                                "Atom hash changed under wrapper: "
+                                f"{old_hash[:8]}.. -> {new_hash[:8]}.."
+                            ),
+                        )
+                    )
+
+            wrapper_sensitive_types = {
+                ProjectionType.EVENT_BRIDGE,
+                ProjectionType.MIDDLEWARE_WRAP,
+                ProjectionType.RETRY_DECORATE,
+                ProjectionType.SLICE,
+                ProjectionType.INTRODUCTION,
+            }
+            if pin.projection_type not in wrapper_sensitive_types:
+                continue
+            location_file = pin.architectural_location.split(":", 1)[0].strip()
+            if not location_file:
+                reports.append(
+                    DriftReport(
+                        pin_id=pin.pin_id,
+                        atom_id=pin.atom_id,
+                        drift_type="wrapper_changed",
+                        architectural_location=pin.architectural_location,
+                        projection_type=pin.projection_type,
+                        details="Cannot verify wrapper drift: missing architectural file location.",
+                    )
+                )
+                continue
+
+            arch_file = self._layout.architectural_dir() / location_file
+            if not arch_file.exists():
+                reports.append(
+                    DriftReport(
+                        pin_id=pin.pin_id,
+                        atom_id=pin.atom_id,
+                        drift_type="wrapper_changed",
+                        architectural_location=pin.architectural_location,
+                        projection_type=pin.projection_type,
+                        details=f"Wrapper target file missing: {location_file}",
+                    )
+                )
+                continue
+
+            current_wrapper_hash = hashlib.sha256(arch_file.read_bytes()).hexdigest()
+            if pin.wrapper_hash is None:
+                reports.append(
+                    DriftReport(
+                        pin_id=pin.pin_id,
+                        atom_id=pin.atom_id,
+                        drift_type="wrapper_changed",
+                        architectural_location=pin.architectural_location,
+                        projection_type=pin.projection_type,
+                        details="Wrapper hash not recorded; wrapper drift cannot be verified.",
+                    )
+                )
+                continue
+            if current_wrapper_hash != pin.wrapper_hash:
+                reports.append(
+                    DriftReport(
+                        pin_id=pin.pin_id,
+                        atom_id=pin.atom_id,
+                        drift_type="wrapper_changed",
+                        architectural_location=pin.architectural_location,
+                        projection_type=pin.projection_type,
+                        details=(
+                            f"Wrapper hash changed: {pin.wrapper_hash[:8]}.. -> "
+                            f"{current_wrapper_hash[:8]}.."
+                        ),
+                    )
+                )
         return reports
 
     # ---- Coverage analysis ----
@@ -251,11 +351,27 @@ class PinRegistry:
     def get_orphaned_architectural_code(self) -> list[str]:
         """Architectural locations with no pin (undocumented/orphaned).
 
-        This is a placeholder -- in a real system it would scan the
-        architectural branch for code not covered by any pin.  Here we
-        simply return an empty list since we track only known pins.
+        File-level orphan detection: any architectural source file that
+        has no registered pin-location reference is considered orphaned.
         """
-        return []
+        from spec_manager.core.language import source_rglob_no_markers
+
+        arch_dir = self._layout.architectural_dir()
+        if not arch_dir.exists():
+            return []
+
+        pinned_files = {
+            pin.architectural_location.split(":", 1)[0].strip()
+            for pin in self._pins.values()
+            if pin.architectural_location.strip()
+        }
+
+        orphaned: list[str] = []
+        for arch_file in source_rglob_no_markers(arch_dir):
+            relative = arch_file.relative_to(arch_dir).as_posix()
+            if relative not in pinned_files:
+                orphaned.append(relative)
+        return sorted(orphaned)
 
     # ---- ID allocation ----
 
@@ -272,6 +388,7 @@ class PinRegistry:
         self._layout.branches_dir.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {
             "pins": {pid: p.to_dict() for pid, p in self._pins.items()},
+            "projection_edges": list(self._projection_edges),
             "next_pin_number": self._next_pin_number,
         }
         self._layout.pin_registry_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -290,6 +407,9 @@ class PinRegistry:
             return registry
         raw = json.loads(layout.pin_registry_path.read_text(encoding="utf-8"))
         registry._next_pin_number = raw.get("next_pin_number", 1)
+        registry._projection_edges = [
+            row for row in raw.get("projection_edges", []) if isinstance(row, dict)
+        ]
         for pin_data in raw.get("pins", {}).values():
             registry.register_pin(PinProjection.from_dict(pin_data))
         return registry

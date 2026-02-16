@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.compliance.promotion.algorithmic_gates import (
+    check_all_tests_pass,
     check_call_graph_connected,
     check_no_remaining_comments,
     check_no_stub_functions,
@@ -222,17 +223,27 @@ class ComplianceChecker:
     def check_tests_pass(self) -> tuple[bool, list[str]]:
         """Check that algorithmic tests pass.
 
-        This is a structural check -- it verifies that the algorithmic
-        branch exists.  Actual test execution would be done by a CI
-        system.
-
         Returns:
             Tuple of (passed, error_messages).
         """
         alg_dir = self._layout.algorithmic_dir()
         if not alg_dir.exists():
             return True, []
-        return True, []
+
+        test_roots = [self._layout.run_root / "tests", alg_dir / "tests"]
+        if not any(root.exists() for root in test_roots):
+            return True, []
+
+        from spec_manager.compliance.promotion.config import PromotionGateConfig
+
+        config = PromotionGateConfig.default()
+        gate_spec = config.get_gate(GateId.ALL_TESTS_PASS)
+        result = check_all_tests_pass(
+            test_command=config.test_command,
+            project_root=self._layout.run_root,
+            gate_spec=gate_spec,
+        )
+        return _gate_result_to_tuple(result)
 
     def check_call_graph_connected(self) -> tuple[bool, list[str]]:
         """Check that the call graph is connected (no orphaned algorithms).

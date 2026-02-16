@@ -25,7 +25,7 @@ from spec_manager.compliance.promotion.result import PromotionReport
 from spec_manager.orchestration.evidence import EvidenceBundle
 
 from .atoms import AtomRegistry
-from .compliance import ComplianceGateResult
+from .compliance import ComplianceChecker, ComplianceGateResult
 from .layout import BranchLayout
 from .pins import PinRegistry
 from .types import PinProjection, ProjectionType, VerticalSlice
@@ -70,6 +70,15 @@ class PromotionResult:
         )
 
 
+@dataclass
+class ProjectionHint:
+    """Routing evidence for how an atom should project upward."""
+
+    architectural_location: str
+    projection_type: ProjectionType
+    confidence: float = 1.0
+
+
 # ---- Adapter helpers ----
 
 
@@ -79,16 +88,54 @@ def _promotion_report_to_compliance_result(report: PromotionReport) -> Complianc
     for gr in report.gate_results:
         gate_passed[gr.gate_id] = gr.passed
 
+    relevant_gates = {
+        GateId.NO_REMAINING_COMMENTS.value,
+        GateId.NO_STUB_FUNCTIONS.value,
+        GateId.ALL_TESTS_PASS.value,
+        GateId.CALL_GRAPH_CONNECTED.value,
+        GateId.STORE_MONOGAMY.value,
+    }
+    no_comments = gate_passed.get(GateId.NO_REMAINING_COMMENTS.value, True)
+    no_stubs = gate_passed.get(GateId.NO_STUB_FUNCTIONS.value, True)
+    tests_pass = gate_passed.get(GateId.ALL_TESTS_PASS.value, True)
+    call_graph_connected = gate_passed.get(GateId.CALL_GRAPH_CONNECTED.value, True)
+    store_monogamy = gate_passed.get(GateId.STORE_MONOGAMY.value, True)
+
     return ComplianceGateResult(
-        passed=report.passed,
-        no_comments=gate_passed.get(GateId.NO_REMAINING_COMMENTS.value, True),
-        no_stubs=gate_passed.get(GateId.NO_STUB_FUNCTIONS.value, True),
-        tests_pass=gate_passed.get(GateId.ALL_TESTS_PASS.value, True),
-        call_graph_connected=gate_passed.get(GateId.CALL_GRAPH_CONNECTED.value, True),
-        store_monogamy=gate_passed.get(GateId.STORE_MONOGAMY.value, True),
-        errors=[b.summary for b in report.blockers],
-        warnings=[w.summary for w in report.warnings],
+        passed=all((no_comments, no_stubs, store_monogamy)),
+        no_comments=no_comments,
+        no_stubs=no_stubs,
+        tests_pass=tests_pass,
+        call_graph_connected=call_graph_connected,
+        store_monogamy=store_monogamy,
+        errors=[b.summary for b in report.blockers if b.gate_id in relevant_gates],
+        warnings=[w.summary for w in report.warnings if w.gate_id in relevant_gates],
     )
+
+
+def _coerce_projection_type(value: Any) -> ProjectionType | None:
+    """Parse a projection type value from proposal payloads."""
+    if isinstance(value, ProjectionType):
+        return value
+    if not isinstance(value, str):
+        return None
+    raw = value.strip().lower()
+    aliases: dict[str, ProjectionType] = {
+        "projection": ProjectionType.SLICE,
+        "event": ProjectionType.EVENT_BRIDGE,
+        "call": ProjectionType.PASS_THROUGH,
+        "store_touch": ProjectionType.AGGREGATION,
+        "event_emit": ProjectionType.EVENT_BRIDGE,
+        "event_handle": ProjectionType.EVENT_BRIDGE,
+        "import": ProjectionType.SLICE,
+        "reference": ProjectionType.SLICE,
+    }
+    if raw in aliases:
+        return aliases[raw]
+    try:
+        return ProjectionType(raw)
+    except ValueError:
+        return None
 
 
 class PromotionEngine:
@@ -142,18 +189,15 @@ class PromotionEngine:
         if not skip_compliance:
             compliance_result = self._check_compliance(slices)
             if not compliance_result.passed:
-                # TODO: Trigger demotion on compliance failure instead
-                #   of just returning failure. DownwardFlowEngine should
-                #   trace pins back to atoms, identify what needs fixing
-                #   at L1 (code-as-spec), fix it, then retry promotion.
-                #   Current behavior: returns skipped, caller ignores.
+                blocker_errors = ["Promotion blocked by compliance gate failure."]
+                blocker_errors.extend(compliance_result.errors)
                 return PromotionResult(
                     success=False,
                     promoted_atoms=[],
                     skipped_atoms=[],
                     compliance_result=compliance_result,
                     pin_ids_created=[],
-                    errors=compliance_result.errors,
+                    errors=blocker_errors,
                 )
 
         # Identify atoms to promote
@@ -164,6 +208,11 @@ class PromotionEngine:
         skipped: list[str] = []
         new_pins: list[str] = []
         errors: list[str] = []
+        changed_atom_ids = {atom_id for atom_id, _old, _new in self._atom_registry.detect_changes()}
+        projection_hints = self._build_projection_hints(
+            pin_proposals=pin_proposals,
+            edge_proposals=edge_proposals,
+        )
 
         for atom_id in atom_ids:
             descriptor = self._atom_registry.get(atom_id)
@@ -171,14 +220,37 @@ class PromotionEngine:
                 errors.append(f"Atom not found: {atom_id}")
                 continue
 
-            # Check if already projected
             existing = self._pin_registry.get_architectural_locations(atom_id)
-            if existing:
+            hint = projection_hints.get(atom_id)
+            atom_changed = atom_id in changed_atom_ids
+
+            if existing and not atom_changed and hint is None:
                 skipped.append(atom_id)
                 continue
 
-            # Create a new pin for this atom
-            pin = self._project_atom(atom_id)
+            if existing and hint is None:
+                missing_targets = [
+                    pin.architectural_location
+                    for pin in existing
+                    if not (
+                        self._layout.architectural_dir()
+                        / pin.architectural_location.split(":", 1)[0]
+                    ).exists()
+                ]
+                if missing_targets:
+                    errors.append(
+                        f"Changed atom '{atom_id}' has stale projections "
+                        "pointing to missing targets: " + ", ".join(sorted(missing_targets))
+                    )
+                    continue
+                promoted.append(atom_id)
+                continue
+
+            if existing and hint is not None:
+                for pin in existing:
+                    self._pin_registry.unregister_pin(pin.pin_id)
+
+            pin = self._project_atom(atom_id, hint=hint)
             if pin is None:
                 errors.append(f"Failed to project atom: {atom_id}")
                 continue
@@ -221,8 +293,20 @@ class PromotionEngine:
         gate = LayerPromotionGate(config, evidence_bundle=evidence_bundle)
         report = gate.run_all_checks()
         result = _promotion_report_to_compliance_result(report)
+        checker = ComplianceChecker(self._layout, self._atom_registry)
+        no_comments_ok, no_comments_errors = checker.check_no_comments()
+        no_stubs_ok, no_stubs_errors = checker.check_no_stubs()
+        tests_ok, tests_errors = checker.check_tests_pass()
+        graph_ok, graph_errors = checker.check_call_graph_connected()
+        advisory_warnings = list(result.warnings)
+        if not tests_ok:
+            advisory_warnings.extend(tests_errors)
+        if not graph_ok:
+            advisory_warnings.extend(graph_errors)
 
         # Run branches-specific store monogamy if slices provided
+        monogamy_ok = True
+        monogamy_errors: list[str] = []
         if slices is not None:
             store_owners: dict[str, list[str]] = {}
             for vs in slices:
@@ -231,22 +315,109 @@ class PromotionEngine:
 
             violations = {sid: owners for sid, owners in store_owners.items() if len(owners) > 1}
             if violations:
-                result = ComplianceGateResult(
-                    passed=False,
-                    no_comments=result.no_comments,
-                    no_stubs=result.no_stubs,
-                    tests_pass=result.tests_pass,
-                    call_graph_connected=result.call_graph_connected,
-                    store_monogamy=False,
-                    errors=result.errors
-                    + [
-                        f"Store {sid} owned by multiple slices: {', '.join(owners)}"
-                        for sid, owners in violations.items()
-                    ],
-                    warnings=result.warnings,
-                )
+                monogamy_ok = False
+                monogamy_errors = [
+                    f"Store {sid} owned by multiple slices: {', '.join(owners)}"
+                    for sid, owners in violations.items()
+                ]
+
+        result = ComplianceGateResult(
+            passed=all((no_comments_ok, no_stubs_ok, monogamy_ok)),
+            no_comments=no_comments_ok,
+            no_stubs=no_stubs_ok,
+            tests_pass=tests_ok,
+            call_graph_connected=graph_ok,
+            store_monogamy=monogamy_ok,
+            errors=no_comments_errors + no_stubs_errors + monogamy_errors,
+            warnings=advisory_warnings,
+        )
 
         return result
+
+    def _build_projection_hints(
+        self,
+        *,
+        pin_proposals: list[dict[str, Any]] | None,
+        edge_proposals: list[dict[str, Any]] | None,
+    ) -> dict[str, ProjectionHint]:
+        """Index routing evidence by atom id for promotion-time projection."""
+        hints: dict[str, ProjectionHint] = {}
+        pin_rows = [row for row in (pin_proposals or []) if isinstance(row, dict)]
+        edge_rows = [row for row in (edge_proposals or []) if isinstance(row, dict)]
+        edge_by_src: dict[str, dict[str, Any]] = {
+            str(row.get("src") or row.get("pin_id") or row.get("pin_func_id") or "").strip(): row
+            for row in edge_rows
+            if str(row.get("src") or row.get("pin_id") or row.get("pin_func_id") or "").strip()
+        }
+
+        for row in pin_rows:
+            atom_hint = self._find_atom_hint_key(row)
+            if atom_hint is None:
+                continue
+
+            src_pin_id = str(row.get("pin_id") or row.get("pin_func_id") or "").strip()
+            linked_edge = edge_by_src.get(src_pin_id, {})
+
+            location = str(
+                linked_edge.get("arch_location")
+                or linked_edge.get("dst")
+                or row.get("arch_location")
+                or row.get("fqn")
+                or ""
+            ).strip()
+            if not location:
+                continue
+
+            projection_type = _coerce_projection_type(
+                linked_edge.get("projection_type") or linked_edge.get("signal_type")
+            )
+            if projection_type is None:
+                projection_type = _coerce_projection_type(row.get("projection_type"))
+            if projection_type is None:
+                projection_type = ProjectionType.PASS_THROUGH
+
+            confidence_raw = linked_edge.get(
+                "confidence",
+                linked_edge.get("weight", row.get("confidence", 1.0)),
+            )
+            try:
+                confidence = max(0.0, min(1.0, float(confidence_raw)))
+            except (TypeError, ValueError):
+                confidence = 1.0
+
+            hints[atom_hint] = ProjectionHint(
+                architectural_location=location,
+                projection_type=projection_type,
+                confidence=confidence,
+            )
+        return hints
+
+    def _find_atom_hint_key(self, proposal: dict[str, Any]) -> str | None:
+        """Resolve a proposal row to a registered atom id."""
+        explicit = str(proposal.get("atom_id_hint") or proposal.get("atom_id") or "").strip()
+        if explicit and self._atom_registry.get(explicit) is not None:
+            return explicit
+
+        fqn = str(proposal.get("fqn") or proposal.get("function_name") or "").strip()
+        file_path = str(proposal.get("file_path") or proposal.get("file") or "").strip()
+        function_name = ""
+        if fqn:
+            if ":" in fqn:
+                function_name = fqn.rsplit(":", 1)[-1]
+            elif "." in fqn:
+                function_name = fqn.rsplit(".", 1)[-1]
+            else:
+                function_name = fqn
+        fallback_name = function_name or str(proposal.get("pin_name") or "").strip()
+
+        for atom in self._atom_registry.list_all():
+            if explicit and atom.atom_id == explicit:
+                return atom.atom_id
+            if file_path and atom.file_path == file_path:
+                return atom.atom_id
+            if fallback_name and atom.function_name == fallback_name:
+                return atom.atom_id
+        return None
 
     def _identify_changed_atoms(self) -> list[str]:
         """Identify atoms that have changed since last promotion.
@@ -269,35 +440,36 @@ class PromotionEngine:
 
         return changed
 
-    def _project_atom(self, atom_id: str) -> PinProjection | None:
-        """Create a pin for an atom using pass-through projection.
-
-        By default, new atoms are projected as pass-through since the
-        architecture imports them directly.
+    def _project_atom(self, atom_id: str, *, hint: ProjectionHint | None) -> PinProjection | None:
+        """Create a pin for an atom from routing evidence.
 
         Args:
             atom_id: The atom to project.
+            hint: Projection routing evidence for location and projection type.
+                When absent, descriptor pointers provide a deterministic fallback.
 
         Returns:
-            A new PinProjection, or ``None`` if the atom is not found.
+            A new PinProjection, or ``None`` if atom metadata is incomplete.
         """
         descriptor = self._atom_registry.get(atom_id)
         if descriptor is None:
             return None
 
-        # TODO: Smart projection routing based on atom metadata.
-        #   Currently always uses PASS_THROUGH. Should inspect the
-        #   atom's role/context to select the appropriate ProjectionType:
-        #   - EVENT_BRIDGE for event-emitting atoms
-        #   - MIDDLEWARE_WRAP for cross-cutting concerns
-        #   - RETRY_DECORATE for retry-capable operations
-        #   - AGGREGATION for data-combining atoms
-        #   Atom descriptor should carry enough metadata to decide.
+        if hint is None:
+            location_fn = str(descriptor.function_name or "").strip()
+            if not location_fn:
+                return None
+            hint = ProjectionHint(
+                architectural_location=f"services/{location_fn}",
+                projection_type=ProjectionType.PASS_THROUGH,
+                confidence=0.5,
+            )
+
         pin_id = self._pin_registry.allocate_pin_id()
         return PinProjection(
             pin_id=pin_id,
             atom_id=atom_id,
-            architectural_location=f"services/{descriptor.function_name}",
-            projection_type=ProjectionType.PASS_THROUGH,
-            confidence=1.0,
+            architectural_location=hint.architectural_location,
+            projection_type=hint.projection_type,
+            confidence=hint.confidence,
         )

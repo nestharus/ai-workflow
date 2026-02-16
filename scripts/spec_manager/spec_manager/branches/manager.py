@@ -14,7 +14,9 @@ Integrates all branch subsystems behind a single entry point:
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .analysis import AnalysisGenerator, AnalysisReport
 from .atoms import AtomRegistry
@@ -98,7 +100,15 @@ class BranchManager:
             List of issues encountered (empty if successful).
         """
         if force and self._layout.branches_dir.exists():
-            shutil.rmtree(self._layout.branches_dir)
+            archive_root = self._layout.run_root / "branches_archive"
+            archive_root.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            archive_path = archive_root / f"branches-{timestamp}"
+            suffix = 1
+            while archive_path.exists():
+                archive_path = archive_root / f"branches-{timestamp}-{suffix:02d}"
+                suffix += 1
+            shutil.move(str(self._layout.branches_dir), str(archive_path))
             self._atom_registry = AtomRegistry(self._layout)
             self._pin_registry = PinRegistry(self._layout)
             self._slice_navigator = SliceNavigator(
@@ -195,12 +205,16 @@ class BranchManager:
         self,
         atom_ids: list[str] | None = None,
         skip_compliance: bool = False,
+        pin_proposals: list[dict[str, Any]] | None = None,
+        edge_proposals: list[dict[str, Any]] | None = None,
     ) -> PromotionResult:
         """Promote atoms from algorithmic to architectural branch.
 
         Args:
             atom_ids: Specific atoms to promote (``None`` = all changed).
             skip_compliance: Skip compliance gate.
+            pin_proposals: Optional projection hints keyed by atom evidence.
+            edge_proposals: Optional graph/projection edge hints.
 
         Returns:
             PromotionResult describing the outcome.
@@ -210,6 +224,8 @@ class BranchManager:
             atom_ids=atom_ids,
             skip_compliance=skip_compliance,
             slices=slices if slices else None,
+            pin_proposals=pin_proposals,
+            edge_proposals=edge_proposals,
         )
 
     # ---- Downward flow ----

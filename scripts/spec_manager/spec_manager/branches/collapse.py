@@ -292,8 +292,40 @@ class CollapseEngine:
             file_ambiguities = _with_file_context(
                 _coerce_dict_list(routed.get("ambiguities", [])), rel_path
             )
-            routed_edges = _normalize_adjacency_edges(routed.get("adjacency_edges"))
+            discarded_edges: list[dict[str, Any]] = []
+            routed_edges = _normalize_adjacency_edges(
+                routed.get("adjacency_edges"),
+                file_path=rel_path,
+                discarded=discarded_edges,
+            )
             combined_edges = routed_edges
+
+            for discarded in discarded_edges:
+                reason = str(discarded.get("reason") or "invalid_edge").strip()
+                raw_edge = discarded.get("edge")
+                span_id = discarded.get("span_id")
+                warnings.append(f"Discarded adjacency edge in {rel_path}: {reason}")
+                ambiguities.append(
+                    {
+                        "file_path": rel_path,
+                        "span_id": span_id,
+                        "question": "Should this adjacency edge be corrected and retained?",
+                        "reason": f"invalid_adjacency_edge:{reason}",
+                        "raw_edge": raw_edge,
+                    }
+                )
+                gaps.append(
+                    {
+                        "kind": "ambiguity_gap",
+                        "file": rel_path,
+                        "description": f"Discarded adjacency edge ({reason}).",
+                        "reason": f"invalid_adjacency_edge:{reason}",
+                        "severity": "MAJOR",
+                        "required_change_type": "spec_change",
+                        "span_id": span_id,
+                        "span": {},
+                    }
+                )
 
             if not file_store_touches:
                 file_store_touches = _derive_store_touches_from_edges(combined_edges, rel_path)
@@ -336,6 +368,7 @@ class CollapseEngine:
                     source_text=source,
                     warnings=warnings,
                     ambiguities=ambiguities,
+                    gaps=gaps,
                 )
                 if descriptor is None:
                     continue
@@ -395,10 +428,35 @@ class CollapseEngine:
         source_text: str,
         warnings: list[str],
         ambiguities: list[dict[str, Any]],
+        gaps: list[dict[str, Any]],
     ) -> AtomDescriptor | None:
         """Build an atom descriptor from router-produced pointers."""
         span_id = str(atom_data.get("span_id") or atom_data.get("atom_id") or "").strip()
         if not span_id:
+            warnings.append(
+                f"Atom candidate missing span_id in {file_path}; routing row preserved as ambiguity"
+            )
+            ambiguities.append(
+                {
+                    "file_path": file_path,
+                    "span_id": None,
+                    "question": "Atom candidate is missing span_id/atom_id pointer.",
+                    "reason": "missing_span_id",
+                    "raw_candidate": dict(atom_data),
+                }
+            )
+            gaps.append(
+                {
+                    "kind": "ambiguity_gap",
+                    "file": file_path,
+                    "description": "Atom candidate missing span_id/atom_id pointer.",
+                    "reason": "missing_span_id",
+                    "severity": "BLOCKER",
+                    "required_change_type": "spec_change",
+                    "span_id": None,
+                    "span": {},
+                }
+            )
             return None
 
         kind_raw = str(atom_data.get("kind") or "algorithm").strip().lower()
@@ -514,19 +572,51 @@ def _with_file_context(rows: list[dict[str, Any]], file_path: str) -> list[dict[
     return enriched
 
 
-def _normalize_adjacency_edges(value: Any) -> list[dict[str, Any]]:
+def _normalize_adjacency_edges(
+    value: Any,
+    *,
+    file_path: str | None = None,
+    discarded: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Normalize adjacency edges to a stable structure."""
     normalized: list[dict[str, Any]] = []
     for edge in _coerce_dict_list(value):
         signal_type = str(edge.get("signal_type") or edge.get("type") or "").strip().upper()
         if not signal_type:
+            if discarded is not None:
+                discarded.append(
+                    {
+                        "reason": "missing_signal_type",
+                        "edge": dict(edge),
+                        "span_id": edge.get("span_id"),
+                        "file_path": file_path,
+                    }
+                )
             continue
         if signal_type not in _ROUTING_SIGNAL_TYPES:
+            if discarded is not None:
+                discarded.append(
+                    {
+                        "reason": f"unsupported_signal_type:{signal_type}",
+                        "edge": dict(edge),
+                        "span_id": edge.get("span_id"),
+                        "file_path": file_path,
+                    }
+                )
             continue
 
         src_id = str(edge.get("src_id") or edge.get("from") or edge.get("caller") or "").strip()
         dst_id = str(edge.get("dst_id") or edge.get("to") or edge.get("callee") or "").strip()
         if not src_id or not dst_id:
+            if discarded is not None:
+                discarded.append(
+                    {
+                        "reason": "missing_src_or_dst",
+                        "edge": dict(edge),
+                        "span_id": edge.get("span_id"),
+                        "file_path": file_path,
+                    }
+                )
             continue
 
         try:
@@ -543,6 +633,13 @@ def _normalize_adjacency_edges(value: Any) -> list[dict[str, Any]]:
                 "rationale_span": edge.get("rationale_span"),
                 "evidence": edge.get("evidence", {}),
             }
+        )
+
+    if discarded:
+        logger.warning(
+            "Discarded %d invalid adjacency edge(s)%s",
+            len(discarded),
+            f" for {file_path}" if file_path else "",
         )
 
     return normalized
