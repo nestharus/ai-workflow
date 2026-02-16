@@ -1,6 +1,6 @@
-"""Test-span baselining and persistence.
+"""Runtime-observed test-pin baselining and persistence.
 
-Extracts and persists content hashes of test function spans associated with
+Persists hashes of runtime test identity observations associated with
 pin-functions, providing a stable baseline for drift detection.
 """
 
@@ -8,33 +8,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
-import textwrap
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
-
 if TYPE_CHECKING:
-    from spec_manager.projection.lineage.test_pin_discovery import TestPinMap
-
-logger = logging.getLogger(__name__)
+    from spec_manager.projection.lineage.test_pin_discovery import (
+        TestPinAssociation,
+        TestPinMap,
+    )
 
 
 @dataclass
 class TestSignatureBaseline:
-    """Baseline signature of a single test function.
-
-    Attributes:
-        test_file: Path to the test file.
-        test_function: Fully qualified test function name.
-        pin_func_id: The associated pin-function ID.
-        signature_hash: Hash of normalized test span content.
-        signature_text: Diagnostic text representation of captured test span.
-        recorded_at: ISO-8601 timestamp of when the baseline was recorded.
-    """
+    """Baseline signature of a single runtime-observed test identity."""
 
     test_file: str
     test_function: str
@@ -46,14 +34,7 @@ class TestSignatureBaseline:
 
 @dataclass
 class TestPinBaselineStore:
-    """Persistent store of all test-pin signature baselines.
-
-    Attributes:
-        schema_version: Schema version for forward compatibility.
-        baselines: List of baseline entries.
-        created_at: ISO-8601 timestamp of initial creation.
-        updated_at: ISO-8601 timestamp of last update.
-    """
+    """Persistent store of test-pin runtime signature baselines."""
 
     schema_version: str = "1.0"
     baselines: list[TestSignatureBaseline] = field(default_factory=list)
@@ -61,15 +42,7 @@ class TestPinBaselineStore:
     updated_at: str = ""
 
     def get_baseline(self, test_file: str, test_function: str) -> TestSignatureBaseline | None:
-        """Find a baseline entry by test file and function name.
-
-        Args:
-            test_file: Path to the test file.
-            test_function: Fully qualified test function name.
-
-        Returns:
-            The matching baseline, or None if not found.
-        """
+        """Find a baseline entry by test file and function name."""
         for bl in self.baselines:
             if bl.test_file == test_file and bl.test_function == test_function:
                 return bl
@@ -77,17 +50,7 @@ class TestPinBaselineStore:
 
 
 def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
-    """Build a baseline store from a test-pin association map.
-
-    For each association, computes a span-content hash for the test
-    function and stores a diagnostic text snapshot.
-
-    Args:
-        test_pin_map: The test-pin association map.
-
-    Returns:
-        A populated TestPinBaselineStore.
-    """
+    """Build a baseline store from runtime test-pin association observations."""
     now = datetime.now(UTC).isoformat()
     baselines: list[TestSignatureBaseline] = []
     seen: set[tuple[str, str]] = set()
@@ -98,23 +61,17 @@ def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
             continue
         seen.add(key)
 
-        # Compute signature hash for the test function
-        sig_hash = _compute_test_signature_hash(assoc.test_file, assoc.test_function)
-        sig_text = _extract_test_signature_text(assoc.test_file, assoc.test_function)
-
+        sig_hash = _compute_test_signature_hash(test_pin_map, assoc.test_file, assoc.test_function)
+        sig_text = _extract_test_signature_text(test_pin_map, assoc.test_file, assoc.test_function)
         if sig_hash is None:
-            logger.warning(
-                "Could not compute signature hash for %s in %s",
-                assoc.test_function,
-                assoc.test_file,
-            )
             continue
 
+        primary_pin = _primary_pin_for_test(test_pin_map, assoc.test_file, assoc.test_function)
         baselines.append(
             TestSignatureBaseline(
                 test_file=assoc.test_file,
                 test_function=assoc.test_function,
-                pin_func_id=assoc.pin_func_id,
+                pin_func_id=primary_pin,
                 signature_hash=sig_hash,
                 signature_text=sig_text,
                 recorded_at=now,
@@ -130,12 +87,7 @@ def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
 
 
 def save_baseline(store: TestPinBaselineStore, path: Path) -> None:
-    """Save the baseline store to a JSON file.
-
-    Args:
-        store: The baseline store to persist.
-        path: File path to write to (default: .spec/test_pin_baselines.json).
-    """
+    """Save the baseline store to a JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _store_to_dict(store)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -145,12 +97,6 @@ def load_baseline(path: Path) -> TestPinBaselineStore:
     """Load a baseline store from a JSON file.
 
     Returns an empty store if the file does not exist.
-
-    Args:
-        path: File path to read from.
-
-    Returns:
-        The loaded or empty TestPinBaselineStore.
     """
     if not path.exists():
         return TestPinBaselineStore()
@@ -164,23 +110,10 @@ def update_baseline(
     new_map: TestPinMap,
     force: bool = False,
 ) -> tuple[TestPinBaselineStore, list[str]]:
-    """Merge new associations into an existing baseline store.
-
-    For new test functions, adds baseline entries. For existing entries
-    whose signatures have changed, only overwrites if force=True.
-
-    Args:
-        existing: The existing baseline store.
-        new_map: The new test-pin association map.
-        force: If True, overwrite changed signatures.
-
-    Returns:
-        Tuple of (updated store, list of change descriptions).
-    """
+    """Merge new runtime associations into an existing baseline store."""
     now = datetime.now(UTC).isoformat()
     changes: list[str] = []
 
-    # Build a lookup of existing baselines
     existing_lookup: dict[tuple[str, str], int] = {}
     for i, bl in enumerate(existing.baselines):
         existing_lookup[(bl.test_file, bl.test_function)] = i
@@ -197,12 +130,12 @@ def update_baseline(
                     existing.baselines[idx] = new_bl
                     changes.append(
                         f"Updated {new_bl.test_function} in {new_bl.test_file}: "
-                        f"span hash changed ({old_bl.signature_hash} -> {new_bl.signature_hash})"
+                        f"{old_bl.signature_hash} -> {new_bl.signature_hash}"
                     )
                 else:
                     changes.append(
                         f"Drift detected for {new_bl.test_function} in {new_bl.test_file}: "
-                        f"span hash changed ({old_bl.signature_hash} -> {new_bl.signature_hash})"
+                        f"{old_bl.signature_hash} -> {new_bl.signature_hash}"
                     )
         else:
             existing.baselines.append(new_bl)
@@ -212,108 +145,79 @@ def update_baseline(
     return existing, changes
 
 
-def _compute_test_signature_hash(file_path: str, test_function: str) -> str | None:
-    """Compute content hash for a test function span.
-
-    Args:
-        file_path: Path to the test file.
-        test_function: Test function name, possibly class-qualified.
-
-    Returns:
-        SHA-256 hex digest of normalized span text, or None if not found.
-    """
-    func_info = _find_function_info(file_path, test_function)
-    if func_info is None:
+def _compute_test_signature_hash(
+    test_pin_map: TestPinMap,
+    test_file: str,
+    test_function: str,
+) -> str | None:
+    """Compute hash for runtime test identity facts."""
+    rows = _collect_associations(test_pin_map, test_file, test_function)
+    if not rows:
         return None
 
-    span_text = _extract_function_span_text(file_path, func_info)
-    if not span_text:
-        return None
+    payload = {
+        "test_file": test_file,
+        "test_function": test_function,
+        "associations": rows,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
-    normalized = textwrap.dedent(span_text).strip()
-    if not normalized:
-        return None
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
-
-def _extract_test_signature_text(file_path: str, test_function: str) -> str:
-    """Extract captured span text used for baseline hashing.
-
-    Args:
-        file_path: Path to the test file.
-        test_function: Test function name, possibly class-qualified.
-
-    Returns:
-        Human-readable signature string, or empty string if not found.
-    """
-    func_info = _find_function_info(file_path, test_function)
-    if func_info is None:
+def _extract_test_signature_text(
+    test_pin_map: TestPinMap,
+    test_file: str,
+    test_function: str,
+) -> str:
+    """Extract human-readable runtime identity text used for baseline hashing."""
+    rows = _collect_associations(test_pin_map, test_file, test_function)
+    if not rows:
         return ""
+    payload = {
+        "test_file": test_file,
+        "test_function": test_function,
+        "associations": rows,
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)
 
-    span_text = _extract_function_span_text(file_path, func_info)
-    return textwrap.dedent(span_text).strip()
 
-
-def _extract_function_span_text(file_path: str, func_info: RawFunctionInfo) -> str:
-    path = Path(file_path)
-    if not path.exists():
+def _primary_pin_for_test(test_pin_map: TestPinMap, test_file: str, test_function: str) -> str:
+    rows = _collect_associations(test_pin_map, test_file, test_function)
+    if not rows:
         return ""
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
-        return ""
-
-    lines = source.splitlines()
-    start = max(0, func_info.start_line - 1)
-    end = min(len(lines), max(func_info.end_line, func_info.start_line))
-    return "\n".join(lines[start:end])
+    return str(rows[0].get("pin_func_id", ""))
 
 
-def _find_function_info(file_path: str, test_function: str) -> RawFunctionInfo | None:
-    """Find the RawFunctionInfo for a test function using analyze_source.
+def _collect_associations(
+    test_pin_map: TestPinMap,
+    test_file: str,
+    test_function: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for assoc in test_pin_map.associations:
+        if assoc.test_file != test_file or assoc.test_function != test_function:
+            continue
+        rows.append(_association_to_row(assoc))
+    rows.sort(
+        key=lambda row: (
+            str(row.get("pin_func_id", "")),
+            str(row.get("association_type", "")),
+        )
+    )
+    return rows
 
-    Args:
-        file_path: Path to the source file.
-        test_function: Function name, possibly class-qualified (e.g., "TestClass.test_method").
 
-    Returns:
-        The matching RawFunctionInfo, or None if not found.
-    """
-    path = Path(file_path)
-    if not path.exists():
-        return None
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return None
-
-    try:
-        analysis = analyze_source(source, filepath=file_path)
-    except Exception:
-        logger.debug("Pin baseline test parse failed", exc_info=True)
-        return None
-
-    # Match by qualified_name for class methods, by name for top-level functions
-    for func in analysis.functions:
-        if func.qualified_name == test_function:
-            return func
-        # Also try matching just by name for simple (non-class-qualified) functions
-        if "." not in test_function and func.name == test_function:
-            return func
-
-    return None
+def _association_to_row(assoc: TestPinAssociation) -> dict[str, Any]:
+    return {
+        "pin_func_id": assoc.pin_func_id,
+        "pin_function_name": assoc.pin_function_name,
+        "association_type": assoc.association_type,
+        "confidence": round(float(assoc.confidence), 6),
+    }
 
 
 def _store_to_dict(store: TestPinBaselineStore) -> dict[str, Any]:
-    """Serialize a TestPinBaselineStore to a dictionary.
-
-    Args:
-        store: The store to serialize.
-
-    Returns:
-        Dictionary representation.
-    """
+    """Serialize a TestPinBaselineStore to a dictionary."""
     return {
         "schema_version": store.schema_version,
         "baselines": [asdict(bl) for bl in store.baselines],
@@ -323,14 +227,7 @@ def _store_to_dict(store: TestPinBaselineStore) -> dict[str, Any]:
 
 
 def _store_from_dict(data: dict[str, Any]) -> TestPinBaselineStore:
-    """Deserialize a TestPinBaselineStore from a dictionary.
-
-    Args:
-        data: Dictionary representation.
-
-    Returns:
-        Reconstructed TestPinBaselineStore.
-    """
+    """Deserialize a TestPinBaselineStore from a dictionary."""
     return TestPinBaselineStore(
         schema_version=data.get("schema_version", "1.0"),
         baselines=[TestSignatureBaseline(**bl) for bl in data.get("baselines", [])],

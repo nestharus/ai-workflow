@@ -143,6 +143,12 @@ class LayerPromotionGate:
         pin_coverage_report: PinCoverageReport | None,
     ) -> tuple[GateCheckResult, PinCoverageReport | None]:
         """Dispatch one gate execution."""
+        changed_files = [
+            str(path).strip()
+            for path in (self._bundle.diff.changed_files or [])
+            if isinstance(path, str) and str(path).strip()
+        ]
+
         if gate_id == GateId.NO_REMAINING_COMMENTS:
             return (
                 check_no_remaining_comments(self._bundle, gate_spec),
@@ -187,11 +193,13 @@ class LayerPromotionGate:
                 self._pin_registry,
                 architectural_files,
                 gate_spec,
+                changed_files=changed_files,
                 analyzed=self._architectural_analyzed,
             )
             pin_coverage_report = build_pin_coverage_report(
                 self._pin_registry,
                 architectural_files,
+                changed_files=changed_files,
                 analyzed=self._architectural_analyzed,
             )
             return result, pin_coverage_report
@@ -210,6 +218,7 @@ class LayerPromotionGate:
                 pin_coverage_report = build_pin_coverage_report(
                     self._pin_registry,
                     architectural_files,
+                    changed_files=changed_files,
                     analyzed=self._architectural_analyzed,
                 )
             return (

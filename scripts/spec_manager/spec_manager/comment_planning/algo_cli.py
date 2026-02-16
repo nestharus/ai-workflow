@@ -2,7 +2,6 @@
 
 Provides subcommands for:
 - insert: Insert pseudocode comments from an intention
-- reverse: Reverse-translate code to pseudocode comments
 - scan: Scan for gaps (unimplemented comments + stubs)
 - adjacency: Discover adjacent details
 - decompose: Decompose an intention into micro-units
@@ -33,16 +32,6 @@ def setup_plan_v2_parser(subparsers: Any) -> None:
     p_insert.add_argument("--intention", required=True, help="High-level intention text")
     p_insert.add_argument("--evidence-dir", help="Path to spec evidence directory")
     p_insert.add_argument("--apply", action="store_true", help="Write changes to disk")
-
-    # reverse
-    p_reverse = plan_v2_sub.add_parser(
-        "reverse", help="Reverse-translate code to pseudocode comments"
-    )
-    p_reverse.add_argument("--file", required=True, help="Path to Python file")
-    p_reverse.add_argument("--function", required=True, help="Target function name")
-    p_reverse.add_argument("--start-line", type=int, help="Start line (1-based)")
-    p_reverse.add_argument("--end-line", type=int, help="End line (1-based)")
-    p_reverse.add_argument("--apply", action="store_true", help="Write changes to disk")
 
     # scan
     p_scan = plan_v2_sub.add_parser("scan", help="Scan for gaps (unimplemented comments + stubs)")
@@ -75,7 +64,6 @@ def handle_plan_v2_command(args: argparse.Namespace) -> int:
     """
     handlers = {
         "insert": cmd_insert,
-        "reverse": cmd_reverse,
         "scan": cmd_scan,
         "adjacency": cmd_adjacency,
         "decompose": cmd_decompose,
@@ -144,60 +132,6 @@ def cmd_insert(args: argparse.Namespace) -> int:
 
     if args.apply:
         modified = apply_insertion_plan(plan)
-        Path(file_path).write_text(modified, encoding="utf-8")
-        print(f"\nChanges written to {file_path}")
-    else:
-        print("\nDry run. Use --apply to write changes.")
-
-    return 0
-
-
-def cmd_reverse(args: argparse.Namespace) -> int:
-    """Handle plan-v2 reverse command.
-
-    Args:
-        args: Parsed arguments with --file, --function.
-
-    Returns:
-        Exit code.
-    """
-    from spec_manager.comment_planning.models import parse_file
-    from spec_manager.comment_planning.reverser import (
-        apply_reverse_plan,
-        reverse_translate,
-    )
-
-    file_path = str(Path(args.file).resolve())
-
-    try:
-        code_file = parse_file(file_path)
-    except FileNotFoundError:
-        print(f"File not found: {file_path}", file=sys.stderr)
-        return 1
-    except SyntaxError as e:
-        print(f"Syntax error in {file_path}: {e}", file=sys.stderr)
-        return 1
-
-    try:
-        plan = reverse_translate(
-            code_file=code_file,
-            function_name=args.function,
-            start_line=getattr(args, "start_line", None),
-            end_line=getattr(args, "end_line", None),
-        )
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-    print(f"Reverse translation for {args.function} in {file_path}:")
-    print(f"  Range: lines {plan.start_line}-{plan.end_line}")
-    print(f"  Generated comments: {len(plan.generated_comments)}")
-
-    for comment in plan.generated_comments:
-        print(f"    # {comment.text}")
-
-    if args.apply:
-        modified = apply_reverse_plan(plan)
         Path(file_path).write_text(modified, encoding="utf-8")
         print(f"\nChanges written to {file_path}")
     else:

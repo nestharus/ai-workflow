@@ -1,8 +1,7 @@
-"""High-level orchestration for pin-function extraction, registration, and change tracking.
+"""High-level orchestration for pin-function proposal materialization.
 
-Uses ``analyze_source()`` from ``spec_manager.core.code_analysis`` for
-function discovery instead of the removed ``ast_extractor`` and
-``import_graph`` modules.
+Pins and projection edges are sourced from IMPLEMENT-step proposals.
+This module verifies and normalizes those proposals into PinFunctionRegistry.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 from spec_manager.core.pin_registry import PinRegistryIndex
 from spec_manager.projection.pin_propagation import (
     PinChangePropagator,
@@ -33,19 +31,14 @@ from spec_manager.schemas.pin_functions import (
 class PinFunctionConfig:
     """Configuration for the pin-function orchestrator."""
 
-    atom_directories: list[str] = field(default_factory=lambda: ["atoms", "shapes"])
     algorithmic_roots: list[str] = field(default_factory=lambda: ["atoms", "shapes"])
     architectural_roots: list[str] = field(default_factory=lambda: ["services", "handlers"])
     registry_dir: str = ".spec"
     registry_filename: str = "pin_registry.json"
-    max_function_lines: int = 30
-    require_docstring: bool = True
-    annotation_marker: str = "# @pin"
-    exclude_patterns: list[str] = field(default_factory=lambda: ["test_", "_test", "conftest"])
 
 
 class PinFunctionOrchestrator:
-    """Orchestrates pin-function extraction, registration, and change tracking."""
+    """Orchestrates proposal verification, registration, and change tracking."""
 
     def __init__(
         self,
@@ -63,107 +56,41 @@ class PinFunctionOrchestrator:
 
     def scan(
         self,
-        mode: str = "proposals",
         *,
-        allow_scan_fallback: bool = False,
         pin_proposals: list[dict[str, Any]] | None = None,
         edge_proposals: list[dict[str, Any]] | None = None,
         pin_proposals_path: str | Path | None = None,
         edge_proposals_path: str | Path | None = None,
-        source_index_entries: list[dict[str, Any]] | None = None,
         changed_files: list[str] | None = None,
     ) -> PinFunctionRegistry:
-        """Build the pin registry from LLM proposals with optional scan fallback.
-
-        The authoritative source of truth is IMPLEMENT-step pin/edge
-        proposals. Filesystem scanning is only an optional fallback backend
-        for generating candidate pins when ``mode`` includes ``"scan"``.
+        """Build the pin registry from verified proposals.
 
         Args:
-            mode: One of ``"proposals"`` (authoritative proposals only),
-                ``"scan"`` (fallback scanner only), or ``"both"`` (scanner
-                suggestions + authoritative proposals).
-            allow_scan_fallback: Explicit opt-in for mechanical scanner modes.
-                Scanner-backed discovery is verification fallback only and is
-                not allowed on operational paths unless this flag is true.
-            pin_proposals: Pin proposals from the IMPLEMENT step (P9).
-                Each dict should have at minimum ``function_name``,
-                ``module_path``, ``file_path``.
-            edge_proposals: Edge proposals from the IMPLEMENT step.
-                Each dict should have ``pin_func_id``, ``arch_file_path``,
-                ``arch_location``, ``projection_type``.
-            pin_proposals_path: Optional JSON file path containing pin
-                proposals. Loaded and merged with ``pin_proposals``.
-            edge_proposals_path: Optional JSON file path containing edge
-                proposals. Loaded and merged with ``edge_proposals``.
-            source_index_entries: Optional precomputed source-analysis
-                entries (from PromotionLoop ``SourceIndexRef``). When
-                provided, scan reuses these entries instead of re-running
-                deep ``analyze_source`` directory walks.
-            changed_files: Optional changed-file list used for proposal
-                diff-coverage verification.
+            pin_proposals: Pin proposals from IMPLEMENT output.
+            edge_proposals: Edge proposals from IMPLEMENT output.
+            pin_proposals_path: Optional JSON file path containing pin proposals.
+            edge_proposals_path: Optional JSON file path containing edge proposals.
+            changed_files: Optional changed-file list used for proposal diff-coverage verification.
 
         Returns:
-            PinFunctionRegistry with all discovered pin-functions and edges.
+            PinFunctionRegistry with all materialized pin-functions and edges.
         """
-        allowed_modes = {"scan", "proposals", "both"}
-        if mode not in allowed_modes:
-            raise ValueError(
-                f"Unsupported scan mode {mode!r}; expected one of {sorted(allowed_modes)}"
-            )
-        if mode in {"scan", "both"} and not allow_scan_fallback:
-            raise ValueError(
-                "Scanner-backed pin discovery is fallback-only; pass "
-                "allow_scan_fallback=True to opt in explicitly."
-            )
+        loaded_pin_proposals = self._load_proposals(pin_proposals_path)
+        loaded_edge_proposals = self._load_proposals(edge_proposals_path)
 
-        pin_functions: list[PinFunction] = []
-        import_edges: list[ImportEdge] = []
+        merged_pins, import_edges = self._merge_proposals(
+            existing_pins=[],
+            pin_proposals=loaded_pin_proposals + (pin_proposals or []),
+            edge_proposals=loaded_edge_proposals + (edge_proposals or []),
+            changed_files=changed_files,
+        )
 
-        # Phase 1: Optional filesystem scan backend — pins only, NO edges.
-        if mode in ("scan", "both"):
-            all_candidates: list[_AtomCandidate]
-            if source_index_entries:
-                all_candidates = self._extract_from_source_index(source_index_entries)
-            else:
-                all_candidates = []
-                for atom_dir_name in self._config.atom_directories:
-                    atom_dir = self._project_root / atom_dir_name
-                    if atom_dir.is_dir():
-                        candidates = self._extract_from_directory(atom_dir)
-                        all_candidates.extend(candidates)
-
-                root_candidates = self._extract_from_directory(self._project_root, recursive=True)
-                seen_keys: set[str] = {f"{c.file_path}:{c.function_name}" for c in all_candidates}
-                for c in root_candidates:
-                    key = f"{c.file_path}:{c.function_name}"
-                    if key not in seen_keys:
-                        seen_keys.add(key)
-                        all_candidates.append(c)
-
-            pin_functions = self._candidates_to_pin_functions(all_candidates)
-
-        # Phase 2: Proposal materialization and verification.
-        if mode in ("proposals", "both"):
-            loaded_pin_proposals = self._load_proposals(pin_proposals_path)
-            loaded_edge_proposals = self._load_proposals(edge_proposals_path)
-            proposed_pins, proposed_edges = self._merge_proposals(
-                pin_functions,
-                loaded_pin_proposals + (pin_proposals or []),
-                loaded_edge_proposals + (edge_proposals or []),
-                changed_files=changed_files,
-            )
-            pin_functions = proposed_pins
-            import_edges.extend(proposed_edges)
-
-        registry = PinFunctionRegistry(
+        return PinFunctionRegistry(
             schema_version="1.0",
-            pin_functions=pin_functions,
+            pin_functions=merged_pins,
             import_edges=import_edges,
             created_at=datetime.now(UTC).isoformat(),
         )
-
-        return registry
 
     def load_registry(self) -> PinFunctionRegistry:
         """Load the persisted pin registry from disk."""
@@ -203,40 +130,20 @@ class PinFunctionOrchestrator:
         return result
 
     def diff(self, old_registry_path: Path) -> PropagationReport:
-        """Compare current state to previous registry and report changes.
-
-        Args:
-            old_registry_path: Path to the previous registry JSON file.
-
-        Returns:
-            PropagationReport with all changes and affected locations.
-        """
-        # Load old registry
+        """Compare current state to previous registry and report changes."""
         old_data = json.loads(old_registry_path.read_text(encoding="utf-8"))
         old_registry = PinFunctionRegistry.model_validate(old_data)
 
-        # Load current persisted registry state
         new_registry = self.load_registry()
 
-        # Build index from new registry for propagation
         index = PinRegistryIndex.from_registry(new_registry)
         propagator = PinChangePropagator(index)
 
-        # Detect changes
         changes = propagator.detect_changes(old_registry, new_registry)
-
-        # Propagate changes
         return propagator.propagate(changes)
 
     def query_importers(self, function_name: str) -> list[ImportEdge]:
-        """Query which architectural locations import a given function.
-
-        Args:
-            function_name: The function name to look up.
-
-        Returns:
-            List of ImportEdge objects for all importing locations.
-        """
+        """Query which architectural locations import a given function."""
         registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
 
@@ -247,18 +154,10 @@ class PinFunctionOrchestrator:
         return index.get_importers(pf.pin_func_id)
 
     def query_pin_functions_for(self, arch_file: str) -> list[PinFunction]:
-        """Query which pin-functions a given architectural file uses.
-
-        Args:
-            arch_file: Path to the architectural file.
-
-        Returns:
-            List of PinFunction objects used by the file.
-        """
+        """Query which pin-functions a given architectural file uses."""
         registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
 
-        # Find all edges that reference this architectural file
         result: list[PinFunction] = []
         seen: set[str] = set()
         for edge in registry.import_edges:
@@ -271,14 +170,7 @@ class PinFunctionOrchestrator:
         return result
 
     def save_registry(self, registry: PinFunctionRegistry) -> Path:
-        """Save a registry to disk.
-
-        Args:
-            registry: The registry to save.
-
-        Returns:
-            Path where the registry was saved.
-        """
+        """Save a registry to disk."""
         registry_dir = self._project_root / self._config.registry_dir
         registry_dir.mkdir(parents=True, exist_ok=True)
 
@@ -290,11 +182,7 @@ class PinFunctionOrchestrator:
         return path
 
     def generate_analysis_file(self) -> str:
-        """Generate the computed analysis artifact.
-
-        Returns:
-            Markdown string with the analysis report.
-        """
+        """Generate the computed analysis artifact."""
         registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
 
@@ -304,7 +192,6 @@ class PinFunctionOrchestrator:
         lines.append(f"Generated: {datetime.now(UTC).isoformat()}")
         lines.append("")
 
-        # Summary
         lines.append("## Summary")
         lines.append("")
         lines.append(f"- Total pin-functions: {len(registry.pin_functions)}")
@@ -315,7 +202,6 @@ class PinFunctionOrchestrator:
         lines.append(f"- Impure functions: {len(registry.pin_functions) - shape_count}")
         lines.append("")
 
-        # Pin-functions
         lines.append("## Pin-Functions")
         lines.append("")
         for pf in registry.pin_functions:
@@ -335,19 +221,17 @@ class PinFunctionOrchestrator:
                     lines.append(f"  - {edge.arch_location} ({edge.projection_type})")
             lines.append("")
 
-        # Projection type distribution
         lines.append("## Projection Type Distribution")
         lines.append("")
         type_counts: dict[str, int] = {}
         for edge in registry.import_edges:
-            type_counts[edge.projection_type] = type_counts.get(edge.projection_type, 0) + 1
+            key = str(edge.projection_type)
+            type_counts[key] = type_counts.get(key, 0) + 1
         for pt, count in sorted(type_counts.items()):
             lines.append(f"- {pt}: {count}")
         lines.append("")
 
         return "\n".join(lines)
-
-    # --- Private: proposal merging ---
 
     def _merge_proposals(
         self,
@@ -357,11 +241,7 @@ class PinFunctionOrchestrator:
         *,
         changed_files: list[str] | None = None,
     ) -> tuple[list[PinFunction], list[ImportEdge]]:
-        """Materialize verified proposals into registry schemas.
-
-        Returns:
-            (merged_pin_functions, new_edges)
-        """
+        """Materialize verified proposals into registry schemas."""
         existing_by_key = {(pf.function_name, pf.file_path): pf for pf in existing_pins}
         used_pin_ids: set[str] = {pf.pin_func_id for pf in existing_pins}
         merged_by_key: dict[tuple[str, str], PinFunction] = dict(existing_by_key)
@@ -724,276 +604,11 @@ class PinFunctionOrchestrator:
                 result.append(text)
         return result
 
-    # --- Private: function extraction (replaces ast_extractor) ---
-
-    def _extract_from_source_index(
-        self,
-        source_index_entries: list[dict[str, Any]],
-    ) -> list[_AtomCandidate]:
-        """Extract atom candidates from precomputed source-index entries."""
-        candidates: list[_AtomCandidate] = []
-        seen_keys: set[tuple[str, str, int, int]] = set()
-        source_cache: dict[Path, list[str]] = {}
-
-        for entry in source_index_entries:
-            if not isinstance(entry, dict):
-                continue
-            rel_path = str(entry.get("path", "")).strip()
-            if not rel_path or not rel_path.endswith(".py"):
-                continue
-
-            file_path = self._project_root / rel_path
-            file_name = file_path.stem
-            if any(pattern in file_name for pattern in self._config.exclude_patterns):
-                continue
-
-            analysis = entry.get("analysis", {})
-            functions = analysis.get("functions", []) if isinstance(analysis, dict) else []
-            if not isinstance(functions, list) or not functions:
-                continue
-
-            if file_path not in source_cache:
-                try:
-                    source_cache[file_path] = file_path.read_text(encoding="utf-8").splitlines()
-                except (OSError, UnicodeDecodeError):
-                    source_cache[file_path] = []
-            source_lines = source_cache[file_path]
-
-            module_path = self._file_to_module(file_path)
-            is_convention = self._is_convention_directory(file_path)
-            is_shapes_dir = "shapes" in [p.lower() for p in file_path.parts]
-
-            for raw_func in functions:
-                if not isinstance(raw_func, dict):
-                    continue
-
-                func_name = str(raw_func.get("name", "")).strip()
-                if not func_name:
-                    continue
-
-                detection_method = self._classify_detection(func_name, is_convention)
-                if detection_method is None:
-                    continue
-
-                docstring = str(raw_func.get("docstring", "")).split("\n")[0].strip()
-                if (
-                    detection_method == "heuristic"
-                    and self._config.require_docstring
-                    and not docstring
-                ):
-                    continue
-
-                try:
-                    start_line = int(raw_func.get("start_line", 0))
-                    end_line = int(raw_func.get("end_line", 0))
-                except (TypeError, ValueError):
-                    continue
-                if start_line <= 0 or end_line <= 0:
-                    continue
-
-                body_lines = end_line - start_line + 1
-                if detection_method == "heuristic" and body_lines > self._config.max_function_lines:
-                    continue
-
-                line_start = max(start_line - 1, 0)
-                line_end = max(end_line, line_start)
-                body_source = "\n".join(source_lines[line_start:line_end]) if source_lines else ""
-
-                args_raw = raw_func.get("args", [])
-                args = [str(arg) for arg in args_raw] if isinstance(args_raw, list) else []
-                signature = f"({', '.join(args)})"
-                return_annotation = raw_func.get("return_annotation")
-                if isinstance(return_annotation, str) and return_annotation:
-                    signature += f" -> {return_annotation}"
-
-                qualified_raw = str(raw_func.get("qualified_name") or func_name).strip()
-                candidate_key = (str(file_path), func_name, start_line, end_line)
-                if candidate_key in seen_keys:
-                    continue
-                seen_keys.add(candidate_key)
-
-                candidates.append(
-                    _AtomCandidate(
-                        function_name=func_name,
-                        qualified_name=f"{module_path}.{qualified_raw}",
-                        file_path=str(file_path),
-                        module_path=module_path,
-                        line_start=start_line,
-                        line_end=end_line,
-                        signature=signature,
-                        docstring=docstring,
-                        body_source=body_source,
-                        is_shape=is_shapes_dir,
-                        detection_method=detection_method,
-                    )
-                )
-
-        return candidates
-
-    def _extract_from_directory(
-        self,
-        dir_path: Path,
-        recursive: bool = True,
-    ) -> list[_AtomCandidate]:
-        """Extract atom candidates from all source files in a directory."""
-        from spec_manager.core.language import SOURCE_GLOBS, SOURCE_RGLOBS
-
-        candidates: list[_AtomCandidate] = []
-        patterns = SOURCE_RGLOBS if recursive else SOURCE_GLOBS
-        for pattern in patterns:
-            for py_file in sorted(dir_path.glob(pattern)):
-                if py_file.is_file():
-                    candidates.extend(self._extract_from_file(py_file, dir_path))
-        return candidates
-
-    def _extract_from_file(
-        self,
-        file_path: Path,
-        scan_root: Path | None = None,
-    ) -> list[_AtomCandidate]:
-        """Extract atom candidates from a single source file using analyze_source."""
-        file_name = file_path.stem
-        for pat in self._config.exclude_patterns:
-            if pat in file_name:
-                return []
-
-        try:
-            source = file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return []
-
-        analysis = analyze_source(source, str(file_path))
-        if not analysis.functions:
-            return []
-
-        module_path = self._file_to_module(file_path)
-        is_convention = self._is_convention_directory(file_path)
-        is_shapes_dir = "shapes" in [p.lower() for p in file_path.parts]
-        source_lines = source.splitlines()
-
-        candidates: list[_AtomCandidate] = []
-        for raw_func in analysis.functions:
-            detection_method = self._classify_detection(
-                raw_func.name,
-                is_convention,
-            )
-            if detection_method is None:
-                continue
-
-            docstring = ""
-            if raw_func.docstring:
-                docstring = raw_func.docstring.split("\n")[0].strip()
-
-            if detection_method == "heuristic" and self._config.require_docstring and not docstring:
-                continue
-
-            body_lines = raw_func.end_line - raw_func.start_line + 1
-            if detection_method == "heuristic" and body_lines > self._config.max_function_lines:
-                continue
-
-            body_source = "\n".join(source_lines[raw_func.start_line - 1 : raw_func.end_line])
-            signature = _reconstruct_signature(raw_func)
-            qualified_name = f"{module_path}.{raw_func.qualified_name}"
-
-            candidates.append(
-                _AtomCandidate(
-                    function_name=raw_func.name,
-                    qualified_name=qualified_name,
-                    file_path=str(file_path),
-                    module_path=module_path,
-                    line_start=raw_func.start_line,
-                    line_end=raw_func.end_line,
-                    signature=signature,
-                    docstring=docstring,
-                    body_source=body_source,
-                    is_shape=is_shapes_dir,
-                    detection_method=detection_method,
-                )
-            )
-        return candidates
-
     def _file_to_module(self, file_path: Path) -> str:
         parts = list(file_path.with_suffix("").parts)
         while parts and parts[0] in (".", ".."):
             parts.pop(0)
         return ".".join(parts)
-
-    def _is_convention_directory(self, file_path: Path) -> bool:
-        path_parts = [p.lower() for p in file_path.parts]
-        return any(d.lower() in path_parts for d in self._config.atom_directories)
-
-    def _classify_detection(
-        self,
-        func_name: str,
-        is_convention: bool,
-    ) -> str | None:
-        """Classify how a function was detected as a pin candidate.
-
-        Public functions in convention directories are candidates.
-        Private functions (``_``-prefixed) are excluded.
-        Public functions outside convention directories use heuristic rules.
-        """
-        from spec_manager.core.language import PRIVATE_PREFIX
-
-        if func_name.startswith(PRIVATE_PREFIX):
-            return None
-        if is_convention:
-            return "convention"
-        return "heuristic"
-
-    # --- Private: conversion ---
-
-    def _candidates_to_pin_functions(self, candidates: list[_AtomCandidate]) -> list[PinFunction]:
-        """Convert _AtomCandidate objects to PinFunction schemas."""
-        pin_functions: list[PinFunction] = []
-        for i, candidate in enumerate(candidates, start=1):
-            body_text = textwrap.dedent(candidate.body_source).strip()
-            content_hash = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
-
-            pf = PinFunction(
-                pin_func_id=f"PFUNC-{i:04d}",
-                function_name=candidate.function_name,
-                module_path=candidate.module_path,
-                file_path=candidate.file_path,
-                line_start=candidate.line_start,
-                line_end=candidate.line_end,
-                signature=candidate.signature,
-                docstring=candidate.docstring,
-                content_hash=content_hash,
-                is_shape=candidate.is_shape,
-                store_touches=[],
-                evidence_atom_ids=[],
-            )
-            pin_functions.append(pf)
-
-        return pin_functions
-
-
-# --- Module-level helpers ---
-
-
-@dataclass
-class _AtomCandidate:
-    """A function identified as a potential pin-function atom (internal)."""
-
-    function_name: str
-    qualified_name: str
-    file_path: str
-    module_path: str
-    line_start: int
-    line_end: int
-    signature: str
-    docstring: str
-    body_source: str
-    is_shape: bool
-    detection_method: str
-
-
-def _reconstruct_signature(func: RawFunctionInfo) -> str:
-    sig = f"({', '.join(func.args)})"
-    if func.return_annotation:
-        sig += f" -> {func.return_annotation}"
-    return sig
 
 
 __all__ = [

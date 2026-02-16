@@ -5663,13 +5663,10 @@ class PromoteStep:
         orchestrator = PinFunctionOrchestrator(slice_root)
         try:
             registry = orchestrator.scan(
-                mode="both",
-                allow_scan_fallback=True,
                 pin_proposals=normalized_pins,
                 edge_proposals=normalized_edges,
                 pin_proposals_path=pin_proposals_path,
                 edge_proposals_path=edge_proposals_path,
-                source_index_entries=bundle.source_index.entries,
                 changed_files=[
                     str(path)
                     for path in (bundle.diff.changed_files or [])

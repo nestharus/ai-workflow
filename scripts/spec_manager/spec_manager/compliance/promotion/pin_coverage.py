@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
-from spec_manager.core.code_analysis import SourceAnalysis, analyze_source
-from spec_manager.schemas.pin_functions import PinFunctionRegistry
+from spec_manager.schemas.pin_functions import PinFunctionRegistry, ProjectionType
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class PinCoverageItem:
-    """Coverage status of a single architectural block span."""
+    """Coverage status of one changed span."""
 
     arch_location: str
     arch_file_path: str
@@ -41,137 +40,82 @@ class PinCoverageReport:
     unpinned_locations: int
     coverage_ratio: float
     items: list[PinCoverageItem] = field(default_factory=list)
-    missing_architecture_files: list[str] = field(default_factory=list)
-
-
-@dataclass
-class _ArchBlock:
-    block_id: str
-    line_start: int
-    line_end: int
-    kind: str
-    confidence: float = 1.0
-
-
-def _coerce_arch_blocks(*, analysis: SourceAnalysis) -> list[_ArchBlock]:
-    """Resolve architecture blocks from analysis facets only."""
-    raw_blocks = analysis.facets.get("arch_blocks")
-
-    blocks: list[_ArchBlock] = []
-    if isinstance(raw_blocks, list):
-        for idx, block in enumerate(raw_blocks):
-            if not isinstance(block, dict):
-                continue
-            start = int(block.get("line_start") or block.get("start_line") or 0)
-            end = int(block.get("line_end") or block.get("end_line") or start)
-            if start <= 0:
-                continue
-            if end < start:
-                end = start
-            block_id = str(block.get("id") or block.get("block_id") or f"block_{idx + 1}").strip()
-            kind = str(block.get("kind") or "ARCH_BLOCK").strip().upper()
-            confidence_raw = block.get("confidence", 1.0)
-            try:
-                confidence = float(confidence_raw)
-            except (TypeError, ValueError):
-                confidence = 1.0
-            blocks.append(
-                _ArchBlock(
-                    block_id=block_id,
-                    line_start=start,
-                    line_end=end,
-                    kind=kind,
-                    confidence=max(0.0, min(1.0, confidence)),
-                )
-            )
-    return blocks
-
-
-def _comments_in_range(analysis: SourceAnalysis, start_line: int, end_line: int) -> list[str]:
-    comments: list[str] = []
-    for comment in analysis.comments:
-        if comment.line < start_line or comment.line > end_line:
-            continue
-        text = comment.text.strip()
-        if text and not text.startswith("!") and "coding" not in text and "type:" not in text:
-            comments.append(text)
-    return comments
+    missing_changed_files: list[str] = field(default_factory=list)
 
 
 def build_pin_coverage_report(
     registry: PinFunctionRegistry,
     architectural_files: list[Path],
+    *,
+    changed_files: list[str] | None = None,
+    changed_line_spans: dict[str, list[tuple[int, int]]] | None = None,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> PinCoverageReport:
-    """Build pin coverage report over architecture block spans."""
-    introduction_edges: set[str] = set()
-    for edge in registry.import_edges:
-        if str(edge.projection_type).lower() == "introduction":
-            introduction_edges.add(edge.arch_location)
-
+    """Build pin coverage report over changed spans (diff semantics)."""
     analyzed_lookup: dict[str, AnalyzedFile] = {}
     if analyzed is not None:
         for af in analyzed:
-            analyzed_lookup[af.path] = af
+            analyzed_lookup[_normalize_path(af.path)] = af
+
+    known_files: set[str] = set(analyzed_lookup.keys())
+    known_files.update(_normalize_path(path) for path in architectural_files)
+    known_files.update(_normalize_path(pin.file_path) for pin in registry.pin_functions)
+
+    spans_by_file, missing_changed_files = _resolve_changed_spans(
+        changed_files=changed_files,
+        changed_line_spans=changed_line_spans,
+        analyzed_lookup=analyzed_lookup,
+        known_files=known_files,
+    )
+
+    introduction_lines_by_file: dict[str, set[int]] = {}
+    for edge in registry.import_edges:
+        if edge.projection_type != ProjectionType.INTRODUCTION:
+            continue
+        file_key = _normalize_path(edge.arch_file_path)
+        intro_lines = introduction_lines_by_file.setdefault(file_key, set())
+        if edge.arch_line > 0:
+            intro_lines.add(edge.arch_line)
+
+    pins_by_file: dict[str, list[Any]] = {}
+    for pin in registry.pin_functions:
+        pins_by_file.setdefault(_normalize_path(pin.file_path), []).append(pin)
 
     items: list[PinCoverageItem] = []
-    missing_architecture_files: list[str] = []
 
-    for arch_file in architectural_files:
-        file_str = str(arch_file)
-        af = analyzed_lookup.get(file_str)
-        if af is not None:
-            source = af.content
-            analysis = af.analysis
-        else:
-            try:
-                source = arch_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            analysis = analyze_source(source, file_str)
+    for file_path, spans in spans_by_file.items():
+        file_pins = pins_by_file.get(file_path, [])
+        intro_lines = introduction_lines_by_file.get(file_path, set())
 
-        blocks = _coerce_arch_blocks(analysis=analysis)
-        if not blocks:
-            missing_architecture_files.append(file_str)
-            continue
-
-        for block in blocks:
-            block_location = f"{file_str}:{block.block_id}"
-            in_span_edges = [
-                edge
-                for edge in registry.import_edges
-                if (
-                    edge.arch_file_path == file_str
-                    and block.line_start <= edge.arch_line <= block.line_end
-                )
+        for idx, (start_line, end_line) in enumerate(spans, start=1):
+            covering_pins = [
+                pin
+                for pin in file_pins
+                if _ranges_overlap(start_line, end_line, pin.line_start, pin.line_end)
             ]
-            pin_func_ids = sorted({edge.pin_func_id for edge in in_span_edges})
-            has_pin = bool(pin_func_ids)
+            pin_func_ids = sorted({pin.pin_func_id for pin in covering_pins})
 
-            comments = _comments_in_range(analysis, block.line_start, block.line_end)
-
-            explicit_intro = block.kind == "INTRODUCTION" or block_location in introduction_edges
-            is_introduction = explicit_intro
-            intro_confidence = block.confidence if is_introduction else 1.0
+            is_introduction = any(start_line <= line <= end_line for line in intro_lines)
+            location = f"{file_path}:{start_line}-{end_line}#span{idx}"
 
             items.append(
                 PinCoverageItem(
-                    arch_location=block_location,
-                    arch_file_path=file_str,
-                    arch_line=block.line_start,
-                    arch_line_end=block.line_end,
-                    has_pin=has_pin,
+                    arch_location=location,
+                    arch_file_path=file_path,
+                    arch_line=start_line,
+                    arch_line_end=end_line,
+                    has_pin=bool(pin_func_ids),
                     pin_func_ids=pin_func_ids,
                     is_introduction=is_introduction,
-                    introduction_has_spec=bool(comments),
-                    introduction_confidence=intro_confidence,
+                    introduction_has_spec=False,
+                    introduction_confidence=1.0,
                 )
             )
 
     total = len(items)
     pinned = sum(1 for item in items if item.has_pin)
     introductions = sum(1 for item in items if item.is_introduction)
-    unpinned = total - pinned - introductions
+    unpinned = sum(1 for item in items if not item.has_pin and not item.is_introduction)
 
     denominator = total - introductions
     coverage_ratio = (pinned / denominator) if denominator > 0 else 1.0
@@ -183,7 +127,7 @@ def build_pin_coverage_report(
         unpinned_locations=unpinned,
         coverage_ratio=coverage_ratio,
         items=items,
-        missing_architecture_files=missing_architecture_files,
+        missing_changed_files=sorted(set(missing_changed_files)),
     )
 
 
@@ -191,26 +135,31 @@ def check_pin_coverage(
     registry: PinFunctionRegistry,
     architectural_files: list[Path],
     gate_spec: GateSpec,
+    *,
+    changed_files: list[str] | None = None,
+    changed_line_spans: dict[str, list[tuple[int, int]]] | None = None,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
-    """Gate: every architecture block span is covered by a pin or introduction."""
+    """Gate: changed spans are covered by pin spans or introduction edges."""
     start = time.monotonic()
     threshold = gate_spec.threshold if gate_spec.threshold > 0 else 1.0
 
     report = build_pin_coverage_report(
         registry=registry,
         architectural_files=architectural_files,
+        changed_files=changed_files,
+        changed_line_spans=changed_line_spans,
         analyzed=analyzed,
     )
 
     duration = (time.monotonic() - start) * 1000
-    if report.missing_architecture_files:
+    if report.missing_changed_files:
         findings = [
             {
-                "reason": "missing_architecture_nodes",
-                "arch_file_path": file_path,
+                "reason": "missing_changed_file",
+                "file_path": file_path,
             }
-            for file_path in sorted(report.missing_architecture_files)
+            for file_path in report.missing_changed_files
         ]
         return GateCheckResult(
             gate_id=GateId.PIN_COVERAGE.value,
@@ -219,9 +168,20 @@ def check_pin_coverage(
             score=0.0,
             findings=findings,
             summary=(
-                "Architecture-node evidence missing for one or more files; "
-                "pin coverage requires pre-built architecture blocks."
+                "Diff-span evidence missing for one or more changed files; "
+                "pin coverage requires changed span inputs."
             ),
+            duration_ms=duration,
+        )
+
+    if report.total_locations == 0:
+        return GateCheckResult(
+            gate_id=GateId.PIN_COVERAGE.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=[{"reason": "no_changed_spans"}],
+            summary="No changed spans were provided for pin coverage evaluation",
             duration_ms=duration,
         )
 
@@ -234,7 +194,7 @@ def check_pin_coverage(
                     "arch_file_path": item.arch_file_path,
                     "line_start": item.arch_line,
                     "line_end": item.arch_line_end,
-                    "reason": "Architecture block span has no pin projection coverage",
+                    "reason": "Changed span has no pin or introduction coverage",
                 }
             )
 
@@ -248,10 +208,94 @@ def check_pin_coverage(
         score=report.coverage_ratio,
         findings=findings,
         summary=(
-            f"Pin span coverage: {report.coverage_ratio:.1%} "
+            f"Pin/diff span coverage: {report.coverage_ratio:.1%} "
             f"({report.pinned_locations} pinned, "
             f"{report.introduction_locations} introductions, "
             f"{report.unpinned_locations} uncovered of {report.total_locations})"
         ),
         duration_ms=duration,
     )
+
+
+def _resolve_changed_spans(
+    *,
+    changed_files: list[str] | None,
+    changed_line_spans: dict[str, list[tuple[int, int]]] | None,
+    analyzed_lookup: dict[str, AnalyzedFile],
+    known_files: set[str],
+) -> tuple[dict[str, list[tuple[int, int]]], list[str]]:
+    spans_by_file: dict[str, list[tuple[int, int]]] = {}
+    missing: list[str] = []
+
+    if changed_line_spans:
+        for raw_file, raw_spans in changed_line_spans.items():
+            resolved = _resolve_known_file(raw_file, known_files)
+            if resolved is None:
+                missing.append(str(raw_file))
+                continue
+            valid_spans: list[tuple[int, int]] = []
+            for span in raw_spans:
+                if not isinstance(span, (tuple, list)) or len(span) != 2:
+                    continue
+                try:
+                    start = int(span[0])
+                    end = int(span[1])
+                except (TypeError, ValueError):
+                    continue
+                if start <= 0:
+                    continue
+                if end < start:
+                    end = start
+                valid_spans.append((start, end))
+            if valid_spans:
+                spans_by_file[resolved] = valid_spans
+        return spans_by_file, missing
+
+    for raw_file in changed_files or []:
+        resolved = _resolve_known_file(raw_file, known_files)
+        if resolved is None:
+            missing.append(str(raw_file))
+            continue
+
+        line_count = _line_count_for_file(resolved, analyzed_lookup)
+        if line_count <= 0:
+            missing.append(str(raw_file))
+            continue
+
+        spans_by_file[resolved] = [(1, line_count)]
+
+    return spans_by_file, missing
+
+
+def _line_count_for_file(file_path: str, analyzed_lookup: dict[str, AnalyzedFile]) -> int:
+    analyzed = analyzed_lookup.get(file_path)
+    if analyzed is not None:
+        return len(analyzed.content.splitlines())
+
+    path = Path(file_path)
+    if not path.exists() or not path.is_file():
+        return 0
+    try:
+        return len(path.read_text(encoding="utf-8").splitlines())
+    except (OSError, UnicodeDecodeError):
+        return 0
+
+
+def _resolve_known_file(raw_file: str, known_files: set[str]) -> str | None:
+    candidate = _normalize_path(raw_file)
+    if candidate in known_files:
+        return candidate
+
+    for known in known_files:
+        if known.endswith(candidate) or candidate.endswith(known):
+            return known
+
+    return candidate if Path(candidate).exists() else None
+
+
+def _ranges_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+    return not (a_end < b_start or b_end < a_start)
+
+
+def _normalize_path(path: str | Path) -> str:
+    return str(Path(path).resolve()).replace("\\", "/")

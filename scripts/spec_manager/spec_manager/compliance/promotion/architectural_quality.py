@@ -77,25 +77,7 @@ def _extract_function_info_from_analyzed(af: AnalyzedFile) -> list[tuple[RawFunc
     return [(func, af.content) for func in af.analysis.functions]
 
 
-def _get_line_fingerprints(source: str, start: int, end: int) -> set[str]:
-    """Get SHA-256 fingerprints for individual lines in a range."""
-    lines = source.splitlines()
-    fingerprints: set[str] = set()
-    for i in range(max(0, start - 1), min(end, len(lines))):
-        stripped = lines[i].strip()
-        if stripped and not stripped.startswith("#"):
-            fp = hashlib.sha256(stripped.encode("utf-8")).hexdigest()
-            fingerprints.add(fp)
-    return fingerprints
-
-
-def _fingerprint_overlap_ratio(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a)
-
-
-def _llm_tie_break_duplicate(
+def _llm_detect_inlined_logic(
     *,
     workspace: Path,
     agent_name: str,
@@ -103,22 +85,22 @@ def _llm_tie_break_duplicate(
     arch_context: str,
     candidates: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Use an LLM tie-breaker only when fingerprint candidates are ambiguous."""
+    """Use semantic analysis to determine whether an arch span inlines an atom."""
     from spec_manager.core.agent_utils import run_agent
 
     prompt = (
-        "Decide whether architectural code duplicates one candidate atom implementation.\n"
-        "Do not use syntax-category reasoning. Use behavior/intent equivalence.\n"
+        "Decide whether the architectural span inlines atom logic from the candidate list.\n"
+        "Use semantic behavior equivalence; do not rely on superficial token matching.\n"
         "Return JSON only:\n"
         '{"duplicate": true|false, "matching_pin_func_id": "string|null", '
         '"confidence": 0.0, "reason": "string"}\n\n'
         f"Architectural location: {arch_context}\n"
         "Architectural span:\n"
         "```\n"
-        f"{arch_span[:5000]}\n"
+        f"{arch_span[:6000]}\n"
         "```\n\n"
         "Candidate atom spans:\n"
-        f"{json.dumps(candidates[:4], ensure_ascii=True)}\n"
+        f"{json.dumps(candidates, ensure_ascii=True)}\n"
     )
     raw_output = run_agent(
         agent_name=agent_name,
@@ -138,6 +120,60 @@ def _llm_tie_break_duplicate(
     return loaded
 
 
+def _collect_pin_span_texts(
+    pin_registry: PinFunctionRegistry,
+    algorithmic_files: list[Path],
+    analyzed_algo: list[AnalyzedFile] | None,
+) -> dict[str, dict[str, Any]]:
+    """Collect candidate atom spans keyed by pin-function ID."""
+    pin_ids_by_name: dict[str, list[str]] = {}
+    for pin in pin_registry.pin_functions:
+        pin_ids_by_name.setdefault(pin.function_name, []).append(pin.pin_func_id)
+
+    span_by_pin_id: dict[str, dict[str, Any]] = {}
+    analyzed_lookup: dict[str, AnalyzedFile] = {}
+    if analyzed_algo is not None:
+        for af in analyzed_algo:
+            analyzed_lookup[af.path] = af
+
+    for algo_file in algorithmic_files:
+        af = analyzed_lookup.get(str(algo_file))
+        entries = (
+            _extract_function_info_from_analyzed(af) if af else _extract_function_info(algo_file)
+        )
+        for func_info, source in entries:
+            pin_ids = pin_ids_by_name.get(func_info.name, [])
+            if not pin_ids:
+                continue
+            span_text = _extract_span_text(source, func_info.start_line, func_info.end_line)
+            if not span_text:
+                continue
+            for pin_id in pin_ids:
+                span_by_pin_id[pin_id] = {
+                    "pin_func_id": pin_id,
+                    "function_name": func_info.name,
+                    "file_path": str(algo_file),
+                    "line_start": func_info.start_line,
+                    "line_end": func_info.end_line,
+                    "span": span_text,
+                }
+
+    # Keep empty placeholders for pins whose source span wasn't resolved.
+    for pin in pin_registry.pin_functions:
+        span_by_pin_id.setdefault(
+            pin.pin_func_id,
+            {
+                "pin_func_id": pin.pin_func_id,
+                "function_name": pin.function_name,
+                "file_path": pin.file_path,
+                "line_start": pin.line_start,
+                "line_end": pin.line_end,
+                "span": "",
+            },
+        )
+    return span_by_pin_id
+
+
 def check_no_inlined_atom_logic(
     pin_registry: PinFunctionRegistry,
     architectural_files: list[Path],
@@ -146,66 +182,15 @@ def check_no_inlined_atom_logic(
     analyzed_arch: list[AnalyzedFile] | None = None,
     analyzed_algo: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
-    """Gate: No inlined atom logic in architectural layer.
-
-    Detection strategies:
-    1. Exact span fingerprint match against pin registry content hashes.
-    2. Fingerprint-overlap candidate generation.
-    3. Optional LLM tie-breaker only when overlap candidates are ambiguous.
-
-    gate_spec.params:
-        - fingerprint_overlap_threshold (float, default 0.8): Minimum overlap.
-        - enable_llm_tiebreak (bool, default True): Use LLM for ambiguous cases.
-        - llm_tiebreak_agent (str, default "pdd-code-analyzer"): Tie-break agent.
-        - workspace (str, optional): Workspace path for agent execution.
-
-    Args:
-        pin_registry: PinFunctionRegistry with atom content hashes.
-        architectural_files: Architectural layer files to scan.
-        algorithmic_files: Algorithmic layer files (for body extraction).
-        gate_spec: Gate configuration.
-
-    Returns:
-        GateCheckResult with findings for each inlined logic instance.
-    """
+    """Gate: No semantically inlined atom logic in architectural layer."""
     start_time = time.monotonic()
-    fingerprint_overlap_threshold = float(
-        gate_spec.params.get("fingerprint_overlap_threshold", 0.8)
-    )
-    enable_llm_tiebreak = bool(gate_spec.params.get("enable_llm_tiebreak", True))
-    llm_tiebreak_agent = str(gate_spec.params.get("llm_tiebreak_agent", "pdd-code-analyzer"))
+    semantic_agent = str(gate_spec.params.get("semantic_agent", "pdd-code-analyzer"))
     workspace = Path(str(gate_spec.params.get("workspace", ".")).strip() or ".")
+    min_confidence = float(gate_spec.params.get("semantic_min_confidence", 0.6))
+    max_candidates = int(gate_spec.params.get("semantic_candidate_limit", 12))
 
-    pin_hashes: dict[str, list[str]] = {}
-    for pf in pin_registry.pin_functions:
-        if not pf.content_hash:
-            continue
-        pin_hashes.setdefault(pf.content_hash, []).append(pf.pin_func_id)
-
-    pin_func_id_by_name = {pf.function_name: pf.pin_func_id for pf in pin_registry.pin_functions}
-    pin_span_texts: dict[str, str] = {}
-    pin_func_fingerprints: dict[str, set[str]] = {}
-
-    algo_analyzed_lookup: dict[str, AnalyzedFile] = {}
-    if analyzed_algo is not None:
-        for af in analyzed_algo:
-            algo_analyzed_lookup[af.path] = af
-
-    for algo_file in algorithmic_files:
-        af = algo_analyzed_lookup.get(str(algo_file))
-        entries = (
-            _extract_function_info_from_analyzed(af) if af else _extract_function_info(algo_file)
-        )
-        for func_info, source in entries:
-            pfid = pin_func_id_by_name.get(func_info.name)
-            if not pfid:
-                continue
-            pin_span_texts[pfid] = _extract_span_text(
-                source, func_info.start_line, func_info.end_line
-            )
-            pin_func_fingerprints[pfid] = _get_line_fingerprints(
-                source, func_info.start_line, func_info.end_line
-            )
+    pin_spans = _collect_pin_span_texts(pin_registry, algorithmic_files, analyzed_algo)
+    candidate_pool = list(pin_spans.values())
 
     all_findings: list[dict[str, Any]] = []
     ambiguous_findings: list[dict[str, Any]] = []
@@ -222,77 +207,27 @@ def check_no_inlined_atom_logic(
         )
         for arch_func_info, arch_source in arch_entries:
             arch_end = arch_func_info.end_line
-            arch_hash = _hash_function_body(arch_source, arch_func_info.start_line, arch_end)
-
-            if arch_hash in pin_hashes:
-                for pin_func_id in pin_hashes[arch_hash]:
-                    all_findings.append(
-                        {
-                            "arch_file": str(arch_file),
-                            "arch_line_start": arch_func_info.start_line,
-                            "arch_line_end": arch_end,
-                            "matching_pin_func_id": pin_func_id,
-                            "similarity_score": 1.0,
-                            "detection_method": "fingerprint_exact",
-                            "arch_function_name": arch_func_info.name,
-                        }
-                    )
-                continue
-
-            arch_fps = _get_line_fingerprints(arch_source, arch_func_info.start_line, arch_end)
-            if not arch_fps:
-                continue
-
-            candidate_scores: list[tuple[str, float]] = []
-            for pfid, pin_fps in pin_func_fingerprints.items():
-                overlap_ratio = _fingerprint_overlap_ratio(arch_fps, pin_fps)
-                if overlap_ratio >= fingerprint_overlap_threshold:
-                    candidate_scores.append((pfid, overlap_ratio))
-
-            if not candidate_scores:
-                continue
-
-            candidate_scores.sort(key=lambda item: item[1], reverse=True)
-            best_id, best_score = candidate_scores[0]
-            if len(candidate_scores) == 1:
-                all_findings.append(
-                    {
-                        "arch_file": str(arch_file),
-                        "arch_line_start": arch_func_info.start_line,
-                        "arch_line_end": arch_end,
-                        "matching_pin_func_id": best_id,
-                        "similarity_score": best_score,
-                        "detection_method": "fingerprint_overlap",
-                        "arch_function_name": arch_func_info.name,
-                    }
-                )
-                continue
-
-            if not enable_llm_tiebreak:
-                ambiguous_findings.append(
-                    {
-                        "arch_file": str(arch_file),
-                        "arch_line_start": arch_func_info.start_line,
-                        "arch_line_end": arch_end,
-                        "arch_function_name": arch_func_info.name,
-                        "reason": "ambiguous_fingerprint_candidates",
-                        "candidate_pin_func_ids": [item[0] for item in candidate_scores[:4]],
-                    }
-                )
-                continue
-
             arch_span = _extract_span_text(arch_source, arch_func_info.start_line, arch_end)
-            candidates_payload = [
-                {
-                    "pin_func_id": candidate_id,
-                    "overlap_ratio": ratio,
-                    "span": pin_span_texts.get(candidate_id, "")[:2000],
-                }
-                for candidate_id, ratio in candidate_scores[:4]
+            if not arch_span:
+                continue
+
+            ranked_candidates = [
+                candidate
+                for candidate in candidate_pool
+                if candidate.get("span")
+                and str(candidate.get("function_name", "")).lower() in arch_span.lower()
             ]
-            llm_decision = _llm_tie_break_duplicate(
+            if not ranked_candidates:
+                ranked_candidates = [
+                    candidate for candidate in candidate_pool if candidate.get("span")
+                ]
+            candidates_payload = ranked_candidates[: max(1, max_candidates)]
+            if not candidates_payload:
+                continue
+
+            llm_decision = _llm_detect_inlined_logic(
                 workspace=workspace,
-                agent_name=llm_tiebreak_agent,
+                agent_name=semantic_agent,
                 arch_span=arch_span,
                 arch_context=f"{arch_file}:{arch_func_info.start_line}-{arch_end}",
                 candidates=candidates_payload,
@@ -304,30 +239,59 @@ def check_no_inlined_atom_logic(
                         "arch_line_start": arch_func_info.start_line,
                         "arch_line_end": arch_end,
                         "arch_function_name": arch_func_info.name,
-                        "reason": "llm_tiebreak_failed",
-                        "candidate_pin_func_ids": [item[0] for item in candidate_scores[:4]],
+                        "reason": "semantic_evaluator_failed",
+                        "candidate_pin_func_ids": [
+                            str(item.get("pin_func_id", "")) for item in candidates_payload
+                        ],
                     }
                 )
                 continue
 
             duplicate = bool(llm_decision.get("duplicate"))
             matching_pin = str(llm_decision.get("matching_pin_func_id") or "").strip()
+            try:
+                confidence = float(llm_decision.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+
+            if confidence < min_confidence:
+                ambiguous_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_func_info.start_line,
+                        "arch_line_end": arch_end,
+                        "arch_function_name": arch_func_info.name,
+                        "reason": "semantic_confidence_below_threshold",
+                        "llm_confidence": confidence,
+                        "llm_reason": llm_decision.get("reason"),
+                    }
+                )
+                continue
             if not duplicate:
                 continue
-            if matching_pin not in {item[0] for item in candidate_scores}:
-                matching_pin = best_id
+            if matching_pin not in pin_spans:
+                ambiguous_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_func_info.start_line,
+                        "arch_line_end": arch_end,
+                        "arch_function_name": arch_func_info.name,
+                        "reason": "semantic_match_not_in_candidate_pool",
+                        "matching_pin_func_id": matching_pin,
+                    }
+                )
+                continue
 
-            score_by_pin = {pin_id: score for pin_id, score in candidate_scores}
             all_findings.append(
                 {
                     "arch_file": str(arch_file),
                     "arch_line_start": arch_func_info.start_line,
                     "arch_line_end": arch_end,
                     "matching_pin_func_id": matching_pin,
-                    "similarity_score": score_by_pin.get(matching_pin, best_score),
-                    "detection_method": "fingerprint_overlap_llm_tiebreak",
+                    "similarity_score": confidence,
+                    "detection_method": "semantic_llm",
                     "arch_function_name": arch_func_info.name,
-                    "llm_confidence": llm_decision.get("confidence"),
+                    "llm_confidence": confidence,
                     "llm_reason": llm_decision.get("reason"),
                 }
             )
@@ -718,7 +682,8 @@ def check_config_externalization(
 ) -> GateCheckResult:
     """Gate: environment/config should be injected rather than hardcoded."""
     start = time.monotonic()
-    assignment_re = re.compile(r"\\b(API_KEY|TOKEN|SECRET|PASSWORD|HOST|URL)\\b\\s*=\\s*['\\\"]")
+    semantic_agent = str(gate_spec.params.get("semantic_agent", "pdd-code-analyzer"))
+    workspace = Path(str(gate_spec.params.get("workspace", ".")).strip() or ".")
 
     analyzed_lookup: dict[str, AnalyzedFile] = {}
     if analyzed_arch is not None:
@@ -726,6 +691,7 @@ def check_config_externalization(
             analyzed_lookup[af.path] = af
 
     findings: list[dict[str, Any]] = []
+    uncertain_files: list[str] = []
     for file_path in architectural_files:
         af = analyzed_lookup.get(str(file_path))
         if af is not None:
@@ -735,32 +701,101 @@ def check_config_externalization(
                 source = file_path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-        for idx, line in enumerate(source.splitlines(), start=1):
-            if assignment_re.search(line):
-                findings.append(
-                    {
-                        "file_path": str(file_path),
-                        "line": idx,
-                        "snippet": line.strip()[:200],
-                    }
-                )
+        payload = _llm_detect_hardcoded_config(
+            workspace=workspace,
+            agent_name=semantic_agent,
+            file_path=str(file_path),
+            source=source,
+        )
+        if payload is None:
+            uncertain_files.append(str(file_path))
+            continue
 
-    passed = not findings
+        rows = payload.get("findings", [])
+        if not isinstance(rows, list):
+            uncertain_files.append(str(file_path))
+            continue
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            findings.append(
+                {
+                    "file_path": str(file_path),
+                    "line": int(row.get("line", 0) or 0),
+                    "snippet": str(row.get("snippet", "")).strip()[:200],
+                    "reason": str(row.get("reason", "")).strip(),
+                }
+            )
+
+    passed = not findings and not uncertain_files
     duration = (time.monotonic() - start) * 1000
+    if findings:
+        status = GateStatus.FAILED
+        score = 0.0
+        summary = f"Found {len(findings)} potential hardcoded config assignment(s)"
+    elif uncertain_files:
+        status = GateStatus.AMBIGUOUS
+        score = 0.5
+        summary = "Semantic config externalization check was inconclusive for some files"
+        findings = findings + [
+            {"file_path": file_path, "reason": "semantic_evaluator_failed"}
+            for file_path in uncertain_files
+        ]
+    else:
+        status = GateStatus.PASSED
+        score = 1.0
+        summary = "No semantic hardcoded runtime config values detected"
+
     return GateCheckResult(
         gate_id=GateId.CONFIG_EXTERNALIZATION.value,
         passed=passed,
         mode=gate_spec.mode.value,
-        status=GateStatus.PASSED if passed else GateStatus.FAILED,
-        score=1.0 if passed else 0.0,
+        status=status,
+        score=score,
         findings=findings,
-        summary=(
-            "No obvious hardcoded runtime config values detected"
-            if passed
-            else f"Found {len(findings)} potential hardcoded config assignment(s)"
-        ),
+        summary=summary,
         duration_ms=duration,
     )
+
+
+def _llm_detect_hardcoded_config(
+    *,
+    workspace: Path,
+    agent_name: str,
+    file_path: str,
+    source: str,
+) -> dict[str, Any] | None:
+    from spec_manager.core.agent_utils import run_agent
+
+    prompt = (
+        "Identify hardcoded runtime configuration values that should be injected.\n"
+        "Classify semantically (for example credentials, endpoint URLs, hostnames,\n"
+        "service tokens, environment-specific constants). Ignore harmless local literals.\n"
+        "Return JSON only with shape: "
+        '{"findings":[{"line":1,"snippet":"...","reason":"..."}]}.\n\n'
+        f"File: {file_path}\n"
+        "Source:\n"
+        "```\n"
+        f"{source[:12000]}\n"
+        "```\n"
+    )
+    raw_output = run_agent(
+        agent_name=agent_name,
+        prompt=prompt,
+        workspace=workspace,
+    )
+    cleaned = _strip_code_fences(raw_output)
+    payload = _extract_json_payload(cleaned)
+    if not payload:
+        return None
+    try:
+        loaded = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    return loaded
 
 
 def check_arch_drift_pass(

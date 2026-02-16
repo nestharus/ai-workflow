@@ -247,7 +247,11 @@ class PinDriftDetector:
         drifts: list[PinDrift] = []
 
         for bl in baseline_store.baselines:
-            current_hash = _compute_test_signature_hash(bl.test_file, bl.test_function)
+            current_hash = _compute_test_signature_hash(
+                current_map,
+                bl.test_file,
+                bl.test_function,
+            )
 
             if current_hash is None:
                 # Test function no longer exists -- create a synthetic edge

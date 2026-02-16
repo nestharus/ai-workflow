@@ -1,7 +1,7 @@
 """Coverage analyzer for executable gap detection.
 
-Wraps coverage.py to identify unexercised paths in algorithmic code.
-Reports which functions/branches are exercised vs. not.
+Maps runtime coverage onto pin spans and changed diff spans.
+This module does not derive function-level gaps from source parsing.
 """
 
 from __future__ import annotations
@@ -11,10 +11,12 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Literal
 
-from spec_manager.core.code_analysis import analyze_source
 from spec_manager.core.gap import GapEvidence
+
+if TYPE_CHECKING:
+    from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 
 @dataclass
@@ -29,26 +31,27 @@ class FileCoverage:
 
 
 @dataclass
-class FunctionCoverage:
-    """Coverage data for a single function."""
+class SpanCoverage:
+    """Coverage status for one pin span or changed diff span."""
 
+    scope: Literal["pin", "diff"]
     file_path: str
-    function_name: str
+    span_id: str
     line_start: int
     line_end: int
-    total_statements: int
-    covered_statements: int
-    coverage_ratio: float
+    total_lines: int
+    uncovered_lines: list[int]
+    uncovered_ratio: float
 
 
 @dataclass
 class CoverageReport:
-    """Aggregate coverage report across files."""
+    """Aggregate coverage report across files and spans."""
 
     files: list[FileCoverage] = field(default_factory=list)
-    functions: list[FunctionCoverage] = field(default_factory=list)
+    pin_spans: list[SpanCoverage] = field(default_factory=list)
+    diff_spans: list[SpanCoverage] = field(default_factory=list)
     overall_ratio: float = 0.0
-    uncovered_functions: list[FunctionCoverage] = field(default_factory=list)
 
 
 def run_coverage(
@@ -57,20 +60,7 @@ def run_coverage(
     project_root: Path,
     coverage_data_file: Path | None = None,
 ) -> Path:
-    """Run a test command with coverage.py instrumentation.
-
-    Executes: coverage run --source=<dirs> <test_command>
-    Returns path to the .coverage data file.
-
-    Args:
-        test_command: Command to run (e.g., ["pytest", "tests/"]).
-        source_dirs: Directories to measure coverage for.
-        project_root: Working directory for the command.
-        coverage_data_file: Optional path for .coverage file.
-
-    Returns:
-        Path to the .coverage data file.
-    """
+    """Run a test command with coverage.py instrumentation."""
     if coverage_data_file is None:
         coverage_data_file = project_root / ".coverage"
 
@@ -98,65 +88,11 @@ def run_coverage(
     return coverage_data_file
 
 
-def _extract_function_ranges(source: str, filepath: str = "") -> list[tuple[str, int, int]]:
-    """Extract function name and line ranges from source code.
-
-    Uses ``analyze_source`` (language-agnostic) instead of Python AST.
-
-    Returns list of (qualified_name, start_line, end_line).
-    """
-    analysis = analyze_source(source, filepath)
-
-    ranges: list[tuple[str, int, int]] = []
-    for func in analysis.functions:
-        qualified = func.qualified_name or func.name
-        ranges.append((qualified, func.start_line, func.end_line))
-
-    return ranges
-
-
-def _count_statements_in_range(
-    source_lines: list[str],
-    start: int,
-    end: int,
-) -> int:
-    """Count non-blank, non-comment, non-decorator lines in a range.
-
-    This is a rough approximation of statement count.
-    """
-    from spec_manager.core.language import COMMENT_PREFIX, DECORATOR_PREFIX
-
-    count = 0
-    for i in range(start - 1, min(end, len(source_lines))):
-        line = source_lines[i].strip()
-        if not line:
-            continue
-        if line.startswith(COMMENT_PREFIX.rstrip()):
-            continue
-        if line.startswith(DECORATOR_PREFIX):
-            continue
-        count += 1
-    return count
-
-
 def parse_coverage_report(
     coverage_data_file: Path,
     source_files: list[Path],
 ) -> CoverageReport:
-    """Parse a .coverage data file into structured coverage data.
-
-    Uses coverage.py JSON report to analyze per-file coverage, then
-    cross-references with extracted function ranges for per-function
-    coverage.
-
-    Args:
-        coverage_data_file: Path to .coverage file.
-        source_files: Files to analyze coverage for.
-
-    Returns:
-        CoverageReport with file and function-level data.
-    """
-    # Generate JSON report
+    """Parse a .coverage data file into structured per-file coverage data."""
     json_file = coverage_data_file.parent / "coverage.json"
 
     try:
@@ -187,30 +123,33 @@ def parse_coverage_report(
         json_file.unlink(missing_ok=True)
 
     file_coverages: list[FileCoverage] = []
-    function_coverages: list[FunctionCoverage] = []
-    uncovered_functions: list[FunctionCoverage] = []
-
     total_stmts = 0
     total_covered = 0
 
-    source_file_strs = {str(f.resolve()) for f in source_files}
+    source_file_strs = {_normalize_path(f) for f in source_files}
     files_data = cov_data.get("files", {})
 
     for file_path_str, file_info in files_data.items():
-        resolved = str(Path(file_path_str).resolve())
+        resolved = _normalize_path(file_path_str)
         if source_file_strs and resolved not in source_file_strs:
             continue
 
         summary = file_info.get("summary", {})
-        num_statements = summary.get("num_statements", 0)
-        covered = summary.get("covered_lines", 0)
-        missing = file_info.get("missing_lines", [])
-
+        num_statements = int(summary.get("num_statements", 0) or 0)
+        covered = int(summary.get("covered_lines", 0) or 0)
+        missing_raw = file_info.get("missing_lines", [])
+        missing = sorted(
+            {
+                int(line)
+                for line in missing_raw
+                if isinstance(line, int) or (isinstance(line, str) and line.isdigit())
+            }
+        )
         ratio = covered / num_statements if num_statements > 0 else 1.0
 
         file_coverages.append(
             FileCoverage(
-                file_path=file_path_str,
+                file_path=resolved,
                 total_statements=num_statements,
                 covered_statements=covered,
                 missing_lines=missing,
@@ -221,95 +160,216 @@ def parse_coverage_report(
         total_stmts += num_statements
         total_covered += covered
 
-        # Per-function coverage from analyze_source + missing lines
-        try:
-            source = Path(file_path_str).read_text(encoding="utf-8")
-            source_lines = source.splitlines()
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        function_ranges = _extract_function_ranges(source, file_path_str)
-        missing_set = set(missing)
-
-        for func_name, start, end in function_ranges:
-            func_stmts = _count_statements_in_range(source_lines, start, end)
-            func_missing = sum(1 for line in range(start, end + 1) if line in missing_set)
-            func_covered = max(0, func_stmts - func_missing)
-            func_ratio = func_covered / func_stmts if func_stmts > 0 else 1.0
-
-            fc = FunctionCoverage(
-                file_path=file_path_str,
-                function_name=func_name,
-                line_start=start,
-                line_end=end,
-                total_statements=func_stmts,
-                covered_statements=func_covered,
-                coverage_ratio=func_ratio,
-            )
-            function_coverages.append(fc)
-
-            if func_ratio == 0.0 and func_stmts > 0:
-                uncovered_functions.append(fc)
-
     overall_ratio = total_covered / total_stmts if total_stmts > 0 else 1.0
-
-    return CoverageReport(
-        files=file_coverages,
-        functions=function_coverages,
-        overall_ratio=overall_ratio,
-        uncovered_functions=uncovered_functions,
-    )
+    return CoverageReport(files=file_coverages, overall_ratio=overall_ratio)
 
 
 def coverage_to_gap_evidence(
     report: CoverageReport,
-    min_function_coverage: float = 0.0,
+    *,
+    pin_registry: PinFunctionRegistry | None = None,
+    changed_line_spans: dict[str, list[tuple[int, int]]] | None = None,
+    min_uncovered_ratio: float = 0.0,
 ) -> list[GapEvidence]:
-    """Convert uncovered functions to GapEvidence.
+    """Map coverage gaps to pin spans and diff spans.
 
-    Only functions with coverage_ratio <= min_function_coverage are gaps.
-    Default threshold is 0.0 (only completely uncovered functions).
-
-    invariant_family = "executable_coverage"
-    detector = "coverage_analyzer"
-
-    Args:
-        report: CoverageReport from parse_coverage_report.
-        min_function_coverage: Threshold below which a function is a gap.
-
-    Returns:
-        List of GapEvidence for uncovered functions.
+    A span becomes a gap when ``uncovered_ratio`` is greater than
+    ``min_uncovered_ratio``.
     """
     evidence: list[GapEvidence] = []
 
-    candidates = (
-        report.uncovered_functions
-        if min_function_coverage == 0.0
-        else [f for f in report.functions if f.coverage_ratio <= min_function_coverage]
-    )
+    threshold = max(0.0, min(1.0, float(min_uncovered_ratio)))
+    file_lookup = {_normalize_path(fc.file_path): fc for fc in report.files}
+    normalized_changed = _normalize_changed_spans(changed_line_spans)
 
-    for func in candidates:
-        details: dict[str, Any] = {
-            "function_name": func.function_name,
-            "line_start": func.line_start,
-            "line_end": func.line_end,
-            "total_statements": func.total_statements,
-            "covered_statements": func.covered_statements,
-            "coverage_ratio": func.coverage_ratio,
-        }
-        evidence.append(
-            GapEvidence(
-                invariant_family="executable_coverage",
-                description=(
-                    f"Uncovered function: {func.function_name} "
-                    f"({func.coverage_ratio:.0%} coverage, "
-                    f"{func.total_statements} statements)"
-                ),
-                details=details,
-                confidence=0.8,
-                location=f"{func.file_path}:{func.line_start}-{func.line_end}",
-                detector="coverage_analyzer",
+    pin_span_items: list[SpanCoverage] = []
+    if pin_registry is not None:
+        for pin in pin_registry.pin_functions:
+            file_key, file_cov = _resolve_file_coverage(file_lookup, pin.file_path)
+            if normalized_changed and not _pin_touches_changed_spans(
+                pin.file_path, pin.line_start, pin.line_end, normalized_changed
+            ):
+                continue
+
+            total_lines = max(0, pin.line_end - pin.line_start + 1)
+            if total_lines <= 0:
+                continue
+
+            if file_cov is None:
+                uncovered_lines = list(range(pin.line_start, pin.line_end + 1))
+            else:
+                missing_set = set(file_cov.missing_lines)
+                uncovered_lines = [
+                    line for line in range(pin.line_start, pin.line_end + 1) if line in missing_set
+                ]
+
+            uncovered_ratio = len(uncovered_lines) / total_lines
+            span = SpanCoverage(
+                scope="pin",
+                file_path=file_key,
+                span_id=pin.pin_func_id,
+                line_start=pin.line_start,
+                line_end=pin.line_end,
+                total_lines=total_lines,
+                uncovered_lines=uncovered_lines,
+                uncovered_ratio=uncovered_ratio,
             )
-        )
+            pin_span_items.append(span)
 
+            if uncovered_ratio <= threshold:
+                continue
+
+            evidence.append(
+                GapEvidence(
+                    invariant_family="executable_coverage",
+                    description=(
+                        f"Uncovered changed pin span: {pin.pin_func_id} "
+                        f"({uncovered_ratio:.0%} uncovered)"
+                    ),
+                    details={
+                        "scope": "pin",
+                        "pin_func_id": pin.pin_func_id,
+                        "file_path": file_key,
+                        "line_start": pin.line_start,
+                        "line_end": pin.line_end,
+                        "uncovered_lines": uncovered_lines,
+                        "uncovered_ratio": uncovered_ratio,
+                    },
+                    confidence=0.8,
+                    location=f"{file_key}:{pin.line_start}-{pin.line_end}",
+                    detector="coverage_analyzer",
+                )
+            )
+
+    diff_span_items: list[SpanCoverage] = []
+    for file_path, spans in normalized_changed.items():
+        file_key, file_cov = _resolve_file_coverage(file_lookup, file_path)
+        for idx, (start_line, end_line) in enumerate(spans, start=1):
+            total_lines = max(0, end_line - start_line + 1)
+            if total_lines <= 0:
+                continue
+
+            if file_cov is None:
+                uncovered_lines = list(range(start_line, end_line + 1))
+            else:
+                missing_set = set(file_cov.missing_lines)
+                uncovered_lines = [
+                    line for line in range(start_line, end_line + 1) if line in missing_set
+                ]
+
+            uncovered_ratio = len(uncovered_lines) / total_lines
+            span = SpanCoverage(
+                scope="diff",
+                file_path=file_key,
+                span_id=f"diff_{idx}",
+                line_start=start_line,
+                line_end=end_line,
+                total_lines=total_lines,
+                uncovered_lines=uncovered_lines,
+                uncovered_ratio=uncovered_ratio,
+            )
+            diff_span_items.append(span)
+
+            if uncovered_ratio <= threshold:
+                continue
+
+            evidence.append(
+                GapEvidence(
+                    invariant_family="executable_coverage",
+                    description=(
+                        f"Uncovered diff span in {file_key}:{start_line}-{end_line} "
+                        f"({uncovered_ratio:.0%} uncovered)"
+                    ),
+                    details={
+                        "scope": "diff",
+                        "file_path": file_key,
+                        "line_start": start_line,
+                        "line_end": end_line,
+                        "uncovered_lines": uncovered_lines,
+                        "uncovered_ratio": uncovered_ratio,
+                    },
+                    confidence=0.8,
+                    location=f"{file_key}:{start_line}-{end_line}",
+                    detector="coverage_analyzer",
+                )
+            )
+
+    report.pin_spans = pin_span_items
+    report.diff_spans = diff_span_items
     return evidence
+
+
+def _normalize_path(path: str | Path) -> str:
+    return str(Path(path).resolve()).replace("\\", "/")
+
+
+def _normalize_changed_spans(
+    changed_line_spans: dict[str, list[tuple[int, int]]] | None,
+) -> dict[str, list[tuple[int, int]]]:
+    if not changed_line_spans:
+        return {}
+
+    normalized: dict[str, list[tuple[int, int]]] = {}
+    for file_path, spans in changed_line_spans.items():
+        if not isinstance(file_path, str):
+            continue
+        key = _normalize_path(file_path)
+        valid_spans: list[tuple[int, int]] = []
+        for span in spans:
+            if not isinstance(span, (tuple, list)) or len(span) != 2:
+                continue
+            try:
+                start = int(span[0])
+                end = int(span[1])
+            except (TypeError, ValueError):
+                continue
+            if start <= 0:
+                continue
+            if end < start:
+                end = start
+            valid_spans.append((start, end))
+        if valid_spans:
+            normalized[key] = valid_spans
+    return normalized
+
+
+def _resolve_file_coverage(
+    file_lookup: dict[str, FileCoverage],
+    file_path: str,
+) -> tuple[str, FileCoverage | None]:
+    normalized = _normalize_path(file_path)
+    if normalized in file_lookup:
+        return normalized, file_lookup[normalized]
+
+    for candidate_path, coverage in file_lookup.items():
+        if normalized.endswith(candidate_path) or candidate_path.endswith(normalized):
+            return candidate_path, coverage
+
+    return normalized, None
+
+
+def _pin_touches_changed_spans(
+    file_path: str,
+    line_start: int,
+    line_end: int,
+    changed_spans: dict[str, list[tuple[int, int]]],
+) -> bool:
+    key = _normalize_path(file_path)
+    spans = changed_spans.get(key)
+    if not spans:
+        return False
+    for changed_start, changed_end in spans:
+        if line_end < changed_start or line_start > changed_end:
+            continue
+        return True
+    return False
+
+
+__all__ = [
+    "CoverageReport",
+    "FileCoverage",
+    "SpanCoverage",
+    "coverage_to_gap_evidence",
+    "parse_coverage_report",
+    "run_coverage",
+]

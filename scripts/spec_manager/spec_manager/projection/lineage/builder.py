@@ -8,6 +8,7 @@ and projects them into ``ProjectionLineageTable``.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -170,7 +171,7 @@ def import_records_from_pin_registry(pin_registry: PinFunctionRegistry) -> list[
 
 
 def compute_signature_hash(file_path: str, function_name: str) -> str | None:
-    """Compute a stable hash of a function signature from source facts."""
+    """Compute a stable hash of canonical function-signature facts."""
     path = Path(file_path)
     if not path.exists():
         return None
@@ -183,30 +184,19 @@ def compute_signature_hash(file_path: str, function_name: str) -> str | None:
     analysis = analyze_source(source, file_path)
 
     for func in analysis.functions:
-        if func.name == function_name:
-            sig_parts = _extract_signature_parts_from_info(func)
-            sig_str = "|".join(sig_parts)
-            return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
+        if func.name != function_name and func.qualified_name != function_name:
+            continue
+        signature_facts = {
+            "name": func.qualified_name or func.name,
+            "args": list(func.args),
+            "return_annotation": func.return_annotation or "",
+            "is_async": bool(func.is_async),
+            "decorators": list(func.decorators),
+        }
+        sig_str = json.dumps(signature_facts, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(sig_str.encode("utf-8")).hexdigest()
 
     return None
-
-
-def _extract_signature_parts_from_info(func: object) -> list[str]:
-    """Extract signature parts from ``RawFunctionInfo``-like object."""
-    parts: list[str] = [func.name]  # type: ignore[union-attr]
-
-    for arg_str in func.args:  # type: ignore[union-attr]
-        if arg_str.startswith("**"):
-            parts.append(f"kwarg:{arg_str[2:]}")
-        elif arg_str.startswith("*"):
-            parts.append(f"vararg:{arg_str[1:]}")
-        else:
-            parts.append(f"arg:{arg_str}")
-
-    if func.return_annotation:  # type: ignore[union-attr]
-        parts.append(f"return:{func.return_annotation}")  # type: ignore[union-attr]
-
-    return parts
 
 
 def _coerce_int(value: Any) -> int:

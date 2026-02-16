@@ -1,7 +1,7 @@
 """CLI commands for the pin-function system.
 
-Provides subcommands for scanning, diffing, querying, and analyzing
-pin-functions via the spec-manager CLI.
+Provides subcommands for proposal materialization, diffing, querying, and
+analysis of pin-functions via the spec-manager CLI.
 """
 
 from __future__ import annotations
@@ -26,8 +26,10 @@ def setup_pin_parser(subparsers: argparse._SubParsersAction) -> None:
     pin_sub = p_pin.add_subparsers(dest="pin_command", required=True)
 
     # pin scan
-    p_scan = pin_sub.add_parser("scan", help="Scan project and build pin-function registry")
+    p_scan = pin_sub.add_parser("scan", help="Build pin-function registry from proposals")
     p_scan.add_argument("--project-root", default=".", help="Project root directory")
+    p_scan.add_argument("--pin-proposals", required=True, help="Path to pin proposals JSON file")
+    p_scan.add_argument("--edge-proposals", help="Path to edge proposals JSON file")
     p_scan.add_argument("--format", choices=["json", "text"], default="text", help="Output format")
 
     # pin diff
@@ -101,7 +103,10 @@ def _cmd_pin_scan(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     orchestrator = PinFunctionOrchestrator(project_root)
 
-    registry = orchestrator.scan(mode="scan", allow_scan_fallback=True)
+    registry = orchestrator.scan(
+        pin_proposals_path=args.pin_proposals,
+        edge_proposals_path=getattr(args, "edge_proposals", None),
+    )
 
     # Save registry
     save_path = orchestrator.save_registry(registry)
@@ -109,7 +114,7 @@ def _cmd_pin_scan(args: argparse.Namespace) -> int:
     if getattr(args, "format", "text") == "json":
         print(registry.model_dump_json(indent=2))
     else:
-        print("Pin-function scan complete:")
+        print("Pin-function proposal materialization complete:")
         print(f"  Pin-functions found: {len(registry.pin_functions)}")
         print(f"  Import edges found: {len(registry.import_edges)}")
         print(f"  Registry saved: {save_path}")
@@ -256,9 +261,12 @@ def _cmd_pin_test_check(args: argparse.Namespace) -> int:
 
         registry = PinFunctionRegistry(**registry_data)
     else:
-        # Scan to build registry
-        registry = orchestrator.scan(mode="scan", allow_scan_fallback=True)
-        orchestrator.save_registry(registry)
+        print(
+            "No pin registry found. Materialize one first via "
+            "'pin scan --pin-proposals <path> [--edge-proposals <path>]'.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Resolve baseline path
     baseline_path = project_root / ".spec" / "test_pin_baselines.json"
