@@ -38,6 +38,7 @@ from spec_manager.orchestration.models import (
     PipelineTickResult,
     PropagateResult,
     next_layer,
+    prev_layer,
 )
 from spec_manager.vcs.operations import VcsOperations
 
@@ -754,6 +755,9 @@ class WorktreeManager:
             # Clear candidate after successful promotion
             self.clear_candidate(layer)
 
+            # Update upstream acceptance on consumer-side promotion.
+            self._update_upstream_accepted(layer)
+
             # Propagate to next layer
             nl = next_layer(layer)
             if nl and nl in self._layer_worktrees:
@@ -761,9 +765,6 @@ class WorktreeManager:
                 result.propagation_results.append(prop)
                 if not prop.success:
                     result.demotion_tickets.append(f"propagation_failed:{layer}→{nl}")
-
-            # Update upstream_accepted tracking
-            self._update_upstream_accepted(layer)
 
         return result
 
@@ -774,8 +775,10 @@ class WorktreeManager:
     def compute_active_layer(self) -> Layer:
         """Determine which layer should be active.
 
-        The active layer is the lowest layer that has dirty != clean
-        or has open demotion work.
+        The active layer is the lowest layer with dirty != clean.
+
+        Demotion reopening is represented by writing new commits to a
+        target layer's dirty branch, which naturally makes dirty != clean.
         """
         for layer in LAYER_ORDER:
             if layer not in self._layer_worktrees:
@@ -910,13 +913,29 @@ class WorktreeManager:
         return created
 
     def _update_upstream_accepted(self, layer: Layer) -> None:
-        """Update the upstream_accepted ref for the next layer."""
-        nl = next_layer(layer)
-        if nl is None:
+        """Record that *layer* accepted its upstream clean state.
+
+        For example, when L2 promotes dirty->clean successfully, this moves
+        ``l2/upstream_accepted`` to the current ``l1/clean`` SHA.
+        """
+        upstream_layer = prev_layer(layer)
+        if upstream_layer is None:
             return
 
-        clean_sha = self.vcs.get_head_sha(self._layer_worktrees.get(layer, {}).get("clean", Path()))
-        if clean_sha:
-            ref = self.upstream_accepted_ref(nl)
-            self.vcs.update_ref(ref, clean_sha)
-            self._upstream_accepted[nl] = clean_sha
+        upstream_clean = self.vcs.get_head_sha(
+            self._layer_worktrees.get(upstream_layer, {}).get("clean", Path())
+        )
+        if not upstream_clean:
+            return
+
+        ref = self.upstream_accepted_ref(layer)
+        ok, err = self.vcs.update_ref(ref, upstream_clean)
+        if not ok:
+            logger.warning(
+                "Failed updating upstream acceptance for %s from %s clean: %s",
+                layer,
+                upstream_layer,
+                err,
+            )
+            return
+        self._upstream_accepted[layer] = upstream_clean

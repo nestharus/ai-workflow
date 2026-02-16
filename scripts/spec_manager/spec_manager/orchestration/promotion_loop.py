@@ -6865,9 +6865,10 @@ class PromoteStep:
 class IntegrateStep:
     """Merge completed slice work into the active layer's dirty branch.
 
-    Merge is still delegated to the lifecycle-owned CI tick. For merge
-    conflicts, integrate performs a single rebase+remerge cycle and then
-    emits demotion/blocking if conflicts persist.
+    Integrate merges slice work into dirty, then directly runs pipeline CI
+    propagation via ``worktree_manager.tick_pipeline()``. For merge conflicts,
+    integrate performs a single rebase+remerge cycle and emits demotion/retry
+    if conflicts persist.
     """
 
     name = "INTEGRATE"
@@ -7333,6 +7334,124 @@ class IntegrateStep:
             with integration_lock:
                 return fn()
 
+        run_gates: bool | dict[str, Any] = True
+        run_tests: bool | dict[str, Any] = True
+        max_pending_batches = 1
+        if isinstance(ctx.config, dict):
+            pipeline_ci = ctx.config.get("pipeline_ci")
+            if isinstance(pipeline_ci, dict):
+                run_gates = cast("bool | dict[str, Any]", pipeline_ci.get("run_gates", True))
+                run_tests = cast("bool | dict[str, Any]", pipeline_ci.get("run_tests", True))
+                raw_max_pending = pipeline_ci.get("max_pending_batches", 1)
+                try:
+                    max_pending_batches = max(0, int(raw_max_pending))
+                except (TypeError, ValueError):
+                    max_pending_batches = 1
+
+        def build_ci_tick_receipt(tick: Any) -> dict[str, Any]:
+            layer_batch: Any | None = None
+            layer_results = getattr(tick, "layer_results", None)
+            if isinstance(layer_results, dict):
+                layer_batch = layer_results.get(ctx.layer)
+
+            candidate_sha = getattr(layer_batch, "candidate_sha", None)
+            base_clean_sha = getattr(layer_batch, "base_clean_sha", None)
+            batch_success = bool(getattr(layer_batch, "success", True)) if layer_batch else True
+            batch_error = str(getattr(layer_batch, "error", "") or "")
+            batch_demotion_tickets = (
+                [str(item) for item in (getattr(layer_batch, "demotion_tickets", []) or [])]
+                if layer_batch is not None
+                else []
+            )
+            gates_passed = bool(getattr(layer_batch, "gates_passed", True)) if layer_batch else True
+            tests_passed = bool(getattr(layer_batch, "tests_passed", True)) if layer_batch else True
+
+            propagation_failures: list[dict[str, Any]] = []
+            for prop in getattr(tick, "propagation_results", []) or []:
+                if str(getattr(prop, "from_layer", "")) != str(ctx.layer):
+                    continue
+                if bool(getattr(prop, "success", True)):
+                    continue
+                propagation_failures.append(
+                    {
+                        "from_layer": getattr(prop, "from_layer", ""),
+                        "to_layer": getattr(prop, "to_layer", ""),
+                        "error": str(getattr(prop, "error", "") or ""),
+                        "conflict_files": list(getattr(prop, "conflict_files", []) or []),
+                    }
+                )
+
+            failed = (not batch_success) or bool(propagation_failures)
+            failure_refs: list[str] = []
+            if batch_error:
+                failure_refs.append(f"batch_error:{batch_error}")
+            for ticket_ref in batch_demotion_tickets:
+                if ticket_ref:
+                    failure_refs.append(f"batch_ticket:{ticket_ref}")
+            for prop_failure in propagation_failures:
+                prop_error = str(prop_failure.get("error", "")).strip()
+                hop = f"{prop_failure.get('from_layer')}->{prop_failure.get('to_layer')}"
+                if prop_error:
+                    failure_refs.append(f"propagation:{hop}:{prop_error}")
+                for path in prop_failure.get("conflict_files", []) or []:
+                    failure_refs.append(f"propagation_conflict_file:{path}")
+
+            failure_summary = ""
+            if failed:
+                segments: list[str] = []
+                if batch_error:
+                    segments.append(batch_error)
+                if propagation_failures and not batch_error:
+                    segments.append("cross-layer propagation failed")
+                failure_summary = "; ".join(segments) if segments else "CI tick failed"
+
+            return {
+                "slice_id": ctx.slice_id,
+                "layer": ctx.layer,
+                "main_updated": bool(getattr(tick, "main_updated", False)),
+                "main_sha": getattr(tick, "main_sha", None),
+                "demotions": len(getattr(tick, "demotion_tickets", []) or []),
+                "candidate_sha": candidate_sha,
+                "base_clean_sha": base_clean_sha,
+                "failed": failed,
+                "failure_summary": failure_summary,
+                "failure_refs": failure_refs[:24],
+                "failure_evidence": {
+                    "batch_success": batch_success,
+                    "batch_error": batch_error,
+                    "batch_demotion_tickets": batch_demotion_tickets,
+                    "gates_passed": gates_passed,
+                    "tests_passed": tests_passed,
+                    "propagation_failures": propagation_failures,
+                },
+            }
+
+        def run_pipeline_tick() -> tuple[dict[str, Any], str]:
+            try:
+                tick = run_with_integration_lock(
+                    lambda: wm.tick_pipeline(
+                        active_layer=ctx.layer,
+                        max_pending_batches=max_pending_batches,
+                        run_gates=run_gates,
+                        run_tests=run_tests,
+                    )
+                )
+            except Exception as exc:
+                error = str(exc)
+                logger.exception("tick_pipeline failed for slice '%s'", ctx.slice_id)
+                return (
+                    {
+                        "slice_id": ctx.slice_id,
+                        "layer": ctx.layer,
+                        "failed": True,
+                        "failure_summary": error,
+                        "failure_refs": [f"ci_tick_exception:{error}"],
+                        "failure_evidence": {"exception": error},
+                    },
+                    error,
+                )
+            return build_ci_tick_receipt(tick), ""
+
         merge_attempts: list[dict[str, Any]] = []
         investigator_report_refs: list[str] = []
         failure_evidence: dict[str, Any] = {}
@@ -7460,16 +7579,8 @@ class IntegrateStep:
         ci_tick_triggered = False
         ci_tick_error = ""
         ci_tick_receipt: dict[str, Any] = {}
-        if ctx.ci_tick_callback is not None:
-            ci_callback = ctx.ci_tick_callback
-            try:
-                tick_result = run_with_integration_lock(lambda: ci_callback(ctx.slice_id))
-                ci_tick_triggered = True
-                if isinstance(tick_result, dict):
-                    ci_tick_receipt = tick_result
-            except Exception as exc:
-                ci_tick_error = str(exc)
-                logger.exception("CI tick callback failed for slice '%s'", ctx.slice_id)
+        ci_tick_triggered = True
+        ci_tick_receipt, ci_tick_error = run_pipeline_tick()
 
         ci_failed = bool(ci_tick_error)
         if isinstance(ci_tick_receipt, dict):
@@ -7501,14 +7612,9 @@ class IntegrateStep:
                 _: int,
                 __: dict[str, Any],
             ) -> tuple[bool, dict[str, Any]]:
-                if ctx.ci_tick_callback is None:
-                    return True, {"note": "No CI callback available for retry verification"}
-                retry_callback = ctx.ci_tick_callback
-                try:
-                    retry_raw = run_with_integration_lock(lambda: retry_callback(ctx.slice_id))
-                except Exception as exc:
-                    return False, {"error": str(exc)}
-                retry_receipt = retry_raw if isinstance(retry_raw, dict) else {}
+                retry_receipt, retry_error = run_pipeline_tick()
+                if retry_error:
+                    return False, {"error": retry_error}
                 retry_receipt_holder["receipt"] = retry_receipt
                 retry_failed = bool(retry_receipt.get("failed", False))
                 return (not retry_failed), {"retry_receipt": retry_receipt}
@@ -7544,7 +7650,7 @@ class IntegrateStep:
                     {
                         "attempt": len(merge_attempts) + 1,
                         "cycle": "ci_tick",
-                        "strategy": "ci_tick_callback",
+                        "strategy": "tick_pipeline",
                         "success": False,
                         "error": diagnosis,
                     }
@@ -9271,6 +9377,78 @@ class PromotionLoop:
         issues = payload.get("issues", [])
         return len(issues) if isinstance(issues, list) else 0
 
+    @staticmethod
+    def _ticket_target_layer_key(target_layer: str) -> Layer:
+        """Map demotion ticket layer labels (L1/L2/L3) to layer keys."""
+        normalized = str(target_layer).strip().upper()
+        if normalized == "L2":
+            return "l2"
+        if normalized == "L3":
+            return "l3"
+        return "l1"
+
+    def _resolve_demotion_apply_root(
+        self,
+        *,
+        ctx: SliceContext,
+        ticket: DemotionTicket,
+    ) -> tuple[Path | None, str]:
+        """Resolve the concrete worktree root where a demotion should apply."""
+        wm = ctx.worktree_manager
+        if wm is None:
+            if ctx.slice_root:
+                return Path(ctx.slice_root), ""
+            return None, "No slice root available for demotion apply"
+
+        target_layer = self._ticket_target_layer_key(ticket.target_layer)
+        layer_roots = getattr(wm, "_layer_worktrees", {}).get(target_layer, {})
+        dirty_root = layer_roots.get("dirty")
+        if dirty_root is None:
+            return (
+                None,
+                f"No dirty worktree for demotion target layer {ticket.target_layer}",
+            )
+        return Path(dirty_root), ""
+
+    @staticmethod
+    def _commit_demotion_reopen(
+        *,
+        ctx: SliceContext,
+        ticket: DemotionTicket,
+        apply_root: Path,
+        apply_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Commit demotion changes so dirty/clean divergence is explicit."""
+        if not bool(apply_result.get("applied", False)):
+            return apply_result
+
+        wm = ctx.worktree_manager
+        vcs = getattr(wm, "vcs", None) if wm is not None else None
+        if vcs is None or not hasattr(vcs, "commit_all"):
+            return apply_result
+
+        commit_message = (
+            f"demotion({str(ticket.target_layer).lower()}): reopen for ticket {ticket.ticket_id}"
+        )
+        committed, commit_error = vcs.commit_all(apply_root, commit_message)
+        apply_result["layer_dirty_commit"] = {
+            "layer": ticket.target_layer,
+            "root": str(apply_root),
+            "committed": bool(committed),
+            "error": str(commit_error or ""),
+        }
+        if committed:
+            return apply_result
+
+        errors = apply_result.setdefault("errors", [])
+        if isinstance(errors, list):
+            errors.append(
+                f"Failed to commit demotion into {ticket.target_layer} dirty branch: "
+                f"{commit_error or 'unknown commit error'}"
+            )
+        apply_result["applied"] = False
+        return apply_result
+
     def run_slice(
         self,
         slice_ref: SliceRef,
@@ -9449,12 +9627,33 @@ class PromotionLoop:
                     # Apply demotion tickets + track retries per unique failure pattern
                     seen_keys: set[tuple[str, str]] = set()
                     for ticket in result.emitted_tickets:
-                        apply_result = self._dm.apply(
-                            ticket,
-                            Path(ctx.slice_root) if ctx.slice_root else Path("."),
-                            gap_queue=self._gap_queue,
-                            branch_manager=ctx.branch_manager,
+                        apply_root, apply_root_error = self._resolve_demotion_apply_root(
+                            ctx=ctx,
+                            ticket=ticket,
                         )
+                        if apply_root is None:
+                            apply_result: dict[str, Any] = {
+                                "ticket_id": ticket.ticket_id,
+                                "applied": False,
+                                "patches": [],
+                                "gap_evidence_added": 0,
+                                "registry_updates": [],
+                                "routing_patches": [],
+                                "errors": [apply_root_error],
+                            }
+                        else:
+                            apply_result = self._dm.apply(
+                                ticket,
+                                apply_root,
+                                gap_queue=self._gap_queue,
+                                branch_manager=ctx.branch_manager,
+                            )
+                            apply_result = self._commit_demotion_reopen(
+                                ctx=ctx,
+                                ticket=ticket,
+                                apply_root=apply_root,
+                                apply_result=apply_result,
+                            )
                         bundle.demotions.emitted.append(ticket.ticket_id)
                         if apply_result.get("applied", False):
                             bundle.demotions.applied.append(ticket.ticket_id)
