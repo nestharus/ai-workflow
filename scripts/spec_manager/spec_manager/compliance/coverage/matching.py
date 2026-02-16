@@ -47,9 +47,33 @@ def _tokenize_name(name: str) -> set[str]:
     return {t.lower() for t in tokens if len(t) >= 3}
 
 
+def build_atom_keyword_index(
+    atom_descriptors: list[AtomDescriptor],
+) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Build token keywords and function-name index for atoms.
+
+    Args:
+        atom_descriptors: Atom descriptors from the registry.
+
+    Returns:
+        Tuple of:
+            - Mapping of atom_id -> keyword token set
+            - Mapping of atom_id -> function_name
+    """
+    atom_keywords: dict[str, set[str]] = {}
+    atom_function_names: dict[str, str] = {}
+    for atom in atom_descriptors:
+        atom_function_names[atom.atom_id] = atom.function_name
+        tokens = _tokenize_name(atom.function_name)
+        if tokens:
+            atom_keywords[atom.atom_id] = tokens
+    return atom_keywords, atom_function_names
+
+
 def match_explicit(
     entities_artifact: EntitiesArtifact,
     atom_ids: set[str],
+    atom_function_names: dict[str, str] | None = None,
 ) -> list[CoverageMatch]:
     """Match entities to atoms via explicit linkage in mentions and tags.
 
@@ -59,6 +83,7 @@ def match_explicit(
     Args:
         entities_artifact: The entities artifact containing entities, mentions, and tags.
         atom_ids: Set of atom IDs present in the atom registry.
+        atom_function_names: Optional mapping of atom_id -> function_name.
 
     Returns:
         List of CoverageMatch with method='explicit' and confidence=1.0.
@@ -75,7 +100,11 @@ def match_explicit(
                         match_method="explicit",
                         confidence=1.0,
                         entity_name=entity.name,
-                        atom_function_name=aid,
+                        atom_function_name=(
+                            atom_function_names.get(aid, aid)
+                            if atom_function_names is not None
+                            else aid
+                        ),
                     )
                 )
     return matches
@@ -126,7 +155,8 @@ def match_by_naming(
 def match_by_keywords(
     entity_paragraphs: dict[str, list[HollowedParagraph]],
     atom_keywords: dict[str, set[str]],
-    entity_names: dict[str, str] | None = None,
+    entity_names: dict[str, str | list[str]] | None = None,
+    atom_function_names: dict[str, str] | None = None,
 ) -> list[CoverageMatch]:
     """Match entities to atoms via keyword overlap.
 
@@ -136,7 +166,8 @@ def match_by_keywords(
     Args:
         entity_paragraphs: Mapping of entity_name -> list of HollowedParagraph.
         atom_keywords: Mapping of atom_id -> set of keywords.
-        entity_names: Optional mapping of entity_name -> entity_id for ID lookup.
+        entity_names: Optional mapping of entity_name -> entity_id(s) for ID lookup.
+        atom_function_names: Optional mapping of atom_id -> function_name.
 
     Returns:
         List of CoverageMatch with method='keyword' and confidence=0.4.
@@ -152,21 +183,32 @@ def match_by_keywords(
         if len(entity_kws) < _MIN_SHARED_KEYWORDS:
             continue
 
-        entity_id = names_map.get(entity_name, entity_name)
+        raw_entity_ids = names_map.get(entity_name)
+        if raw_entity_ids is None:
+            entity_ids = [entity_name]
+        elif isinstance(raw_entity_ids, str):
+            entity_ids = [raw_entity_ids]
+        else:
+            entity_ids = list(dict.fromkeys(raw_entity_ids))
 
         for atom_id, atom_kws in atom_keywords.items():
             shared = entity_kws & {kw.lower() for kw in atom_kws}
             if len(shared) >= _MIN_SHARED_KEYWORDS:
-                matches.append(
-                    CoverageMatch(
-                        entity_id=entity_id,
-                        atom_id=atom_id,
-                        match_method="keyword",
-                        confidence=0.4,
-                        entity_name=entity_name,
-                        atom_function_name=atom_id,
+                for entity_id in entity_ids:
+                    matches.append(
+                        CoverageMatch(
+                            entity_id=entity_id,
+                            atom_id=atom_id,
+                            match_method="keyword",
+                            confidence=0.4,
+                            entity_name=entity_name,
+                            atom_function_name=(
+                                atom_function_names.get(atom_id, atom_id)
+                                if atom_function_names is not None
+                                else atom_id
+                            ),
+                        )
                     )
-                )
     return matches
 
 

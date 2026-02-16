@@ -54,6 +54,7 @@ def check_entity_coverage(
                 "entity_id": ue.entity_id,
                 "name": ue.name,
                 "kind": ue.kind,
+                "paragraph_ids": ue.paragraph_ids,
                 "lib_ids": ue.lib_ids,
                 "type": "unmatched_entity",
             }
@@ -64,9 +65,14 @@ def check_entity_coverage(
                 "atom_id": ua.atom_id,
                 "function_name": ua.function_name,
                 "kind": ua.kind,
+                "vertical_slice": ua.vertical_slice,
                 "type": "unmatched_atom",
             }
         )
+    for diagnostic in report.diagnostics:
+        finding = {"type": "diagnostic"}
+        finding.update(diagnostic)
+        findings.append(finding)
 
     passed = report.entity_coverage >= gate_spec.threshold
     duration_ms = (time.monotonic() - start) * 1000

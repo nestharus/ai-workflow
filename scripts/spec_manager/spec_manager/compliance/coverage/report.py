@@ -93,6 +93,7 @@ class EntityCoverageReport:
     atom_coverage: float = 0.0
     total_entities: int = 0
     total_atoms: int = 0
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the report to a dictionary."""
@@ -131,6 +132,7 @@ class EntityCoverageReport:
             "atom_coverage": self.atom_coverage,
             "total_entities": self.total_entities,
             "total_atoms": self.total_atoms,
+            "diagnostics": self.diagnostics,
         }
 
     def save(self, path: Path) -> None:

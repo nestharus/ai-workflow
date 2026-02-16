@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 from pathlib import Path
 
@@ -91,9 +90,13 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
     from spec_manager.core.run_folder import RunFolderStructure
     from spec_manager.schemas.entities import EntitiesArtifact
 
+    input_root = Path(args.input_folder)
+    if not input_root.is_absolute():
+        input_root = resolve_from_root(args.input_folder)
+
     structure = RunFolderStructure(
         run_id=args.run_id,
-        root=resolve_from_root("runs", args.run_id),
+        root=input_root / "runs" / args.run_id,
     )
 
     # Load evidence index
@@ -110,8 +113,9 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
     atom_registry = AtomRegistry.load(layout)
 
     # Optionally load entities artifact
-    entities_artifact = None
+    entities_artifact: EntitiesArtifact | None = None
     entities_dir = structure.libraries_dir
+    loaded_artifacts: list[EntitiesArtifact] = []
     if entities_dir.exists():
         for lib_dir in sorted(entities_dir.iterdir()):
             if not lib_dir.is_dir():
@@ -119,14 +123,30 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
             entities_path = lib_dir / "entities.json"
             if entities_path.exists():
                 try:
-                    import json as _json
-
-                    data = _json.loads(entities_path.read_text(encoding="utf-8"))
-                    entities_artifact = EntitiesArtifact.model_validate(data)
-                    break  # Use first found
-                except Exception as e:
-                    logging.warning(f"Failed to load entities from {entities_path}: {e}")
-                    continue
+                    data = json.loads(entities_path.read_text(encoding="utf-8"))
+                    loaded_artifacts.append(EntitiesArtifact.model_validate(data))
+                except Exception as exc:
+                    print(
+                        f"Failed to load entities artifact '{entities_path}': {exc}",
+                        file=sys.stderr,
+                    )
+                    return 1
+    if loaded_artifacts:
+        entities = []
+        mentions = []
+        tags = []
+        for artifact in loaded_artifacts:
+            entities.extend(artifact.entities)
+            mentions.extend(artifact.mentions)
+            tags.extend(artifact.tags)
+        entities_artifact = EntitiesArtifact(
+            schema_version=loaded_artifacts[0].schema_version,
+            entities=entities,
+            mentions=mentions,
+            tags=tags,
+            extraction_method="merged",
+            source_file=None,
+        )
 
     # Run analysis
     analyzer = EntityCoverageAnalyzer(evidence_index, atom_registry, entities_artifact)
@@ -169,6 +189,16 @@ def cmd_entity_gaps(args: argparse.Namespace) -> int:
             for ua in report.unmatched_atoms:
                 slice_info = f" (slice: {ua.vertical_slice})" if ua.vertical_slice else ""
                 lines.append(f"  {ua.atom_id} - {ua.function_name} [{ua.kind}]{slice_info}")
+
+        if report.diagnostics:
+            lines.append("")
+            lines.append("Diagnostics:")
+            for diagnostic in report.diagnostics:
+                message = diagnostic.get("message")
+                if isinstance(message, str) and message:
+                    lines.append(f"  - {message}")
+                else:
+                    lines.append(f"  - {diagnostic}")
 
         output_text = "\n".join(lines)
 

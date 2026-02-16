@@ -6,9 +6,11 @@ to produce a coverage report identifying gaps in both directions.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 from spec_manager.compliance.coverage.matching import (
+    build_atom_keyword_index,
     match_by_keywords,
     match_by_naming,
     match_explicit,
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
     from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.schemas.entities import EntitiesArtifact
     from spec_manager.schemas.hollowed_spec import HollowedParagraph
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +84,16 @@ class EntityCoverageAnalyzer:
         """
         all_atoms = self._atom_registry.list_all()
         atom_ids_set = {a.atom_id for a in all_atoms}
+        atom_keywords, atom_function_names = build_atom_keyword_index(all_atoms)
 
         # --- Strategy 1: Explicit linkage ---
         explicit_matches = []
         if self._entities_artifact is not None:
-            explicit_matches = match_explicit(self._entities_artifact, atom_ids_set)
+            explicit_matches = match_explicit(
+                self._entities_artifact,
+                atom_ids_set,
+                atom_function_names=atom_function_names,
+            )
 
         # --- Strategy 2: Naming heuristic ---
         entities_list = []
@@ -93,24 +102,20 @@ class EntityCoverageAnalyzer:
         naming_matches = match_by_naming(entities_list, all_atoms)
 
         # --- Strategy 3: Keyword overlap ---
-        entity_paragraphs = self._collect_entity_paragraphs()
-        # Build atom keywords from function names (tokenized)
-        atom_keywords: dict[str, set[str]] = {}
-        for atom in all_atoms:
-            # Use function name tokens as keywords
-            from spec_manager.compliance.coverage.matching import _tokenize_name
+        entity_paragraphs, diagnostics = self._collect_entity_paragraphs()
 
-            tokens = _tokenize_name(atom.function_name)
-            if tokens:
-                atom_keywords[atom.atom_id] = tokens
-
-        # Build entity name -> entity_id mapping
-        entity_names: dict[str, str] = {}
+        # Build entity name -> entity_ids mapping
+        entity_names: dict[str, list[str]] = {}
         if self._entities_artifact is not None:
             for entity in self._entities_artifact.entities:
-                entity_names[entity.name] = entity.entity_id
+                entity_names.setdefault(entity.name, []).append(entity.entity_id)
 
-        keyword_matches = match_by_keywords(entity_paragraphs, atom_keywords, entity_names)
+        keyword_matches = match_by_keywords(
+            entity_paragraphs,
+            atom_keywords,
+            entity_names if entity_names else None,
+            atom_function_names=atom_function_names,
+        )
 
         # Resolve all matches
         matched = resolve_matches(explicit_matches, naming_matches, keyword_matches)
@@ -139,27 +144,62 @@ class EntityCoverageAnalyzer:
             atom_coverage=atom_coverage,
             total_entities=total_entities,
             total_atoms=total_atoms,
+            diagnostics=diagnostics,
         )
 
-    def _collect_entity_paragraphs(self) -> dict[str, list[HollowedParagraph]]:
+    def _collect_entity_paragraphs(
+        self,
+    ) -> tuple[dict[str, list[HollowedParagraph]], list[dict[str, str]]]:
         """Group paragraphs by entity name using the evidence index.
 
         Returns:
-            Mapping of entity_name -> list of HollowedParagraph.
+            Tuple of:
+                - Mapping of entity_name -> list of HollowedParagraph.
+                - Diagnostics for missing evidence references.
         """
         result: dict[str, list[HollowedParagraph]] = {}
+        diagnostics: list[dict[str, str]] = []
         for entity_name, entries in self._evidence_index.global_entity_index.items():
             paragraphs: list[HollowedParagraph] = []
             for lib_id, para_id in entries:
                 spec = self._evidence_index.specs.get(lib_id)
                 if spec is None:
+                    message = (
+                        f"Entity '{entity_name}' references missing spec '{lib_id}' "
+                        f"(paragraph '{para_id}')."
+                    )
+                    logger.warning(message)
+                    diagnostics.append(
+                        {
+                            "type": "missing_spec_reference",
+                            "entity_name": entity_name,
+                            "lib_id": lib_id,
+                            "paragraph_id": para_id,
+                            "message": message,
+                        }
+                    )
                     continue
                 para = spec.paragraphs.get(para_id)
-                if para is not None:
-                    paragraphs.append(para)
+                if para is None:
+                    message = (
+                        f"Entity '{entity_name}' references missing paragraph '{para_id}' "
+                        f"in spec '{lib_id}'."
+                    )
+                    logger.warning(message)
+                    diagnostics.append(
+                        {
+                            "type": "missing_paragraph_reference",
+                            "entity_name": entity_name,
+                            "lib_id": lib_id,
+                            "paragraph_id": para_id,
+                            "message": message,
+                        }
+                    )
+                    continue
+                paragraphs.append(para)
             if paragraphs:
                 result[entity_name] = paragraphs
-        return result
+        return result, diagnostics
 
     def _get_all_entity_ids(self) -> set[str]:
         """Collect all entity IDs from both the evidence index and entities artifact.
