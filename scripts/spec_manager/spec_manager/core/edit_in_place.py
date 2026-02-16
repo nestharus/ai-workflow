@@ -17,7 +17,7 @@ from __future__ import annotations
 import enum
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from spec_manager.core.code_analysis import analyze_source
@@ -159,6 +159,7 @@ class ProjectTranslationState:
     """Translation state across an entire project (multiple files)."""
 
     files: dict[str, FileTranslationState]  # path -> state
+    analysis_failures: dict[str, str] = field(default_factory=dict)  # path -> failure reason
 
     @property
     def total_gaps(self) -> int:
@@ -170,7 +171,7 @@ class ProjectTranslationState:
 
     @property
     def is_complete(self) -> bool:
-        return all(f.is_complete for f in self.files.values())
+        return all(f.is_complete for f in self.files.values()) and not self.analysis_failures
 
     def get_gaps_by_file(self) -> dict[str, list[SpecComment]]:
         return {path: state.gaps for path, state in self.files.items() if state.gaps}
@@ -563,14 +564,15 @@ def analyze_project(
 
     # Analyze each file
     files: dict[str, FileTranslationState] = {}
+    analysis_failures: dict[str, str] = {}
     for fpath in filtered_files:
         try:
             state = analyze_file(str(fpath), workspace=workspace)
             files[str(fpath)] = state
-        except Exception:  # noqa: S112 — best-effort project scan; skip unparseable files
-            continue
+        except Exception as exc:
+            analysis_failures[str(fpath)] = str(exc)
 
-    return ProjectTranslationState(files=files)
+    return ProjectTranslationState(files=files, analysis_failures=analysis_failures)
 
 
 def find_gaps(
@@ -636,6 +638,8 @@ def format_gap_report(state: ProjectTranslationState) -> str:
         lines.append(f"- Unresolved: {unresolved}")
 
     lines.append(f"- Remaining spec comments: {total_gaps}")
+    if state.analysis_failures:
+        lines.append(f"- Files failed analysis: {len(state.analysis_failures)}")
     lines.append("")
 
     # Gaps by file
@@ -653,6 +657,13 @@ def format_gap_report(state: ProjectTranslationState) -> str:
         lines.append("## No Gaps Found")
         lines.append("")
         lines.append("All spec comments have been resolved.")
+        lines.append("")
+
+    if state.analysis_failures:
+        lines.append("## Analysis Failures")
+        lines.append("")
+        for fpath, reason in sorted(state.analysis_failures.items()):
+            lines.append(f"- {fpath}: {reason}")
         lines.append("")
 
     return "\n".join(lines)

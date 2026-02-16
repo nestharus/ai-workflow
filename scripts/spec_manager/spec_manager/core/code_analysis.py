@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+class SourceAnalysisParseError(RuntimeError):
+    """Raised when code analyzer output cannot be parsed into SourceAnalysis."""
+
+
+class SourceSignalParseError(RuntimeError):
+    """Raised when code analyzer output cannot be parsed into signal facets."""
+
+
 @dataclass(frozen=True)
 class RawFunctionInfo:
     """Function/method info extracted by LLM."""
@@ -289,8 +297,11 @@ def _parse_analysis_response(raw_output: str) -> SourceAnalysis:
                 data = json.loads(extracted)
 
     if data is None:
-        logger.error("Failed to parse code analyzer response: %s", raw_output[:200])
-        return SourceAnalysis()
+        preview = raw_output[:200]
+        logger.error("Failed to parse code analyzer response: %s", preview)
+        raise SourceAnalysisParseError(
+            f"Code analyzer returned unparsable JSON payload; preview={preview!r}"
+        )
 
     return _dict_to_source_analysis(data)
 
@@ -313,8 +324,11 @@ def _parse_signals_response(raw_output: str) -> dict[str, Any]:
                     data = loaded
 
     if data is None:
-        logger.error("Failed to parse code signal response: %s", raw_output[:200])
-        return {}
+        preview = raw_output[:200]
+        logger.error("Failed to parse code signal response: %s", preview)
+        raise SourceSignalParseError(
+            f"Code signal inference returned unparsable JSON payload; preview={preview!r}"
+        )
 
     return data
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
-from spec_manager.core.gap import Gap
+from spec_manager.core.gap import Gap, compute_evidence_signature
 
 
 @dataclass
@@ -21,40 +21,34 @@ class GapQueue:
     last_content_hash: str = ""
     is_stagnant: bool = False
 
-    @staticmethod
-    def _compute_content_hash(gaps: list[Gap]) -> str:
-        """Compute deterministic hash for gaps based on open source pointers.
-
-        Uses source pointers (e.g. ``[spec_snapshot/rules.md::SEC-F0002-0004]``)
-        instead of gap IDs.  Gap IDs are derived from LLM-generated descriptions
-        which vary across iterations, making ID-based hashing useless for
-        stagnation detection.  Source pointers remain stable, so repeated gaps
-        about the same sources will produce the same hash, correctly triggering
-        stagnation.
-        """
+    @classmethod
+    def _compute_content_hash(cls, gaps: list[Gap]) -> str:
+        """Compute deterministic hash for open gaps based on evidence identity."""
         if not gaps:
             return ""
-        open_sources: set[str] = set()
+        open_identities: set[str] = set()
         for gap in gaps:
             if gap.status == "open":
-                for src in gap.source:
-                    open_sources.add(src)
-        if not open_sources:
+                open_identities.add(cls._gap_identity(gap))
+        if not open_identities:
             return ""
-        canonical = "|".join(sorted(open_sources))
+        canonical = "|".join(sorted(open_identities))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
     def _gap_identity(gap: Gap) -> str:
         """Build a stable identity key for gap reconciliation."""
-        normalized_sources = sorted({str(src).strip() for src in gap.source if str(src).strip()})
-        if normalized_sources:
-            source_key = "|".join(normalized_sources)
-        elif str(gap.derived_artifact_target).strip():
-            source_key = f"target:{str(gap.derived_artifact_target).strip()}"
-        else:
-            source_key = f"id:{gap.id}"
-        return f"{gap.gap_type.value}:{source_key}"
+        if gap.evidence:
+            signature = compute_evidence_signature(gap.evidence)
+            return f"{gap.gap_type.value}:{signature}"
+        fallback_payload = {
+            "gap_type": gap.gap_type.value,
+            "source": sorted({str(src).strip() for src in gap.source if str(src).strip()}),
+            "target": str(gap.derived_artifact_target).strip(),
+            "description": str(gap.description).strip(),
+        }
+        canonical = json.dumps(fallback_payload, sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
     def _severity_rank(gap: Gap) -> int:
@@ -103,15 +97,13 @@ class GapQueue:
 
     @staticmethod
     def _retire_gap(gap: Gap) -> Gap:
-        """Retire an open gap that no longer appears in the latest observed set."""
+        """Carry forward an unobserved gap pending explicit resolution evidence."""
         retired = replace(gap)
         if retired.status == "open":
-            retired.status = "integrated"
-            retired.resolved_at = retired.resolved_at or datetime.now().isoformat()
             if not retired.resolution_notes:
                 retired.resolution_notes = (
-                    "Automatically retired by queue reconciliation; "
-                    "not observed in latest gap snapshot."
+                    "Not observed in latest gap snapshot; "
+                    "kept open until explicit resolution evidence is recorded."
                 )
         return retired
 

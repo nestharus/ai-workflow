@@ -6,13 +6,13 @@ Type naming (canonical v2.0 types):
 - DetectorFinding: Raw output from detectors (this module)
 - GapElement: Synthesized first-class gap element (this module)
 
-v2.0 types from data_structures.py:
-- GapEvidence: v2.0 evidence with invariant families (data_structures.py)
-- Gap: v2.0 first-class gap with evidence-based ID (data_structures.py)
+Canonical gap domain types (core/gap.py):
+- GapEvidence: evidence with invariant families
+- Gap: first-class gap with evidence-derived identity
 
 Import from the appropriate module:
 - from spec_manager.core.gaps import DetectorFinding, GapElement  # detector output
-- from spec_manager.core.data_structures import Gap, GapEvidence  # v2.0 state schema
+- from spec_manager.core.gap import Gap, GapEvidence  # canonical gap domain
 
 Evidence categories (invariant-driven):
 - Coverage: unaccounted atoms, membership failures
@@ -25,6 +25,8 @@ Evidence categories (invariant-driven):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import warnings
@@ -324,20 +326,36 @@ class UndefinedFunctionDetector:
         """
         self.builtins = set(self.DEFAULT_BUILTINS)
         self.categories = dict(self.DEFAULT_CATEGORIES)
+        self._config_issues: list[str] = []
 
-        if config_path and config_path.exists():
-            self._load_config(config_path)
+        if config_path is None:
+            return
+        if not config_path.exists():
+            self._config_issues.append(f"Config file not found: {config_path}")
+            return
+        self._load_config(config_path)
 
     def _load_config(self, config_path: Path) -> None:
         """Load word lists from YAML config (Gap 12 fix)."""
         try:
             import yaml
 
-            with open(config_path) as f:
+            with config_path.open(encoding="utf-8") as f:
                 config = yaml.safe_load(f)
+            if config is None:
+                config = {}
+            if not isinstance(config, dict):
+                raise TypeError(
+                    f"Expected mapping at top-level config, got {type(config).__name__}"
+                )
 
             if "undefined_functions" in config:
                 uf_config = config["undefined_functions"]
+                if not isinstance(uf_config, dict):
+                    raise TypeError(
+                        "Expected mapping for 'undefined_functions', "
+                        f"got {type(uf_config).__name__}"
+                    )
 
                 # Load builtins (additive)
                 if "builtins" in uf_config:
@@ -352,8 +370,9 @@ class UndefinedFunctionDetector:
                     self.builtins -= set(uf_config["exclude_builtins"])
 
         except Exception as e:
-            # Config load failure is non-fatal - use defaults
-            logger.debug(f"Failed to load config from {config_path}: {e}")
+            message = f"Failed to load config from {config_path}: {e}"
+            self._config_issues.append(message)
+            logger.warning(message, exc_info=True)
 
     def detect(self, content: str, file_path: str) -> list[DetectorFinding]:
         """Detect undefined function calls in pseudocode.
@@ -362,6 +381,21 @@ class UndefinedFunctionDetector:
         not definitive failure conditions.
         """
         evidence = []
+        for issue in self._config_issues:
+            evidence.append(
+                DetectorFinding(
+                    severity=Severity.WARNING,
+                    message=f"Undefined function detector config degraded: {issue}",
+                    location=file_path,
+                    element_id=None,
+                    detector="undefined_function_config",
+                    details={
+                        "evidence_type": "configuration_failure",
+                        "config_issue": issue,
+                    },
+                    is_authoritative=False,
+                )
+            )
 
         # Find all pseudocode blocks
         pseudo_pattern = re.compile(r"```pseudo\n(.*?)```", re.DOTALL)
@@ -1174,8 +1208,6 @@ Output as JSON list: [{{"type": "...", "confidence": 0.X, "text": "...", "struct
 
         try:
             response = self._llm.complete(prompt)
-            import json
-
             findings = json.loads(response)
 
             for finding in findings:
@@ -1197,8 +1229,23 @@ Output as JSON list: [{{"type": "...", "confidence": 0.X, "text": "...", "struct
                     )
                 )
         except Exception as e:
-            pass  # LLM failures are non-fatal
-            logger.debug(f"LLM inference failed: {e}")
+            logger.warning("LLM inference failed in prose fragment detector", exc_info=True)
+            evidence.append(
+                DetectorFinding(
+                    severity=Severity.WARNING,
+                    message="LLM prose inference failed; detector output incomplete",
+                    location=f"{file_path}:{section['start_line']}",
+                    element_id=None,
+                    detector="prose_fragment_inference",
+                    details={
+                        "evidence_type": "detector_failure",
+                        "failure": str(e),
+                        "method": "llm_inference",
+                        "can_promote": False,
+                    },
+                    is_authoritative=False,
+                )
+            )
 
         return evidence
 
@@ -1708,12 +1755,23 @@ class GapSynthesizer:
     - Same patch origin
     """
 
-    def __init__(self) -> None:
-        self._gap_counter = 0
+    @staticmethod
+    def _finding_fingerprint(finding: DetectorFinding) -> str:
+        payload = {
+            "severity": finding.severity.value,
+            "message": finding.message,
+            "location": finding.location,
+            "element_id": finding.element_id,
+            "detector": finding.detector,
+            "details": finding.details,
+            "is_authoritative": finding.is_authoritative,
+        }
+        return json.dumps(payload, sort_keys=True, default=str)
 
-    def reset_counter(self) -> None:
-        """Reset the gap ID counter."""
-        self._gap_counter = 0
+    @classmethod
+    def _gap_signature(cls, evidence: list[DetectorFinding]) -> str:
+        canonical = "|".join(sorted(cls._finding_fingerprint(item) for item in evidence))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
 
     def synthesize(self, evidence: list[DetectorFinding]) -> list[GapElement]:
         """Synthesize gaps by clustering related evidence."""
@@ -1757,7 +1815,7 @@ class GapSynthesizer:
 
     def _create_gap(self, evidence: list[DetectorFinding], element_id: str | None) -> GapElement:
         """Create a GapElement from evidence."""
-        self._gap_counter += 1
+        signature = self._gap_signature(evidence)
 
         # Determine severity (highest from evidence)
         severities = [e.severity for e in evidence]
@@ -1785,7 +1843,7 @@ class GapSynthesizer:
                 affects.append(e.location)
 
         return GapElement(
-            id=f"GAP-{self._gap_counter:04d}",
+            id=f"GAP-{signature}",
             severity=severity,
             summary=summary,
             affects=affects[:10],  # Limit
@@ -2151,61 +2209,53 @@ def detect_gaps(
     libraries_dir: Path,
     artifact_root: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Detect gaps in the spec that need resolution.
-
-    LEGACY API: This function maintains backward compatibility with the original
-    dict-based gap format. For new code, use UnifiedGapDetector instead.
-
-    Args:
-        content: Combined content from all inputs
-        registry: The library registry (derived from scanning)
-        libraries_dir: Path to libraries directory
-        artifact_root: Optional root path for artifact drift detection
-
-    Returns:
-        List of gap records (dicts)
-    """
+    """Detect gaps and project canonical GapElement output into dict records."""
+    del registry, artifact_root
     warnings.warn(
         "detect_gaps() is deprecated. Use UnifiedGapDetector instead.",
         DeprecationWarning,
         stacklevel=2,
     )
-    gaps = []
+    extractor = EvidenceExtractor()
+    evidence = extractor.extract_from_content(content, "spec.md")
 
-    # Detect undefined references
-    gaps.extend(_detect_undefined_references(content, registry))
+    if libraries_dir.exists():
+        for lib_file in sorted(libraries_dir.glob("*.md")):
+            lib_content = lib_file.read_text(encoding="utf-8")
+            lib_name = f"libraries/{lib_file.name}"
+            evidence.extend(
+                extractor.extract_from_content(lib_content, lib_name, detectors=["duplicate"])
+            )
+            evidence.extend(extractor.extract_from_comparison(content, lib_content, lib_name))
 
-    # Detect underspecified features
-    gaps.extend(_detect_underspecified(content))
+    canonical_gaps = GapSynthesizer().synthesize(evidence)
+    return [_gap_element_to_legacy_record(gap) for gap in canonical_gaps]
 
-    # Detect unknown dependencies
-    gaps.extend(_detect_unknown_dependencies(content))
 
-    # Detect conflicting definitions
-    gaps.extend(_detect_conflicts(content))
-
-    # Detect missing integration points
-    gaps.extend(_detect_missing_integrations(content, registry))
-
-    # Detect unsatisfied invariants/goals (no referencing elements)
-    gaps.extend(_detect_unsatisfied_invariants(content, registry))
-
-    # Detect TODOs that need to be resolved and removed
-    gaps.extend(_detect_todos(content))
-
-    # Detect invalid library organization (type-based instead of subsystem)
-    gaps.extend(_detect_invalid_libraries(libraries_dir))
-
-    # Detect vague invariants
-    gaps.extend(_detect_vague_invariants(content))
-
-    # Detect pin-related gaps (broken pins, unpinned specs)
-    gaps.extend(_detect_pin_gaps(content, artifact_root))
-
-    # Detect subsystem cohesion issues
-    gaps.extend(_detect_cohesion_issues(content, registry, libraries_dir))
-
-    return gaps
+def _gap_element_to_legacy_record(gap: GapElement) -> dict[str, Any]:
+    """Project canonical gap element into legacy dict shape."""
+    return {
+        "type": "synthesized_gap",
+        "id": gap.id,
+        "description": gap.summary,
+        "severity": gap.severity.value,
+        "affects": list(gap.affects),
+        "patch_origin": gap.patch_origin,
+        "bypassed": gap.bypassed,
+        "drop_reason": gap.drop_reason,
+        "evidence": [
+            {
+                "severity": finding.severity.value,
+                "message": finding.message,
+                "location": finding.location,
+                "element_id": finding.element_id,
+                "detector": finding.detector,
+                "details": finding.details,
+                "is_authoritative": finding.is_authoritative,
+            }
+            for finding in gap.evidence
+        ],
+    }
 
 
 def _detect_undefined_references(content: str, registry) -> list[dict[str, Any]]:

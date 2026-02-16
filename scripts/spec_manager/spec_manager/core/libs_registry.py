@@ -4,17 +4,20 @@ Replaces the manual libs.md file by scanning library files for:
 - ([=ID]) declarations - where an ID lives
 - (@[+ID]) references - what each section references
 
-Maintains backwards-compatible API for existing code.
+Fails explicitly when authoritative inputs are missing or unreadable.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .annotations import AnnotationParser
 from .sections import SectionExtractor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,7 +37,8 @@ class LibsRegistry:
     Instead of parsing a libs.md file, this scans library .md files
     to find ([=ID]) declarations and (@[+ID]) references.
 
-    Provides the same API as before for backwards compatibility.
+    Empty registry is authoritative only when the libraries directory exists and
+    genuinely contains no library markdown files.
     """
 
     entries: dict[str, LibsEntry] = field(default_factory=dict)
@@ -46,6 +50,10 @@ class LibsRegistry:
     @classmethod
     def from_libraries(cls, libraries_dir: Path) -> LibsRegistry:
         """Build registry by scanning library files."""
+        if not libraries_dir.exists():
+            raise FileNotFoundError(f"Libraries directory not found: {libraries_dir}")
+        if not libraries_dir.is_dir():
+            raise NotADirectoryError(f"Libraries path is not a directory: {libraries_dir}")
         registry = cls(libraries_dir=libraries_dir)
         registry._scan_libraries()
         return registry
@@ -65,25 +73,37 @@ class LibsRegistry:
         if libraries_dir.exists():
             return cls.from_libraries(libraries_dir)
 
-        # Fallback: empty registry
-        return cls()
+        raise FileNotFoundError(
+            f"Cannot build libs registry from {path}: expected sibling directory {libraries_dir}"
+        )
 
     @classmethod
     def from_content(cls, content: str) -> LibsRegistry:
-        """For backwards compatibility - returns empty registry."""
-        return cls()
+        """Reject non-authoritative content-only construction."""
+        del content
+        raise RuntimeError(
+            "LibsRegistry.from_content() is unsupported: authoritative input is the libraries directory."
+        )
 
     def _scan_libraries(self) -> None:
         """Scan all .md files in the libraries directory."""
-        if not self.libraries_dir or not self.libraries_dir.exists():
-            return
+        if not self.libraries_dir:
+            raise RuntimeError("Libraries directory not configured")
+        if not self.libraries_dir.exists():
+            raise FileNotFoundError(f"Libraries directory not found: {self.libraries_dir}")
+        if not self.libraries_dir.is_dir():
+            raise NotADirectoryError(f"Libraries path is not a directory: {self.libraries_dir}")
 
         extractor = SectionExtractor()
         parser = AnnotationParser()
 
         for lib_file in sorted(self.libraries_dir.glob("*.md")):
             lib_name = lib_file.stem  # e.g., "data" from "data.md"
-            content = lib_file.read_text(encoding="utf-8")
+            try:
+                content = lib_file.read_text(encoding="utf-8")
+            except OSError as exc:
+                logger.error("Failed reading library file %s", lib_file, exc_info=True)
+                raise RuntimeError(f"Failed reading library file {lib_file}: {exc}") from exc
 
             result = extractor.extract(content)
             self._library_ids[lib_name] = set()

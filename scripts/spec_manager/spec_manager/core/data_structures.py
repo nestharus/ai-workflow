@@ -1,7 +1,7 @@
 """Core data structures for spec_manager v2.0 state schema.
 
-This module provides the foundational data structures for evidence-based gap tracking,
-conflict resolution, compliance metrics, and strategy execution records.
+This module provides conflict-resolution, metrics, and queue data structures.
+Canonical gap domain types are sourced from ``spec_manager.core.gap``.
 
 Key Concepts:
     - Evidence-based gaps: Gaps are identified through collected evidence, with stable
@@ -14,18 +14,18 @@ Key Concepts:
       validation status and metrics.
 
 Type Naming (collision avoidance):
-    This module defines v2.0 canonical types. To avoid import collisions:
+    Gap domain types are imported from core.gap:
 
-    - GapEvidence (this module): v2.0 evidence with invariant_family, confidence
+    - GapEvidence (core.gap): evidence with invariant_family, confidence
     - DetectorFinding (gaps.py): Raw detector output (simpler structure)
 
-    - Gap (this module): v2.0 first-class gap with evidence-based ID
+    - Gap (core.gap): first-class gap with evidence-based ID
     - GapElement (gaps.py): Synthesized gap for gaps.md output
 
     - WorkflowEvidence (orchestrator.py): Evidence collected during workflow
 
     When importing, be explicit about which module you need:
-        from spec_manager.core.data_structures import Gap, GapEvidence  # v2.0
+        from spec_manager.core.data_structures import Gap, GapEvidence
         from spec_manager.core.gaps import DetectorFinding, GapElement  # synthesis
 
 Related Modules:
@@ -76,13 +76,16 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from .gaps import Severity
+from . import gap as _gap_domain
+
+Gap = _gap_domain.Gap
+GapEvidence = _gap_domain.GapEvidence
+_safe_serialize_details = _gap_domain._safe_serialize_details
+compute_evidence_signature = _gap_domain.compute_evidence_signature
 
 # =============================================================================
 # Status Constants
@@ -306,160 +309,8 @@ class ConflictBundle:
 
 
 # =============================================================================
-# Gap Evidence and Gap Structures (v2.0 Canonical Types)
+# Canonical gap domain types
 # =============================================================================
-
-
-@dataclass
-class GapEvidence:
-    """v2.0 evidence supporting a gap identification.
-
-    This is the canonical v2.0 evidence type with invariant family classification
-    and confidence scoring for evidence-based gap synthesis.
-
-    Note: This is distinct from DetectorFinding in gaps.py which is simpler
-    raw detector output. Use this type for v2.0 state schema operations.
-
-    Attributes:
-        invariant_family: Which invariant family this evidence relates to
-            (e.g., "format", "coverage", "sequence").
-        description: Human-readable description of the evidence.
-        details: Additional structured details.
-        confidence: Confidence level (0.0-1.0).
-        location: Where found (file:line), optional.
-        detector: Which detector found this, optional.
-    """
-
-    invariant_family: str
-    description: str
-    details: dict[str, Any] = field(default_factory=dict)
-    confidence: float = 1.0
-    location: str | None = None
-    detector: str | None = None
-
-    @staticmethod
-    def _serialize_details(details: dict[str, Any]) -> dict[str, Any]:
-        """Convert details dict to JSON-serializable form.
-
-        Handles common non-JSON types (Path, datetime) by converting them to
-        strings. Other non-JSON types raise ValueError to prevent silent data loss.
-
-        Args:
-            details: Dictionary of evidence details.
-
-        Returns:
-            JSON-serializable dictionary.
-
-        Raises:
-            ValueError: If details contains unsupported non-JSON types.
-        """
-
-        def make_serializable(obj: object) -> object:
-            if obj is None or isinstance(obj, (bool, int, float, str)):
-                return obj
-            if isinstance(obj, (list, tuple)):
-                return [make_serializable(item) for item in obj]
-            if isinstance(obj, dict):
-                return {str(k): make_serializable(v) for k, v in obj.items()}
-            if isinstance(obj, Path):
-                return str(obj)
-            if isinstance(obj, datetime):
-                return obj.isoformat()
-            raise ValueError(
-                f"Unsupported type in details: {type(obj).__name__}. "
-                f"Details must contain only JSON-serializable types, Path, or datetime. "
-                f"Got: {obj!r}"
-            )
-
-        return {str(k): make_serializable(v) for k, v in details.items()}
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dictionary.
-
-        Details are converted to JSON-serializable form (Path -> str, datetime -> ISO str).
-        """
-        return {
-            "invariant_family": self.invariant_family,
-            "description": self.description,
-            "details": self._serialize_details(self.details),
-            "confidence": self.confidence,
-            "location": self.location,
-            "detector": self.detector,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> GapEvidence:
-        """Deserialize from dictionary."""
-        return cls(
-            invariant_family=data["invariant_family"],
-            description=data["description"],
-            details=data.get("details", {}),
-            confidence=data.get("confidence", 1.0),
-            location=data.get("location"),
-            detector=data.get("detector"),
-        )
-
-
-@dataclass
-class Gap:
-    """v2.0 first-class gap element with evidence-based identification.
-
-    This is the canonical v2.0 gap type. Gaps are synthesized from clustered
-    GapEvidence and tracked as first-class elements with stable IDs computed
-    from evidence signatures.
-
-    Note: This is distinct from:
-    - LegacyGap in gaps.py (deprecated wrapper with gap_type field)
-    - GapElement in gaps.py (synthesized gap for gaps.md markdown output)
-
-    Use this type for v2.0 state schema operations and persistent storage.
-
-    Attributes:
-        id: Stable evidence-based ID (e.g., "GAP-abc12345").
-        severity: Severity level from gaps.py.
-        evidence: All GapEvidence supporting this gap.
-        status: One of "open", "resolved", "bypassed", "deferred".
-        affected_elements: Element IDs affected by this gap.
-        created_at: ISO timestamp of gap creation.
-        resolved_at: ISO timestamp of resolution, if resolved.
-        resolution_notes: Notes explaining the resolution.
-    """
-
-    id: str
-    severity: Severity
-    evidence: list[GapEvidence] = field(default_factory=list)
-    status: str = STATUS_OPEN
-    affected_elements: list[str] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    resolved_at: str | None = None
-    resolution_notes: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dictionary."""
-        return {
-            "id": self.id,
-            "severity": self.severity.value,
-            "evidence": [e.to_dict() for e in self.evidence],
-            "status": self.status,
-            "affected_elements": self.affected_elements,
-            "created_at": self.created_at,
-            "resolved_at": self.resolved_at,
-            "resolution_notes": self.resolution_notes,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Gap:
-        """Deserialize from dictionary."""
-        return cls(
-            id=data["id"],
-            severity=Severity(data["severity"]),
-            evidence=[GapEvidence.from_dict(e) for e in data.get("evidence", [])],
-            status=data.get("status", STATUS_OPEN),
-            affected_elements=data.get("affected_elements", []),
-            created_at=data.get("created_at", datetime.now().isoformat()),
-            resolved_at=data.get("resolved_at"),
-            resolution_notes=data.get("resolution_notes"),
-        )
 
 
 # =============================================================================
@@ -620,137 +471,3 @@ class StrategyRecord:
             metrics=data.get("metrics", {}),
             notes=data.get("notes"),
         )
-
-
-# =============================================================================
-# Evidence Signature Computation
-# =============================================================================
-
-
-def _safe_serialize_details(details: dict[str, Any]) -> str:
-    """Safely serialize details dict to a deterministic JSON string.
-
-    Handles common non-JSON-serializable types with deterministic conversions
-    (Path, datetime) and raises ValueError for unsupported types so callers
-    can sanitize details before hashing.
-
-    Args:
-        details: Dictionary of evidence details.
-
-    Returns:
-        Deterministic JSON string representation.
-
-    Raises:
-        ValueError: If details contains unsupported types that cannot be
-            deterministically serialized.
-    """
-    if not details:
-        return "{}"
-
-    def make_serializable(obj: object) -> object:
-        """Convert non-serializable objects to serializable form."""
-        if obj is None or isinstance(obj, (bool, int, float, str)):
-            return obj
-        if isinstance(obj, (list, tuple)):
-            return [make_serializable(item) for item in obj]
-        if isinstance(obj, dict):
-            return {str(k): make_serializable(v) for k, v in sorted(obj.items())}
-        # Handle common types with deterministic conversions
-        if isinstance(obj, Path):
-            return str(obj)
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        # Reject unsupported types to prevent non-deterministic signatures
-        raise ValueError(
-            f"Unsupported type in evidence details: {type(obj).__name__}. "
-            f"Details must contain only JSON-serializable types, Path, or datetime. "
-            f"Got: {obj!r}"
-        )
-
-    serializable_details = make_serializable(details)
-    return json.dumps(serializable_details, sort_keys=True)
-
-
-def compute_evidence_signature(evidence_list: list[GapEvidence]) -> str:
-    """Compute a stable signature from a list of gap evidence.
-
-    The signature is deterministic - the same evidence will always produce
-    the same signature, enabling stable gap IDs across runs. All evidence
-    fields are included to prevent collisions.
-
-    Signature Contract:
-        - Evidence is sorted by ALL fields (invariant_family, description,
-          details_canonical, location, detector, confidence) to ensure full
-          determinism even when primary fields match.
-        - Confidence values are rounded to 2 decimal places. This means
-          0.951 and 0.954 will both round to 0.95 and produce the same
-          signature contribution. This is intentional to handle floating
-          point precision variations across runs.
-        - Empty evidence lists are not allowed since gaps must have supporting
-          evidence. Use the evidence to identify the gap.
-        - Non-JSON-serializable values in details (except Path and datetime)
-          will raise ValueError to prevent non-deterministic signatures.
-
-    Args:
-        evidence_list: List of GapEvidence objects to compute signature from.
-            Must not be empty.
-
-    Returns:
-        First 8 characters of the SHA-256 hex digest (e.g., "abc12345").
-
-    Raises:
-        ValueError: If evidence_list is empty. Gaps must have evidence.
-
-    Example:
-        >>> evidence = [GapEvidence(invariant_family="format", description="test", details={})]
-        >>> sig = compute_evidence_signature(evidence)
-        >>> gap_id = f"GAP-{sig}"  # e.g., "GAP-abc12345"
-    """
-    if not evidence_list:
-        raise ValueError(
-            "Cannot compute signature for empty evidence list. "
-            "Gaps must have at least one piece of supporting evidence."
-        )
-
-    def _make_sort_key(e: GapEvidence) -> tuple[str, str, str, str, str, float]:
-        """Create a complete sort key including all fields for full determinism."""
-        location = e.location if e.location is not None else ""
-        detector = e.detector if e.detector is not None else ""
-        # Round confidence to 2 decimals for stability across floating point variations
-        confidence = round(e.confidence, 2)
-        details_canonical = _safe_serialize_details(e.details)
-        return (
-            e.invariant_family,
-            e.description,
-            details_canonical,
-            location,
-            detector,
-            confidence,
-        )
-
-    # Sort evidence by all fields for fully deterministic ordering
-    sorted_evidence = sorted(evidence_list, key=_make_sort_key)
-
-    # Create canonical representation including all fields
-    canonical_parts = []
-    for e in sorted_evidence:
-        # Normalize None values to empty string for consistency
-        location = e.location if e.location is not None else ""
-        detector = e.detector if e.detector is not None else ""
-        # Round confidence to 2 decimal places (documented in signature contract)
-        confidence = round(e.confidence, 2)
-        # Use safe serialization for details to handle non-JSON types
-        details_str = _safe_serialize_details(e.details)
-
-        # Include all fields in canonical representation
-        canonical_parts.append(
-            f"{e.invariant_family}:{e.description}:{details_str}:{location}:{detector}:{confidence}"
-        )
-
-    canonical_str = "|".join(canonical_parts)
-
-    # Compute SHA-256 hash
-    hash_digest = hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
-
-    # Return first 8 characters
-    return hash_digest[:8]

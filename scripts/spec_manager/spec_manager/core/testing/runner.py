@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
@@ -72,9 +73,26 @@ class PytestRunner:
         extra_args: list[str] | None = None,
         *,
         timeout_seconds: int = 300,
+        command_builder: Callable[[Path, list[str] | None, list[str]], list[str]] | None = None,
     ) -> None:
         self._extra_args = extra_args or []
         self._timeout_seconds = timeout_seconds
+        self._command_builder = command_builder or self._default_command_builder
+
+    @staticmethod
+    def _default_command_builder(
+        root: Path,
+        targets: list[str] | None,
+        extra_args: list[str],
+    ) -> list[str]:
+        """Build a pytest command; kept runner-specific behind this contract."""
+        cmd = ["python", "-m", "pytest", "-q", "--tb=short", "-p", "no:randomly"]
+        cmd.extend(extra_args)
+        if targets:
+            cmd.extend(targets)
+        else:
+            cmd.append(str(root))
+        return cmd
 
     def run(
         self,
@@ -95,13 +113,7 @@ class PytestRunner:
         """
         import time
 
-        cmd = ["python", "-m", "pytest", "-q", "--tb=short", "-p", "no:randomly"]
-        cmd.extend(self._extra_args)
-
-        if targets:
-            cmd.extend(targets)
-        else:
-            cmd.append(str(root))
+        cmd = self._command_builder(root, targets, list(self._extra_args))
 
         start = time.monotonic()
 

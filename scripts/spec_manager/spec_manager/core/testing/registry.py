@@ -13,10 +13,29 @@ from spec_manager.core.testing.runner import PytestRunner, TestRunner
 
 logger = logging.getLogger(__name__)
 
-# Well-known test configuration files mapped to runner IDs
-_RUNNER_INDICATORS: list[tuple[list[str], str]] = [
-    (["pytest.ini", "pyproject.toml", "setup.cfg", "conftest.py"], "pytest"),
-]
+
+class RunnerSelectionError(RuntimeError):
+    """Raised when runner selection is unknown or ambiguous."""
+
+
+def _pyproject_declares_pytest(pyproject_path: Path) -> bool:
+    if not pyproject_path.exists():
+        return False
+    try:
+        content = pyproject_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.pytest" in content
+
+
+def _setup_cfg_declares_pytest(setup_cfg_path: Path) -> bool:
+    if not setup_cfg_path.exists():
+        return False
+    try:
+        content = setup_cfg_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool:pytest]" in content or "[pytest]" in content
 
 
 class TestRunnerRegistry:
@@ -38,26 +57,39 @@ class TestRunnerRegistry:
     def pick(self, *, root: Path, timeout_seconds: int = 300) -> TestRunner:
         """Pick the best test runner for the given project root.
 
-        Returns PytestRunner by default (Python-first, extend later).
+        Raises:
+            RunnerSelectionError: when no runner can be determined or selection is ambiguous.
         """
-        for indicators, runner_id in _RUNNER_INDICATORS:
-            for indicator in indicators:
-                if (root / indicator).exists():
-                    runner_cls = self._runners.get(runner_id)
-                    if runner_cls:
-                        logger.debug(
-                            "Picked %s runner for %s (found %s)",
-                            runner_id,
-                            root,
-                            indicator,
-                        )
-                        if runner_id == "pytest":
-                            return runner_cls(timeout_seconds=timeout_seconds)
-                        return runner_cls()
+        candidates: set[str] = set()
+        if (
+            (root / "pytest.ini").exists()
+            or (root / "conftest.py").exists()
+            or _pyproject_declares_pytest(root / "pyproject.toml")
+            or _setup_cfg_declares_pytest(root / "setup.cfg")
+        ):
+            candidates.add("pytest")
 
-        # Default to pytest
-        logger.debug("No runner indicator found, defaulting to pytest for %s", root)
-        return PytestRunner(timeout_seconds=timeout_seconds)
+        available_candidates = sorted(
+            runner_id for runner_id in candidates if runner_id in self._runners
+        )
+
+        if len(available_candidates) == 1:
+            runner_id = available_candidates[0]
+            runner_cls = self._runners[runner_id]
+            logger.debug("Picked %s runner for %s", runner_id, root)
+            if runner_id == "pytest":
+                return runner_cls(timeout_seconds=timeout_seconds)
+            return runner_cls()
+
+        if len(available_candidates) > 1:
+            raise RunnerSelectionError(
+                f"Ambiguous test runner selection for {root}: {available_candidates}"
+            )
+
+        raise RunnerSelectionError(
+            f"No test runner detected for {root}. "
+            "Add runner configuration (for example pytest.ini or [tool.pytest] in pyproject.toml)."
+        )
 
     def list_runners(self) -> list[str]:
         """List all registered runner IDs."""

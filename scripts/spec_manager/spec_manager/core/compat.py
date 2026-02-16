@@ -1,8 +1,7 @@
 """Atom ID parsing and upgrade utilities.
 
-Supports both legacy (v1) and new (v2) atom ID formats:
-- v1 (legacy): ATOM-F####-L#### (e.g. ATOM-F0001-L0042)
-- v2 (new):    ATOM-F####-R####-L#### (e.g. ATOM-F0001-R0001-L0042)
+Canonical runtime format:
+- v2: ATOM-F####-R####-L#### (e.g. ATOM-F0001-R0001-L0042)
 """
 
 from __future__ import annotations
@@ -10,11 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-LEGACY_ATOM_PATTERN = re.compile(r"^ATOM-(?P<file_id>F\d{4})-L(?P<line_no>\d{4})$")
-
 NEW_ATOM_PATTERN = re.compile(r"^ATOM-(?P<file_uid>F\d{4})-(?P<rev_id>R\d{4})-L(?P<line_no>\d{4})$")
-
-DEFAULT_LEGACY_REV_ID = "R0001"
 
 
 @dataclass
@@ -24,7 +19,7 @@ class ParsedAtomId:
     file_uid: str
     rev_id: str
     line_no: int
-    format: str  # "v1" or "v2"
+    format: str  # "v2"
 
     @property
     def atom_id(self) -> str:
@@ -47,30 +42,13 @@ def parse_atom_id(atom_id: str) -> ParsedAtomId:
             format="v2",
         )
 
-    m = LEGACY_ATOM_PATTERN.match(atom_id)
-    if m:
-        return ParsedAtomId(
-            file_uid=m.group("file_id"),
-            rev_id=DEFAULT_LEGACY_REV_ID,
-            line_no=int(m.group("line_no")),
-            format="v1",
-        )
-
-    raise ValueError(f"Invalid atom ID format: {atom_id!r}")
+    raise ValueError(f"Invalid atom ID format: {atom_id!r}. Expected ATOM-F####-R####-L####")
 
 
 def upgrade_atom_id(atom_id: str) -> str:
-    """Upgrade a legacy v1 atom ID to v2 format.
-
-    If already v2, returns unchanged. Raises ValueError for invalid IDs.
-    """
+    """Normalize an atom ID in canonical v2 format."""
     parsed = parse_atom_id(atom_id)
     return parsed.atom_id
-
-
-def is_legacy_format(atom_id: str) -> bool:
-    """Check if an atom ID is in legacy (v1) format."""
-    return LEGACY_ATOM_PATTERN.match(atom_id) is not None
 
 
 def is_new_format(atom_id: str) -> bool:
