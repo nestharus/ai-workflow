@@ -21,6 +21,10 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
+class ArtifactIntegrityError(RuntimeError):
+    """Raised when persisted architecture artifacts are invalid or incomplete."""
+
+
 def persist_decision_artifacts(
     workspace_root: Path,
     run_id: str,
@@ -63,6 +67,7 @@ def persist_decision_artifacts(
     candidates_dir = decision_dir / "candidates"
     candidates_dir.mkdir(parents=True, exist_ok=True)
 
+    normalized_ids: dict[str, str] = {}
     for index, candidate in enumerate(candidates, start=1):
         candidate_id = (
             str(getattr(candidate, "candidate_id", "")).strip() or f"candidate_{index:03d}"
@@ -70,6 +75,13 @@ def persist_decision_artifacts(
         normalized_id = re.sub(r"[^a-zA-Z0-9._-]+", "_", candidate_id).strip("._")
         if not normalized_id:
             normalized_id = f"candidate_{index:03d}"
+        if normalized_id in normalized_ids:
+            prior_candidate_id = normalized_ids[normalized_id]
+            raise ArtifactIntegrityError(
+                "Candidate filename collision while persisting architecture artifacts: "
+                f"{prior_candidate_id!r} and {candidate_id!r} both map to {normalized_id!r}"
+            )
+        normalized_ids[normalized_id] = candidate_id
         _write_json(candidates_dir / f"{normalized_id}.json", candidate.to_dict())
 
     _write_json(decision_dir / "selected.json", outcome.to_dict())
@@ -114,14 +126,21 @@ def load_committed_decisions(
         return []
 
     outcomes: list[DecisionOutcome] = []
+    errors: list[str] = []
     for outcome_path in sorted(decisions_dir.glob("*/selected.json")):
         try:
             data = json.loads(outcome_path.read_text(encoding="utf-8"))
             outcome = DecisionOutcome.from_dict(data)
             if outcome.committed:
                 outcomes.append(outcome)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load selected decision from %s: %s", outcome_path, exc)
+        except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+            errors.append(f"{outcome_path}: {exc}")
+
+    if errors:
+        raise ArtifactIntegrityError(
+            "Failed to load committed architecture decisions from a complete state:\n"
+            + "\n".join(f"- {message}" for message in errors)
+        )
 
     return outcomes
 
@@ -133,4 +152,8 @@ def load_committed_decisions(
 
 def _write_json(path: Path, data: Any) -> None:
     """Write JSON data to a file."""
-    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    try:
+        rendered = json.dumps(data, indent=2)
+    except (TypeError, ValueError) as exc:
+        raise ArtifactIntegrityError(f"Non-serializable JSON payload for {path}: {exc}") from exc
+    path.write_text(rendered, encoding="utf-8")

@@ -74,18 +74,25 @@ class ProposerOrchestrator:
         list[dict[str, str]]
             K distinct tradeoff position assignments.
         """
-        actual_k = k if k is not None else self._k
+        actual_k = max(1, (k if k is not None else self._k))
 
         axes = _select_axes(decision_point, actual_k)
 
         positions: list[dict[str, str]] = []
-        for i in range(actual_k):
+        max_unique_positions = (1 << len(axes)) - 1
+        if actual_k > max_unique_positions:
+            raise ValueError(
+                "Cannot generate distinct tradeoff positions: "
+                f"k={actual_k} exceeds max={max_unique_positions} for axes={axes}"
+            )
+
+        for ordinal in range(1, actual_k + 1):
+            # Gray-code masks spread choices while guaranteeing uniqueness.
+            mask = ordinal ^ (ordinal >> 1)
             position: dict[str, str] = {}
-            for j, axis in enumerate(axes):
-                if (i + j) % actual_k == 0:
-                    position[axis] = "prioritize"
-                else:
-                    position[axis] = "sacrifice"
+            for axis_index, axis in enumerate(axes):
+                bit = 1 << axis_index
+                position[axis] = "prioritize" if (mask & bit) else "sacrifice"
             positions.append(position)
 
         return positions
@@ -149,11 +156,17 @@ class ProposerOrchestrator:
             decision_id=decision_point.decision_id,
             scope=decision_point.scope,
             position=position,
-            proposal={"approach": "stub_proposal", "details": "No LLM available"},
+            proposal={"approach": "", "details": "", "status": "llm_unavailable"},
             constraints_introduced={"software": {}, "non_software": {}},
-            decision_requirements=[],
+            decision_requirements=[
+                f"LLM proposal generation unavailable for {decision_point.decision_id}; "
+                "manual architecture proposal required"
+            ],
             assumptions=[],
-            trace=[f"heuristic-proposal for {decision_point.decision_id}"],
+            trace=[
+                f"heuristic-proposal for {decision_point.decision_id}",
+                "candidate marked non-committable: llm unavailable",
+            ],
         )
 
     def _propose_via_llm(
@@ -210,7 +223,7 @@ def _build_proposal_prompt(
     constraints_text = (
         "\n".join(
             f"  - [{c.constraint_id}] {c.question}: {c.answer}"
-            for c in scope_packet.authoritative_constraints[:20]
+            for c in scope_packet.authoritative_constraints
         )
         or "  (none)"
     )
@@ -256,6 +269,7 @@ def _parse_proposal_output(
     constraints_introduced: dict[str, Any] = {"software": {}, "non_software": {}}
     decision_requirements: list[str] = []
     assumptions: list[str] = []
+    trace_entries = [f"llm-proposal for {decision_id}"]
 
     try:
         text = raw.strip()
@@ -264,20 +278,50 @@ def _parse_proposal_output(
         if start == -1 or end == -1:
             raise ValueError("No JSON object found in output")
         parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise TypeError("Proposal output must be a JSON object")
+
+        approach = str(parsed.get("approach", "")).strip()
+        details = str(parsed.get("details", "")).strip()
+        if not approach or not details:
+            raise ValueError("Proposal output missing required approach/details")
+
         proposal = {
-            "approach": parsed.get("approach", ""),
-            "details": parsed.get("details", ""),
+            "approach": approach,
+            "details": details,
         }
         ci = parsed.get("constraints_introduced", {})
+        if not isinstance(ci, dict):
+            raise TypeError("constraints_introduced must be an object (dict)")
+        software = ci.get("software", {})
+        non_software = ci.get("non_software", {})
+        if not isinstance(software, dict) or not isinstance(non_software, dict):
+            raise TypeError("constraints_introduced.software/non_software must be objects (dict)")
         constraints_introduced = {
-            "software": dict(ci.get("software", {})),
-            "non_software": dict(ci.get("non_software", {})),
+            "software": dict(software),
+            "non_software": dict(non_software),
         }
-        decision_requirements = list(parsed.get("decision_requirements", []))
-        assumptions = list(parsed.get("assumptions", []))
-    except (json.JSONDecodeError, ValueError):
+        decision_requirements = _coerce_string_list(
+            parsed.get("decision_requirements", []),
+            field_name="decision_requirements",
+        )
+        assumptions = _coerce_string_list(
+            parsed.get("assumptions", []),
+            field_name="assumptions",
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse proposal output for %s", candidate_id)
-        proposal = {"approach": "parse_error", "raw": raw[:500]}
+        proposal = {
+            "approach": "",
+            "details": "",
+            "status": "parse_failed",
+            "raw_excerpt": raw[:500],
+        }
+        decision_requirements = [
+            f"Failed to parse candidate proposal {candidate_id}: {exc}. "
+            "Manual architecture proposal required"
+        ]
+        trace_entries.append("candidate marked non-committable: parse failed")
 
     return ArchitectureCandidate(
         candidate_id=candidate_id,
@@ -288,5 +332,19 @@ def _parse_proposal_output(
         constraints_introduced=constraints_introduced,
         decision_requirements=decision_requirements,
         assumptions=assumptions,
-        trace=[f"llm-proposal for {decision_id}"],
+        trace=trace_entries,
     )
+
+
+def _coerce_string_list(value: Any, *, field_name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise TypeError(f"{field_name} must be a list")
+
+    items: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise TypeError(f"{field_name}[{index}] must be a string")
+        text = item.strip()
+        if text:
+            items.append(text)
+    return items

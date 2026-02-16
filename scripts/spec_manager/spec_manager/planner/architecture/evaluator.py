@@ -23,6 +23,9 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
+_ASSESSMENT_RECOMMENDATIONS = {"accept", "reject", "needs_human"}
+_SATISFACTION_VALUES = {"satisfied", "violated", "unknown", "unevaluated"}
+
 
 class CandidateEvaluator:
     """Evaluates architecture candidates against constraints.
@@ -108,6 +111,9 @@ class CandidateEvaluator:
             )
 
         assessment_map = {a.candidate_id: a for a in assessments}
+        required_constraint_ids = [
+            c.constraint_id for c in authoritative_constraints if str(c.constraint_id).strip()
+        ]
 
         # Find acceptable candidates (no blockers, no unknowns, accept recommendation)
         acceptable: list[tuple[ArchitectureCandidate, CandidateAssessment]] = []
@@ -118,13 +124,29 @@ class CandidateEvaluator:
             if assess is None:
                 continue
 
-            if assess.recommendation == "accept" and not assess.blockers:
-                has_unknown = any(v == "unknown" for v in assess.constraint_satisfaction.values())
-                if not has_unknown:
-                    acceptable.append((cand, assess))
-                else:
-                    needs_human.append((cand, assess))
-            elif assess.recommendation == "needs_human":
+            unresolved_constraint_ids = [
+                cid
+                for cid in required_constraint_ids
+                if assess.constraint_satisfaction.get(cid) != "satisfied"
+            ]
+            has_non_satisfied = any(
+                status != "satisfied" for status in assess.constraint_satisfaction.values()
+            )
+            all_verified = not unresolved_constraint_ids and not has_non_satisfied
+            candidate_committable = _candidate_is_committable(cand)
+
+            if (
+                assess.recommendation == "accept"
+                and not assess.blockers
+                and all_verified
+                and candidate_committable
+            ):
+                acceptable.append((cand, assess))
+            elif (
+                assess.recommendation in {"accept", "needs_human"}
+                or not all_verified
+                or not candidate_committable
+            ):
                 needs_human.append((cand, assess))
 
         # Path 1: commit the lowest-risk acceptable candidate
@@ -145,8 +167,23 @@ class CandidateEvaluator:
 
         # Path 2: needs human authority
         if needs_human:
-            best_cand, _ = needs_human[0]
+            needs_human.sort(key=lambda pair: pair[1].risk_score)
+            best_cand, best_assess = needs_human[0]
             reqs = list(best_cand.decision_requirements)
+            unresolved = [
+                cid
+                for cid in required_constraint_ids
+                if best_assess.constraint_satisfaction.get(cid) != "satisfied"
+            ]
+            if unresolved:
+                reqs.append(
+                    "Unverified authoritative constraints: " + ", ".join(sorted(set(unresolved)))
+                )
+            if not _candidate_is_committable(best_cand):
+                reqs.append(
+                    f"Candidate {best_cand.candidate_id} is non-committable "
+                    + "until a complete proposal is provided"
+                )
             if not reqs:
                 reqs = [
                     f"Human review required for {decision_point.decision_id}: "
@@ -237,21 +274,41 @@ class CandidateEvaluator:
                 if cid in human_required_ids:
                     satisfaction[cid] = "unknown"
                 else:
-                    satisfaction[cid] = "satisfied"
+                    satisfaction[cid] = "unevaluated"
 
-            # Check for decision_requirements -> needs_human
-            if cand.decision_requirements or human_required_ids:
-                recommendation = "needs_human"
-            elif blockers:
-                recommendation = "reject"
-            else:
-                recommendation = "accept"
+            if constraint_ids:
+                blockers.append(
+                    "Constraint satisfaction was not verified; heuristic mode does not provide "
+                    + "authoritative evaluation"
+                )
+
+            if human_required_ids:
+                blockers.append(
+                    "Human authority required for constraints: "
+                    + ", ".join(sorted(human_required_ids))
+                )
+
+            if cand.decision_requirements:
+                blockers.extend(
+                    f"Candidate requires unresolved decision: {req}"
+                    for req in cand.decision_requirements
+                )
+
+            if not _candidate_is_committable(cand):
+                blockers.append(
+                    f"Candidate {cand.candidate_id or '<unknown>'} is non-committable "
+                    + "without a complete proposal"
+                )
+
+            recommendation = "needs_human"
 
             risk_score = 0.0
             if cand.assumptions:
                 risk_score += 0.1 * len(cand.assumptions)
             if cand.decision_requirements:
                 risk_score += 0.2 * len(cand.decision_requirements)
+            if any(value != "satisfied" for value in satisfaction.values()):
+                risk_score += 0.1
             risk_score = min(risk_score, 1.0)
 
             assessments.append(
@@ -315,7 +372,7 @@ def _build_evaluation_prompt(
     constraints_text = (
         "\n".join(
             f"  - [{c.constraint_id}] {c.question}: {c.answer} (authority: {c.authority_required})"
-            for c in authoritative_constraints[:30]
+            for c in authoritative_constraints
         )
         or "  (none)"
     )
@@ -370,14 +427,30 @@ def _parse_evaluation_output(
         if not isinstance(item, dict):
             continue
         rec = item.get("recommendation", "needs_human")
-        if rec not in ("accept", "reject", "needs_human"):
+        if rec not in _ASSESSMENT_RECOMMENDATIONS:
             rec = "needs_human"
+
+        raw_satisfaction = item.get("constraint_satisfaction", {})
+        if not isinstance(raw_satisfaction, dict):
+            raw_satisfaction = {}
+        satisfaction = {
+            str(cid): str(status).strip().lower()
+            for cid, status in raw_satisfaction.items()
+            if str(status).strip().lower() in _SATISFACTION_VALUES
+        }
+
+        raw_blockers = item.get("blockers", [])
+        blockers = (
+            [str(blocker) for blocker in raw_blockers]
+            if isinstance(raw_blockers, list)
+            else [str(raw_blockers)]
+        )
 
         assessments.append(
             CandidateAssessment(
                 candidate_id=item.get("candidate_id", ""),
-                constraint_satisfaction=dict(item.get("constraint_satisfaction", {})),
-                blockers=list(item.get("blockers", [])),
+                constraint_satisfaction=satisfaction,
+                blockers=blockers,
                 risk_score=float(item.get("risk_score", 0.5)),
                 reversibility=item.get("reversibility", "MEDIUM"),
                 recommendation=rec,
@@ -385,3 +458,21 @@ def _parse_evaluation_output(
         )
 
     return assessments
+
+
+def _candidate_is_committable(candidate: ArchitectureCandidate) -> bool:
+    """Return True only for candidates that can safely pass commit gating."""
+    if candidate.decision_requirements:
+        return False
+
+    proposal = candidate.proposal
+    if not isinstance(proposal, dict):
+        return False
+
+    status = str(proposal.get("status", "")).strip().lower()
+    if status in {"llm_unavailable", "parse_failed", "incomplete"}:
+        return False
+
+    approach = str(proposal.get("approach", "")).strip()
+    details = str(proposal.get("details", "")).strip()
+    return bool(approach and details and approach.lower() not in {"parse_error", "stub_proposal"})

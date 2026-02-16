@@ -59,17 +59,66 @@ class DecisionPoint:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DecisionPoint:
+        payload = _require_mapping(d, "DecisionPoint")
+        impact_payload = _require_mapping(
+            _require_key(payload, "impact", "DecisionPoint"), "DecisionPoint.impact"
+        )
         return cls(
-            decision_id=d.get("decision_id", ""),
-            scope=d.get("scope", ""),
-            description=d.get("description", ""),
-            trigger_evidence=list(d.get("trigger_evidence", [])),
-            impact=ImpactClassification.from_dict(d.get("impact", {})),
-            owner_slice_id=d.get("owner_slice_id", ""),
-            status=d.get("status", "OPEN"),
-            required_constraints=list(d.get("required_constraints", [])),
-            candidate_refs=list(d.get("candidate_refs", [])),
-            selected_candidate_ref=d.get("selected_candidate_ref", ""),
+            decision_id=_require_string(
+                _require_key(payload, "decision_id", "DecisionPoint"), "DecisionPoint.decision_id"
+            ),
+            scope=_require_string(
+                _require_key(payload, "scope", "DecisionPoint"), "DecisionPoint.scope"
+            ),
+            description=_require_string(
+                _require_key(payload, "description", "DecisionPoint"), "DecisionPoint.description"
+            ),
+            trigger_evidence=_require_string_list(
+                _require_key(payload, "trigger_evidence", "DecisionPoint"),
+                "DecisionPoint.trigger_evidence",
+            ),
+            impact=ImpactClassification(
+                impact=_require_literal(
+                    _require_key(impact_payload, "impact", "DecisionPoint.impact"),
+                    "DecisionPoint.impact.impact",
+                    {"LOW", "MEDIUM", "HIGH"},
+                ),
+                blast_radius=_require_literal(
+                    _require_key(impact_payload, "blast_radius", "DecisionPoint.impact"),
+                    "DecisionPoint.impact.blast_radius",
+                    {"LOCAL", "SLICE", "CROSS_SLICE", "SYSTEM"},
+                ),
+                reversibility=_require_literal(
+                    _require_key(impact_payload, "reversibility", "DecisionPoint.impact"),
+                    "DecisionPoint.impact.reversibility",
+                    {"EASY", "MEDIUM", "HARD"},
+                ),
+                triggers=_require_string_list(
+                    _require_key(impact_payload, "triggers", "DecisionPoint.impact"),
+                    "DecisionPoint.impact.triggers",
+                ),
+            ),
+            owner_slice_id=_require_string(
+                _require_key(payload, "owner_slice_id", "DecisionPoint"),
+                "DecisionPoint.owner_slice_id",
+            ),
+            status=_require_literal(
+                _require_key(payload, "status", "DecisionPoint"),
+                "DecisionPoint.status",
+                {"OPEN", "EXPLORING", "BLOCKED", "DECIDED"},
+            ),
+            required_constraints=_require_string_list(
+                _require_key(payload, "required_constraints", "DecisionPoint"),
+                "DecisionPoint.required_constraints",
+            ),
+            candidate_refs=_require_string_list(
+                _require_key(payload, "candidate_refs", "DecisionPoint"),
+                "DecisionPoint.candidate_refs",
+            ),
+            selected_candidate_ref=_require_string(
+                _require_key(payload, "selected_candidate_ref", "DecisionPoint"),
+                "DecisionPoint.selected_candidate_ref",
+            ),
         )
 
 
@@ -120,17 +169,47 @@ class ScopePacket:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ScopePacket:
+        payload = _require_mapping(d, "ScopePacket")
+        constraints_payload = _require_list(
+            _require_key(payload, "authoritative_constraints", "ScopePacket"),
+            "ScopePacket.authoritative_constraints",
+        )
         return cls(
-            decision_id=d.get("decision_id", ""),
-            scope=d.get("scope", ""),
-            trigger_evidence=list(d.get("trigger_evidence", [])),
-            source_artifacts=dict(d.get("source_artifacts", {})),
+            decision_id=_require_string(
+                _require_key(payload, "decision_id", "ScopePacket"), "ScopePacket.decision_id"
+            ),
+            scope=_require_string(
+                _require_key(payload, "scope", "ScopePacket"), "ScopePacket.scope"
+            ),
+            trigger_evidence=_require_string_list(
+                _require_key(payload, "trigger_evidence", "ScopePacket"),
+                "ScopePacket.trigger_evidence",
+            ),
+            source_artifacts=_require_mapping(
+                _require_key(payload, "source_artifacts", "ScopePacket"),
+                "ScopePacket.source_artifacts",
+            ),
             authoritative_constraints=[
-                ConstraintFact.from_dict(c) for c in d.get("authoritative_constraints", [])
+                ConstraintFact.from_dict(
+                    _require_mapping(
+                        item,
+                        f"ScopePacket.authoritative_constraints[{index}]",
+                    )
+                )
+                for index, item in enumerate(constraints_payload)
             ],
-            current_arch_state_refs=list(d.get("current_arch_state_refs", [])),
-            tradeoff_assignment=dict(d.get("tradeoff_assignment", {})),
-            positions_taken=list(d.get("positions_taken", [])),
+            current_arch_state_refs=_require_string_list(
+                _require_key(payload, "current_arch_state_refs", "ScopePacket"),
+                "ScopePacket.current_arch_state_refs",
+            ),
+            tradeoff_assignment=_require_string_mapping(
+                _require_key(payload, "tradeoff_assignment", "ScopePacket"),
+                "ScopePacket.tradeoff_assignment",
+            ),
+            positions_taken=_require_string_list(
+                _require_key(payload, "positions_taken", "ScopePacket"),
+                "ScopePacket.positions_taken",
+            ),
         )
 
 
@@ -186,20 +265,56 @@ class ArchitectureCandidate:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ArchitectureCandidate:
-        ci = d.get("constraints_introduced", {})
+        payload = _require_mapping(d, "ArchitectureCandidate")
+        ci = _require_mapping(
+            _require_key(payload, "constraints_introduced", "ArchitectureCandidate"),
+            "ArchitectureCandidate.constraints_introduced",
+        )
+        software = _require_mapping(
+            _require_key(ci, "software", "ArchitectureCandidate.constraints_introduced"),
+            "ArchitectureCandidate.constraints_introduced.software",
+        )
+        non_software = _require_mapping(
+            _require_key(ci, "non_software", "ArchitectureCandidate.constraints_introduced"),
+            "ArchitectureCandidate.constraints_introduced.non_software",
+        )
         return cls(
-            candidate_id=d.get("candidate_id", ""),
-            decision_id=d.get("decision_id", ""),
-            scope=d.get("scope", ""),
-            position=dict(d.get("position", {})),
-            proposal=dict(d.get("proposal", {})),
+            candidate_id=_require_string(
+                _require_key(payload, "candidate_id", "ArchitectureCandidate"),
+                "ArchitectureCandidate.candidate_id",
+            ),
+            decision_id=_require_string(
+                _require_key(payload, "decision_id", "ArchitectureCandidate"),
+                "ArchitectureCandidate.decision_id",
+            ),
+            scope=_require_string(
+                _require_key(payload, "scope", "ArchitectureCandidate"),
+                "ArchitectureCandidate.scope",
+            ),
+            position=_require_string_mapping(
+                _require_key(payload, "position", "ArchitectureCandidate"),
+                "ArchitectureCandidate.position",
+            ),
+            proposal=_require_mapping(
+                _require_key(payload, "proposal", "ArchitectureCandidate"),
+                "ArchitectureCandidate.proposal",
+            ),
             constraints_introduced={
-                "software": dict(ci.get("software", {})),
-                "non_software": dict(ci.get("non_software", {})),
+                "software": software,
+                "non_software": non_software,
             },
-            decision_requirements=list(d.get("decision_requirements", [])),
-            assumptions=list(d.get("assumptions", [])),
-            trace=list(d.get("trace", [])),
+            decision_requirements=_require_string_list(
+                _require_key(payload, "decision_requirements", "ArchitectureCandidate"),
+                "ArchitectureCandidate.decision_requirements",
+            ),
+            assumptions=_require_string_list(
+                _require_key(payload, "assumptions", "ArchitectureCandidate"),
+                "ArchitectureCandidate.assumptions",
+            ),
+            trace=_require_string_list(
+                _require_key(payload, "trace", "ArchitectureCandidate"),
+                "ArchitectureCandidate.trace",
+            ),
         )
 
 
@@ -240,13 +355,35 @@ class CandidateAssessment:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CandidateAssessment:
+        payload = _require_mapping(d, "CandidateAssessment")
         return cls(
-            candidate_id=d.get("candidate_id", ""),
-            constraint_satisfaction=dict(d.get("constraint_satisfaction", {})),
-            blockers=list(d.get("blockers", [])),
-            risk_score=d.get("risk_score", 0.0),
-            reversibility=d.get("reversibility", "EASY"),
-            recommendation=d.get("recommendation", "accept"),
+            candidate_id=_require_string(
+                _require_key(payload, "candidate_id", "CandidateAssessment"),
+                "CandidateAssessment.candidate_id",
+            ),
+            constraint_satisfaction=_require_literal_mapping(
+                _require_key(payload, "constraint_satisfaction", "CandidateAssessment"),
+                "CandidateAssessment.constraint_satisfaction",
+                {"satisfied", "violated", "unknown", "unevaluated"},
+            ),
+            blockers=_require_string_list(
+                _require_key(payload, "blockers", "CandidateAssessment"),
+                "CandidateAssessment.blockers",
+            ),
+            risk_score=_require_float(
+                _require_key(payload, "risk_score", "CandidateAssessment"),
+                "CandidateAssessment.risk_score",
+            ),
+            reversibility=_require_literal(
+                _require_key(payload, "reversibility", "CandidateAssessment"),
+                "CandidateAssessment.reversibility",
+                {"EASY", "MEDIUM", "HARD"},
+            ),
+            recommendation=_require_literal(
+                _require_key(payload, "recommendation", "CandidateAssessment"),
+                "CandidateAssessment.recommendation",
+                {"accept", "reject", "needs_human"},
+            ),
         )
 
 
@@ -290,12 +427,115 @@ class DecisionOutcome:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DecisionOutcome:
+        payload = _require_mapping(d, "DecisionOutcome")
         return cls(
-            decision_id=d.get("decision_id", ""),
-            committed=d.get("committed", False),
-            selected_candidate_id=d.get("selected_candidate_id", ""),
-            wiring_intentions=[dict(w) for w in d.get("wiring_intentions", [])],
-            new_constraints=list(d.get("new_constraints", [])),
-            under_spec_events=[dict(e) for e in d.get("under_spec_events", [])],
-            decision_requirements=list(d.get("decision_requirements", [])),
+            decision_id=_require_string(
+                _require_key(payload, "decision_id", "DecisionOutcome"),
+                "DecisionOutcome.decision_id",
+            ),
+            committed=_require_bool(
+                _require_key(payload, "committed", "DecisionOutcome"),
+                "DecisionOutcome.committed",
+            ),
+            selected_candidate_id=_require_string(
+                _require_key(payload, "selected_candidate_id", "DecisionOutcome"),
+                "DecisionOutcome.selected_candidate_id",
+            ),
+            wiring_intentions=_require_mapping_list(
+                _require_key(payload, "wiring_intentions", "DecisionOutcome"),
+                "DecisionOutcome.wiring_intentions",
+            ),
+            new_constraints=_require_string_list(
+                _require_key(payload, "new_constraints", "DecisionOutcome"),
+                "DecisionOutcome.new_constraints",
+            ),
+            under_spec_events=_require_mapping_list(
+                _require_key(payload, "under_spec_events", "DecisionOutcome"),
+                "DecisionOutcome.under_spec_events",
+            ),
+            decision_requirements=_require_string_list(
+                _require_key(payload, "decision_requirements", "DecisionOutcome"),
+                "DecisionOutcome.decision_requirements",
+            ),
         )
+
+
+def _require_key(payload: dict[str, Any], key: str, context: str) -> Any:
+    if key not in payload:
+        raise ValueError(f"{context} missing required key '{key}'")
+    return payload[key]
+
+
+def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{field_name} must be an object")
+    return dict(value)
+
+
+def _require_list(value: Any, field_name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise TypeError(f"{field_name} must be a list")
+    return list(value)
+
+
+def _require_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    return value
+
+
+def _require_bool(value: Any, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"{field_name} must be a boolean")
+    return value
+
+
+def _require_float(value: Any, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"{field_name} must be a number")
+    return float(value)
+
+
+def _require_literal(value: Any, field_name: str, allowed: set[str]) -> str:
+    text = _require_string(value, field_name)
+    if text not in allowed:
+        raise ValueError(f"{field_name} must be one of {sorted(allowed)}")
+    return text
+
+
+def _require_string_list(value: Any, field_name: str) -> list[str]:
+    items = _require_list(value, field_name)
+    result: list[str] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, str):
+            raise TypeError(f"{field_name}[{index}] must be a string")
+        result.append(item)
+    return result
+
+
+def _require_mapping_list(value: Any, field_name: str) -> list[dict[str, Any]]:
+    items = _require_list(value, field_name)
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        result.append(_require_mapping(item, f"{field_name}[{index}]"))
+    return result
+
+
+def _require_string_mapping(value: Any, field_name: str) -> dict[str, str]:
+    mapping = _require_mapping(value, field_name)
+    result: dict[str, str] = {}
+    for key, item in mapping.items():
+        if not isinstance(key, str):
+            raise TypeError(f"{field_name} keys must be strings")
+        if not isinstance(item, str):
+            raise TypeError(f"{field_name}[{key!r}] must be a string")
+        result[key] = item
+    return result
+
+
+def _require_literal_mapping(value: Any, field_name: str, allowed: set[str]) -> dict[str, str]:
+    mapping = _require_string_mapping(value, field_name)
+    for key, status in mapping.items():
+        if status not in allowed:
+            raise ValueError(f"{field_name}[{key!r}] must be one of {sorted(allowed)}")
+    return mapping

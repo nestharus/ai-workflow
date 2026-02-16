@@ -21,6 +21,13 @@ from .types import DecisionPoint
 
 logger = logging.getLogger(__name__)
 
+_ALLOWED_IMPACT = {"LOW", "MEDIUM", "HIGH"}
+_ALLOWED_BLAST_RADIUS = {"LOCAL", "SLICE", "CROSS_SLICE", "SYSTEM"}
+
+
+class DetectionOutputError(ValueError):
+    """Raised when decision-detection output cannot be trusted."""
+
 
 class DecisionPointDetector:
     """Detects architecture decision points from slice context.
@@ -234,19 +241,19 @@ def _build_detection_prompt(
 ) -> str:
     """Build the LLM prompt for decision detection."""
     nodes_summary = []
-    for node in discovery.get("nodes", [])[:50]:
+    for node in discovery.get("nodes", []):
         nodes_summary.append(
             f"  - {node.get('kind', '?')}: {node.get('name', node.get('id', '?'))}"
         )
     nodes_text = "\n".join(nodes_summary) if nodes_summary else "  (none)"
 
     gaps_summary = []
-    for gap in gaps[:30]:
+    for gap in gaps:
         gaps_summary.append(f"  - {gap.get('target', '?')}: {gap.get('description', '')}")
     gaps_text = "\n".join(gaps_summary) if gaps_summary else "  (none)"
 
     evidence_text = (
-        "\n".join(f"  - {ref}" for ref in evidence_refs[:20]) if evidence_refs else "  (none)"
+        "\n".join(f"  - {ref}" for ref in evidence_refs) if evidence_refs else "  (none)"
     )
 
     return f"""Analyze the following slice for architecture decision points.
@@ -280,38 +287,53 @@ Return [] if no architecture decisions are needed.
 
 
 def _parse_detection_output(raw: str, slice_id: str) -> list[DecisionPoint]:
-    """Parse LLM output into DecisionPoint instances."""
+    """Parse LLM output into DecisionPoint instances.
+
+    Raises
+    ------
+    DetectionOutputError
+        If the response cannot be parsed into valid decision points.
+    """
     try:
         text = raw.strip()
         start = text.find("[")
         end = text.rfind("]")
         if start == -1 or end == -1:
-            return []
+            raise DetectionOutputError("LLM output did not contain a JSON array")
         parsed = json.loads(text[start : end + 1])
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Failed to parse decision detection output")
-        return []
+    except json.JSONDecodeError as exc:
+        raise DetectionOutputError("Failed to parse decision detection JSON output") from exc
 
     points: list[DecisionPoint] = []
-    for item in parsed:
-        if not isinstance(item, dict):
-            continue
+    if not isinstance(parsed, list):
+        raise DetectionOutputError("Decision detection output must be a JSON array")
 
-        scope = _normalize_scope(item.get("scope"), default_library=slice_id)
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise DetectionOutputError(f"Decision item at index {index} is not an object")
+
+        scope = _normalize_scope(item.get("scope"))
         if scope is None:
-            logger.debug("Discarding decision with invalid scope: %s", item.get("scope"))
-            continue
+            raw_scope = str(item.get("scope", "")).strip()
+            if not raw_scope:
+                raise DetectionOutputError(f"Decision item at index {index} is missing scope")
+            scope = f"unresolved:{raw_scope}"
 
         description = str(item.get("description", "")).strip()
         if not description:
-            continue
+            raise DetectionOutputError(f"Decision item at index {index} is missing description")
 
-        impact = str(item.get("impact", "MEDIUM")).strip().upper() or "MEDIUM"
-        if impact not in {"LOW", "MEDIUM", "HIGH"}:
-            impact = "MEDIUM"
-        blast_radius = str(item.get("blast_radius", "SLICE")).strip().upper() or "SLICE"
-        if blast_radius not in {"LOCAL", "SLICE", "CROSS_SLICE", "SYSTEM"}:
-            blast_radius = "SLICE"
+        impact = str(item.get("impact", "")).strip().upper()
+        if impact not in _ALLOWED_IMPACT:
+            raise DetectionOutputError(
+                f"Decision item at index {index} has invalid impact: {item.get('impact')!r}"
+            )
+        blast_radius = str(item.get("blast_radius", "")).strip().upper()
+        if blast_radius not in _ALLOWED_BLAST_RADIUS:
+            raise DetectionOutputError(
+                "Decision item at index "
+                f"{index} has invalid blast_radius: {item.get('blast_radius')!r}"
+            )
 
         point = DecisionPoint(
             decision_id=f"DEC-{uuid.uuid4().hex[:8]}",
@@ -331,31 +353,35 @@ def _parse_detection_output(raw: str, slice_id: str) -> list[DecisionPoint]:
 
 
 def _derive_gap_scope(gap: dict[str, Any], *, default_library: str) -> str | None:
-    explicit_scope = _normalize_scope(gap.get("scope"), default_library=default_library)
-    if explicit_scope is not None:
-        return explicit_scope
+    del default_library  # Scope defaults are intentionally not inferred from slice IDs.
+
+    raw_scope = str(gap.get("scope", "")).strip()
+    if raw_scope:
+        explicit_scope = _normalize_scope(raw_scope)
+        if explicit_scope is not None:
+            return explicit_scope
+        return f"unresolved:{raw_scope}"
 
     inter_scope = _extract_inter_scope_from_gap(gap)
     if inter_scope is not None:
         return inter_scope
 
-    library = _normalize_library(default_library)
+    library = ""
+    for key in (
+        "owner_slice_id",
+        "slice_id",
+        "library",
+        "library_id",
+        "lib_id",
+        "lib",
+        "component_id",
+    ):
+        library = _normalize_library(gap.get(key))
+        if library:
+            break
     if not library:
-        for key in (
-            "owner_slice_id",
-            "slice_id",
-            "library",
-            "library_id",
-            "lib_id",
-            "lib",
-            "component_id",
-            "target",
-        ):
-            library = _normalize_library(gap.get(key))
-            if library:
-                break
-    if not library:
-        return None
+        target = str(gap.get("target", "")).strip()
+        return f"unresolved:{target}" if target else None
     return f"intra:{library}"
 
 
@@ -419,18 +445,22 @@ def _coerce_trigger_evidence(value: Any) -> list[str]:
     return []
 
 
-def _normalize_scope(scope: Any, *, default_library: str = "") -> str | None:
+def _normalize_scope(scope: Any) -> str | None:
     raw = str(scope or "").strip()
     if not raw:
-        library = _normalize_library(default_library)
-        return f"intra:{library}" if library else None
+        return None
 
-    if raw.startswith("intra:"):
-        intra_body = raw.removeprefix("intra:")
+    if raw.lower() == "system":
+        return "system"
+
+    lowered = raw.lower()
+
+    if lowered.startswith("intra:"):
+        intra_body = raw.split(":", 1)[1]
         return _normalize_intra_scope(intra_body)
 
-    if raw.startswith("inter:"):
-        inter_body = raw.removeprefix("inter:")
+    if lowered.startswith("inter:"):
+        inter_body = raw.split(":", 1)[1]
         return _normalize_inter_scope(inter_body)
 
     return None
