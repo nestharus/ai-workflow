@@ -31,10 +31,12 @@ Usage::
 from __future__ import annotations
 
 import logging
+import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 from spec_manager.orchestration.promotion_loop import (
@@ -507,7 +509,8 @@ class ReactivePromotionScheduler:
         assert self._wake_queue is not None
         woken: list[str] = []
         for sid in list(waiting_set.keys()):
-            events = self._wake_queue.dequeue(sid)
+            raw_events = self._wake_queue.dequeue(sid)
+            events = [self._wake_event_payload(event) for event in raw_events]
             if not events:
                 continue
 
@@ -518,16 +521,191 @@ class ReactivePromotionScheduler:
                 # Will be caught by the exceeded check in the main loop
                 continue
 
-            ref = waiting_set.pop(sid)
+            ref = waiting_set[sid]
+            resume_ref = self._build_resume_slice_ref(
+                ref=ref,
+                wake_count=wake_counts[sid],
+                wake_events=events,
+            )
+            sync_ok, sync_error = self._sync_slice_for_resume(
+                slice_ref=resume_ref,
+                run_context=run_context,
+            )
+            if not sync_ok:
+                waiting_set[sid] = self._mark_resume_merge_conflict(
+                    ref=resume_ref,
+                    error=sync_error,
+                    wake_events=events,
+                )
+                logger.warning(
+                    "Wake sync failed for slice '%s'; waiting for triage-compatible wake event: %s",
+                    sid,
+                    sync_error,
+                )
+                continue
+
+            waiting_set.pop(sid, None)
             future = executor.submit(
                 self._run_single_slice,
-                ref,
+                resume_ref,
                 run_context,
                 cancel_event,
             )
             active_futures[future] = sid
             woken.append(sid)
         return woken
+
+    @staticmethod
+    def _wake_event_payload(event: Any) -> dict[str, Any]:
+        """Normalize wake queue entries into dict payloads."""
+        if isinstance(event, dict):
+            return dict(event)
+        to_dict = getattr(event, "to_dict", None)
+        if callable(to_dict):
+            try:
+                payload = to_dict()
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict):
+                return payload
+        payload: dict[str, Any] = {}
+        for key in (
+            "event_id",
+            "timestamp",
+            "monitor_id",
+            "signal_id",
+            "slice_id",
+            "layer",
+            "reason",
+            "artifact_key",
+            "wake_payload",
+        ):
+            value = getattr(event, key, None)
+            if value is None:
+                continue
+            payload[key] = value
+        return payload
+
+    @staticmethod
+    def _build_resume_slice_ref(
+        *,
+        ref: SliceRef,
+        wake_count: int,
+        wake_events: list[dict[str, Any]],
+    ) -> SliceRef:
+        """Copy wake context into slice metadata for resumed runs."""
+        metadata = dict(ref.metadata) if isinstance(ref.metadata, dict) else {}
+        metadata["wake_count"] = max(wake_count, 0)
+        metadata["wake_events"] = list(wake_events)
+
+        if wake_events:
+            last_event = wake_events[-1]
+            signal_id = str(last_event.get("signal_id", "")).strip()
+            if signal_id:
+                metadata["last_signal_id"] = signal_id
+            wake_payload = last_event.get("wake_payload")
+            metadata["wake_payload"] = wake_payload if isinstance(wake_payload, dict) else {}
+            metadata["wake_reason"] = str(last_event.get("reason", "")).strip()
+            metadata["wake_artifact_key"] = str(last_event.get("artifact_key", "")).strip()
+        return replace(ref, metadata=metadata)
+
+    @staticmethod
+    def _mark_resume_merge_conflict(
+        *,
+        ref: SliceRef,
+        error: str,
+        wake_events: list[dict[str, Any]],
+    ) -> SliceRef:
+        """Attach merge-conflict resume context without re-queuing normal execution."""
+        metadata = dict(ref.metadata) if isinstance(ref.metadata, dict) else {}
+        last_signal = str(metadata.get("last_signal_id", "")).strip() or (
+            f"{ref.slice_id}:wake-sync-merge-conflict"
+        )
+        wake_payload = (
+            dict(metadata.get("wake_payload", {}))
+            if isinstance(metadata.get("wake_payload", {}), dict)
+            else {}
+        )
+        wake_payload["wake_sync_status"] = "MERGE_CONFLICT"
+        wake_payload["wake_sync_error"] = str(error).strip()
+        wake_payload["layer"] = str(ref.layer)
+        metadata["last_signal_id"] = last_signal
+        metadata["wake_payload"] = wake_payload
+        metadata["wake_requires_triage"] = True
+
+        merge_event = {
+            "signal_id": last_signal,
+            "slice_id": ref.slice_id,
+            "layer": str(ref.layer),
+            "reason": "wake_sync_merge_conflict",
+            "artifact_key": f"{ref.layer}/dirty",
+            "wake_payload": wake_payload,
+        }
+        metadata["wake_events"] = [*wake_events, merge_event]
+        return replace(ref, metadata=metadata)
+
+    @staticmethod
+    def _git_fetch_origin(worktree: Path) -> tuple[bool, str]:
+        """Best-effort fetch to refresh remote-tracking refs before wake rebase."""
+        try:
+            proc = subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            return False, str(exc)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()
+        return True, ""
+
+    def _sync_slice_for_resume(
+        self,
+        *,
+        slice_ref: SliceRef,
+        run_context: RunContext,
+    ) -> tuple[bool, str]:
+        """Sync a waking slice against layer dirty before re-queueing execution."""
+        wm = getattr(self._loop, "_wm", None)
+        if wm is None or not hasattr(wm, "vcs") or not hasattr(wm, "layer_branch"):
+            return True, ""
+
+        slice_worktree = None
+        try:
+            slice_worktree = wm.get_slice_worktree(slice_ref.layer, slice_ref.slice_id)
+        except Exception:
+            slice_worktree = None
+        if slice_worktree is None and str(slice_ref.worktree_path).strip():
+            slice_worktree = Path(slice_ref.worktree_path)
+        if slice_worktree is None:
+            return False, f"Slice worktree missing for wake sync ({slice_ref.slice_id})"
+
+        worktree_path = Path(slice_worktree)
+        if not worktree_path.exists():
+            return False, f"Slice worktree path does not exist: {worktree_path}"
+
+        fetched, fetch_error = self._git_fetch_origin(worktree_path)
+        if not fetched and fetch_error:
+            logger.warning(
+                "git fetch origin failed before wake rebase for slice '%s': %s",
+                slice_ref.slice_id,
+                fetch_error,
+            )
+
+        try:
+            dirty_branch = wm.layer_branch(slice_ref.layer, "dirty")
+        except Exception:
+            dirty_branch = f"pdd/{run_context.run_id}/{slice_ref.layer}/dirty"
+
+        try:
+            rebased, rebase_error = wm.vcs.rebase(worktree_path, dirty_branch)
+        except Exception as exc:
+            return False, str(exc)
+        if not rebased:
+            return False, str(rebase_error or "Unknown rebase failure")
+        return True, ""
 
     def _monitor_loop(
         self,

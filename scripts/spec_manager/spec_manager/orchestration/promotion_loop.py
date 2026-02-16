@@ -271,6 +271,26 @@ def _bundle_json_path(base: Path, run_id: str, slice_id: str, iteration: int) ->
     )
 
 
+def _max_persisted_iteration(base: Path, run_id: str, slice_id: str) -> int:
+    """Return the highest persisted iteration index for a slice."""
+    if not run_id or not slice_id:
+        return 0
+    slices_root = base / ".pdd_runs" / run_id / "slices" / slice_id
+    if not slices_root.exists():
+        return 0
+
+    latest = 0
+    for candidate in slices_root.glob("iter_*"):
+        if not candidate.is_dir():
+            continue
+        try:
+            iter_num = int(candidate.name.split("_")[-1])
+        except (TypeError, ValueError):
+            continue
+        latest = max(latest, iter_num)
+    return latest
+
+
 def _write_iteration_json(bundle: EvidenceBundle, evidence_root: Path, name: str, data: Any) -> str:
     """Write a JSON artifact in the current iteration directory and return filename."""
     iteration_dir = bundle.iter_dir(evidence_root)
@@ -1142,6 +1162,8 @@ class SliceResult:
     blocked_questions: list[str] = field(default_factory=list)
     pending_signals: list[dict] = field(default_factory=list)
     wake_count: int = 0
+    last_signal_id: str = ""
+    wake_payload: dict[str, Any] = field(default_factory=dict)
     error: str = ""
 
 
@@ -3964,6 +3986,7 @@ class CoordinateStep:
             "EXTERNAL_DEPENDENCY_UNKNOWN": "MISSING_INTERFACE",
             "NEEDS_PRODUCT_DECISION": "AMBIGUOUS_SPEC",
             "NEEDS_API_DECISION": "MISSING_INTERFACE",
+            "MERGE_CONFLICT": "MERGE_CONFLICT",
         }
         question = str(event.get("question", "")).strip() or "Under-specification detected"
         raw_event_id = str(event.get("event_id", "")).strip()
@@ -7600,34 +7623,89 @@ class IntegrateStep:
             summary = (
                 f"Merge conflict after rebase retry: {merge_result.error or 'unknown merge error'}"
             )
-            refs = [
-                summary,
-                *[
-                    str(item.get("error", "")).strip()
-                    for item in merge_attempts
-                    if str(item.get("error", "")).strip()
-                ],
-            ]
-            tickets = self._build_test_failure_tickets(
-                ctx=ctx,
-                bundle=bundle,
-                refs=refs,
-                summary=summary,
-                evidence_refs=["integration.report.json"],
+            refs = [summary]
+            refs.extend(
+                str(item.get("error", "")).strip()
+                for item in merge_attempts
+                if str(item.get("error", "")).strip()
             )
+            dirty_branch = (
+                wm.layer_branch(ctx.layer, "dirty")
+                if wm is not None and hasattr(wm, "layer_branch")
+                else f"pdd/{ctx.run_id}/{ctx.layer}/dirty"
+            )
+            merge_conflict_payload: dict[str, Any] = {
+                "merge_error": str(merge_result.error or "").strip(),
+                "merge_attempts": list(merge_attempts),
+                "dirty_branch": dirty_branch,
+                "slice_root": ctx.slice_root,
+                "refs": refs,
+            }
+
+            signal_id = ""
+            try:
+                from spec_manager.orchestration.coordination.signals import (
+                    CoordinationSignal,
+                    SignalNeed,
+                )
+
+                signal = CoordinationSignal(
+                    run_id=ctx.run_id,
+                    layer=ctx.layer,
+                    slice_id=ctx.slice_id,
+                    iteration=bundle.iteration,
+                    classification="MERGE_CONFLICT",
+                    need=SignalNeed(
+                        summary=summary,
+                        artifact_type="git_branch",
+                        artifact_key=dirty_branch,
+                        expected_shape={"resolution": "conflict_resolution_commit"},
+                        confidence=1.0,
+                    ),
+                    payload=merge_conflict_payload,
+                )
+                signal.write_to(bundle.iter_dir(evidence_root))
+                signal_id = signal.signal_id
+            except Exception:
+                logger.warning(
+                    "Failed to emit MERGE_CONFLICT coordination signal for %s",
+                    ctx.slice_id,
+                    exc_info=True,
+                )
+
+            merge_event = {
+                "event_id": signal_id or hashlib.sha256(summary.encode("utf-8")).hexdigest()[:12],
+                "kind": "MERGE_CONFLICT",
+                "question": summary,
+                "context": merge_conflict_payload,
+                "source": "INTEGRATE",
+            }
+            existing_events = [
+                event
+                for event in (bundle.implementation.under_spec_events or [])
+                if isinstance(event, dict)
+            ]
+            _append_unique_record(existing_events, merge_event)
+            bundle.implementation.under_spec_events = existing_events
+            if signal_id:
+                _append_unique_record(
+                    bundle.under_spec.decisions,
+                    {
+                        "signal_id": signal_id,
+                        "action": "MERGE_CONFLICT",
+                        "summary": summary,
+                        "source": "INTEGRATE",
+                    },
+                )
+
             record_artifacts(
                 merge=merge_result,
-                emitted=tickets,
                 error=merge_result.error,
                 merge_attempts=merge_attempts,
                 failure_evidence=failure_evidence,
                 investigator_report_refs=investigator_report_refs,
             )
-            return StepResult(
-                status="RETRY",
-                emitted_tickets=tickets,
-                error=merge_result.error,
-            )
+            return StepResult(status="RETRY", error=summary)
 
         ci_tick_triggered = False
         ci_tick_error = ""
@@ -9528,6 +9606,51 @@ class PromotionLoop:
         Returns:
             SliceResult with final status.
         """
+        raw_metadata = slice_ref.metadata if isinstance(slice_ref.metadata, dict) else {}
+        metadata = dict(raw_metadata)
+
+        wake_count_seed = 0
+        try:
+            wake_count_seed = int(metadata.get("wake_count", 0) or 0)
+        except (TypeError, ValueError):
+            wake_count_seed = 0
+
+        wake_events_raw = metadata.get("wake_events", [])
+        wake_events: list[dict[str, Any]] = []
+        if isinstance(wake_events_raw, list):
+            for item in wake_events_raw:
+                if isinstance(item, dict):
+                    wake_events.append(dict(item))
+        wake_requires_triage = bool(metadata.get("wake_requires_triage", False))
+
+        last_signal_id = str(metadata.get("last_signal_id", "")).strip()
+        wake_payload_raw = metadata.get("wake_payload", {})
+        wake_payload = dict(wake_payload_raw) if isinstance(wake_payload_raw, dict) else {}
+        if wake_events:
+            for event in wake_events:
+                event_signal = str(event.get("signal_id", "")).strip()
+                if event_signal:
+                    last_signal_id = event_signal
+                event_payload = event.get("wake_payload")
+                if isinstance(event_payload, dict):
+                    wake_payload = dict(event_payload)
+        elif last_signal_id or wake_payload:
+            wake_events = [
+                {
+                    "signal_id": last_signal_id,
+                    "slice_id": slice_ref.slice_id,
+                    "layer": str(slice_ref.layer),
+                    "reason": str(metadata.get("wake_reason", "")).strip(),
+                    "artifact_key": str(metadata.get("wake_artifact_key", "")).strip(),
+                    "wake_payload": dict(wake_payload),
+                }
+            ]
+
+        def build_slice_result(**kwargs: Any) -> SliceResult:
+            kwargs.setdefault("last_signal_id", last_signal_id)
+            kwargs.setdefault("wake_payload", dict(wake_payload))
+            return SliceResult(**kwargs)
+
         gate_passed, gate_error = self._resolve_phase0_quality_gate(run_context)
         if not gate_passed:
             logger.warning(
@@ -9535,7 +9658,7 @@ class PromotionLoop:
                 slice_ref.slice_id,
                 gate_error,
             )
-            return SliceResult(
+            return build_slice_result(
                 slice_id=slice_ref.slice_id,
                 status="FAILED",
                 iterations=0,
@@ -9596,13 +9719,12 @@ class PromotionLoop:
         )
 
         all_tickets: list[DemotionTicket] = []
-        iteration = 0
-        wake_count_seed = 0
-        if isinstance(slice_ref.metadata, dict):
-            try:
-                wake_count_seed = int(slice_ref.metadata.get("wake_count", 0) or 0)
-            except (TypeError, ValueError):
-                wake_count_seed = 0
+        resume_iteration_seed = _max_persisted_iteration(
+            evidence_root,
+            run_context.run_id,
+            slice_ref.slice_id,
+        )
+        iteration = max(resume_iteration_seed, 0)
         waiting_iterations = max(wake_count_seed, 0)
 
         # Per-ticket retry budget: track (failing_files_key, gate) → count
@@ -9612,19 +9734,76 @@ class PromotionLoop:
         bundle = EvidenceBundle(
             run_id=run_context.run_id,
             slice_id=slice_ref.slice_id,
-            iteration=0,
+            iteration=iteration,
             created_at=_now_iso(),
             mode=run_context.mode,
             workspace_root=run_context.workspace_root,
             slice_root=slice_ref.worktree_path,
         )
-        if seed_gap_set and seed_gap_set.open_gaps:
+        if seed_gap_set and seed_gap_set.open_gaps and iteration == 0:
             bundle.gaps.open_gaps = [
                 _normalize_gap_record(gap)
                 for gap in seed_gap_set.open_gaps
                 if isinstance(gap, dict)
             ]
             bundle.gaps.path = "gaps.json"
+        if wake_events:
+            for idx, event in enumerate(wake_events, start=1):
+                event_signal = str(event.get("signal_id", "")).strip()
+                wake_event_payload = (
+                    dict(event.get("wake_payload", {}))
+                    if isinstance(event.get("wake_payload"), dict)
+                    else {}
+                )
+                _append_unique_record(
+                    bundle.under_spec.decisions,
+                    {
+                        "source": "WAKE_EVENT",
+                        "sequence": idx,
+                        "signal_id": event_signal,
+                        "reason": str(event.get("reason", "")).strip(),
+                        "artifact_key": str(event.get("artifact_key", "")).strip(),
+                        "wake_payload": wake_event_payload,
+                    },
+                )
+        if wake_requires_triage:
+            merge_summary = str(wake_payload.get("wake_sync_error", "")).strip() or (
+                "Wake sync reported merge conflict and requires triage"
+            )
+            conflict_event = {
+                "event_id": last_signal_id
+                or hashlib.sha256(merge_summary.encode("utf-8")).hexdigest()[:12],
+                "kind": "MERGE_CONFLICT",
+                "question": f"Resolve wake-sync merge conflict: {merge_summary}",
+                "context": dict(wake_payload),
+                "source": "WAKE_SYNC",
+            }
+            existing_events = [
+                event
+                for event in (bundle.implementation.under_spec_events or [])
+                if isinstance(event, dict)
+            ]
+            _append_unique_record(existing_events, conflict_event)
+            bundle.implementation.under_spec_events = existing_events
+
+        if iteration >= max_iters:
+            return build_slice_result(
+                slice_id=ctx.slice_id,
+                status="MAX_ITERATIONS",
+                iterations=iteration,
+                remaining_gaps=0,
+                demotion_tickets=all_tickets,
+            )
+
+        prioritize_coordinate = wake_requires_triage
+
+        def has_merge_conflict_under_spec() -> bool:
+            return any(
+                str(event.get("kind", "")).strip().upper() == "MERGE_CONFLICT"
+                for event in (bundle.implementation.under_spec_events or [])
+                if isinstance(event, dict)
+            )
+
         periodic_tick_due_at: float | None = None
         if ctx.ci_periodic_tick_callback is not None:
             interval = max(float(ctx.ci_periodic_tick_interval_sec), 1.0)
@@ -9659,7 +9838,19 @@ class PromotionLoop:
             waiting = False
             step_statuses: dict[str, str] = {}
 
-            for step in active_steps:
+            iteration_steps = active_steps
+            if prioritize_coordinate:
+                coordinate_steps = [
+                    step for step in active_steps if getattr(step, "name", "") == "COORDINATE"
+                ]
+                if coordinate_steps:
+                    non_coordinate_steps = [
+                        step for step in active_steps if getattr(step, "name", "") != "COORDINATE"
+                    ]
+                    iteration_steps = [*coordinate_steps, *non_coordinate_steps]
+                prioritize_coordinate = False
+
+            for step in iteration_steps:
                 maybe_emit_periodic_ci_tick()
                 logger.debug("Running step: %s", step.name)
                 result = step.run(ctx, bundle)
@@ -9676,7 +9867,7 @@ class PromotionLoop:
                         bundle.status = "FAILED"
                         self._persist_iteration_artifacts(ctx, bundle)
                         bundle.save(evidence_root)
-                        return SliceResult(
+                        return build_slice_result(
                             slice_id=ctx.slice_id,
                             status="STAGNATED",
                             iterations=iteration,
@@ -9750,7 +9941,7 @@ class PromotionLoop:
                             bundle.status = "FAILED"
                             self._persist_iteration_artifacts(ctx, bundle)
                             bundle.save(evidence_root)
-                            return SliceResult(
+                            return build_slice_result(
                                 slice_id=ctx.slice_id,
                                 status="STAGNATED",
                                 iterations=iteration,
@@ -9806,7 +9997,7 @@ class PromotionLoop:
                             step.name,
                             next_bundle_path,
                         )
-                        return SliceResult(
+                        return build_slice_result(
                             slice_id=ctx.slice_id,
                             status="FAILED",
                             iterations=iteration,
@@ -9840,7 +10031,7 @@ class PromotionLoop:
                             if cleaned:
                                 questions.append(cleaned)
                     questions = list(dict.fromkeys(questions))
-                    return SliceResult(
+                    return build_slice_result(
                         slice_id=ctx.slice_id,
                         status="BLOCKED",
                         iterations=iteration,
@@ -9850,6 +10041,8 @@ class PromotionLoop:
 
                 if result.status == "RETRY":
                     # A gate/test/merge failed — restart iteration
+                    if step.name == "INTEGRATE" and has_merge_conflict_under_spec():
+                        prioritize_coordinate = True
                     retry = True
                     break
 
@@ -9857,7 +10050,7 @@ class PromotionLoop:
                     bundle.status = "FAILED"
                     self._persist_iteration_artifacts(ctx, bundle)
                     bundle.save(evidence_root)
-                    return SliceResult(
+                    return build_slice_result(
                         slice_id=ctx.slice_id,
                         status="FAILED",
                         iterations=iteration,
@@ -9891,7 +10084,7 @@ class PromotionLoop:
                         for item in pending
                         if str(item.get("question", "")).strip()
                     ]
-                    return SliceResult(
+                    return build_slice_result(
                         slice_id=ctx.slice_id,
                         status="BLOCKED",
                         iterations=iteration,
@@ -9902,7 +10095,7 @@ class PromotionLoop:
                         wake_count=waiting_iterations,
                         error=f"Exceeded max_wait_cycles ({run_context.max_wait_cycles})",
                     )
-                return SliceResult(
+                return build_slice_result(
                     slice_id=ctx.slice_id,
                     status="WAITING",
                     iterations=iteration,
@@ -9947,7 +10140,7 @@ class PromotionLoop:
                     bundle.status = "FAILED"
                     self._persist_iteration_artifacts(ctx, bundle)
                     bundle.save(evidence_root)
-                    return SliceResult(
+                    return build_slice_result(
                         slice_id=ctx.slice_id,
                         status="STAGNATED",
                         iterations=iteration,
@@ -9959,7 +10152,7 @@ class PromotionLoop:
                 bundle.status = "COMPLETE"
                 self._persist_iteration_artifacts(ctx, bundle)
                 bundle.save(evidence_root)
-                return SliceResult(
+                return build_slice_result(
                     slice_id=ctx.slice_id,
                     status="COMPLETE",
                     iterations=iteration,
@@ -9979,7 +10172,7 @@ class PromotionLoop:
         bundle.status = "FAILED"
         self._persist_iteration_artifacts(ctx, bundle)
         bundle.save(evidence_root)
-        return SliceResult(
+        return build_slice_result(
             slice_id=ctx.slice_id,
             status="MAX_ITERATIONS",
             iterations=iteration,
