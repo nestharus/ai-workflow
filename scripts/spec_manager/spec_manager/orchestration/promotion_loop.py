@@ -3385,6 +3385,11 @@ class ImplementStep:
             "under_spec_events": bundle.implementation.under_spec_events,
             "tests_added": bundle.implementation.tests_added,
             "patch_path": bundle.implementation.patch_path,
+            "pin_proposals_path": bundle.implementation.pin_proposals_path,
+            "edge_proposals_path": bundle.implementation.edge_proposals_path,
+            "under_spec_events_path": bundle.implementation.under_spec_events_path,
+            "tests_added_path": bundle.implementation.tests_added_path,
+            "notes_path": bundle.implementation.notes_path,
         }
         impl_result_path = iteration_dir / "impl.result.json"
         impl_result_path.write_text(json.dumps(impl_result, indent=2), encoding="utf-8")
@@ -3406,6 +3411,8 @@ class ImplementStep:
         self, ctx: SliceContext, bundle: EvidenceBundle, slice_root: Path
     ) -> StepResult:
         """L1: fill function bodies via ImplementationRunner (P9)."""
+        import json
+
         from spec_manager.orchestration.evidence import ImplementationRef
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
@@ -3425,15 +3432,78 @@ class ImplementStep:
                 workspace_root=ctx.workspace_root,
             )
             iteration_dir = bundle.iter_dir(evidence_root)
+            iteration_dir.mkdir(parents=True, exist_ok=True)
             focus_targets = self._focus_targets(ctx)
+            prioritized_gap_report = self._prioritize_gap_report(
+                bundle.gaps.open_gaps, focus_targets
+            )
+
+            plan_path = iteration_dir / (bundle.plan.path or "plan.json")
+            if not plan_path.exists():
+                plan_path.write_text(
+                    json.dumps(
+                        {
+                            "intentions": bundle.plan.intentions,
+                            "plan_artifacts": bundle.plan.plan_artifacts,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
+            gaps_path = iteration_dir / (bundle.gaps.path or "gaps.json")
+            if not gaps_path.exists():
+                gaps_path.write_text(
+                    json.dumps({"open_gaps": prioritized_gap_report}, indent=2),
+                    encoding="utf-8",
+                )
+
+            constraints_paths: list[Path] = []
+            for ref in bundle.facts.constraints_refs or []:
+                cleaned = str(ref).strip()
+                if not cleaned:
+                    continue
+                candidate = Path(cleaned)
+                if not candidate.is_absolute():
+                    candidate = workspace / candidate
+                constraints_paths.append(candidate)
+
             run_result = runner.run_for_slice(
                 slice_root=slice_root,
                 iteration_dir=iteration_dir,
-                plan_intentions=[],
-                gap_report=self._prioritize_gap_report(bundle.gaps.open_gaps, focus_targets),
+                plan_path=plan_path,
+                gaps_path=gaps_path,
+                constraints_paths=constraints_paths,
             )
 
-            gap_inventory = self._gaps_from_under_spec_events(run_result.under_spec_events)
+            pin_proposals = (
+                _read_json_file(iteration_dir / run_result.pin_proposals_path)
+                if run_result.pin_proposals_path
+                else []
+            )
+            if not isinstance(pin_proposals, list):
+                pin_proposals = run_result.pin_proposals
+
+            edge_proposals = (
+                _read_json_file(iteration_dir / run_result.edge_proposals_path)
+                if run_result.edge_proposals_path
+                else []
+            )
+            if not isinstance(edge_proposals, list):
+                edge_proposals = run_result.edge_proposals
+
+            under_spec_events = (
+                _read_json_file(iteration_dir / run_result.under_spec_events_path)
+                if run_result.under_spec_events_path
+                else []
+            )
+            if not isinstance(under_spec_events, list):
+                under_spec_events = run_result.under_spec_events
+
+            prioritized_gaps = self._prioritize_gap_report(bundle.gaps.open_gaps, focus_targets)
+            gap_inventory = self._gaps_from_under_spec_events(under_spec_events)
+            if not gap_inventory and prioritized_gaps:
+                gap_inventory.extend(prioritized_gaps)
             if run_result.functions_skipped > 0:
                 gap_inventory.append(
                     {
@@ -3465,11 +3535,16 @@ class ImplementStep:
 
             bundle.implementation = ImplementationRef(
                 patch_path=run_result.patch_path,
+                pin_proposals_path=run_result.pin_proposals_path,
+                edge_proposals_path=run_result.edge_proposals_path,
+                under_spec_events_path=run_result.under_spec_events_path,
+                tests_added_path=run_result.tests_added_path,
+                notes_path=run_result.notes_path,
                 applied_edits=run_result.applied_edits,
                 gap_inventory=gap_inventory,
-                pin_proposals=run_result.pin_proposals,
-                edge_proposals=run_result.edge_proposals,
-                under_spec_events=run_result.under_spec_events,
+                pin_proposals=pin_proposals,
+                edge_proposals=edge_proposals,
+                under_spec_events=under_spec_events,
                 tests_added=run_result.tests_added,
             )
 
@@ -5236,9 +5311,17 @@ class PromoteStep:
             function_name = str(proposal.get("function_name") or "").strip()
             module_path = str(proposal.get("module_path") or "").strip()
             if not function_name and fqn:
-                function_name = fqn.rsplit(".", 1)[-1]
-            if not module_path and "." in fqn:
-                module_path = fqn.rsplit(".", 1)[0]
+                if ":" in fqn:
+                    function_name = fqn.rsplit(":", 1)[-1]
+                elif "." in fqn:
+                    function_name = fqn.rsplit(".", 1)[-1]
+                else:
+                    function_name = fqn
+            if not module_path and fqn:
+                if ":" in fqn:
+                    module_path = fqn.rsplit(":", 1)[0]
+                elif "." in fqn:
+                    module_path = fqn.rsplit(".", 1)[0]
 
             file_path = str(proposal.get("file_path") or proposal.get("file") or "").strip()
             span = proposal.get("span") if isinstance(proposal.get("span"), dict) else {}
@@ -5273,6 +5356,19 @@ class PromoteStep:
     ) -> list[dict[str, Any]]:
         """Normalize IMPLEMENT edge proposals into pin-orchestrator shape."""
         normalized: list[dict[str, Any]] = []
+
+        def _projection_from_signal(signal_type: str) -> str:
+            signal = signal_type.strip().upper()
+            if signal in {"CALL"}:
+                return "pass_through"
+            if signal in {"STORE_TOUCH"}:
+                return "aggregation"
+            if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
+                return "event_bridge"
+            if signal in {"IMPORT", "REFERENCE"}:
+                return "slice"
+            return "pass_through"
+
         for proposal in proposals or []:
             if not isinstance(proposal, dict):
                 continue
@@ -5294,7 +5390,7 @@ class PromoteStep:
 
             projection_type = proposal.get("projection_type")
             if not isinstance(projection_type, str) or not projection_type.strip():
-                raise ValueError("edge_proposals entries must include projection_type")
+                projection_type = _projection_from_signal(str(proposal.get("signal_type", "CALL")))
             confidence_raw = proposal.get("confidence", proposal.get("weight", 0.8))
             try:
                 confidence = float(confidence_raw)
@@ -5333,9 +5429,21 @@ class PromoteStep:
         iteration_dir = bundle.iter_dir(evidence_root)
         iteration_dir.mkdir(parents=True, exist_ok=True)
 
+        raw_pin_proposals: list[dict[str, Any]] = list(bundle.implementation.pin_proposals or [])
+        if bundle.implementation.pin_proposals_path:
+            loaded = _read_json_file(iteration_dir / bundle.implementation.pin_proposals_path)
+            if isinstance(loaded, list):
+                raw_pin_proposals = [row for row in loaded if isinstance(row, dict)]
+
+        raw_edge_proposals: list[dict[str, Any]] = list(bundle.implementation.edge_proposals or [])
+        if bundle.implementation.edge_proposals_path:
+            loaded = _read_json_file(iteration_dir / bundle.implementation.edge_proposals_path)
+            if isinstance(loaded, list):
+                raw_edge_proposals = [row for row in loaded if isinstance(row, dict)]
+
         try:
-            normalized_pins = self._normalize_pin_proposals(bundle.implementation.pin_proposals)
-            normalized_edges = self._normalize_edge_proposals(bundle.implementation.edge_proposals)
+            normalized_pins = self._normalize_pin_proposals(raw_pin_proposals)
+            normalized_edges = self._normalize_edge_proposals(raw_edge_proposals)
         except ValueError as exc:
             return StepResult(status="RETRY", error=f"P5 proposal normalization failed: {exc}")
 
@@ -5352,7 +5460,8 @@ class PromoteStep:
         orchestrator = PinFunctionOrchestrator(slice_root)
         try:
             registry = orchestrator.scan(
-                mode="proposals",
+                mode="both",
+                allow_scan_fallback=True,
                 pin_proposals=normalized_pins,
                 edge_proposals=normalized_edges,
                 pin_proposals_path=pin_proposals_path,
@@ -9162,6 +9271,11 @@ class PromotionLoop:
             or bundle.implementation.under_spec_events
             or bundle.implementation.tests_added
             or bundle.implementation.patch_path
+            or bundle.implementation.pin_proposals_path
+            or bundle.implementation.edge_proposals_path
+            or bundle.implementation.under_spec_events_path
+            or bundle.implementation.tests_added_path
+            or bundle.implementation.notes_path
         ):
             bundle.implementation.result_path = _write_iteration_json(
                 bundle,
@@ -9169,6 +9283,11 @@ class PromotionLoop:
                 "impl.result.json",
                 {
                     "patch_path": bundle.implementation.patch_path,
+                    "pin_proposals_path": bundle.implementation.pin_proposals_path,
+                    "edge_proposals_path": bundle.implementation.edge_proposals_path,
+                    "under_spec_events_path": bundle.implementation.under_spec_events_path,
+                    "tests_added_path": bundle.implementation.tests_added_path,
+                    "notes_path": bundle.implementation.notes_path,
                     "applied_edits": bundle.implementation.applied_edits,
                     "gap_inventory": bundle.implementation.gap_inventory,
                     "pin_proposals": bundle.implementation.pin_proposals,

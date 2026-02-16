@@ -13,11 +13,21 @@ from typing import Any, Literal
 logger = logging.getLogger(__name__)
 
 _REQUIRED_FIELDS: dict[str, list[str]] = {
-    "PinProposal": ["pin_id", "fqn", "file"],
-    "EdgeProposal": ["src", "dst"],
-    "TestArtifact": ["path", "purpose"],
-    "EditEntry": ["path"],
-    "ImplementorOutput": [],
+    "FunctionTarget": ["file", "fqn", "signature", "span_hint"],
+    "PinProposal": ["pin_id", "role", "fqn", "file", "span"],
+    "EdgeProposal": ["src", "dst", "signal_type", "weight"],
+    "TestArtifact": ["path", "purpose", "scope", "unified_diff"],
+    "EditEntry": ["path", "unified_diff"],
+    "UnderSpecEvent": ["kind", "question", "options", "needed_for", "evidence_paths"],
+    "ImplementorOutput": [
+        "function_target",
+        "edits",
+        "pin_proposals",
+        "edge_proposals",
+        "tests",
+        "under_spec_events",
+        "notes_md",
+    ],
 }
 
 _VALID_DIMENSIONS = {
@@ -69,15 +79,10 @@ def _normalize_decision_type(value: Any, *, kind: str) -> str:
 
 
 def _check_required(cls_name: str, d: dict[str, Any]) -> None:
-    """Log warnings for missing required fields in LLM output (C00/C01)."""
+    """Raise when required fields are missing in LLM output."""
     for key in _REQUIRED_FIELDS.get(cls_name, []):
         if key not in d or d[key] in (None, ""):
-            logger.warning(
-                "LLM output missing required field %r in %s — "
-                "defaulting to empty (potential data loss)",
-                key,
-                cls_name,
-            )
+            raise ValueError(f"{cls_name} missing required field: {key}")
 
 
 @dataclass
@@ -95,12 +100,15 @@ class PinProposal:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PinProposal:
         _check_required("PinProposal", d)
+        span = d.get("span")
+        if not isinstance(span, dict):
+            raise TypeError("PinProposal.span must be an object")
         return cls(
-            pin_id=d.get("pin_id", ""),
-            fqn=d.get("fqn", ""),
-            file=d.get("file", ""),
-            role=d.get("role", "ATOM"),
-            span=d.get("span"),
+            pin_id=str(d["pin_id"]).strip(),
+            fqn=str(d["fqn"]).strip(),
+            file=str(d["file"]).strip(),
+            role=str(d["role"]).strip() or "ATOM",
+            span=span,
             atom_id_hint=d.get("atom_id_hint"),
             evidence_paths=d.get("evidence_paths", []),
         )
@@ -133,10 +141,10 @@ class EdgeProposal:
     def from_dict(cls, d: dict[str, Any]) -> EdgeProposal:
         _check_required("EdgeProposal", d)
         return cls(
-            src=d.get("src", ""),
-            dst=d.get("dst", ""),
-            signal_type=d.get("signal_type", "CALL"),
-            weight=d.get("weight", 0.7),
+            src=str(d["src"]).strip(),
+            dst=str(d["dst"]).strip(),
+            signal_type=str(d["signal_type"]).strip() or "CALL",
+            weight=float(d["weight"]),
             evidence_paths=d.get("evidence_paths", []),
         )
 
@@ -164,11 +172,11 @@ class TestArtifact:
     def from_dict(cls, d: dict[str, Any]) -> TestArtifact:
         _check_required("TestArtifact", d)
         return cls(
-            path=d.get("path", ""),
-            purpose=d.get("purpose", ""),
-            scope=d.get("scope", "UNIT"),
+            path=str(d["path"]).strip(),
+            purpose=str(d["purpose"]).strip(),
+            scope=str(d["scope"]).strip() or "UNIT",
             runner_hint=d.get("runner_hint"),
-            unified_diff=d.get("unified_diff", ""),
+            unified_diff=str(d["unified_diff"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -220,6 +228,7 @@ class UnderSpecEvent:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> UnderSpecEvent:
+        _check_required("UnderSpecEvent", d)
         kind = str(d.get("kind", "MISSING_CONSTRAINT")).strip() or "MISSING_CONSTRAINT"
         dimension = _normalize_dimension(d.get("dimension", "software"))
         authority_required = _normalize_authority_required(
@@ -265,11 +274,15 @@ class FunctionTarget:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FunctionTarget:
+        _check_required("FunctionTarget", d)
+        span_hint = d.get("span_hint")
+        if not isinstance(span_hint, dict):
+            raise TypeError("FunctionTarget.span_hint must be an object")
         return cls(
-            file=d.get("file", ""),
-            fqn=d.get("fqn", ""),
-            signature=d.get("signature", ""),
-            span_hint=d.get("span_hint"),
+            file=str(d["file"]).strip(),
+            fqn=str(d["fqn"]).strip(),
+            signature=str(d["signature"]),
+            span_hint=span_hint,
         )
 
 
@@ -284,8 +297,8 @@ class EditEntry:
     def from_dict(cls, d: dict[str, Any]) -> EditEntry:
         _check_required("EditEntry", d)
         return cls(
-            path=d.get("path", ""),
-            unified_diff=d.get("unified_diff", ""),
+            path=str(d["path"]).strip(),
+            unified_diff=str(d["unified_diff"]),
         )
 
 
@@ -306,13 +319,31 @@ class ImplementorOutput:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ImplementorOutput:
+        _check_required("ImplementorOutput", d)
         ft = d.get("function_target")
+        if not isinstance(ft, dict):
+            raise TypeError("ImplementorOutput.function_target must be an object")
+        edits = d.get("edits")
+        pin_proposals = d.get("pin_proposals")
+        edge_proposals = d.get("edge_proposals")
+        tests = d.get("tests")
+        under_spec_events = d.get("under_spec_events")
+        if not isinstance(edits, list):
+            raise TypeError("ImplementorOutput.edits must be a list")
+        if not isinstance(pin_proposals, list):
+            raise TypeError("ImplementorOutput.pin_proposals must be a list")
+        if not isinstance(edge_proposals, list):
+            raise TypeError("ImplementorOutput.edge_proposals must be a list")
+        if not isinstance(tests, list):
+            raise TypeError("ImplementorOutput.tests must be a list")
+        if not isinstance(under_spec_events, list):
+            raise TypeError("ImplementorOutput.under_spec_events must be a list")
         return cls(
-            function_target=FunctionTarget.from_dict(ft) if ft else FunctionTarget(),
-            edits=[EditEntry.from_dict(e) for e in d.get("edits", [])],
-            pin_proposals=[PinProposal.from_dict(p) for p in d.get("pin_proposals", [])],
-            edge_proposals=[EdgeProposal.from_dict(e) for e in d.get("edge_proposals", [])],
-            tests=[TestArtifact.from_dict(t) for t in d.get("tests", [])],
-            under_spec_events=[UnderSpecEvent.from_dict(e) for e in d.get("under_spec_events", [])],
-            notes_md=d.get("notes_md", d.get("notes", "")),
+            function_target=FunctionTarget.from_dict(ft),
+            edits=[EditEntry.from_dict(e) for e in edits],
+            pin_proposals=[PinProposal.from_dict(p) for p in pin_proposals],
+            edge_proposals=[EdgeProposal.from_dict(e) for e in edge_proposals],
+            tests=[TestArtifact.from_dict(t) for t in tests],
+            under_spec_events=[UnderSpecEvent.from_dict(e) for e in under_spec_events],
+            notes_md=str(d["notes_md"]),
         )

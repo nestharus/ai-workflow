@@ -217,6 +217,11 @@ class ImplementationRef:
     """Pointer to implementation step output."""
 
     patch_path: str = ""
+    pin_proposals_path: str = ""
+    edge_proposals_path: str = ""
+    under_spec_events_path: str = ""
+    tests_added_path: str = ""
+    notes_path: str = ""
     result_path: str = ""
     applied_edits: list[dict[str, Any]] = field(default_factory=list)
     gap_inventory: list[dict[str, Any]] = field(default_factory=list)
