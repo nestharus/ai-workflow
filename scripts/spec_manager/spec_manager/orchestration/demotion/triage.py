@@ -7,6 +7,7 @@ must be blocked in-place.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -14,6 +15,7 @@ Layer = Literal["L1", "L2", "L3"]
 RoutingAction = Literal["demote", "fix_in_layer", "block"]
 
 _LAYER_ORDER: dict[Layer, int] = {"L1": 0, "L2": 1, "L3": 2}
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,6 +43,7 @@ class DemotionRouting:
     action: RoutingAction = "demote"
     reason: str = ""
     confidence: float = 1.0
+    diagnostics: list[str] = field(default_factory=list)
 
 
 # required_change_type → target layer (highest priority)
@@ -65,61 +68,36 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "spec": "logic",
 }
 
-# Gate → target layer mapping
-_GATE_ROUTING: dict[str, Layer | None] = {
+# Gate routing is authoritative in one table:
+# gate_id -> (source_layer, target_layer)
+_GATE_RULES: dict[str, tuple[Layer, Layer | None]] = {
     # L1 gates
-    "NO_REMAINING_COMMENTS": "L1",
-    "NO_STUB_FUNCTIONS": "L1",
-    "ALL_TESTS_PASS": "L1",
-    "CALL_GRAPH_CONNECTED": "L1",
-    "STORE_MONOGAMY": "L1",
+    "NO_REMAINING_COMMENTS": ("L1", "L1"),
+    "NO_STUB_FUNCTIONS": ("L1", "L1"),
+    "ALL_TESTS_PASS": ("L1", "L1"),
+    "CALL_GRAPH_CONNECTED": ("L1", "L1"),
+    "STORE_MONOGAMY": ("L1", "L1"),
     # L2 gates
-    "NO_INLINED_ATOM_LOGIC": "L1",
-    "FUNCTION_RECOMPOSITION": "L2",
-    "PIN_CONSUMPTION_COVERAGE": "L2",
-    "PIN_COVERAGE": "L2",
-    "EDGE_REALIZATION": "L2",
-    "NO_ORPHAN_COMPONENTS": "L2",
-    "EVENT_HANDLER_COVERAGE": "L2",
-    "CONFIG_EXTERNALIZATION": "L2",
-    "ARCH_DRIFT_PASS": "L2",
-    "INTRODUCED_ALGORITHM_SPECS": "L2",
+    "NO_INLINED_ATOM_LOGIC": ("L2", "L1"),
+    "FUNCTION_RECOMPOSITION": ("L2", "L2"),
+    "PIN_CONSUMPTION_COVERAGE": ("L2", "L2"),
+    "PIN_COVERAGE": ("L2", "L2"),
+    "EDGE_REALIZATION": ("L2", "L2"),
+    "NO_ORPHAN_COMPONENTS": ("L2", "L2"),
+    "EVENT_HANDLER_COVERAGE": ("L2", "L2"),
+    "CONFIG_EXTERNALIZATION": ("L2", "L2"),
+    "ARCH_DRIFT_PASS": ("L2", "L2"),
+    "INTRODUCED_ALGORITHM_SPECS": ("L2", "L2"),
     # L3 gates
-    "ALL_QUALITY_REVIEWERS_PASS": None,
-    "NO_LOGIC_CHANGE": "L1",
-    "NO_ARCH_BOUNDARY_VIOLATIONS": "L2",
-    "DRIFT_PASS": None,
-    "TESTS_PASS": "L1",
+    "ALL_QUALITY_REVIEWERS_PASS": ("L3", None),
+    "NO_LOGIC_CHANGE": ("L3", "L1"),
+    "NO_ARCH_BOUNDARY_VIOLATIONS": ("L3", "L2"),
+    "DRIFT_PASS": ("L3", None),
+    "TESTS_PASS": ("L3", "L1"),
 }
 
-_L1_GATES = {
-    "NO_REMAINING_COMMENTS",
-    "NO_STUB_FUNCTIONS",
-    "ALL_TESTS_PASS",
-    "CALL_GRAPH_CONNECTED",
-    "STORE_MONOGAMY",
-}
-
-_L2_GATES = {
-    "NO_INLINED_ATOM_LOGIC",
-    "FUNCTION_RECOMPOSITION",
-    "PIN_CONSUMPTION_COVERAGE",
-    "PIN_COVERAGE",
-    "EDGE_REALIZATION",
-    "NO_ORPHAN_COMPONENTS",
-    "EVENT_HANDLER_COVERAGE",
-    "CONFIG_EXTERNALIZATION",
-    "ARCH_DRIFT_PASS",
-    "INTRODUCED_ALGORITHM_SPECS",
-}
-
-_L3_GATES = {
-    "ALL_QUALITY_REVIEWERS_PASS",
-    "NO_LOGIC_CHANGE",
-    "NO_ARCH_BOUNDARY_VIOLATIONS",
-    "DRIFT_PASS",
-    "TESTS_PASS",
-}
+_GATE_ROUTING: dict[str, Layer | None] = {gate: rule[1] for gate, rule in _GATE_RULES.items()}
+_GATE_SOURCE_LAYER: dict[str, Layer] = {gate: rule[0] for gate, rule in _GATE_RULES.items()}
 
 # Source → target layer fallback
 _SOURCE_ROUTING: dict[str, Layer | None] = {
@@ -175,6 +153,8 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
     """
     active_layer = _normalize_layer(ctx.active_layer, "L1")
     source_layer = _normalize_layer(ctx.source_layer, active_layer)
+    source = _normalize_source(ctx.source)
+    gate = normalize_gate_id(ctx.gate)
     category = _normalize_category(ctx.category)
     dimension = (ctx.dimension or "").strip().upper()
     tags = _normalize_tags(ctx.tags)
@@ -200,11 +180,11 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 confidence=0.95,
             )
         if target is None:
-            return DemotionRouting(
-                target_layer=active_layer,
-                action="fix_in_layer",
+            return _diagnostic_fix_in_layer(
+                active_layer=active_layer,
                 reason=f"Unknown change type '{required_change_type}' — fix in current layer",
                 confidence=0.5,
+                diagnostic_code=f"UNKNOWN_CHANGE_TYPE:{required_change_type}",
             )
         return _constrain_to_active(
             DemotionRouting(
@@ -239,11 +219,11 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 confidence=0.9,
             )
         if target is None:
-            return DemotionRouting(
-                target_layer=active_layer,
-                action="fix_in_layer",
+            return _diagnostic_fix_in_layer(
+                active_layer=active_layer,
                 reason=f"Unknown category '{category}' — fix in current layer",
                 confidence=0.5,
+                diagnostic_code=f"UNKNOWN_CATEGORY:{category}",
             )
 
         override = _tag_override_target(category=category, tags=tags)
@@ -269,13 +249,13 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
         )
 
     # 2. Try gate-based routing
-    if ctx.gate:
-        target = _GATE_ROUTING.get(ctx.gate)
-        if target is None and ctx.gate in _GATE_ROUTING:
+    if gate:
+        target = _GATE_ROUTING.get(gate)
+        if target is None and gate in _GATE_ROUTING:
             return DemotionRouting(
                 target_layer=active_layer,
                 action="fix_in_layer",
-                reason=f"Gate '{ctx.gate}' fixes in current layer",
+                reason=f"Gate '{gate}' fixes in current layer",
                 confidence=0.85,
             )
         if target:
@@ -283,14 +263,14 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 DemotionRouting(
                     target_layer=target,
                     action="demote",
-                    reason=f"Gate '{ctx.gate}' routes to {target}",
+                    reason=f"Gate '{gate}' routes to {target}",
                     confidence=0.85,
                 ),
                 active_layer,
             )
 
     # 3. Try source-based routing
-    if ctx.source:
+    if source:
         # Higher-layer failures cannot be fixed at that higher layer while a lower
         # layer is active; source-layer context narrows source-based fallback.
         if _is_layer_above(source_layer, active_layer):
@@ -298,12 +278,12 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 target_layer=active_layer,
                 action="fix_in_layer",
                 reason=(
-                    f"Source '{ctx.source}' originated at {source_layer} while active layer is "
+                    f"Source '{source}' originated at {source_layer} while active layer is "
                     f"{active_layer}; routing is constrained to current editable layer"
                 ),
                 confidence=0.75,
             )
-        if ctx.source == "TEST_FAILURE":
+        if source == "TEST_FAILURE":
             return _constrain_to_active(
                 DemotionRouting(
                     target_layer="L1",
@@ -316,12 +296,12 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 ),
                 active_layer,
             )
-        target = _SOURCE_ROUTING.get(ctx.source)
-        if target is None and ctx.source in _SOURCE_ROUTING:
+        target = _SOURCE_ROUTING.get(source)
+        if target is None and source in _SOURCE_ROUTING:
             return DemotionRouting(
                 target_layer=active_layer,
                 action="fix_in_layer",
-                reason=f"Source '{ctx.source}' fixes in current layer",
+                reason=f"Source '{source}' fixes in current layer",
                 confidence=0.6,
             )
         if target:
@@ -329,18 +309,24 @@ def triage(ctx: DemotionContext) -> DemotionRouting:
                 DemotionRouting(
                     target_layer=target,
                     action="demote",
-                    reason=f"Source '{ctx.source}' routes to {target}",
+                    reason=f"Source '{source}' routes to {target}",
                     confidence=0.7,
                 ),
                 active_layer,
             )
+        return _diagnostic_fix_in_layer(
+            active_layer=active_layer,
+            reason=f"Unknown source '{source}' — fix in current layer",
+            confidence=0.5,
+            diagnostic_code=f"UNKNOWN_SOURCE:{source}",
+        )
 
     # 4. Default: fix in current layer (don't guess target at low confidence)
-    return DemotionRouting(
-        target_layer=active_layer,
-        action="fix_in_layer",
+    return _diagnostic_fix_in_layer(
+        active_layer=active_layer,
         reason="Unclassifiable failure — fix in current layer (needs manual triage)",
         confidence=0.3,
+        diagnostic_code="UNCLASSIFIABLE_FAILURE",
     )
 
 
@@ -420,7 +406,7 @@ def _route_drift(*, tags: set[str], dimension: str) -> tuple[Layer, str]:
 
 def infer_gate_source_layer(gate_id: str | None) -> Layer | None:
     """Infer the originating layer for a gate identifier."""
-    normalized = str(gate_id or "").strip().upper()
+    normalized = normalize_gate_id(gate_id)
     if not normalized:
         return None
 
@@ -430,14 +416,13 @@ def infer_gate_source_layer(gate_id: str | None) -> Layer | None:
         return "L2"
     if normalized.startswith("L3_"):
         return "L3"
+    return _GATE_SOURCE_LAYER.get(normalized)
 
-    if normalized in _L1_GATES:
-        return "L1"
-    if normalized in _L2_GATES:
-        return "L2"
-    if normalized in _L3_GATES:
-        return "L3"
-    return None
+
+def normalize_gate_id(gate_id: str | None) -> str | None:
+    """Canonical gate identifier format used across triage decisions."""
+    normalized = str(gate_id or "").strip().upper()
+    return normalized or None
 
 
 def _normalize_layer(layer: str | None, default: Layer) -> Layer:
@@ -449,3 +434,24 @@ def _normalize_layer(layer: str | None, default: Layer) -> Layer:
 
 def _is_layer_above(source_layer: Layer, active_layer: Layer) -> bool:
     return _LAYER_ORDER[source_layer] > _LAYER_ORDER[active_layer]
+
+
+def _normalize_source(source: str | None) -> str:
+    return str(source or "").strip().upper()
+
+
+def _diagnostic_fix_in_layer(
+    *,
+    active_layer: Layer,
+    reason: str,
+    confidence: float,
+    diagnostic_code: str,
+) -> DemotionRouting:
+    logger.warning("Demotion triage unresolved input: %s [%s]", reason, diagnostic_code)
+    return DemotionRouting(
+        target_layer=active_layer,
+        action="fix_in_layer",
+        reason=reason,
+        confidence=confidence,
+        diagnostics=[diagnostic_code],
+    )
