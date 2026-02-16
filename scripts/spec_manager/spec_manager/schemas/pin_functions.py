@@ -61,7 +61,7 @@ class PinFunctionSchema(BaseModel):
     pin_id: str
     atom_id: str
     architectural_location: str
-    projection_type: str
+    projection_type: ProjectionType
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     wrapper_hash: str | None = None
 
@@ -72,14 +72,6 @@ class PinFunctionSchema(BaseModel):
 
         if not re.match(r"^PIN-\d{4}$", v):
             raise ValueError("pin_id must match PIN-#### format")
-        return v
-
-    @field_validator("projection_type")
-    @classmethod
-    def validate_projection_type(cls, v: str) -> str:
-        allowed = {"pass_through", "projection", "aggregation", "introduction"}
-        if v not in allowed:
-            raise ValueError(f"projection_type must be one of {sorted(allowed)}")
         return v
 
 

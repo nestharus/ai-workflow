@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -102,8 +102,8 @@ class RelationshipFacts(BaseModel):
 
     @staticmethod
     def _canonical_signal(value: Any) -> Literal["CALL", "REFERENCE", "STORE_TOUCH", "EVENT"]:
-        if not isinstance(value, str):
-            return "REFERENCE"
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("signal_type must be a non-empty string")
         signal = value.strip().upper()
         if signal in {"CALL", "CALLS"}:
             return "CALL"
@@ -111,110 +111,160 @@ class RelationshipFacts(BaseModel):
             return "STORE_TOUCH"
         if signal in {"EVENT", "EVENT_EMIT", "EVENT_HANDLE"}:
             return "EVENT"
-        return "REFERENCE"
+        if signal in {"REFERENCE", "REFERENCES"}:
+            return "REFERENCE"
+        raise ValueError(f"unsupported signal_type '{value}'")
 
     @staticmethod
-    def _coerce_confidence(value: Any) -> float:
+    def _parse_confidence(value: Any) -> float:
         try:
             confidence = float(value)
         except (TypeError, ValueError):
-            return 1.0
-        return max(0.0, min(confidence, 1.0))
+            raise ValueError("confidence must be numeric") from None
+        if confidence < 0.0 or confidence > 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        return confidence
+
+    @staticmethod
+    def _extract_id(edge: dict[str, Any], keys: tuple[str, ...], *, field_name: str) -> str:
+        for key in keys:
+            if key not in edge:
+                continue
+            raw = edge.get(key)
+            if raw is None:
+                continue
+            if not isinstance(raw, str):
+                raise TypeError(f"{field_name} from '{key}' must be a string")
+            parsed = raw.strip()
+            if parsed:
+                return parsed
+        raise ValueError(f"{field_name} is required")
 
     @classmethod
     def from_edge_records(cls, edge_records: list[dict[str, Any]]) -> RelationshipFacts:
         """Build typed relationship facts from generic edge dict payloads."""
         facts = cls()
-        for edge in edge_records:
+        errors: list[str] = []
+        for index, edge in enumerate(edge_records, start=1):
             if not isinstance(edge, dict):
+                errors.append(f"edge_records[{index}] must be an object")
                 continue
-            signal = cls._canonical_signal(
-                edge.get("signal_type") or edge.get("type") or edge.get("facet") or edge.get("kind")
-            )
-            src = str(
-                edge.get("src_id")
-                or edge.get("src")
-                or edge.get("caller")
-                or edge.get("from")
-                or edge.get("pin")
-                or edge.get("emitter_pin")
-                or edge.get("referrer_pin")
-                or ""
-            ).strip()
-            dst = str(
-                edge.get("dst_id")
-                or edge.get("dst")
-                or edge.get("callee")
-                or edge.get("to")
-                or edge.get("store_id")
-                or edge.get("event_id")
-                or edge.get("referenced_id")
-                or ""
-            ).strip()
-            if not src or not dst:
-                continue
+            try:
+                signal = cls._canonical_signal(
+                    edge.get("signal_type")
+                    or edge.get("type")
+                    or edge.get("facet")
+                    or edge.get("kind")
+                )
+                src = cls._extract_id(
+                    edge,
+                    ("src_id", "src", "caller", "from", "pin", "emitter_pin", "referrer_pin"),
+                    field_name="src_id",
+                )
+                dst = cls._extract_id(
+                    edge,
+                    ("dst_id", "dst", "callee", "to", "store_id", "event_id", "referenced_id"),
+                    field_name="dst_id",
+                )
+                confidence = cls._parse_confidence(edge.get("confidence", 1.0))
+                evidence_pin_raw = edge.get("evidence_pin")
+                if evidence_pin_raw is None:
+                    evidence_pin = None
+                elif isinstance(evidence_pin_raw, str):
+                    evidence_pin = evidence_pin_raw.strip() or None
+                else:
+                    raise ValueError("evidence_pin must be a string when provided")
 
-            confidence = cls._coerce_confidence(edge.get("confidence", 1.0))
-            evidence_pin_raw = edge.get("evidence_pin")
-            evidence_pin = (
-                str(evidence_pin_raw).strip()
-                if isinstance(evidence_pin_raw, str) and str(evidence_pin_raw).strip()
-                else None
-            )
+                if signal == "CALL":
+                    facts.calls.append(
+                        CallRelationshipFact(
+                            caller_pin=src,
+                            callee_pin=dst,
+                            confidence=confidence,
+                            evidence_pin=evidence_pin,
+                        )
+                    )
+                    continue
+                if signal == "REFERENCE":
+                    facts.references.append(
+                        ReferenceRelationshipFact(
+                            referrer_pin=src,
+                            referenced_id=dst,
+                            confidence=confidence,
+                            evidence_pin=evidence_pin,
+                        )
+                    )
+                    continue
+                if signal == "STORE_TOUCH":
+                    raw_access_type = edge.get("access_type", "read_write")
+                    if not isinstance(raw_access_type, str):
+                        raise ValueError("access_type must be a string")
+                    access_type = raw_access_type.strip().lower() or "read_write"
+                    if access_type not in {"read", "write", "read_write"}:
+                        raise ValueError("access_type must be one of: read, write, read_write")
+                    facts.stores.append(
+                        StoreRelationshipFact(
+                            pin=src,
+                            store_id=dst,
+                            access_type=access_type,
+                        )
+                    )
+                    continue
 
-            if signal == "CALL":
-                facts.calls.append(
-                    CallRelationshipFact(
-                        caller_pin=src,
-                        callee_pin=dst,
-                        confidence=confidence,
-                        evidence_pin=evidence_pin,
+                role_raw = edge.get("role", "")
+                if not isinstance(role_raw, str):
+                    raise TypeError("role must be a string when provided")
+                role = role_raw.strip().lower()
+                if role not in {"", "emit", "consume"}:
+                    raise ValueError("role must be one of: emit, consume")
+                if role == "consume":
+                    emitter_pin_raw = edge.get("emitter_pin")
+                    event_id_raw = edge.get("event_id")
+                    consumer_pin_raw = edge.get("consumer_pin")
+                    if emitter_pin_raw is not None and not isinstance(emitter_pin_raw, str):
+                        raise ValueError("emitter_pin must be a string when provided")
+                    if event_id_raw is not None and not isinstance(event_id_raw, str):
+                        raise ValueError("event_id must be a string when provided")
+                    if consumer_pin_raw is not None and not isinstance(consumer_pin_raw, str):
+                        raise ValueError("consumer_pin must be a string when provided")
+                    emitter_pin = (
+                        emitter_pin_raw.strip() if isinstance(emitter_pin_raw, str) else src
+                    ) or src
+                    event_id = (
+                        event_id_raw.strip() if isinstance(event_id_raw, str) else src
+                    ) or src
+                    consumer_pin = (
+                        consumer_pin_raw.strip() if isinstance(consumer_pin_raw, str) else dst
+                    ) or dst
+                    facts.events.append(
+                        EventRelationshipFact(
+                            emitter_pin=emitter_pin,
+                            event_id=event_id,
+                            consumer_pin=consumer_pin,
+                        )
                     )
-                )
-                continue
-            if signal == "REFERENCE":
-                facts.references.append(
-                    ReferenceRelationshipFact(
-                        referrer_pin=src,
-                        referenced_id=dst,
-                        confidence=confidence,
-                        evidence_pin=evidence_pin,
-                    )
-                )
-                continue
-            if signal == "STORE_TOUCH":
-                raw_access_type = str(edge.get("access_type") or "read_write").strip().lower()
-                access_type: Literal["read", "write", "read_write"] = (
-                    cast("Literal['read', 'write', 'read_write']", raw_access_type)
-                    if raw_access_type in {"read", "write", "read_write"}
-                    else "read_write"
-                )
-                facts.stores.append(
-                    StoreRelationshipFact(
-                        pin=src,
-                        store_id=dst,
-                        access_type=access_type,
-                    )
-                )
-                continue
-
-            role = str(edge.get("role") or "").strip().lower()
-            if role == "consume":
+                    continue
+                consumer_pin_raw = edge.get("consumer_pin")
+                if consumer_pin_raw is not None and not isinstance(consumer_pin_raw, str):
+                    raise ValueError("consumer_pin must be a string when provided")
+                event_id_raw = edge.get("event_id")
+                if event_id_raw is not None and not isinstance(event_id_raw, str):
+                    raise ValueError("event_id must be a string when provided")
+                event_id = (event_id_raw.strip() if isinstance(event_id_raw, str) else dst) or dst
                 facts.events.append(
                     EventRelationshipFact(
-                        emitter_pin=str(edge.get("emitter_pin") or src).strip(),
-                        event_id=str(edge.get("event_id") or src).strip(),
-                        consumer_pin=str(edge.get("consumer_pin") or dst).strip() or None,
+                        emitter_pin=src,
+                        event_id=event_id,
+                        consumer_pin=(
+                            consumer_pin_raw.strip() if isinstance(consumer_pin_raw, str) else None
+                        )
+                        or None,
                     )
                 )
-                continue
-            facts.events.append(
-                EventRelationshipFact(
-                    emitter_pin=src,
-                    event_id=str(edge.get("event_id") or dst).strip(),
-                    consumer_pin=str(edge.get("consumer_pin") or "").strip() or None,
-                )
-            )
+            except ValueError as exc:
+                errors.append(f"edge_records[{index}]: {exc}")
+        if errors:
+            raise ValueError("Invalid relationship edge records:\n- " + "\n- ".join(errors))
         return facts
 
     def to_edge_records(self) -> list[dict[str, Any]]:

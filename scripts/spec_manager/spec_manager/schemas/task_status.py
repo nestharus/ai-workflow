@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .edge_list import TASK_ID_RE, _validate_iso8601
+from .validation_utils import TASK_ID_RE, validate_iso8601
 
 
 class TestResultSchema(BaseModel):
@@ -99,7 +99,7 @@ class TaskImplementationStatusSchema(BaseModel):
         """
         if value is None:
             return value
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
     @model_validator(mode="after")
     def validate_status_requirements(self) -> TaskImplementationStatusSchema:

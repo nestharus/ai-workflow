@@ -25,7 +25,6 @@ Example:
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -34,39 +33,10 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from spec_manager.core.evidence_pointers import parse_evidence_pointer
 
+from .validation_utils import EDGE_ID_RE, ELEMENT_ID_RE, LIB_ID_RE, validate_iso8601
+
 if TYPE_CHECKING:
     from .interface_contract import InterfaceContractSchema
-
-EDGE_ID_RE = re.compile(r"^EDGE-LIB-\d{4}-LIB-\d{4}$")
-LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
-ELEMENT_ID_RE = re.compile(
-    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
-)
-TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
-
-
-def _validate_iso8601(value: str) -> str:
-    """Validate an ISO-8601 timestamp with date-time precision.
-
-    Args:
-        value: Timestamp string such as "2024-01-01T00:00:00".
-
-    Returns:
-        The original timestamp string when valid.
-
-    Raises:
-        ValueError: When the timestamp is not ISO-8601 or lacks time.
-
-    Example:
-        _validate_iso8601("2024-01-01T00:00:00")
-    """
-    try:
-        datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError("value must be ISO-8601") from exc
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        raise ValueError("value must be ISO-8601") from None
-    return value
 
 
 class EdgeSchema(BaseModel):
@@ -307,7 +277,7 @@ class EdgeListSchema(BaseModel):
                 edges=[],
             )
         """
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
     @field_validator("edges")
     @classmethod
@@ -389,7 +359,7 @@ class InterfaceIndexSchema(BaseModel):
                 contract_files={},
             )
         """
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
 
 def allocate_edge_id(consumer_lib: str, provider_lib: str) -> str:
@@ -505,21 +475,19 @@ def build_interface_index(
     edges: list[EdgeSchema],
     run_id: str,
     contract_base_path: Path,
-    contracts_ready: set[str] | None = None,
+    contracts_ready: set[str],
 ) -> InterfaceIndexSchema:
     """Build an interface index for a set of edges.
 
     Only edges whose ``edge_id`` appears in *contracts_ready* receive
-    ``contract_files`` entries.  When *contracts_ready* is ``None`` every
-    edge is assumed to have a written contract (backwards-compatible
-    default).
+    ``contract_files`` entries.
 
     Args:
         edges: List of EdgeSchema instances.
         run_id: Workflow run identifier.
         contract_base_path: Base path used for contract artifact locations.
         contracts_ready: Edge IDs with successfully written contract
-            artifacts.  Edges not in this set are still tracked in the
+            artifacts. Edges not in this set are still tracked in the
             consumer/provider lookups but omitted from ``contract_files``
             so the index never references missing files.
 
@@ -538,7 +506,7 @@ def build_interface_index(
         edges_by_consumer.setdefault(edge.consumer_lib, []).append(edge.edge_id)
         edges_by_provider.setdefault(edge.provider_lib, []).append(edge.edge_id)
 
-        if contracts_ready is not None and edge.edge_id not in contracts_ready:
+        if edge.edge_id not in contracts_ready:
             continue
 
         contract_rel = Path("libraries") / edge.consumer_lib / "interfaces" / edge.edge_id

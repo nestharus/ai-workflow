@@ -10,18 +10,16 @@ Design References:
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, field_validator
 
+from .validation_utils import LIB_ID_RE
+
 if TYPE_CHECKING:
     from spec_manager.schemas.derived_elements import DerivedElement
-
-# Library ID pattern
-_LIB_ID_PATTERN = re.compile(r"^LIB-\d+$")
 
 
 class Library(BaseModel):
@@ -45,7 +43,7 @@ class Library(BaseModel):
     @classmethod
     def validate_lib_id(cls, value: str) -> str:
         """Validate library ID format."""
-        if not _LIB_ID_PATTERN.fullmatch(value):
+        if not LIB_ID_RE.fullmatch(value):
             raise ValueError(f"lib_id must match LIB-#### format, got: {value}")
         return value
 

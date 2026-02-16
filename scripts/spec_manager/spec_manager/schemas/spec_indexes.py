@@ -2,32 +2,23 @@
 
 from __future__ import annotations
 
-import re
-from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-_LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
-_SPEC_ELEMENT_ID_RE = re.compile(
-    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
-)
-_DECISION_ID_RE = re.compile(r"^ANL-LIB-\d{4}-\d{4}$")
+from .validation_utils import DECISION_ID_RE, ELEMENT_ID_RE, LIB_ID_RE, validate_iso8601
 
-
-def _validate_iso8601(value: str) -> str:
-    try:
-        datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError("value must be ISO-8601") from exc
-    return value
+_KIND_BY_PREFIX: dict[str, Literal["detail", "constraint", "analysis", "overview"]] = {
+    "DTL": "detail",
+    "CON": "constraint",
+    "ANL": "analysis",
+    "OVW": "overview",
+}
 
 
 class SpecElement(BaseModel):
     element_id: str
-    kind: Literal[
-        "detail", "constraint", "analysis", "overview", "requirement", "flow", "invariant"
-    ]
+    kind: Literal["detail", "constraint", "analysis", "overview"]
     section: str
     text: str
     raw_line: str
@@ -37,9 +28,21 @@ class SpecElement(BaseModel):
     @field_validator("element_id")
     @classmethod
     def validate_element_id(cls, value: str) -> str:
-        if not _SPEC_ELEMENT_ID_RE.fullmatch(value):
+        if not ELEMENT_ID_RE.fullmatch(value):
             raise ValueError("element_id must match DTL/CON/ANL/OVW-LIB-####-####")
         return value
+
+    @model_validator(mode="after")
+    def validate_kind_matches_element_id(self) -> SpecElement:
+        prefix = self.element_id.split("-", 1)[0]
+        expected_kind = _KIND_BY_PREFIX.get(prefix)
+        if expected_kind is None:
+            raise ValueError("element_id must start with DTL, CON, ANL, or OVW")
+        if self.kind != expected_kind:
+            raise ValueError(
+                f"kind '{self.kind}' does not match element_id prefix '{prefix}' ({expected_kind})"
+            )
+        return self
 
 
 class SpecIndex(BaseModel):
@@ -51,14 +54,14 @@ class SpecIndex(BaseModel):
     @field_validator("lib_id")
     @classmethod
     def validate_lib_id(cls, value: str) -> str:
-        if not _LIB_ID_RE.fullmatch(value):
+        if not LIB_ID_RE.fullmatch(value):
             raise ValueError("lib_id must match LIB-####")
         return value
 
     @field_validator("generated_at")
     @classmethod
     def validate_generated_at(cls, value: str) -> str:
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
 
 class Decision(BaseModel):
@@ -73,7 +76,7 @@ class Decision(BaseModel):
     @field_validator("decision_id")
     @classmethod
     def validate_decision_id(cls, value: str) -> str:
-        if not _DECISION_ID_RE.fullmatch(value):
+        if not DECISION_ID_RE.fullmatch(value):
             raise ValueError("decision_id must match ANL-LIB-####-####")
         return value
 
@@ -87,11 +90,11 @@ class DecisionsIndex(BaseModel):
     @field_validator("lib_id")
     @classmethod
     def validate_lib_id(cls, value: str) -> str:
-        if not _LIB_ID_RE.fullmatch(value):
+        if not LIB_ID_RE.fullmatch(value):
             raise ValueError("lib_id must match LIB-####")
         return value
 
     @field_validator("generated_at")
     @classmethod
     def validate_generated_at(cls, value: str) -> str:
-        return _validate_iso8601(value)
+        return validate_iso8601(value)

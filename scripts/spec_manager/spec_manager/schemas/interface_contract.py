@@ -28,7 +28,6 @@ Example:
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Literal
 
@@ -36,9 +35,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from spec_manager.core.evidence_pointers import parse_evidence_pointer
 
-from .edge_list import EDGE_ID_RE, ELEMENT_ID_RE, LIB_ID_RE
-
-DECISION_ID_RE = re.compile(r"^ANL-LIB-\d{4}-\d{4}$")
+from .validation_utils import DECISION_ID_RE, EDGE_ID_RE, ELEMENT_ID_RE, LIB_ID_RE
 
 
 def _extract_lib_id_from_decision(decision_id: str) -> str | None:

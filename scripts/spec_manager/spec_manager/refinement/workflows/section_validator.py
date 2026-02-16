@@ -94,10 +94,15 @@ def _validate_section_format(
     index: int,
 ) -> list[str]:
     issues: list[str] = []
-    if not validate_section_id_format(section.section_id, file_id):
+    if section.file_uid != file_id:
+        issues.append(
+            f"section {index} file_uid {section.file_uid} does not match expected {file_id}"
+        )
+        return issues
+    if not validate_section_id_format(section.section_id, section.file_uid):
         issues.append(
             f"section {index} section_id {section.section_id} does not match "
-            f"SEC-{file_id}-{{ordinal:04d}} format"
+            f"SEC-{section.file_uid}-{{ordinal:04d}} format"
         )
         return issues
 
@@ -106,7 +111,7 @@ def _validate_section_format(
     except (IndexError, ValueError):
         issues.append(
             f"section {index} section_id {section.section_id} does not match "
-            f"SEC-{file_id}-{{ordinal:04d}} format"
+            f"SEC-{section.file_uid}-{{ordinal:04d}} format"
         )
         return issues
 

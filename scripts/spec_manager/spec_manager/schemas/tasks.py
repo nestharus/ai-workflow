@@ -34,8 +34,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from spec_manager.core.evidence_pointers import parse_evidence_pointer
 
-from .edge_list import EDGE_ID_RE, ELEMENT_ID_RE, LIB_ID_RE, _validate_iso8601
-from .interface_contract import DECISION_ID_RE
+from .validation_utils import (
+    DECISION_ID_RE,
+    EDGE_ID_RE,
+    ELEMENT_ID_RE,
+    LIB_ID_RE,
+    validate_iso8601,
+)
 
 TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
 GAP_ID_RE = re.compile(r"^GAP-[A-Z0-9-]+$")
@@ -529,7 +534,7 @@ class TaskIndexSchema(BaseModel):
                 tasks=[],
             )
         """
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
     @field_validator("tasks")
     @classmethod
@@ -610,7 +615,7 @@ class PatchGraphSchema(BaseModel):
                 edges=[],
             )
         """
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
     @field_validator("nodes")
     @classmethod
@@ -800,7 +805,7 @@ class TaskStatusSchema(BaseModel):
                 updated_at="2024-01-01T00:00:00",
             )
         """
-        return _validate_iso8601(value)
+        return validate_iso8601(value)
 
 
 def write_task_json(task: TaskSchema, output_path: Path) -> None:

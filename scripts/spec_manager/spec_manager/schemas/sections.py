@@ -5,7 +5,9 @@ Per DS-STRUCT-0001, sections track their atom_ids directly for 100% atom account
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+import re
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SectionSpan(BaseModel):
@@ -16,8 +18,8 @@ class SectionSpan(BaseModel):
 
     Attributes:
         section_id: Unique identifier for this section
-        file_uid: File UID (F####) - optional for backward compatibility
-        rev_id: Revision ID (R####) - optional for backward compatibility
+        file_uid: File UID (F####)
+        rev_id: Revision ID (R####)
         start_line: Start line number (1-based)
         end_line: End line number (1-based, inclusive)
         label: Human-readable section label
@@ -27,14 +29,30 @@ class SectionSpan(BaseModel):
     """
 
     section_id: str
-    file_uid: str | None = None
-    rev_id: str | None = None
+    file_uid: str
+    rev_id: str
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     label: str
     atom_ids: list[str] = Field(default_factory=list)
     span_type: str | None = None
     confidence: float = 1.0
+
+    @field_validator("file_uid")
+    @classmethod
+    def validate_file_uid(cls, value: str) -> str:
+        """Validate file_uid format (F####)."""
+        if not re.fullmatch(r"F\d{4}", value):
+            raise ValueError("file_uid must match F#### pattern")
+        return value
+
+    @field_validator("rev_id")
+    @classmethod
+    def validate_rev_id(cls, value: str) -> str:
+        """Validate rev_id format (R####)."""
+        if not re.fullmatch(r"R\d{4}", value):
+            raise ValueError("rev_id must match R#### pattern")
+        return value
 
     @model_validator(mode="after")
     def validate_line_range(self) -> SectionSpan:
@@ -47,9 +65,26 @@ class SectionSpan(BaseModel):
 class FileSections(BaseModel):
     """Container for all section spans within a file with coverage validation."""
 
-    file_id: str
+    file_uid: str
+    rev_id: str
     sections: list[SectionSpan]
     total_lines: int | None = Field(default=None, ge=0)
+
+    @field_validator("file_uid")
+    @classmethod
+    def validate_file_uid(cls, value: str) -> str:
+        """Validate file_uid format (F####)."""
+        if not re.fullmatch(r"F\d{4}", value):
+            raise ValueError("file_uid must match F#### pattern")
+        return value
+
+    @field_validator("rev_id")
+    @classmethod
+    def validate_rev_id(cls, value: str) -> str:
+        """Validate rev_id format (R####)."""
+        if not re.fullmatch(r"R\d{4}", value):
+            raise ValueError("rev_id must match R#### pattern")
+        return value
 
     @model_validator(mode="after")
     def validate_section_coverage(self) -> FileSections:
@@ -61,5 +96,15 @@ class FileSections(BaseModel):
 
         if not self.sections:
             raise ValueError("sections must not be empty")
+
+        for index, section in enumerate(self.sections, start=1):
+            if section.file_uid != self.file_uid:
+                raise ValueError(
+                    f"section {index} file_uid {section.file_uid} does not match {self.file_uid}"
+                )
+            if section.rev_id != self.rev_id:
+                raise ValueError(
+                    f"section {index} rev_id {section.rev_id} does not match {self.rev_id}"
+                )
 
         return self

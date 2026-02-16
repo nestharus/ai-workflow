@@ -282,13 +282,25 @@ def _process_file_sectionization(
             if not isinstance(parsed, list):
                 raise TypeError("Expected JSON array of sections")
             parsed = _repair_section_gaps(parsed, total_lines)
+            file_data = manager.state.file_manifest.get(file_id, {})
+            if not isinstance(file_data, dict):
+                raise TypeError(f"Missing file metadata for {file_id}")
+            rev_id = file_data.get("rev_id")
+            if not isinstance(rev_id, str) or not rev_id:
+                raise ValueError(f"Missing rev_id in file manifest for {file_id}")
+            for section in parsed:
+                if not isinstance(section, dict):
+                    raise TypeError("Each section entry must be a JSON object")
+                section["file_uid"] = file_id
+                section["rev_id"] = rev_id
             sections_payload = {
-                "file_id": file_id,
+                "file_uid": file_id,
+                "rev_id": rev_id,
                 "sections": parsed,
                 "total_lines": total_lines,
             }
             sections_path = manager.write_file_sections(file_id, sections_payload)
-        except (json.JSONDecodeError, ValidationError, TypeError, OSError) as exc:
+        except (json.JSONDecodeError, ValidationError, TypeError, ValueError, OSError) as exc:
             errors.append(f"Failed to parse/write sections: {exc}")
 
     section_ids: list[str] = []
@@ -368,30 +380,33 @@ def _process_file_sectionization(
             if atoms_path.exists():
                 atoms_path.unlink()
             before_atoms = _count_evidence_lines(evidence_output)
-
-            # Get rev_id from file manifest (defaults to R0001 for legacy compatibility)
-            file_data = manager.state.file_manifest.get(file_id, {})
-            rev_id = file_data.get("rev_id", "R0001") if isinstance(file_data, dict) else "R0001"
-
-            atoms_written = emit_atoms(
-                file_uid=file_id,
-                rev_id=rev_id,
-                file_path=file_path,
-                sections=sections_model,
-                output_path=atoms_path,
-                evidence_output=evidence_output,
-            )
-            after_atoms = _count_evidence_lines(evidence_output)
-            if after_atoms > before_atoms:
-                validation_ok = False
-                evidence_count += after_atoms - before_atoms
-                issues.append(
-                    {
-                        "type": "atom_emission",
-                        "file_id": file_id,
-                        "message": "Atom emission validation failed.",
-                    }
+            if sections_model.file_uid != file_id:
+                errors.append(
+                    f"Sections provenance mismatch: expected file_uid {file_id}, "
+                    f"got {sections_model.file_uid}"
                 )
+                sections_model = None
+
+            if sections_model is not None:
+                atoms_written = emit_atoms(
+                    file_uid=sections_model.file_uid,
+                    rev_id=sections_model.rev_id,
+                    file_path=file_path,
+                    sections=sections_model,
+                    output_path=atoms_path,
+                    evidence_output=evidence_output,
+                )
+                after_atoms = _count_evidence_lines(evidence_output)
+                if after_atoms > before_atoms:
+                    validation_ok = False
+                    evidence_count += after_atoms - before_atoms
+                    issues.append(
+                        {
+                            "type": "atom_emission",
+                            "file_id": file_id,
+                            "message": "Atom emission validation failed.",
+                        }
+                    )
 
         schema_sections = validate_sections_schema(
             sections_path=sections_path,

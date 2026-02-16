@@ -3,25 +3,46 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
-from .atoms import LineAtom
+from .atoms import ATOM_ID_PATTERN, LineAtom
 from .sections import SectionSpan
 
-SECTION_ID_PATTERN = re.compile(r"^SEC-(?P<file_id>[^-]+)-(?P<ordinal>\d{4})$")
-ATOM_ID_PATTERN = re.compile(r"^ATOM-(?P<file_id>[^-]+)-L(?P<line_no>\d{4})$")
+LIB_ID_RE = re.compile(r"^LIB-\d{4}$")
+ELEMENT_ID_RE = re.compile(
+    r"^(?:DTL-LIB-\d{4}-\d{4}|CON-LIB-\d{4}-\d{4}|ANL-LIB-\d{4}-\d{4}|OVW-LIB-\d{4}-\d{4})$"
+)
+EDGE_ID_RE = re.compile(r"^EDGE-LIB-\d{4}-LIB-\d{4}$")
+TASK_ID_RE = re.compile(r"^TASK-\d{4}$")
+DECISION_ID_RE = re.compile(r"^ANL-LIB-\d{4}-\d{4}$")
+SECTION_ID_PATTERN = re.compile(r"^SEC-(?P<file_uid>F\d{4})-(?P<ordinal>\d{4})$")
 
 
-def validate_section_id_format(section_id: str, file_id: str) -> bool:
-    """Return True when section_id matches SEC-{file_id}-{ordinal:04d}."""
+def validate_iso8601(value: str) -> str:
+    """Validate an ISO-8601 timestamp with date-time precision."""
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("value must be ISO-8601") from exc
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError("value must be ISO-8601")
+    return value
+
+
+def validate_section_id_format(section_id: str, file_uid: str) -> bool:
+    """Return True when section_id matches SEC-{file_uid}-{ordinal:04d}."""
     match = SECTION_ID_PATTERN.fullmatch(section_id)
-    return bool(match and match.group("file_id") == file_id)
+    return bool(match and match.group("file_uid") == file_uid)
 
 
-def validate_atom_id_format(atom_id: str, file_id: str, line_no: int) -> bool:
-    """Return True when atom_id matches ATOM-{file_id}-L{line_no:04d}."""
+def validate_atom_id_format(atom_id: str, file_uid: str, rev_id: str, line_no: int) -> bool:
+    """Return True when atom_id matches ATOM-{file_uid}-{rev_id}-L{line_no:04d}."""
     match = ATOM_ID_PATTERN.fullmatch(atom_id)
     return bool(
-        match and match.group("file_id") == file_id and int(match.group("line_no")) == line_no
+        match
+        and match.group("file_uid") == file_uid
+        and match.group("rev_id") == rev_id
+        and int(match.group("line_no")) == line_no
     )
 
 
@@ -87,20 +108,37 @@ def validate_atom_sequence(atoms: list[LineAtom], total_lines: int | None = None
         return issues
 
     expected_line = 1
-    file_id: str | None = None
+    file_uid: str | None = None
+    rev_id: str | None = None
     for index, atom in enumerate(atoms, start=1):
         match = ATOM_ID_PATTERN.fullmatch(atom.atom_id)
         if not match:
             issues.append(f"atom {index} atom_id {atom.atom_id} is not in expected format")
         else:
-            parsed_file_id = match.group("file_id")
+            parsed_file_uid = match.group("file_uid")
+            parsed_rev_id = match.group("rev_id")
             parsed_line_no = int(match.group("line_no"))
-            if file_id is None:
-                file_id = parsed_file_id
-            elif parsed_file_id != file_id:
+            if file_uid is None:
+                file_uid = parsed_file_uid
+            elif parsed_file_uid != file_uid:
                 issues.append(
-                    f"atom {index} file_id {parsed_file_id} does not match "
-                    f"previous file_id {file_id}"
+                    f"atom {index} file_uid {parsed_file_uid} does not match "
+                    f"previous file_uid {file_uid}"
+                )
+            if rev_id is None:
+                rev_id = parsed_rev_id
+            elif parsed_rev_id != rev_id:
+                issues.append(
+                    f"atom {index} rev_id {parsed_rev_id} does not match previous rev_id {rev_id}"
+                )
+            if parsed_file_uid != atom.file_uid:
+                issues.append(
+                    f"atom {index} file_uid {atom.file_uid} "
+                    f"does not match atom_id {parsed_file_uid}"
+                )
+            if parsed_rev_id != atom.rev_id:
+                issues.append(
+                    f"atom {index} rev_id {atom.rev_id} does not match atom_id {parsed_rev_id}"
                 )
             if parsed_line_no != atom.line_no:
                 issues.append(
