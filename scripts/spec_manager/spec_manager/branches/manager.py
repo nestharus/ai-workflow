@@ -13,6 +13,7 @@ Integrates all branch subsystems behind a single entry point:
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from .analysis import AnalysisGenerator, AnalysisReport
@@ -91,11 +92,28 @@ class BranchManager:
         """Initialize the branch directory structure.
 
         Args:
-            force: If ``True``, recreate even if already initialized.
+            force: If ``True``, clear existing branch state before recreating.
 
         Returns:
             List of issues encountered (empty if successful).
         """
+        if force and self._layout.branches_dir.exists():
+            shutil.rmtree(self._layout.branches_dir)
+            self._atom_registry = AtomRegistry(self._layout)
+            self._pin_registry = PinRegistry(self._layout)
+            self._slice_navigator = SliceNavigator(
+                self._layout, self._atom_registry, self._pin_registry
+            )
+            self._promotion_engine = PromotionEngine(
+                self._layout, self._atom_registry, self._pin_registry
+            )
+            self._downward_flow = DownwardFlowEngine(
+                self._layout, self._atom_registry, self._pin_registry
+            )
+            self._analysis_generator = AnalysisGenerator(
+                self._layout, self._atom_registry, self._pin_registry, self._slice_navigator
+            )
+
         if self.is_initialized() and not force:
             return []
         self._layout.initialize()
@@ -187,7 +205,7 @@ class BranchManager:
         Returns:
             PromotionResult describing the outcome.
         """
-        slices = list(self._slice_navigator._slices.values())
+        slices = self.list_slices()
         return self._promotion_engine.promote(
             atom_ids=atom_ids,
             skip_compliance=skip_compliance,
@@ -293,6 +311,21 @@ class BranchManager:
             List of violation descriptions. Empty if valid.
         """
         return self._slice_navigator.validate_store_monogamy()
+
+    def list_slices(self) -> list[VerticalSlice]:
+        """Return all vertical slices using navigator public APIs."""
+        slices: list[VerticalSlice] = []
+        seen: set[str] = set()
+        pending = list(self._slice_navigator.list_root_slices())
+        while pending:
+            current = pending.pop()
+            slice_id = str(current.slice_id).strip()
+            if not slice_id or slice_id in seen:
+                continue
+            seen.add(slice_id)
+            slices.append(current)
+            pending.extend(self._slice_navigator.list_children(slice_id))
+        return slices
 
     # ---- Persistence ----
 

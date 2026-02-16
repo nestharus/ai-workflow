@@ -90,24 +90,18 @@ def _intent_run_dir(workspace: Path, run_id: str) -> Path:
 def _load_intent_queue(workspace: Path, run_id: str) -> Any:
     """Load the persisted intent queue for an active run."""
     run_dir = _intent_run_dir(workspace, run_id)
-    try:
-        from spec_manager.orchestration.intent_agent.queue import QuestionQueue
+    from spec_manager.orchestration.intent_agent.queue import QuestionQueue
 
-        return QuestionQueue.load(run_dir)
-    except Exception:
-        return None
+    return QuestionQueue.load(run_dir)
 
 
 def _intent_open_questions(workspace: Path, run_id: str) -> list[Any]:
     """Return open intent queue items from the persisted snapshot."""
     queue = _load_intent_queue(workspace, run_id)
-    if queue is None or not hasattr(queue, "get_open_items"):
-        return []
-
-    try:
-        return list(queue.get_open_items())
-    except Exception:
-        return []
+    get_open_items = getattr(queue, "get_open_items", None)
+    if get_open_items is None:
+        raise TypeError("Intent queue object does not expose get_open_items().")
+    return list(get_open_items())
 
 
 def _build_intent_session(workspace: Path, run_id: str, *, create_if_missing: bool = False) -> Any:
@@ -172,11 +166,26 @@ def _resolve_refine_spec_path(workspace: Path, run_id: str) -> Path:
         workspace / "runs" / run_id / "spec.md",
         workspace / ".pdd_runs" / run_id / "spec.md",
     ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    if len(existing) == 1:
+        return existing[0]
+    if len(existing) > 1:
+        matched = ", ".join(str(path) for path in existing)
+        raise ValueError(
+            "Ambiguous spec path. Multiple candidates exist: "
+            f"{matched}. Keep only one spec.md or pass a workspace that resolves to one."
+        )
     searched = ", ".join(str(path) for path in candidates)
     raise FileNotFoundError(f"Spec not found. Looked for: {searched}")
+
+
+def _generate_run_id() -> str:
+    """Generate a collision-resistant run id."""
+    from datetime import datetime
+    from uuid import uuid4
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    return f"pdd-{ts}-{uuid4().hex[:8]}"
 
 
 def _emit_refine_signals(
@@ -684,6 +693,9 @@ def cmd_refine(args: argparse.Namespace) -> int:
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     run_dir = _intent_run_dir(workspace, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -746,7 +758,11 @@ def cmd_intent_questions(args: argparse.Namespace) -> int:
         print(f"Failed to refresh intent state: {exc}", file=sys.stderr)
         return 1
 
-    open_items = _intent_open_questions(workspace, run_id)
+    try:
+        open_items = _intent_open_questions(workspace, run_id)
+    except Exception as exc:
+        print(f"Failed to load intent questions: {exc}", file=sys.stderr)
+        return 1
     payload = [_intent_question_payload(item) for item in open_items]
 
     if args.json:
@@ -798,7 +814,11 @@ def cmd_intent_answer(args: argparse.Namespace) -> int:
         print(f"Failed to submit intent answer: {exc}", file=sys.stderr)
         return 1
 
-    open_count = len(_intent_open_questions(workspace, run_id))
+    try:
+        open_count = len(_intent_open_questions(workspace, run_id))
+    except Exception as exc:
+        print(f"Answer accepted, but failed to refresh queue state: {exc}", file=sys.stderr)
+        return 1
 
     if args.json:
         print(
@@ -1218,7 +1238,7 @@ def cmd_branches_init(args: argparse.Namespace) -> int:
     if args.from_scan:
         return cmd_branches_init_from_scan(args)
 
-    result = run_branch_init(args.run_id, source_dir=source_dir)
+    result = run_branch_init(args.run_id, source_dir=source_dir, force=args.force)
     if not result.get("success"):
         print(f"Branch init failed: {result.get('error')}", file=sys.stderr)
         return 1
@@ -1245,7 +1265,11 @@ def cmd_branches_init_from_scan(args: argparse.Namespace) -> int:
         print(f"Source directory not found: {source_dir}", file=sys.stderr)
         return 1
 
-    result = run_branch_init_from_edit_in_place(args.run_id, source_dir=source_dir)
+    result = run_branch_init_from_edit_in_place(
+        args.run_id,
+        source_dir=source_dir,
+        force=args.force,
+    )
     if not result.get("success"):
         print(f"Branch init from scan failed: {result.get('error')}", file=sys.stderr)
         return 1
@@ -1335,13 +1359,14 @@ def cmd_branches_status(args: argparse.Namespace) -> int:
     print(f"  Initialized: {branch_initialized}")
 
     if branch_initialized:
-        import contextlib
-
-        with contextlib.suppress(Exception):
+        try:
             manager.branches.load()
+        except Exception as exc:
+            print(f"  Failed to load branch state: {exc}", file=sys.stderr)
+            return 1
         atoms = manager.branches.list_atoms()
         pins = manager.branches.pin_registry.list_all()
-        slices = list(manager.branches.slice_navigator._slices.values())
+        slices = manager.branches.list_slices()
         print(f"  Atoms: {len(atoms)}")
         print(f"  Pins: {len(pins)}")
         print(f"  Slices: {len(slices)}")
@@ -1422,6 +1447,81 @@ def cmd_planner(args: argparse.Namespace) -> int:
         print(f"Unknown planner trace command: {args.planner_trace_command}", file=sys.stderr)
         return 2
     return handler(args)
+
+
+def _setup_ambiguities_and_intent_parsers(subparsers: Any) -> None:
+    """Register ambiguity and intent subcommand groups."""
+    p_ambiguities = subparsers.add_parser("ambiguities", help="Ambiguity detection commands")
+    ambiguities_sub = p_ambiguities.add_subparsers(dest="ambiguities_command", required=True)
+    p_amb_list = ambiguities_sub.add_parser("list", help="List detected ambiguities")
+    p_amb_list.add_argument("run_id", help="Run identifier")
+    p_amb_list.add_argument("--workspace", help="Workspace directory")
+
+    p_intent = subparsers.add_parser("intent", help="Intent adapter commands")
+    intent_sub = p_intent.add_subparsers(dest="intent_command", required=True)
+
+    p_intent_questions = intent_sub.add_parser(
+        "questions",
+        help="List open intent questions for a run",
+    )
+    p_intent_questions.add_argument("run_id", help="Run identifier")
+    p_intent_questions.add_argument("--workspace", help="Workspace directory")
+    p_intent_questions.add_argument("--json", action="store_true", help="Print JSON payload")
+
+    p_intent_answer = intent_sub.add_parser("answer", help="Submit an answer to an intent question")
+    p_intent_answer.add_argument("run_id", help="Run identifier")
+    p_intent_answer.add_argument("question_id", help="Question identifier")
+    p_intent_answer.add_argument("answer", nargs="+", help="Answer text to submit")
+    p_intent_answer.add_argument(
+        "--choice",
+        help="Choice identifier when answering choice questions",
+    )
+    p_intent_answer.add_argument("--workspace", help="Workspace directory")
+    p_intent_answer.add_argument("--json", action="store_true", help="Print JSON payload")
+
+    p_intent_run = intent_sub.add_parser(
+        "run",
+        help="Run interactive queue loop (ask next question, submit answer, repeat)",
+    )
+    p_intent_run.add_argument("run_id", help="Run identifier")
+    p_intent_run.add_argument("--workspace", help="Workspace directory")
+    p_intent_run.add_argument(
+        "--max-turns",
+        type=int,
+        default=50,
+        help="Maximum questions to answer in one run (default: 50)",
+    )
+
+
+def _setup_branches_parser(subparsers: Any) -> None:
+    """Register branch lifecycle subcommands."""
+    p_branches = subparsers.add_parser("branches", help="Branch lifecycle management commands")
+    branches_sub = p_branches.add_subparsers(dest="branches_command", required=True)
+
+    p_br_init = branches_sub.add_parser("init", help="Initialize branch layout")
+    p_br_init.add_argument("run_id", help="Run identifier")
+    p_br_init.add_argument("--source-dir", help="Source directory to collapse")
+    p_br_init.add_argument("--from-scan", help="Run edit-in-place scan on this directory first")
+    p_br_init.add_argument("--force", action="store_true", help="Force re-initialization")
+
+    p_br_gaps = branches_sub.add_parser("gaps", help="Scan algorithmic branch for gaps")
+    p_br_gaps.add_argument("run_id", help="Run identifier")
+
+    p_br_promote = branches_sub.add_parser("promote", help="Promote atoms to architectural branch")
+    p_br_promote.add_argument("run_id", help="Run identifier")
+    p_br_promote.add_argument("--skip-compliance", action="store_true", help="Skip compliance gate")
+    p_br_promote.add_argument("--atom-ids", nargs="+", help="Specific atom IDs to promote")
+
+    p_br_analyze = branches_sub.add_parser("analyze", help="Regenerate analysis branch")
+    p_br_analyze.add_argument("run_id", help="Run identifier")
+
+    p_br_status = branches_sub.add_parser("status", help="Show branch system status")
+    p_br_status.add_argument("run_id", help="Run identifier")
+
+    p_br_run = branches_sub.add_parser("run", help="Run all branch lifecycle phases")
+    p_br_run.add_argument("run_id", help="Run identifier")
+    p_br_run.add_argument("--source-dir", help="Source directory to collapse")
+    p_br_run.add_argument("--skip-compliance", action="store_true", help="Skip compliance gate")
 
 
 def main() -> int:
@@ -1591,63 +1691,7 @@ def main() -> int:
         help="Emit refinement signals only (do not start interactive intent loop)",
     )
 
-    # ambiguities (sub-group with "list" subcommand)
-    p_ambiguities = subparsers.add_parser("ambiguities", help="Ambiguity detection commands")
-    ambiguities_sub = p_ambiguities.add_subparsers(dest="ambiguities_command", required=True)
-    p_amb_list = ambiguities_sub.add_parser("list", help="List detected ambiguities")
-    p_amb_list.add_argument("run_id", help="Run identifier")
-    p_amb_list.add_argument("--workspace", help="Workspace directory")
-
-    # intent adapter commands (question queue + answer bridge)
-    p_intent = subparsers.add_parser("intent", help="Intent adapter commands")
-    intent_sub = p_intent.add_subparsers(dest="intent_command", required=True)
-
-    p_intent_questions = intent_sub.add_parser(
-        "questions",
-        help="List open intent questions for a run",
-    )
-    p_intent_questions.add_argument("run_id", help="Run identifier")
-    p_intent_questions.add_argument("--workspace", help="Workspace directory")
-    p_intent_questions.add_argument(
-        "--json",
-        action="store_true",
-        help="Print JSON payload",
-    )
-
-    p_intent_answer = intent_sub.add_parser(
-        "answer",
-        help="Submit an answer to an intent question",
-    )
-    p_intent_answer.add_argument("run_id", help="Run identifier")
-    p_intent_answer.add_argument("question_id", help="Question identifier")
-    p_intent_answer.add_argument(
-        "answer",
-        nargs="+",
-        help="Answer text to submit",
-    )
-    p_intent_answer.add_argument(
-        "--choice",
-        help="Choice identifier when answering choice questions",
-    )
-    p_intent_answer.add_argument("--workspace", help="Workspace directory")
-    p_intent_answer.add_argument(
-        "--json",
-        action="store_true",
-        help="Print JSON payload",
-    )
-
-    p_intent_run = intent_sub.add_parser(
-        "run",
-        help="Run interactive queue loop (ask next question, submit answer, repeat)",
-    )
-    p_intent_run.add_argument("run_id", help="Run identifier")
-    p_intent_run.add_argument("--workspace", help="Workspace directory")
-    p_intent_run.add_argument(
-        "--max-turns",
-        type=int,
-        default=50,
-        help="Maximum questions to answer in one run (default: 50)",
-    )
+    _setup_ambiguities_and_intent_parsers(subparsers)
 
     # evidence-store
     p_evidence_store = subparsers.add_parser(
@@ -1748,34 +1792,7 @@ def main() -> int:
         help="Write output to file instead of stdout",
     )
 
-    # branches - branch lifecycle management commands
-    p_branches = subparsers.add_parser("branches", help="Branch lifecycle management commands")
-    branches_sub = p_branches.add_subparsers(dest="branches_command", required=True)
-
-    p_br_init = branches_sub.add_parser("init", help="Initialize branch layout")
-    p_br_init.add_argument("run_id", help="Run identifier")
-    p_br_init.add_argument("--source-dir", help="Source directory to collapse")
-    p_br_init.add_argument("--from-scan", help="Run edit-in-place scan on this directory first")
-    p_br_init.add_argument("--force", action="store_true", help="Force re-initialization")
-
-    p_br_gaps = branches_sub.add_parser("gaps", help="Scan algorithmic branch for gaps")
-    p_br_gaps.add_argument("run_id", help="Run identifier")
-
-    p_br_promote = branches_sub.add_parser("promote", help="Promote atoms to architectural branch")
-    p_br_promote.add_argument("run_id", help="Run identifier")
-    p_br_promote.add_argument("--skip-compliance", action="store_true", help="Skip compliance gate")
-    p_br_promote.add_argument("--atom-ids", nargs="+", help="Specific atom IDs to promote")
-
-    p_br_analyze = branches_sub.add_parser("analyze", help="Regenerate analysis branch")
-    p_br_analyze.add_argument("run_id", help="Run identifier")
-
-    p_br_status = branches_sub.add_parser("status", help="Show branch system status")
-    p_br_status.add_argument("run_id", help="Run identifier")
-
-    p_br_run = branches_sub.add_parser("run", help="Run all branch lifecycle phases")
-    p_br_run.add_argument("run_id", help="Run identifier")
-    p_br_run.add_argument("--source-dir", help="Source directory to collapse")
-    p_br_run.add_argument("--skip-compliance", action="store_true", help="Skip compliance gate")
+    _setup_branches_parser(subparsers)
 
     # pin - pin-function management commands
     from spec_manager.pin_functions.cli import setup_pin_parser
@@ -1873,9 +1890,7 @@ def main() -> int:
         args.command in ("run", "phase", "extract", "lifecycle")
         and getattr(args, "run_id", None) is None
     ):
-        from datetime import datetime
-
-        args.run_id = datetime.now().strftime("pdd-%Y%m%d-%H%M%S")
+        args.run_id = _generate_run_id()
 
     commands = {
         "run": cmd_run,

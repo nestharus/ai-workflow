@@ -34,12 +34,15 @@ def _get_manager(run_id: str) -> Any:
 def run_branch_init(
     run_id: str,
     source_dir: Path | None = None,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Initialize branch layout and optionally collapse a codebase.
 
     Args:
         run_id: The run identifier.
         source_dir: If provided, collapse this directory into Layer 1.
+        force: Reinitialize branches from a clean state before collapse.
 
     Returns:
         Dict with ``success`` flag and ``outputs`` dict.
@@ -52,7 +55,7 @@ def run_branch_init(
 
     try:
         # Initialize branch directory structure
-        issues = manager.branches.initialize()
+        issues = manager.branches.initialize(force=force)
         if issues:
             logger.warning("Branch init issues: %s", issues)
 
@@ -254,6 +257,8 @@ def run_branch_analyze(run_id: str) -> dict[str, Any]:
 def run_branch_init_from_edit_in_place(
     run_id: str,
     source_dir: Path,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Initialize branches using edit-in-place analysis output.
 
@@ -264,6 +269,7 @@ def run_branch_init_from_edit_in_place(
     Args:
         run_id: The run identifier.
         source_dir: Root directory of the source codebase.
+        force: Reinitialize branches from a clean state before collapse.
 
     Returns:
         Dict with ``success`` flag and ``outputs`` dict.
@@ -275,7 +281,7 @@ def run_branch_init_from_edit_in_place(
     )
 
     # Run branch init with collapse
-    init_result = run_branch_init(run_id, source_dir=source_dir)
+    init_result = run_branch_init(run_id, source_dir=source_dir, force=force)
     if not init_result.get("success"):
         return init_result
 
