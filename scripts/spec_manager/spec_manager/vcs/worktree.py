@@ -71,9 +71,7 @@ class WorktreeManager:
         # Multi-layer state
         self._layer_worktrees: dict[Layer, dict[Lane, Path]] = {}
         self._layer_branches: dict[Layer, dict[Lane, str]] = {}
-        self._candidate_refs: dict[Layer, str] = {}
         self._batch_seq: dict[Layer, int] = {}
-        self._upstream_accepted: dict[Layer, str] = {}
         self._slice_worktrees: dict[str, Path] = {}  # slice_id → Path
         self._base_ref: str = "HEAD"
         self._layers_initialized: bool = False
@@ -315,10 +313,17 @@ class WorktreeManager:
     def cleanup_slice_worktree(self, layer: Layer, slice_id: str) -> None:
         """Remove a slice worktree."""
         full_id = f"{layer}:{slice_id}"
-        path = self._slice_worktrees.pop(full_id, None)
-        if path and self.vcs.worktree_exists(path):
-            self.vcs.remove_worktree(path)
-            logger.info("Removed slice worktree '%s'", full_id)
+        path = self._slice_worktrees.get(full_id)
+        if path is None:
+            return
+
+        ok, err = self.vcs.remove_worktree(path)
+        if not ok:
+            logger.warning("Failed removing slice worktree '%s': %s", full_id, err)
+            return
+
+        self._slice_worktrees.pop(full_id, None)
+        logger.info("Removed slice worktree '%s'", full_id)
 
     # ------------------------------------------------------------------
     # Batch / CI primitives
@@ -345,12 +350,6 @@ class WorktreeManager:
 
         clean_path = self._layer_worktrees.get(layer, {}).get("clean")
         base_clean_sha = self.vcs.get_head_sha(clean_path) if clean_path else None
-
-        candidate_branch = self.candidate_ref(layer)
-        ok, err = self.vcs.update_ref(candidate_branch, dirty_sha)
-        if not ok:
-            logger.warning("Failed to snapshot candidate for %s: %s", layer, err)
-            return None
 
         merge_commits: list[str] = []
         if base_clean_sha:
@@ -382,16 +381,25 @@ class WorktreeManager:
                 break
         if not tag_ok:
             logger.warning("Failed to create batch tag %s for %s: %s", tag_name, layer, tag_err)
+            return None
 
-        self._candidate_refs[layer] = dirty_sha
+        candidate_branch = self.candidate_ref(layer)
+        ok, err = self.vcs.update_ref(candidate_branch, dirty_sha)
+        if not ok:
+            logger.warning("Failed to snapshot candidate for %s: %s", layer, err)
+            return None
+
         logger.info("Snapshot candidate for %s: %s", layer, dirty_sha[:12])
         return dirty_sha
 
     def clear_candidate(self, layer: Layer) -> None:
         """Clear the candidate ref for a layer."""
         candidate_branch = self.candidate_ref(layer)
-        self.vcs.delete_ref(candidate_branch)
-        self._candidate_refs.pop(layer, None)
+        if self.vcs.rev_parse(candidate_branch) is None:
+            return
+        ok, err = self.vcs.delete_ref(candidate_branch)
+        if not ok:
+            logger.warning("Failed to clear candidate ref for %s: %s", layer, err)
 
     @staticmethod
     def _resolve_gate_check(
@@ -418,7 +426,11 @@ class WorktreeManager:
         enabled = bool(config)
         if not enabled:
             return True, [], ""
-        return True, [], ""
+        return (
+            False,
+            [f"{check_id}_not_evaluated"],
+            f"{check_id} enabled without explicit evaluation result",
+        )
 
     def _default_tier_commands(self, workspace_root: Path) -> dict[str, Any]:
         """Infer tier command defaults from known test layouts."""
@@ -563,7 +575,18 @@ class WorktreeManager:
         clean_path = self._layer_worktrees.get(layer, {}).get("clean")
         if clean_path:
             # Reset clean worktree to the new clean branch HEAD
-            self.vcs.rebase(clean_path, clean_branch)
+            sync_ok, sync_err = self.vcs.rebase(clean_path, clean_branch)
+            if not sync_ok:
+                return BatchResult(
+                    success=False,
+                    layer=layer,
+                    candidate_sha=candidate_sha,
+                    base_clean_sha=base_clean_sha,
+                    clean_sha=candidate_sha,
+                    error=f"Clean ref advanced but failed to sync clean worktree: {sync_err}",
+                    gates_passed=gates_passed,
+                    tests_passed=tests_passed,
+                )
 
         logger.info("Promoted %s clean to %s", layer, candidate_sha[:12])
         return BatchResult(
@@ -741,7 +764,20 @@ class WorktreeManager:
                 continue
 
             # Snapshot and promote the current dirty head.
-            self.snapshot_candidate(layer)
+            candidate_sha = self.snapshot_candidate(layer)
+            if not candidate_sha:
+                clean_path = self._layer_worktrees.get(layer, {}).get("clean")
+                base_clean_sha = self.vcs.get_head_sha(clean_path) if clean_path else None
+                result.layer_results[layer] = BatchResult(
+                    success=False,
+                    layer=layer,
+                    base_clean_sha=base_clean_sha,
+                    error=f"Failed to snapshot candidate for {layer}",
+                    gates_passed=True,
+                    tests_passed=True,
+                )
+                break
+
             batch = self.promote_dirty_to_clean(
                 layer,
                 gates=run_gates,
@@ -819,9 +855,12 @@ class WorktreeManager:
         removed = []
         for full_id in list(self._slice_worktrees.keys()):
             if full_id.startswith(prefix):
-                path = self._slice_worktrees.pop(full_id)
-                if self.vcs.worktree_exists(path):
-                    self.vcs.remove_worktree(path)
+                path = self._slice_worktrees[full_id]
+                ok, err = self.vcs.remove_worktree(path)
+                if not ok:
+                    logger.warning("Failed removing slice worktree '%s': %s", full_id, err)
+                    continue
+                self._slice_worktrees.pop(full_id, None)
                 removed.append(full_id)
         return removed
 
@@ -858,7 +897,12 @@ class WorktreeManager:
 
         # Clear candidate refs
         for layer in LAYER_ORDER:
-            self.vcs.delete_ref(self.candidate_ref(layer))
+            candidate_ref = self.candidate_ref(layer)
+            if self.vcs.rev_parse(candidate_ref) is None:
+                continue
+            ok, err = self.vcs.delete_ref(candidate_ref)
+            if not ok:
+                errors.append({"worktree": f"{layer}/candidate", "error": err})
 
         logger.info("Cleanup complete: removed %d worktrees", len(removed))
         return {"removed": removed, "errors": errors}
@@ -942,4 +986,3 @@ class WorktreeManager:
                 err,
             )
             return
-        self._upstream_accepted[layer] = upstream_clean

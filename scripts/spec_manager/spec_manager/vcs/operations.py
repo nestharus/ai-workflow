@@ -159,7 +159,9 @@ class VcsOperations(Protocol):
         ...
 
     def delete_ref(self, ref: str) -> tuple[bool, str]:
-        """Delete a branch or ref.
+        """Delete a branch name or explicit git ref.
+
+        Bare names are treated as branch names under ``refs/heads/``.
 
         Returns:
             ``(success, error_message)``.
@@ -170,22 +172,44 @@ class VcsOperations(Protocol):
 class GitVcs:
     """Git implementation of :class:`VcsOperations`."""
 
-    def __init__(self, repo_root: Path) -> None:
+    DEFAULT_COMMAND_TIMEOUT_SECONDS = 120.0
+
+    def __init__(
+        self,
+        repo_root: Path,
+        *,
+        command_timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    ) -> None:
         self.repo_root = repo_root
+        self.command_timeout_seconds = command_timeout_seconds
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
     def _run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git", *args],
-            cwd=cwd or self.repo_root,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            check=False,
-        )
+        command = ["git", *args]
+        try:
+            return subprocess.run(
+                command,
+                cwd=cwd or self.repo_root,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                check=False,
+                timeout=self.command_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            timeout_message = (
+                "git command timed out "
+                f"after {self.command_timeout_seconds:g}s: {' '.join(command)}"
+            )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=124,
+                stdout=exc.stdout if isinstance(exc.stdout, str) else "",
+                stderr=timeout_message,
+            )
 
     # ------------------------------------------------------------------
     # VcsOperations implementation
@@ -200,13 +224,14 @@ class GitVcs:
         return True, ""
 
     def remove_worktree(self, path: Path) -> tuple[bool, str]:
+        branch = self._branch_for_worktree(path)
         result = self._run(["worktree", "remove", str(path), "--force"])
         if result.returncode != 0:
             return False, result.stderr.strip()
-        # Also delete the branch
-        branch = self._branch_for_worktree(path)
         if branch:
-            self._run(["branch", "-D", branch])
+            ok, err = self.delete_ref(branch)
+            if not ok:
+                return False, f"Worktree removed but failed to delete ref '{branch}': {err}"
         return True, ""
 
     def worktree_exists(self, path: Path) -> bool:
@@ -346,7 +371,8 @@ class GitVcs:
         return True, ""
 
     def delete_ref(self, ref: str) -> tuple[bool, str]:
-        result = self._run(["branch", "-D", ref])
+        normalized_ref = ref if ref.startswith("refs/") else f"refs/heads/{ref}"
+        result = self._run(["update-ref", "-d", normalized_ref])
         if result.returncode != 0:
             return False, result.stderr.strip()
         return True, ""
