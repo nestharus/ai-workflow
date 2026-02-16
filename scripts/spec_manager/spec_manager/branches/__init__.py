@@ -11,8 +11,7 @@ Delegation pattern
 Several modules in this package delegate their core logic to canonical
 implementations elsewhere in the codebase:
 
-- ``gap_detection`` -> ``compliance.detection.comment_scanner``,
-  ``compliance.detection.stub_scanner``
+- ``gap_detection`` -> canonical gap inventory builder
 - ``compliance`` -> ``compliance.promotion.algorithmic_gates``
 - ``promotion`` -> ``compliance.promotion.orchestrator``
 - ``analysis`` -> ``analysis.adjacency.graph.AdjacencyGraph``
@@ -36,7 +35,7 @@ from .atoms import AtomRegistry
 from .collapse import CollapseEngine, CollapseResult
 from .compliance import ComplianceChecker, ComplianceGateResult
 from .downward_flow import ArchitecturalIssue, DownwardFlowEngine, DownwardTraceResult
-from .gap_detection import GapDetector, GapItem
+from .gap_detection import GapDetector, GapInventoryItem
 from .layout import BranchLayout
 from .manager import BranchManager
 from .pins import DriftReport, PinRegistry
@@ -71,7 +70,7 @@ __all__ = [
     "DownwardTraceResult",
     "DriftReport",
     "GapDetector",
-    "GapItem",
+    "GapInventoryItem",
     "HorizontalLayer",
     "PinProjection",
     "PinRegistry",

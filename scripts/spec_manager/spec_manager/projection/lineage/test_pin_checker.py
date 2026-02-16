@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from spec_manager.projection.lineage.builder import AtomDefinition
 from spec_manager.projection.lineage.drift_detector import (
@@ -58,6 +58,8 @@ def check_test_pin_alignment(
     test_roots: list[Path],
     baseline_path: Path,
     update_baseline_flag: bool = False,
+    runtime_observations: list[dict[str, Any]] | None = None,
+    observations_path: Path | None = None,
 ) -> TestPinCheckResult:
     """Run full test-pin validation pipeline.
 
@@ -71,6 +73,8 @@ def check_test_pin_alignment(
         test_roots: Directories to scan for test files.
         baseline_path: Path to the baseline JSON file.
         update_baseline_flag: Whether to update the baseline after checking.
+        runtime_observations: Runtime instrumentation association rows.
+        observations_path: Optional JSON file with runtime observations.
 
     Returns:
         TestPinCheckResult with drift findings and coverage stats.
@@ -79,7 +83,12 @@ def check_test_pin_alignment(
     test_files = _collect_test_files(test_roots)
 
     # Step 2: Discover test-pin associations
-    test_pin_map = discover_test_pin_associations(test_files, registry)
+    test_pin_map = discover_test_pin_associations(
+        test_files,
+        registry,
+        runtime_observations=runtime_observations,
+        observations_path=observations_path,
+    )
 
     # Step 3: Load existing baseline
     baseline_store = load_baseline(baseline_path)

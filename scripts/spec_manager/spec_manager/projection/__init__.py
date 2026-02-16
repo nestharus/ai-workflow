@@ -42,8 +42,6 @@ __all__ = [
     "convert_propagation_to_drift",
     "generate_plan_from_libraries",
     "import_records_from_pin_registry",
-    "scan_imports_from_directory",
-    "scan_imports_from_files",
 ]
 
 
@@ -116,8 +114,6 @@ def __getattr__(name: str) -> Any:
         "LineageBuilder",
         "RawImportRecord",
         "import_records_from_pin_registry",
-        "scan_imports_from_directory",
-        "scan_imports_from_files",
     }
     _lineage_flow_names = {"DataFlowHop", "DataFlowTracker", "SignalSpec"}
     _lineage_drift_names = {"DriftKind", "PinDrift", "PinDriftDetector"}
@@ -144,8 +140,6 @@ def __getattr__(name: str) -> Any:
             LineageBuilder,
             RawImportRecord,
             import_records_from_pin_registry,
-            scan_imports_from_directory,
-            scan_imports_from_files,
         )
 
         return {
@@ -153,8 +147,6 @@ def __getattr__(name: str) -> Any:
             "LineageBuilder": LineageBuilder,
             "RawImportRecord": RawImportRecord,
             "import_records_from_pin_registry": import_records_from_pin_registry,
-            "scan_imports_from_directory": scan_imports_from_directory,
-            "scan_imports_from_files": scan_imports_from_files,
         }[name]
 
     if name in _lineage_flow_names:

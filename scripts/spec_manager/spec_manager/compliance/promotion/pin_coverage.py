@@ -9,13 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
-from spec_manager.core.code_analysis import SourceAnalysis, analyze_source, infer_code_signals
+from spec_manager.core.code_analysis import SourceAnalysis, analyze_source
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
-
-_DEFAULT_INTRODUCTION_MARKERS = ["# @introduced", "# @infrastructure"]
 
 
 @dataclass
@@ -43,6 +41,7 @@ class PinCoverageReport:
     unpinned_locations: int
     coverage_ratio: float
     items: list[PinCoverageItem] = field(default_factory=list)
+    missing_architecture_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -54,38 +53,9 @@ class _ArchBlock:
     confidence: float = 1.0
 
 
-def _is_infrastructure_path(file_path: str) -> bool:
-    return "infrastructure" in file_path.split("/")
-
-
-def _has_introduction_marker(body_lines: list[str], markers: list[str]) -> bool:
-    for line in body_lines:
-        stripped = line.strip()
-        for marker in markers:
-            if marker in stripped:
-                return True
-    return False
-
-
-def _coerce_arch_blocks(
-    *,
-    analysis: SourceAnalysis,
-    source_text: str,
-    file_path: str,
-) -> list[_ArchBlock]:
-    """Resolve architecture blocks from facets, requesting on-demand when absent."""
+def _coerce_arch_blocks(*, analysis: SourceAnalysis) -> list[_ArchBlock]:
+    """Resolve architecture blocks from analysis facets only."""
     raw_blocks = analysis.facets.get("arch_blocks")
-
-    if not isinstance(raw_blocks, list) or not raw_blocks:
-        inferred = infer_code_signals(
-            file_path=file_path,
-            source_text=source_text,
-            spans=[],
-            requested={"arch_blocks"},
-        )
-        candidate = inferred.get("arch_blocks") or inferred.get("ARCH_BLOCKS")
-        if isinstance(candidate, list):
-            raw_blocks = candidate
 
     blocks: list[_ArchBlock] = []
     if isinstance(raw_blocks, list):
@@ -114,22 +84,6 @@ def _coerce_arch_blocks(
                     confidence=max(0.0, min(1.0, confidence)),
                 )
             )
-
-    if blocks:
-        return blocks
-
-    # Fallback to function spans when architecture blocks are unavailable.
-    for idx, func in enumerate(analysis.functions):
-        block_id = func.qualified_name or func.name or f"function_{idx + 1}"
-        blocks.append(
-            _ArchBlock(
-                block_id=block_id,
-                line_start=func.start_line,
-                line_end=max(func.end_line, func.start_line),
-                kind="ARCH_BLOCK",
-                confidence=0.5,
-            )
-        )
     return blocks
 
 
@@ -147,14 +101,9 @@ def _comments_in_range(analysis: SourceAnalysis, start_line: int, end_line: int)
 def build_pin_coverage_report(
     registry: PinFunctionRegistry,
     architectural_files: list[Path],
-    introduction_markers: list[str] | None = None,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> PinCoverageReport:
     """Build pin coverage report over architecture block spans."""
-    markers = list(_DEFAULT_INTRODUCTION_MARKERS)
-    if introduction_markers:
-        markers.extend(introduction_markers)
-
     introduction_edges: set[str] = set()
     for edge in registry.import_edges:
         if str(edge.projection_type).lower() == "introduction":
@@ -166,6 +115,7 @@ def build_pin_coverage_report(
             analyzed_lookup[af.path] = af
 
     items: list[PinCoverageItem] = []
+    missing_architecture_files: list[str] = []
 
     for arch_file in architectural_files:
         file_str = str(arch_file)
@@ -180,8 +130,10 @@ def build_pin_coverage_report(
                 continue
             analysis = analyze_source(source, file_str)
 
-        blocks = _coerce_arch_blocks(analysis=analysis, source_text=source, file_path=file_str)
-        source_lines = source.splitlines()
+        blocks = _coerce_arch_blocks(analysis=analysis)
+        if not blocks:
+            missing_architecture_files.append(file_str)
+            continue
 
         for block in blocks:
             block_location = f"{file_str}:{block.block_id}"
@@ -196,24 +148,11 @@ def build_pin_coverage_report(
             pin_func_ids = sorted({edge.pin_func_id for edge in in_span_edges})
             has_pin = bool(pin_func_ids)
 
-            line_start_idx = max(0, block.line_start - 1)
-            line_end_idx = min(len(source_lines), block.line_end)
-            block_lines = source_lines[line_start_idx:line_end_idx]
             comments = _comments_in_range(analysis, block.line_start, block.line_end)
 
-            marker_introduction = _has_introduction_marker(block_lines, markers)
             explicit_intro = block.kind == "INTRODUCTION" or block_location in introduction_edges
-            inferred_intro = (not has_pin) and (
-                _is_infrastructure_path(file_str) or marker_introduction
-            )
-
-            is_introduction = explicit_intro or inferred_intro
-            if explicit_intro:
-                intro_confidence = max(block.confidence, 0.9)
-            elif inferred_intro:
-                intro_confidence = min(block.confidence, 0.6)
-            else:
-                intro_confidence = 1.0
+            is_introduction = explicit_intro
+            intro_confidence = block.confidence if is_introduction else 1.0
 
             items.append(
                 PinCoverageItem(
@@ -244,6 +183,7 @@ def build_pin_coverage_report(
         unpinned_locations=unpinned,
         coverage_ratio=coverage_ratio,
         items=items,
+        missing_architecture_files=missing_architecture_files,
     )
 
 
@@ -251,23 +191,39 @@ def check_pin_coverage(
     registry: PinFunctionRegistry,
     architectural_files: list[Path],
     gate_spec: GateSpec,
-    introduction_markers: list[str] | None = None,
     analyzed: list[AnalyzedFile] | None = None,
 ) -> GateCheckResult:
     """Gate: every architecture block span is covered by a pin or introduction."""
     start = time.monotonic()
     threshold = gate_spec.threshold if gate_spec.threshold > 0 else 1.0
-    extra_markers = gate_spec.params.get("introduction_markers", [])
-    all_markers = list(introduction_markers or []) + [
-        str(item) for item in extra_markers if isinstance(item, str)
-    ]
 
     report = build_pin_coverage_report(
         registry=registry,
         architectural_files=architectural_files,
-        introduction_markers=all_markers or None,
         analyzed=analyzed,
     )
+
+    duration = (time.monotonic() - start) * 1000
+    if report.missing_architecture_files:
+        findings = [
+            {
+                "reason": "missing_architecture_nodes",
+                "arch_file_path": file_path,
+            }
+            for file_path in sorted(report.missing_architecture_files)
+        ]
+        return GateCheckResult(
+            gate_id=GateId.PIN_COVERAGE.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.STALE_EVIDENCE,
+            score=0.0,
+            findings=findings,
+            summary=(
+                "Architecture-node evidence missing for one or more files; "
+                "pin coverage requires pre-built architecture blocks."
+            ),
+            duration_ms=duration,
+        )
 
     findings: list[dict[str, Any]] = []
     for item in report.items:
@@ -283,7 +239,6 @@ def check_pin_coverage(
             )
 
     passed = report.coverage_ratio >= threshold
-    duration = (time.monotonic() - start) * 1000
 
     return GateCheckResult(
         gate_id=GateId.PIN_COVERAGE.value,

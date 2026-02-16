@@ -311,7 +311,7 @@ def probe_stubs(
     Stubs of type "not_implemented" are prioritized (most likely to confirm).
 
     Args:
-        stubs: List of StubFunction from stub_scanner.
+        stubs: List of StubFunction from branches.gap_detection.
         project_root: Root of the Python project for module path resolution.
         timeout_seconds: Per-function timeout.
 

@@ -392,8 +392,7 @@ class ComplianceScorer:
         Returns:
             List of blocker dicts for compliance scoring.
         """
-        from spec_manager.compliance.detection.comment_scanner import scan_comments
-        from spec_manager.compliance.detection.stub_scanner import scan_stubs
+        from spec_manager.branches.gap_detection import scan_comments, scan_stubs
 
         blockers: list[dict[str, Any]] = []
 

@@ -1,6 +1,6 @@
-"""Test signature baselining and persistence.
+"""Test-span baselining and persistence.
 
-Extracts and persists the signatures of test functions associated with
+Extracts and persists content hashes of test function spans associated with
 pin-functions, providing a stable baseline for drift detection.
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import textwrap
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,8 +31,8 @@ class TestSignatureBaseline:
         test_file: Path to the test file.
         test_function: Fully qualified test function name.
         pin_func_id: The associated pin-function ID.
-        signature_hash: MD5 hash from compute_signature_hash().
-        signature_text: Human-readable signature string for diagnostics.
+        signature_hash: Hash of normalized test span content.
+        signature_text: Diagnostic text representation of captured test span.
         recorded_at: ISO-8601 timestamp of when the baseline was recorded.
     """
 
@@ -78,8 +79,8 @@ class TestPinBaselineStore:
 def build_baseline(test_pin_map: TestPinMap) -> TestPinBaselineStore:
     """Build a baseline store from a test-pin association map.
 
-    For each association, computes the test function's signature hash
-    and extracts the human-readable signature text.
+    For each association, computes a span-content hash for the test
+    function and stores a diagnostic text snapshot.
 
     Args:
         test_pin_map: The test-pin association map.
@@ -196,12 +197,12 @@ def update_baseline(
                     existing.baselines[idx] = new_bl
                     changes.append(
                         f"Updated {new_bl.test_function} in {new_bl.test_file}: "
-                        f"signature changed ({old_bl.signature_hash} -> {new_bl.signature_hash})"
+                        f"span hash changed ({old_bl.signature_hash} -> {new_bl.signature_hash})"
                     )
                 else:
                     changes.append(
                         f"Drift detected for {new_bl.test_function} in {new_bl.test_file}: "
-                        f"signature changed ({old_bl.signature_hash} -> {new_bl.signature_hash})"
+                        f"span hash changed ({old_bl.signature_hash} -> {new_bl.signature_hash})"
                     )
         else:
             existing.baselines.append(new_bl)
@@ -212,29 +213,31 @@ def update_baseline(
 
 
 def _compute_test_signature_hash(file_path: str, test_function: str) -> str | None:
-    """Compute signature hash for a test function, handling class-qualified names.
-
-    For names like "TestClass.test_method", finds the method inside the class.
-    For simple names like "test_foo", finds the top-level function.
+    """Compute content hash for a test function span.
 
     Args:
         file_path: Path to the test file.
         test_function: Test function name, possibly class-qualified.
 
     Returns:
-        MD5 hex digest of the signature, or None if not found.
+        SHA-256 hex digest of normalized span text, or None if not found.
     """
     func_info = _find_function_info(file_path, test_function)
     if func_info is None:
         return None
 
-    sig_parts = _extract_signature_parts_from_info(func_info)
-    sig_str = "|".join(sig_parts)
-    return hashlib.md5(sig_str.encode()).hexdigest()  # noqa: S324
+    span_text = _extract_function_span_text(file_path, func_info)
+    if not span_text:
+        return None
+
+    normalized = textwrap.dedent(span_text).strip()
+    if not normalized:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _extract_test_signature_text(file_path: str, test_function: str) -> str:
-    """Extract human-readable signature text for a test function.
+    """Extract captured span text used for baseline hashing.
 
     Args:
         file_path: Path to the test file.
@@ -247,8 +250,23 @@ def _extract_test_signature_text(file_path: str, test_function: str) -> str:
     if func_info is None:
         return ""
 
-    parts = _extract_signature_parts_from_info(func_info)
-    return "|".join(parts)
+    span_text = _extract_function_span_text(file_path, func_info)
+    return textwrap.dedent(span_text).strip()
+
+
+def _extract_function_span_text(file_path: str, func_info: RawFunctionInfo) -> str:
+    path = Path(file_path)
+    if not path.exists():
+        return ""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return ""
+
+    lines = source.splitlines()
+    start = max(0, func_info.start_line - 1)
+    end = min(len(lines), max(func_info.end_line, func_info.start_line))
+    return "\n".join(lines[start:end])
 
 
 def _find_function_info(file_path: str, test_function: str) -> RawFunctionInfo | None:
@@ -285,51 +303,6 @@ def _find_function_info(file_path: str, test_function: str) -> RawFunctionInfo |
             return func
 
     return None
-
-
-def _extract_signature_parts_from_info(func_info: RawFunctionInfo) -> list[str]:
-    """Extract signature components from a RawFunctionInfo.
-
-    Produces output compatible with the original AST-based _extract_signature_parts:
-    function name, then arg specs, then return annotation.
-
-    Args:
-        func_info: Function info from analyze_source.
-
-    Returns:
-        List of signature component strings.
-    """
-    parts: list[str] = [func_info.name]
-
-    # Parameters: args is a tuple of strings like "param", "param: Type", etc.
-    for arg_str in func_info.args:
-        arg_str = arg_str.strip()
-        if arg_str.startswith("*") and not arg_str.startswith("**"):
-            # *args / vararg
-            vararg_name = arg_str.lstrip("*").split(":")[0].strip()
-            if vararg_name:
-                parts.append(f"vararg:{vararg_name}")
-        elif arg_str.startswith("**"):
-            # **kwargs / kwarg
-            kwarg_name = arg_str.lstrip("*").split(":")[0].strip()
-            if kwarg_name:
-                parts.append(f"kwarg:{kwarg_name}")
-        else:
-            # Regular arg or keyword-only arg
-            if ":" in arg_str:
-                name, annotation = arg_str.split(":", 1)
-                name = name.strip()
-                annotation = annotation.strip()
-            else:
-                name = arg_str
-                annotation = ""
-            parts.append(f"arg:{name}:{annotation}")
-
-    # Return annotation
-    if func_info.return_annotation:
-        parts.append(f"return:{func_info.return_annotation}")
-
-    return parts
 
 
 def _store_to_dict(store: TestPinBaselineStore) -> dict[str, Any]:

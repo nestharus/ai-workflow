@@ -8,6 +8,7 @@ Verifies:
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -17,7 +18,8 @@ from typing import TYPE_CHECKING, Any
 from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
-from spec_manager.projection.lineage.builder import scan_imports_from_files
+from spec_manager.core.json_extraction import _extract_json_payload
+from spec_manager.refinement.formats import _strip_code_fences
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 if TYPE_CHECKING:
@@ -53,25 +55,11 @@ def _hash_function_body(source: str, start_line: int, end_line: int) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _text_similarity(
-    source_a: str,
-    start_a: int,
-    end_a: int,
-    source_b: str,
-    start_b: int,
-    end_b: int,
-) -> float:
-    """Compute text-based structural similarity between two function bodies."""
-    from difflib import SequenceMatcher
-
-    lines_a = source_a.splitlines()[start_a - 1 : end_a]
-    lines_b = source_b.splitlines()[start_b - 1 : end_b]
-    # Normalize: strip whitespace, skip empty/comment lines
-    norm_a = [line.strip() for line in lines_a if line.strip() and not line.strip().startswith("#")]
-    norm_b = [line.strip() for line in lines_b if line.strip() and not line.strip().startswith("#")]
-    if not norm_a or not norm_b:
-        return 0.0
-    return SequenceMatcher(None, "\n".join(norm_a), "\n".join(norm_b)).ratio()
+def _extract_span_text(source: str, start: int, end: int) -> str:
+    lines = source.splitlines()
+    lower = max(0, start - 1)
+    upper = min(end, len(lines))
+    return "\n".join(lines[lower:upper]).strip()
 
 
 def _extract_function_info(file_path: Path) -> list[tuple[RawFunctionInfo, str]]:
@@ -101,6 +89,55 @@ def _get_line_fingerprints(source: str, start: int, end: int) -> set[str]:
     return fingerprints
 
 
+def _fingerprint_overlap_ratio(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a)
+
+
+def _llm_tie_break_duplicate(
+    *,
+    workspace: Path,
+    agent_name: str,
+    arch_span: str,
+    arch_context: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Use an LLM tie-breaker only when fingerprint candidates are ambiguous."""
+    from spec_manager.core.agent_utils import run_agent
+
+    prompt = (
+        "Decide whether architectural code duplicates one candidate atom implementation.\n"
+        "Do not use syntax-category reasoning. Use behavior/intent equivalence.\n"
+        "Return JSON only:\n"
+        '{"duplicate": true|false, "matching_pin_func_id": "string|null", '
+        '"confidence": 0.0, "reason": "string"}\n\n'
+        f"Architectural location: {arch_context}\n"
+        "Architectural span:\n"
+        "```\n"
+        f"{arch_span[:5000]}\n"
+        "```\n\n"
+        "Candidate atom spans:\n"
+        f"{json.dumps(candidates[:4], ensure_ascii=True)}\n"
+    )
+    raw_output = run_agent(
+        agent_name=agent_name,
+        prompt=prompt,
+        workspace=workspace,
+    )
+    cleaned = _strip_code_fences(raw_output)
+    payload = _extract_json_payload(cleaned)
+    if not payload:
+        return None
+    try:
+        loaded = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    return loaded
+
+
 def check_no_inlined_atom_logic(
     pin_registry: PinFunctionRegistry,
     architectural_files: list[Path],
@@ -111,18 +148,16 @@ def check_no_inlined_atom_logic(
 ) -> GateCheckResult:
     """Gate: No inlined atom logic in architectural layer.
 
-    Detection strategies (applied in order):
-    1. Exact body match: Hash the body of each architectural function,
-       compare against pin-function content_hash values.
-    2. Text structural similarity: Normalize source lines, compare structure.
-    3. Line fingerprint overlap: If >threshold of an architectural
-       function's line fingerprints match a pin-function's lines, flag it.
+    Detection strategies:
+    1. Exact span fingerprint match against pin registry content hashes.
+    2. Fingerprint-overlap candidate generation.
+    3. Optional LLM tie-breaker only when overlap candidates are ambiguous.
 
     gate_spec.params:
-        - similarity_threshold (float, default 0.8): Minimum text similarity.
-        - fingerprint_overlap_threshold (float, default 0.6): Minimum line
-            fingerprint overlap.
-        - exclude_patterns (list[str]): File patterns to skip.
+        - fingerprint_overlap_threshold (float, default 0.8): Minimum overlap.
+        - enable_llm_tiebreak (bool, default True): Use LLM for ambiguous cases.
+        - llm_tiebreak_agent (str, default "pdd-code-analyzer"): Tie-break agent.
+        - workspace (str, optional): Workspace path for agent execution.
 
     Args:
         pin_registry: PinFunctionRegistry with atom content hashes.
@@ -134,24 +169,23 @@ def check_no_inlined_atom_logic(
         GateCheckResult with findings for each inlined logic instance.
     """
     start_time = time.monotonic()
-    similarity_threshold = gate_spec.params.get("similarity_threshold", 0.8)
-    fingerprint_overlap_threshold = gate_spec.params.get("fingerprint_overlap_threshold", 0.6)
+    fingerprint_overlap_threshold = float(
+        gate_spec.params.get("fingerprint_overlap_threshold", 0.8)
+    )
+    enable_llm_tiebreak = bool(gate_spec.params.get("enable_llm_tiebreak", True))
+    llm_tiebreak_agent = str(gate_spec.params.get("llm_tiebreak_agent", "pdd-code-analyzer"))
+    workspace = Path(str(gate_spec.params.get("workspace", ".")).strip() or ".")
 
-    # Build map of pin-function content hashes -> pin_func_id
-    pin_hashes: dict[str, str] = {}
+    pin_hashes: dict[str, list[str]] = {}
     for pf in pin_registry.pin_functions:
-        if pf.content_hash:
-            pin_hashes[pf.content_hash] = pf.pin_func_id
+        if not pf.content_hash:
+            continue
+        pin_hashes.setdefault(pf.content_hash, []).append(pf.pin_func_id)
 
-    # Extract pin-function info and line fingerprints from algorithmic files
-    pin_func_info: dict[str, tuple[RawFunctionInfo, str]] = {}
+    pin_func_id_by_name = {pf.function_name: pf.pin_func_id for pf in pin_registry.pin_functions}
+    pin_span_texts: dict[str, str] = {}
     pin_func_fingerprints: dict[str, set[str]] = {}
-    pin_func_id_by_name: dict[str, str] = {}
 
-    for pf in pin_registry.pin_functions:
-        pin_func_id_by_name[pf.function_name] = pf.pin_func_id
-
-    # Build algo lookup from analyzed or files
     algo_analyzed_lookup: dict[str, AnalyzedFile] = {}
     if analyzed_algo is not None:
         for af in analyzed_algo:
@@ -163,16 +197,18 @@ def check_no_inlined_atom_logic(
             _extract_function_info_from_analyzed(af) if af else _extract_function_info(algo_file)
         )
         for func_info, source in entries:
-            func_name = func_info.name
-            if func_name in pin_func_id_by_name:
-                pfid = pin_func_id_by_name[func_name]
-                pin_func_info[pfid] = (func_info, source)
-                pin_func_fingerprints[pfid] = _get_line_fingerprints(
-                    source, func_info.start_line, func_info.end_line
-                )
+            pfid = pin_func_id_by_name.get(func_info.name)
+            if not pfid:
+                continue
+            pin_span_texts[pfid] = _extract_span_text(
+                source, func_info.start_line, func_info.end_line
+            )
+            pin_func_fingerprints[pfid] = _get_line_fingerprints(
+                source, func_info.start_line, func_info.end_line
+            )
 
-    # Scan architectural files
     all_findings: list[dict[str, Any]] = []
+    ambiguous_findings: list[dict[str, Any]] = []
 
     arch_analyzed_lookup: dict[str, AnalyzedFile] = {}
     if analyzed_arch is not None:
@@ -186,92 +222,140 @@ def check_no_inlined_atom_logic(
         )
         for arch_func_info, arch_source in arch_entries:
             arch_end = arch_func_info.end_line
-
-            # Strategy 1: Exact body match
             arch_hash = _hash_function_body(arch_source, arch_func_info.start_line, arch_end)
+
             if arch_hash in pin_hashes:
-                all_findings.append(
-                    {
-                        "arch_file": str(arch_file),
-                        "arch_line_start": arch_func_info.start_line,
-                        "arch_line_end": arch_end,
-                        "matching_pin_func_id": pin_hashes[arch_hash],
-                        "similarity_score": 1.0,
-                        "detection_method": "exact_match",
-                        "arch_function_name": arch_func_info.name,
-                    }
-                )
-                continue  # No need to check other strategies
-
-            # Strategy 2: Text structural similarity
-            best_similarity = 0.0
-            best_match_id = ""
-            for pfid, (pf_info, pf_source) in pin_func_info.items():
-                sim = _text_similarity(
-                    arch_source,
-                    arch_func_info.start_line,
-                    arch_end,
-                    pf_source,
-                    pf_info.start_line,
-                    pf_info.end_line,
-                )
-                if sim > best_similarity:
-                    best_similarity = sim
-                    best_match_id = pfid
-
-            if best_similarity >= similarity_threshold:
-                all_findings.append(
-                    {
-                        "arch_file": str(arch_file),
-                        "arch_line_start": arch_func_info.start_line,
-                        "arch_line_end": arch_end,
-                        "matching_pin_func_id": best_match_id,
-                        "similarity_score": best_similarity,
-                        "detection_method": "text_similarity",
-                        "arch_function_name": arch_func_info.name,
-                    }
-                )
-                continue
-
-            # Strategy 3: Line fingerprint overlap
-            arch_fps = _get_line_fingerprints(arch_source, arch_func_info.start_line, arch_end)
-            if not arch_fps:
-                continue
-
-            for pfid, pin_fps in pin_func_fingerprints.items():
-                if not pin_fps:
-                    continue
-                overlap = len(arch_fps & pin_fps)
-                overlap_ratio = overlap / len(arch_fps)
-                if overlap_ratio >= fingerprint_overlap_threshold:
+                for pin_func_id in pin_hashes[arch_hash]:
                     all_findings.append(
                         {
                             "arch_file": str(arch_file),
                             "arch_line_start": arch_func_info.start_line,
                             "arch_line_end": arch_end,
-                            "matching_pin_func_id": pfid,
-                            "similarity_score": overlap_ratio,
-                            "detection_method": "fingerprint_overlap",
+                            "matching_pin_func_id": pin_func_id,
+                            "similarity_score": 1.0,
+                            "detection_method": "fingerprint_exact",
                             "arch_function_name": arch_func_info.name,
                         }
                     )
-                    break
+                continue
 
-    passed = len(all_findings) == 0
+            arch_fps = _get_line_fingerprints(arch_source, arch_func_info.start_line, arch_end)
+            if not arch_fps:
+                continue
+
+            candidate_scores: list[tuple[str, float]] = []
+            for pfid, pin_fps in pin_func_fingerprints.items():
+                overlap_ratio = _fingerprint_overlap_ratio(arch_fps, pin_fps)
+                if overlap_ratio >= fingerprint_overlap_threshold:
+                    candidate_scores.append((pfid, overlap_ratio))
+
+            if not candidate_scores:
+                continue
+
+            candidate_scores.sort(key=lambda item: item[1], reverse=True)
+            best_id, best_score = candidate_scores[0]
+            if len(candidate_scores) == 1:
+                all_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_func_info.start_line,
+                        "arch_line_end": arch_end,
+                        "matching_pin_func_id": best_id,
+                        "similarity_score": best_score,
+                        "detection_method": "fingerprint_overlap",
+                        "arch_function_name": arch_func_info.name,
+                    }
+                )
+                continue
+
+            if not enable_llm_tiebreak:
+                ambiguous_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_func_info.start_line,
+                        "arch_line_end": arch_end,
+                        "arch_function_name": arch_func_info.name,
+                        "reason": "ambiguous_fingerprint_candidates",
+                        "candidate_pin_func_ids": [item[0] for item in candidate_scores[:4]],
+                    }
+                )
+                continue
+
+            arch_span = _extract_span_text(arch_source, arch_func_info.start_line, arch_end)
+            candidates_payload = [
+                {
+                    "pin_func_id": candidate_id,
+                    "overlap_ratio": ratio,
+                    "span": pin_span_texts.get(candidate_id, "")[:2000],
+                }
+                for candidate_id, ratio in candidate_scores[:4]
+            ]
+            llm_decision = _llm_tie_break_duplicate(
+                workspace=workspace,
+                agent_name=llm_tiebreak_agent,
+                arch_span=arch_span,
+                arch_context=f"{arch_file}:{arch_func_info.start_line}-{arch_end}",
+                candidates=candidates_payload,
+            )
+            if not llm_decision:
+                ambiguous_findings.append(
+                    {
+                        "arch_file": str(arch_file),
+                        "arch_line_start": arch_func_info.start_line,
+                        "arch_line_end": arch_end,
+                        "arch_function_name": arch_func_info.name,
+                        "reason": "llm_tiebreak_failed",
+                        "candidate_pin_func_ids": [item[0] for item in candidate_scores[:4]],
+                    }
+                )
+                continue
+
+            duplicate = bool(llm_decision.get("duplicate"))
+            matching_pin = str(llm_decision.get("matching_pin_func_id") or "").strip()
+            if not duplicate:
+                continue
+            if matching_pin not in {item[0] for item in candidate_scores}:
+                matching_pin = best_id
+
+            score_by_pin = {pin_id: score for pin_id, score in candidate_scores}
+            all_findings.append(
+                {
+                    "arch_file": str(arch_file),
+                    "arch_line_start": arch_func_info.start_line,
+                    "arch_line_end": arch_end,
+                    "matching_pin_func_id": matching_pin,
+                    "similarity_score": score_by_pin.get(matching_pin, best_score),
+                    "detection_method": "fingerprint_overlap_llm_tiebreak",
+                    "arch_function_name": arch_func_info.name,
+                    "llm_confidence": llm_decision.get("confidence"),
+                    "llm_reason": llm_decision.get("reason"),
+                }
+            )
+
     duration = (time.monotonic() - start_time) * 1000
+    if all_findings:
+        status = GateStatus.FAILED
+        score = 0.0
+        summary = f"Found {len(all_findings)} instance(s) of inlined atom logic"
+        findings = all_findings
+    elif ambiguous_findings:
+        status = GateStatus.AMBIGUOUS
+        score = 0.5
+        summary = "Inlined-logic detection is ambiguous for some spans; manual review required."
+        findings = ambiguous_findings
+    else:
+        status = GateStatus.PASSED
+        score = 1.0
+        summary = "No inlined atom logic found in architectural layer"
+        findings = []
 
     return GateCheckResult(
         gate_id=GateId.NO_INLINED_ATOM_LOGIC.value,
-        passed=passed,
         mode=gate_spec.mode.value,
-        status=GateStatus.PASSED if passed else GateStatus.FAILED,
-        score=1.0 if passed else 0.0,
-        findings=all_findings,
-        summary=(
-            "No inlined atom logic found in architectural layer"
-            if passed
-            else f"Found {len(all_findings)} instance(s) of inlined atom logic"
-        ),
+        status=status,
+        score=score,
+        findings=findings,
+        summary=summary,
         duration_ms=duration,
     )
 
@@ -305,27 +389,23 @@ def check_function_recomposition(
 
     # Build set of pin-function names
     pin_func_names: dict[str, str] = {}  # function_name -> pin_func_id
-    pin_func_signatures: dict[str, int] = {}  # function_name -> param count
+    pin_names_by_id: dict[str, str] = {}
     for pf in pin_registry.pin_functions:
         pin_func_names[pf.function_name] = pf.pin_func_id
-        # Extract param count from signature string
-        sig = pf.signature
-        if "(" in sig and ")" in sig:
-            params_str = sig[sig.index("(") + 1 : sig.rindex(")")]
-            params = [p.strip() for p in params_str.split(",") if p.strip() and p.strip() != "self"]
-            pin_func_signatures[pf.function_name] = len(params)
+        pin_names_by_id[pf.pin_func_id] = pf.function_name
 
     findings: list[dict[str, Any]] = []
 
-    # Use evidence-based import scanning for all architectural files
-    import_records = scan_imports_from_files(architectural_files)
-
-    # Group import records by file
+    # Group pin-consumption edges by architecture file.
     imports_by_file: dict[str, set[str]] = {}
-    for record in import_records:
-        name = record.imported_name
-        if name in pin_func_names:
-            imports_by_file.setdefault(record.importer_file, set()).add(name)
+    for edge in pin_registry.import_edges:
+        function_name = pin_names_by_id.get(edge.pin_func_id)
+        if not function_name:
+            continue
+        key = str(edge.arch_file_path).replace("\\", "/").strip()
+        if not key:
+            continue
+        imports_by_file.setdefault(key, set()).add(function_name)
 
     # Build analyzed lookup
     arch_analyzed_lookup: dict[str, AnalyzedFile] = {}
@@ -334,8 +414,12 @@ def check_function_recomposition(
             arch_analyzed_lookup[af.path] = af
 
     for arch_file in architectural_files:
-        file_str = str(arch_file)
-        imported_pin_names = imports_by_file.get(file_str, set())
+        file_str = str(arch_file).replace("\\", "/")
+        imported_pin_names = set(imports_by_file.get(file_str, set()))
+        if not imported_pin_names:
+            for candidate_key, names in imports_by_file.items():
+                if file_str.endswith(candidate_key):
+                    imported_pin_names.update(names)
         if not imported_pin_names:
             continue
 

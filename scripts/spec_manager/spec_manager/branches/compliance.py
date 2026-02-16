@@ -168,7 +168,7 @@ class ComplianceChecker:
         if not files:
             return True, []
 
-        from spec_manager.compliance.detection.comment_scanner import scan_comments
+        from spec_manager.branches.gap_detection import scan_comments
 
         evidence_bundle = _empty_evidence_bundle(self._layout.run_root)
         for file_path in files:
@@ -201,7 +201,7 @@ class ComplianceChecker:
         if not files:
             return True, []
 
-        from spec_manager.compliance.detection.stub_scanner import scan_stubs
+        from spec_manager.branches.gap_detection import scan_stubs
 
         evidence_bundle = _empty_evidence_bundle(self._layout.run_root)
         for file_path in files:

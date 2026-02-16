@@ -107,6 +107,15 @@ Return JSON only with this shape:
       "question": "string",
       "reason": "string"
     }}
+  ],
+  "gaps": [
+    {{
+      "kind": "comment_gap|stub_gap|ambiguity_gap",
+      "span_id": "string|null",
+      "description": "string",
+      "reason": "string",
+      "severity": "BLOCKER|MAJOR|MINOR"
+    }}
   ]
 }}
 
@@ -147,6 +156,7 @@ class CollapseResult:
     event_routes: list[dict[str, Any]]
     architecture_promotions: list[dict[str, Any]]
     adjacency_edges: list[dict[str, Any]]
+    gaps: list[dict[str, Any]]
     ambiguities: list[dict[str, Any]]
     warnings: list[str]
 
@@ -160,6 +170,7 @@ class CollapseResult:
             "event_routes": self.event_routes,
             "architecture_promotions": self.architecture_promotions,
             "adjacency_edges": self.adjacency_edges,
+            "gaps": self.gaps,
             "ambiguities": self.ambiguities,
             "warnings": self.warnings,
         }
@@ -178,6 +189,7 @@ class CollapseResult:
             event_routes=_coerce_dict_list(data.get("event_routes", [])),
             architecture_promotions=_coerce_dict_list(data.get("architecture_promotions", [])),
             adjacency_edges=_coerce_dict_list(data.get("adjacency_edges", [])),
+            gaps=_normalize_gap_rows(_coerce_dict_list(data.get("gaps", []))),
             ambiguities=_coerce_dict_list(data.get("ambiguities", [])),
             warnings=[str(item) for item in data.get("warnings", [])],
         )
@@ -198,6 +210,7 @@ class CollapseEngine:
         event_routes: list[dict[str, Any]] = []
         architecture_promotions: list[dict[str, Any]] = []
         adjacency_edges: list[dict[str, Any]] = []
+        gaps: list[dict[str, Any]] = []
         ambiguities: list[dict[str, Any]] = []
         warnings: list[str] = []
 
@@ -214,6 +227,7 @@ class CollapseEngine:
                 event_routes=event_routes,
                 architecture_promotions=architecture_promotions,
                 adjacency_edges=adjacency_edges,
+                gaps=gaps,
                 ambiguities=ambiguities,
                 warnings=warnings,
             )
@@ -269,6 +283,18 @@ class CollapseEngine:
                         "reason": f"routing_error:{type(exc).__name__}",
                     }
                 )
+                gaps.append(
+                    {
+                        "kind": "ambiguity_gap",
+                        "file": rel_path,
+                        "description": f"Routing failed for {rel_path}",
+                        "reason": f"routing_error:{type(exc).__name__}",
+                        "severity": "BLOCKER",
+                        "required_change_type": "spec_change",
+                        "span": {},
+                        "location": {"file": rel_path},
+                    }
+                )
                 routed = {}
 
             file_pin_spans = _with_file_context(
@@ -289,6 +315,9 @@ class CollapseEngine:
                 _coerce_dict_list(routed.get("architecture_promotions", [])),
                 rel_path,
             )
+            file_gaps = _normalize_gap_rows(
+                _with_file_context(_coerce_dict_list(routed.get("gaps", [])), rel_path)
+            )
             file_ambiguities = _with_file_context(
                 _coerce_dict_list(routed.get("ambiguities", [])), rel_path
             )
@@ -306,6 +335,10 @@ class CollapseEngine:
             event_routes.extend(file_event_routes)
             architecture_promotions.extend(file_promotions)
             ambiguities.extend(file_ambiguities)
+            gaps.extend(file_gaps)
+
+            if file_ambiguities:
+                gaps.extend(_gaps_from_ambiguities(file_ambiguities, rel_path))
 
             for edge in combined_edges:
                 key = (
@@ -341,12 +374,35 @@ class CollapseEngine:
                 seen_atom_ids.add(descriptor.atom_id)
                 atom_candidates.append(descriptor)
 
+            routed_span_ids: set[str] = set()
+            for row in (
+                file_pin_spans
+                + file_slice_entrypoints
+                + file_store_touches
+                + file_event_routes
+                + file_promotions
+                + file_ambiguities
+                + file_gaps
+            ):
+                span_id = str(row.get("span_id", "")).strip()
+                if span_id:
+                    routed_span_ids.add(span_id)
+
+            candidate_span_ids = {
+                str(item.get("span_id", "")).strip() for item in spans if isinstance(item, dict)
+            }
+            candidate_span_ids.discard("")
+            unrouted_span_ids = sorted(candidate_span_ids - routed_span_ids)
+            if unrouted_span_ids:
+                gaps.extend(_gaps_from_unrouted_spans(unrouted_span_ids, rel_path))
+
             if (
                 not file_pin_spans
                 and not file_slice_entrypoints
                 and not file_store_touches
                 and not file_event_routes
                 and not file_promotions
+                and not file_gaps
                 and not file_ambiguities
             ):
                 ambiguities.append(
@@ -355,6 +411,18 @@ class CollapseEngine:
                         "span_id": None,
                         "question": "Router returned no routing decisions for this file.",
                         "reason": "empty_router_output",
+                    }
+                )
+                gaps.append(
+                    {
+                        "kind": "ambiguity_gap",
+                        "file": rel_path,
+                        "description": "Router returned no routing decisions for this file.",
+                        "reason": "empty_router_output",
+                        "severity": "BLOCKER",
+                        "required_change_type": "spec_change",
+                        "span": {},
+                        "location": {"file": rel_path},
                     }
                 )
 
@@ -366,6 +434,7 @@ class CollapseEngine:
             event_routes=event_routes,
             architecture_promotions=architecture_promotions,
             adjacency_edges=adjacency_edges,
+            gaps=_normalize_gap_rows(gaps),
             ambiguities=ambiguities,
             warnings=warnings,
         )
@@ -547,6 +616,92 @@ def _normalize_adjacency_edges(value: Any) -> list[dict[str, Any]]:
         )
 
     return normalized
+
+
+def _normalize_span(raw: Any) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    span: dict[str, int] = {}
+    start_line = raw.get("start_line")
+    end_line = raw.get("end_line")
+    if isinstance(start_line, int) and start_line > 0:
+        span["start_line"] = start_line
+    if isinstance(end_line, int) and end_line > 0:
+        span["end_line"] = end_line
+    elif "start_line" in span:
+        span["end_line"] = span["start_line"]
+    start_col = raw.get("start_col")
+    end_col = raw.get("end_col")
+    if isinstance(start_col, int) and start_col >= 0:
+        span["start_col"] = start_col
+    if isinstance(end_col, int) and end_col >= 0:
+        span["end_col"] = end_col
+    return span
+
+
+def _normalize_gap_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        file_path = str(row.get("file") or row.get("file_path") or "").strip()
+        span = _normalize_span(row.get("span", {}))
+        normalized.append(
+            {
+                "kind": str(row.get("kind") or "ambiguity_gap").strip() or "ambiguity_gap",
+                "file": file_path,
+                "description": str(row.get("description") or "").strip(),
+                "reason": str(row.get("reason") or "").strip(),
+                "severity": str(row.get("severity") or "MAJOR").strip() or "MAJOR",
+                "required_change_type": str(
+                    row.get("required_change_type") or "spec_change"
+                ).strip()
+                or "spec_change",
+                "span_id": row.get("span_id"),
+                "span": span,
+                "location": {"file": file_path, **span},
+            }
+        )
+    return normalized
+
+
+def _gaps_from_ambiguities(
+    ambiguities: list[dict[str, Any]], file_path: str
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for ambiguity in ambiguities:
+        span_id = ambiguity.get("span_id")
+        reason = str(ambiguity.get("reason") or "routing_ambiguity").strip()
+        question = str(ambiguity.get("question") or "Routing ambiguity").strip()
+        rows.append(
+            {
+                "kind": "ambiguity_gap",
+                "file": file_path,
+                "description": question,
+                "reason": reason,
+                "severity": "BLOCKER",
+                "required_change_type": "spec_change",
+                "span_id": span_id,
+                "span": {},
+            }
+        )
+    return _normalize_gap_rows(rows)
+
+
+def _gaps_from_unrouted_spans(span_ids: list[str], file_path: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for span_id in span_ids:
+        rows.append(
+            {
+                "kind": "ambiguity_gap",
+                "file": file_path,
+                "description": "No routing decision for candidate span.",
+                "reason": "unrouted_span",
+                "severity": "BLOCKER",
+                "required_change_type": "spec_change",
+                "span_id": span_id,
+                "span": {},
+            }
+        )
+    return _normalize_gap_rows(rows)
 
 
 def _derive_store_touches_from_edges(

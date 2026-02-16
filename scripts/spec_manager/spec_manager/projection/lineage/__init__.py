@@ -3,7 +3,7 @@
 Provides:
 - ProjectionLineageEdge and ProjectionType: Core data model
 - ProjectionLineageTable: Queryable edge collection with forward/backward trace
-- RawImportRecord and scan helpers: Static analysis of imports
+- RawImportRecord and registry-edge projection helpers
 - LineageBuilder and AtomDefinition: Bridge import records to lineage table
 - DataFlowTracker, SignalSpec, DataFlowHop: Data flow projection tracking
 - PinDriftDetector, DriftKind, PinDrift: Pin target drift detection
@@ -36,8 +36,6 @@ __all__ = [
     "import_records_from_pin_registry",
     "load_lineage_table",
     "save_lineage_table",
-    "scan_imports_from_directory",
-    "scan_imports_from_files",
 ]
 
 
@@ -62,8 +60,6 @@ def __getattr__(name: str) -> Any:
         "RawImportRecord",
         "compute_signature_hash",
         "import_records_from_pin_registry",
-        "scan_imports_from_directory",
-        "scan_imports_from_files",
     ):
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
@@ -71,8 +67,6 @@ def __getattr__(name: str) -> Any:
             RawImportRecord,
             compute_signature_hash,
             import_records_from_pin_registry,
-            scan_imports_from_directory,
-            scan_imports_from_files,
         )
 
         return {
@@ -81,8 +75,6 @@ def __getattr__(name: str) -> Any:
             "RawImportRecord": RawImportRecord,
             "compute_signature_hash": compute_signature_hash,
             "import_records_from_pin_registry": import_records_from_pin_registry,
-            "scan_imports_from_directory": scan_imports_from_directory,
-            "scan_imports_from_files": scan_imports_from_files,
         }[name]
 
     if name in ("DataFlowHop", "DataFlowTracker", "SignalSpec"):

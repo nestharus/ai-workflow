@@ -85,6 +85,7 @@ def run_branch_init(
             outputs["event_routes"] = len(collapse_result.event_routes)
             outputs["architecture_promotions"] = len(collapse_result.architecture_promotions)
             outputs["adjacency_edges"] = len(collapse_result.adjacency_edges)
+            outputs["collapse_gap_inventory"] = len(collapse_result.gaps)
             outputs["collapse_ambiguities"] = len(collapse_result.ambiguities)
             outputs["collapse_warnings"] = collapse_result.warnings
 
@@ -135,10 +136,10 @@ def run_branch_gaps(run_id: str) -> dict[str, Any]:
             encoding="utf-8",
         )
 
-        # Summarize by type
+        # Summarize by canonical gap kind.
         gaps_by_type: dict[str, int] = {}
         for gap in gap_items:
-            gaps_by_type[gap.gap_type] = gaps_by_type.get(gap.gap_type, 0) + 1
+            gaps_by_type[gap.kind] = gaps_by_type.get(gap.kind, 0) + 1
 
         outputs: dict[str, Any] = {
             "total_gaps": len(gap_items),

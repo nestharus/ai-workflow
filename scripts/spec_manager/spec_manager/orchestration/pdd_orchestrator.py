@@ -1154,9 +1154,7 @@ class PddOrchestrator:
                     )
                 )
 
-        # 2. Consume registry-declared edges first; infer via LLM when unavailable.
-        from spec_manager.projection.lineage.builder import scan_imports_from_directory
-
+        # 2. Consume registry-declared projection edges.
         import_records = []
         registry_status = "missing"
         stale_reason = ""
@@ -1187,21 +1185,9 @@ class PddOrchestrator:
                     registry_status = "invalid"
 
         if not import_records:
-            try:
-                inferred_records = scan_imports_from_directory(root, verification_mode=False)
-            except Exception as exc:
-                logger.warning("Failed to infer lineage edges from source: %s", exc, exc_info=True)
-                inferred_records = []
-            if inferred_records:
-                import_records = inferred_records
-                outputs["lineage_input_inferred"] = True
-                outputs["lineage_input_source"] = "code_analysis_llm_inference"
-            else:
-                outputs["lineage_input_warning"] = (
-                    "No usable relationship edges from pin registry or inference fallback."
-                )
-                if stale_reason:
-                    outputs["lineage_input_warning"] += f" Registry stale reason: {stale_reason}"
+            outputs["lineage_input_warning"] = "No usable relationship edges from pin registry."
+            if stale_reason:
+                outputs["lineage_input_warning"] += f" Registry stale reason: {stale_reason}"
         outputs["pin_registry_status"] = registry_status
         outputs["import_edges"] = len(import_records)
 
