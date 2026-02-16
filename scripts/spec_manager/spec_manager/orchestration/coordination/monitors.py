@@ -9,11 +9,41 @@ lookup helpers for the executor and planner.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
+
+_EXECUTION_MODES = {"hybrid", "poll", "event"}
+_TIMEOUT_ACTIONS = {"ESCALATE", "FAIL", "RETRY"}
+_WAKE_ACTIONS = {"WAKE_SLICE"}
+_MONITOR_STATES = {"ACTIVE", "FIRED", "EXPIRED", "FAILED", "CANCELLED"}
+
+
+def _require_enum(
+    *,
+    field_name: str,
+    value: Any,
+    allowed: set[str],
+    normalize: str = "upper",
+) -> str:
+    raw = str(value).strip()
+    if normalize == "lower":
+        normalized = raw.lower()
+    elif normalize == "upper":
+        normalized = raw.upper()
+    else:
+        normalized = raw
+    if normalized not in allowed:
+        raise ValueError(
+            f"Invalid monitor field '{field_name}': {raw!r}. Expected one of {sorted(allowed)}."
+        )
+    return normalized
+
 
 # ------------------------------------------------------------------
 # Condition types
@@ -230,6 +260,30 @@ class MonitorSpec:
             if isinstance(last_checked_at_raw, str) and last_checked_at_raw
             else None
         )
+        mode = _require_enum(
+            field_name="execution.mode",
+            value=exec_d.get("mode", "hybrid"),
+            allowed=_EXECUTION_MODES,
+            normalize="lower",
+        )
+        on_timeout = _require_enum(
+            field_name="timeout.on_timeout",
+            value=timeout_d.get("on_timeout", "ESCALATE"),
+            allowed=_TIMEOUT_ACTIONS,
+            normalize="upper",
+        )
+        wake_action = _require_enum(
+            field_name="wake.action",
+            value=wake_d.get("action", "WAKE_SLICE"),
+            allowed=_WAKE_ACTIONS,
+            normalize="upper",
+        )
+        state = _require_enum(
+            field_name="status.state",
+            value=status_d.get("state", "ACTIVE"),
+            allowed=_MONITOR_STATES,
+            normalize="upper",
+        )
         return cls(
             monitor_version=d.get("monitor_version", 1),
             monitor_id=d.get("monitor_id", ""),
@@ -238,20 +292,20 @@ class MonitorSpec:
             signal_id=d.get("signal_id", ""),
             condition=d.get("condition", {}),
             execution=MonitorExecution(
-                mode=exec_d.get("mode", "hybrid"),
+                mode=mode,
                 poll_interval_sec=exec_d.get("poll_interval_sec", 20),
                 event_triggers=exec_d.get("event_triggers", []),
             ),
             timeout=MonitorTimeout(
                 timeout_sec=timeout_d.get("timeout_sec", 7200),
-                on_timeout=timeout_d.get("on_timeout", "ESCALATE"),
+                on_timeout=on_timeout,
             ),
             wake=MonitorWake(
-                action=wake_d.get("action", "WAKE_SLICE"),
+                action=wake_action,
                 payload=wake_d.get("payload", {}),
             ),
             status=MonitorStatus(
-                state=status_d.get("state", "ACTIVE"),
+                state=state,
                 created_at=created_at,
                 last_checked_at=last_checked_at,
                 check_count=status_d.get("check_count", 0),
@@ -313,7 +367,8 @@ class MonitorRegistry:
             if p.suffix == ".json":
                 try:
                     specs.append(MonitorSpec.load(p))
-                except (json.JSONDecodeError, KeyError):
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                    logger.warning("Skipping malformed monitor spec '%s': %s", p, exc)
                     continue
         return specs
 
@@ -344,9 +399,15 @@ class MonitorRegistry:
         """Update a monitor's status fields and re-save."""
         spec = self.get(monitor_id)
         if spec is None:
-            return
+            raise KeyError(f"Monitor not found: {monitor_id}")
+        normalized_state = _require_enum(
+            field_name="status.state",
+            value=state,
+            allowed=_MONITOR_STATES,
+            normalize="upper",
+        )
         previous_state = spec.status.state
-        spec.status.state = state  # type: ignore[assignment]
+        spec.status.state = normalized_state  # type: ignore[assignment]
         for key, val in updates.items():
             if hasattr(spec.status, key):
                 setattr(spec.status, key, val)
@@ -354,7 +415,7 @@ class MonitorRegistry:
         self._append_receipt(
             spec,
             previous_state=previous_state,
-            new_state=state,
+            new_state=normalized_state,
             event=receipt_event,
             payload=receipt_payload,
         )

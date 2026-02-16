@@ -211,10 +211,12 @@ class WaitGraph:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> WaitGraph:
         g = cls()
-        for edge_data in d.get("edges", []):
+        for idx, edge_data in enumerate(d.get("edges", []), start=1):
             edge = WaitEdge.from_dict(edge_data)
-            # Use direct append to skip cycle check during deserialization
-            # (the persisted graph was valid when saved)
-            g._edges.append(edge)
-            g._adj[edge.waiting_slice].add(edge.provider_slice)
+            try:
+                g.add_edge(edge)
+            except CyclicDependencyError as exc:
+                raise ValueError(
+                    f"Invalid wait graph payload: edge #{idx} introduces a cycle ({exc})"
+                ) from exc
         return g

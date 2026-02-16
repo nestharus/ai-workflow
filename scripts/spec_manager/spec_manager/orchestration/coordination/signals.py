@@ -8,10 +8,13 @@ and either resolves the issue or schedules a JIT monitor.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
 # Sub-types carried by every signal
@@ -186,8 +189,21 @@ _CLASSIFICATION_VALUES = frozenset(
         "INTERFACE_MISMATCH",
         "MERGE_CONFLICT",
         "MONITOR_FAILED",
+        "MONITOR_TIMEOUT",
     }
 )
+
+_STATUS_VALUES = frozenset({"HALT"})
+
+
+def _validate_signal_enum(*, field_name: str, value: Any, allowed: frozenset[str]) -> str:
+    normalized = str(value).strip().upper()
+    if normalized not in allowed:
+        raise ValueError(
+            f"Invalid coordination signal field '{field_name}': {value!r}. "
+            f"Expected one of {sorted(allowed)}."
+        )
+    return normalized
 
 
 @dataclass
@@ -208,6 +224,7 @@ class CoordinationSignal:
         "INTERFACE_MISMATCH",
         "MERGE_CONFLICT",
         "MONITOR_FAILED",
+        "MONITOR_TIMEOUT",
     ] = "MISSING_INTERFACE"
     need: SignalNeed = field(default_factory=SignalNeed)
     spec_refs: list[SpecRef] = field(default_factory=list)
@@ -219,6 +236,16 @@ class CoordinationSignal:
     def __post_init__(self) -> None:
         if not self.signal_id:
             self.signal_id = os.urandom(8).hex()
+        self.status = _validate_signal_enum(
+            field_name="status",
+            value=self.status,
+            allowed=_STATUS_VALUES,
+        )  # type: ignore[assignment]
+        self.classification = _validate_signal_enum(
+            field_name="classification",
+            value=self.classification,
+            allowed=_CLASSIFICATION_VALUES,
+        )  # type: ignore[assignment]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -258,24 +285,36 @@ class CoordinationSignal:
         )
 
     def write_to(self, iteration_dir: Path) -> None:
-        """Append this signal to ``signals.json`` in *iteration_dir*.
-
-        The file stores a JSON array so multiple signals can coexist in
-        the same iteration directory.
-        """
+        """Append this signal to ``signals.jsonl`` in *iteration_dir*."""
         iteration_dir.mkdir(parents=True, exist_ok=True)
-        signals_path = iteration_dir / "signals.json"
-        existing: list[dict[str, Any]] = []
-        if signals_path.exists():
-            existing = json.loads(signals_path.read_text())
-        existing.append(self.to_dict())
-        signals_path.write_text(json.dumps(existing, indent=2))
+        signals_path = iteration_dir / "signals.jsonl"
+        with signals_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
 
     @classmethod
     def load_from(cls, iteration_dir: Path) -> list[CoordinationSignal]:
-        """Load all signals from ``signals.json`` in *iteration_dir*."""
-        signals_path = iteration_dir / "signals.json"
+        """Load all signals from ``signals.jsonl`` in *iteration_dir*."""
+        signals_path = iteration_dir / "signals.jsonl"
         if not signals_path.exists():
             return []
-        raw = json.loads(signals_path.read_text())
-        return [cls.from_dict(d) for d in raw]
+        loaded: list[CoordinationSignal] = []
+        for line_no, line in enumerate(
+            signals_path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+                if not isinstance(payload, dict):
+                    raise TypeError("signal line must be a JSON object")
+                loaded.append(cls.from_dict(payload))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Skipping malformed coordination signal at %s:%s: %s",
+                    signals_path,
+                    line_no,
+                    exc,
+                )
+        return loaded

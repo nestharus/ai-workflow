@@ -3973,13 +3973,19 @@ class CoordinateStep:
         ]
         try:
             iteration_dir.mkdir(parents=True, exist_ok=True)
-            (iteration_dir / "signals.json").write_text(
-                json.dumps(synthesized, indent=2),
-                encoding="utf-8",
-            )
+            signals_path = iteration_dir / "signals.jsonl"
+            signals_path.unlink(missing_ok=True)
+            for payload in synthesized:
+                CoordinationSignal.from_dict(payload).write_to(iteration_dir)
         except OSError:
             logger.debug(
                 "Failed to persist synthesized signals for %s",
+                ctx.slice_id,
+                exc_info=True,
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "Failed to persist synthesized signals for %s due to invalid payload",
                 ctx.slice_id,
                 exc_info=True,
             )
@@ -4333,7 +4339,15 @@ class CoordinateStep:
         for payload in routing:
             if not isinstance(payload, dict):
                 continue
-            work_item = WorkItem.from_dict(payload)
+            try:
+                work_item = WorkItem.from_dict(payload)
+            except ValueError as exc:
+                logger.warning(
+                    "Skipping invalid routed work item payload for %s: %s",
+                    ctx.slice_id,
+                    exc,
+                )
+                continue
             if not work_item.work_item_id:
                 continue
             if not work_item.owner_slice_id:

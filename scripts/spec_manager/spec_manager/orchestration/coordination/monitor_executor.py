@@ -15,7 +15,7 @@ import subprocess
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .monitors import (
     ConstraintPresentCondition,
@@ -29,6 +29,13 @@ from .monitors import (
 from .wake_queue import WakeEvent, WakeQueue
 
 logger = logging.getLogger(__name__)
+
+
+class ConstraintLookupStore(Protocol):
+    """Constraint store contract needed by ConditionChecker."""
+
+    def load_merged(self, slice_id: str) -> list[Any]:
+        """Return merged constraints for a slice."""
 
 
 # ------------------------------------------------------------------
@@ -46,7 +53,7 @@ class ConditionChecker:
         self,
         workspace_root: Path,
         work_item_store: Any = None,
-        constraints_store: Any = None,
+        constraints_store: ConstraintLookupStore | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._work_item_store = work_item_store
@@ -115,10 +122,7 @@ class ConditionChecker:
         """
         # Constraint-store-aware path: look for specific constraint by ID
         if cond.constraint_id and cond.slice_id and self._constraints_store is not None:
-            if hasattr(self._constraints_store, "load_merged"):
-                constraints = self._constraints_store.load_merged(cond.slice_id)
-            else:
-                constraints = self._constraints_store.load(cond.slice_id)
+            constraints = self._constraints_store.load_merged(cond.slice_id)
             return any(c.constraint_id == cond.constraint_id for c in constraints)
 
         # Fallback: file-existence check
@@ -179,20 +183,30 @@ class MonitorExecutor:
         self._checker = checker
         self._wake_queue = wake_queue
         self._planner_updates_path = self._registry.coordination_dir / "planner_updates.jsonl"
+        self._planner_update_dead_letters_path = (
+            self._registry.coordination_dir / "planner_updates_dead_letters.jsonl"
+        )
 
     def run_once(self) -> list[str]:
         """Poll active monitors that are poll-eligible and due."""
         fired: list[str] = []
         for spec in self._registry.get_active():
-            if spec.execution.mode not in {"poll", "hybrid"}:
-                continue
-            if self._is_timed_out(spec):
-                self._handle_timeout(spec)
-                continue
-            if not self._is_poll_due(spec):
-                continue
-            if self._check_and_fire(spec):
-                fired.append(spec.monitor_id)
+            try:
+                if spec.execution.mode not in {"poll", "hybrid"}:
+                    continue
+                if self._is_timed_out(spec):
+                    self._handle_timeout(spec)
+                    continue
+                if not self._is_poll_due(spec):
+                    continue
+                if self._check_and_fire(spec):
+                    fired.append(spec.monitor_id)
+            except KeyError:
+                logger.warning(
+                    "Monitor status update failed during poll for monitor %s",
+                    spec.monitor_id,
+                    exc_info=True,
+                )
         return fired
 
     def on_event(self, event_type: str) -> list[str]:
@@ -202,15 +216,23 @@ class MonitorExecutor:
         """
         fired: list[str] = []
         for spec in self._registry.get_active():
-            if spec.execution.mode not in {"event", "hybrid"}:
-                continue
-            if event_type not in spec.execution.event_triggers:
-                continue
-            if self._is_timed_out(spec):
-                self._handle_timeout(spec)
-                continue
-            if self._check_and_fire(spec):
-                fired.append(spec.monitor_id)
+            try:
+                if spec.execution.mode not in {"event", "hybrid"}:
+                    continue
+                if event_type not in spec.execution.event_triggers:
+                    continue
+                if self._is_timed_out(spec):
+                    self._handle_timeout(spec)
+                    continue
+                if self._check_and_fire(spec):
+                    fired.append(spec.monitor_id)
+            except KeyError:
+                logger.warning(
+                    "Monitor status update failed during event=%s for monitor %s",
+                    event_type,
+                    spec.monitor_id,
+                    exc_info=True,
+                )
         return fired
 
     def _check_and_fire(self, spec: MonitorSpec) -> bool:
@@ -374,13 +396,14 @@ class MonitorExecutor:
         reason: str,
         extra: dict[str, Any] | None = None,
     ) -> None:
+        classification = self._classification_for_event(event_type)
         event: dict[str, Any] = {
             "type": event_type,
             "event_kind": event_type,
             "event_id": f"mon_{uuid.uuid4().hex[:12]}",
             "created_at": datetime.now(UTC).isoformat(),
             "source": "MONITOR_EXECUTOR",
-            "classification": "MONITOR_FAILED",
+            "classification": classification,
             "run_id": monitor.run_id,
             "monitor_id": monitor.monitor_id,
             "signal_id": monitor.signal_id,
@@ -395,9 +418,34 @@ class MonitorExecutor:
             self._planner_updates_path.parent.mkdir(parents=True, exist_ok=True)
             with self._planner_updates_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
-        except OSError:
+        except OSError as exc:
             logger.warning(
                 "Failed to append planner update for monitor %s",
                 monitor.monitor_id,
+                exc_info=True,
+            )
+            self._record_planner_update_dead_letter(event=event, error=exc)
+
+    @staticmethod
+    def _classification_for_event(event_type: str) -> str:
+        if event_type == "monitor_timeout":
+            return "MONITOR_TIMEOUT"
+        return "MONITOR_FAILED"
+
+    def _record_planner_update_dead_letter(self, *, event: dict[str, Any], error: OSError) -> None:
+        record = {
+            "failed_at": datetime.now(UTC).isoformat(),
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "event": event,
+        }
+        try:
+            self._planner_update_dead_letters_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._planner_update_dead_letters_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        except OSError:
+            logger.error(
+                "Failed to write planner update dead-letter for monitor %s",
+                event.get("monitor_id", ""),
                 exc_info=True,
             )

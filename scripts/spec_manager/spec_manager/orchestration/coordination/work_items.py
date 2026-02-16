@@ -164,7 +164,10 @@ class WorkItem:
         raw_status = str(d.get("status", "")).strip().upper()
         status = raw_status or _default_status_for_kind(kind)
         if status not in _valid_statuses_for_kind(kind):
-            status = _default_status_for_kind(kind)
+            raise ValueError(
+                f"Invalid status '{raw_status or status}' for kind '{kind}'. "
+                f"Expected one of {sorted(_valid_statuses_for_kind(kind))}."
+            )
         trigger_refs = d.get("trigger_refs", [])
         required_constraints = d.get("required_constraints", [])
         candidate_refs = d.get("candidate_refs", [])
@@ -485,8 +488,9 @@ class WorkItemStore:
 
     def _search_exact(self, query: SearchQuery) -> list[SearchResult]:
         results: list[SearchResult] = []
-        if query.spec_text:
-            fp = _fingerprint(query.spec_text)
+        query_norm = _normalize(query.spec_text)
+        if query_norm:
+            fp = _fingerprint(query_norm)
             # Fingerprint match via explicit fingerprint -> work_item_id index.
             for work_item_id in self._spec_fingerprint_index.get(fp, []):
                 item = self._items.get(work_item_id)
@@ -501,12 +505,13 @@ class WorkItemStore:
                     )
                 )
             # Substring containment
-            query_norm = _normalize(query.spec_text)
             seen = {r.work_item.work_item_id for r in results}
             for item in self._items.values():
                 if item.work_item_id in seen:
                     continue
                 item_norm = _normalize(item.spec_text)
+                if not item_norm:
+                    continue
                 if query_norm in item_norm or item_norm in query_norm:
                     results.append(
                         SearchResult(
@@ -657,14 +662,22 @@ class WorkItemStore:
                 )
                 raw = tool.research(query_obj)
         except Exception:
-            logger.debug(
-                "Semantic rerank tool failed; falling back to lexical order", exc_info=True
+            logger.warning(
+                "Semantic rerank tool failed for artifact_key=%r spec_text_preview=%r; "
+                "falling back to lexical order",
+                query.artifact_key,
+                query.spec_text[:120],
+                exc_info=True,
             )
             return None
 
         parsed = self._parse_semantic_output(raw)
         if parsed is None:
-            logger.debug("Semantic rerank output was not parseable; falling back to lexical order")
+            logger.warning(
+                "Semantic rerank output was not parseable for artifact_key=%r; "
+                "falling back to lexical order",
+                query.artifact_key,
+            )
         return parsed
 
     def _build_semantic_prompt(self, payload: dict[str, Any]) -> str:
@@ -833,7 +846,9 @@ class WorkItemStore:
         if not self._jsonl_path.exists():
             return
         items: dict[str, WorkItem] = {}
-        for line in self._jsonl_path.read_text(encoding="utf-8").splitlines():
+        for line_no, line in enumerate(
+            self._jsonl_path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             line = line.strip()
             if not line:
                 continue
@@ -843,8 +858,13 @@ class WorkItemStore:
                 item.metadata = dict(item.metadata or {})
                 item.metadata["spec_fingerprint"] = _fingerprint(item.spec_text)
                 items[item.work_item_id] = item  # last write wins
-            except (json.JSONDecodeError, KeyError):
-                logger.warning("Skipping malformed JSONL line")
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Skipping malformed work item JSONL line %s in %s: %s",
+                    line_no,
+                    self._jsonl_path,
+                    exc,
+                )
         self._items = items
         self._rebuild_fingerprint_index()
 

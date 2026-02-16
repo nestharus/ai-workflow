@@ -520,11 +520,10 @@ class ImplementationRunner:
         result.tests_added_path = tests_path.name
 
         if signals:
-            signals_path = iteration_dir / "signals.json"
-            signals_path.write_text(
-                json.dumps([s.to_dict() for s in signals], indent=2),
-                encoding="utf-8",
-            )
+            signals_path = iteration_dir / "signals.jsonl"
+            signals_path.unlink(missing_ok=True)
+            for signal in signals:
+                signal.write_to(iteration_dir)
 
         notes_path = iteration_dir / "notes.md"
         notes_path.write_text("\n\n---\n\n".join(notes), encoding="utf-8")

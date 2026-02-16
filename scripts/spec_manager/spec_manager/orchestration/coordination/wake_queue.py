@@ -8,11 +8,14 @@ before deciding the next step.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -75,14 +78,21 @@ class WakeQueue:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _event_filename(self, event: WakeEvent) -> str:
-        # Sanitize timestamp for filesystem safety
+        # Include event_id so each wake artifact has collision-proof identity.
         ts = event.timestamp.replace(":", "-").replace("+", "p")
-        return f"wake_{ts}_{event.slice_id}.json"
+        safe_slice = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(event.slice_id)
+        )
+        safe_event_id = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(event.event_id)
+        )
+        return f"wake_{ts}_{safe_slice}_{safe_event_id}.json"
 
     def enqueue(self, event: WakeEvent) -> None:
         """Persist a wake event to disk."""
         path = self._dir / self._event_filename(event)
-        path.write_text(json.dumps(event.to_dict(), indent=2))
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(event.to_dict(), indent=2))
 
     def _read_all(self, slice_id: str | None = None) -> list[tuple[Path, WakeEvent]]:
         """Read all events, optionally filtered by slice_id."""
@@ -94,7 +104,8 @@ class WakeQueue:
                 continue
             try:
                 evt = WakeEvent.from_dict(json.loads(p.read_text()))
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                logger.warning("Skipping malformed wake-event file '%s': %s", p, exc)
                 continue
             if slice_id is None or evt.slice_id == slice_id:
                 results.append((p, evt))
