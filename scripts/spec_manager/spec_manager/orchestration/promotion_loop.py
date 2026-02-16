@@ -3470,6 +3470,8 @@ class ImplementStep:
 
             run_result = runner.run_for_slice(
                 slice_root=slice_root,
+                slice_id=ctx.slice_id,
+                iteration=bundle.iteration,
                 iteration_dir=iteration_dir,
                 plan_path=plan_path,
                 gaps_path=gaps_path,

@@ -18,6 +18,9 @@ from typing import Any
 
 from spec_manager.orchestration.coordination.signals import (
     CoordinationSignal,
+    FunctionRef,
+    LocalContext,
+    SearchHints,
     SignalNeed,
     SignalProgress,
     SpecRef,
@@ -69,6 +72,8 @@ class ImplementationRunner:
         self,
         *,
         slice_root: Path,
+        slice_id: str,
+        iteration: int,
         iteration_dir: Path,
         plan_path: Path | None,
         gaps_path: Path | None,
@@ -80,6 +85,9 @@ class ImplementationRunner:
 
         result = ImplementationRunResult()
         iteration_dir.mkdir(parents=True, exist_ok=True)
+        worktree_branch, latest_commit = self._resolve_git_context(slice_root)
+        patch_path_hint = (iteration_dir / "patch.diff").as_posix()
+        notes_path_hint = (iteration_dir / "notes.md").as_posix()
 
         before_snapshot = self._snapshot_text_files(slice_root)
         plan_intentions = self._load_plan_intentions(plan_path)
@@ -104,6 +112,7 @@ class ImplementationRunner:
         all_tests: list[TestArtifact] = []
         all_edits: list[dict[str, Any]] = []
         all_notes: list[str] = []
+        all_signals: list[CoordinationSignal] = []
 
         for idx, candidate in enumerate(prioritized):
             if result.functions_implemented >= max_functions:
@@ -149,10 +158,81 @@ class ImplementationRunner:
                 continue
 
             if output.under_spec_events:
-                # Under-spec blocks the ambiguous function only.
                 all_under_spec.extend(output.under_spec_events)
-                result.functions_skipped += 1
-                continue
+                remaining_candidates = len(prioritized) - idx
+                result.functions_skipped += remaining_candidates
+
+                function_ref = FunctionRef(
+                    file=candidate["file_rel"],
+                    symbol=candidate["qualified_name"],
+                    signature_line=self._signature_line_text(
+                        file_content=file_content,
+                        line_number=int(getattr(live_func, "line_start", 0) or 0),
+                    ),
+                )
+                base_spec_refs = self._build_spec_refs(
+                    func=live_func,
+                    file_rel=candidate["file_rel"],
+                    symbol=candidate["qualified_name"],
+                    fallback_text=(
+                        output.under_spec_events[0].question if output.under_spec_events else ""
+                    ),
+                )
+
+                for event in output.under_spec_events:
+                    classification = _classify_under_spec(event)
+                    need_summary = str(event.question).strip()
+                    if not need_summary:
+                        need_summary = (
+                            f"Need clarification to continue implementing "
+                            f"{candidate['qualified_name']}"
+                        )
+                    signal = CoordinationSignal(
+                        run_id=self._run_id,
+                        layer="l1",
+                        slice_id=slice_id,
+                        iteration=iteration,
+                        classification=classification,
+                        need=SignalNeed(
+                            summary=need_summary,
+                            artifact_type=_need_artifact_type(event),
+                            artifact_key=str(
+                                event.needed_for or candidate["qualified_name"]
+                            ).strip(),
+                            expected_shape=_need_expected_shape(event),
+                            confidence=_need_confidence(event),
+                        ),
+                        spec_refs=list(base_spec_refs),
+                        local_context=LocalContext(
+                            blocked_function=function_ref,
+                            attempted_approach=(
+                                f"Blocked while implementing {candidate['qualified_name']}: "
+                                f"{need_summary}"
+                            ),
+                        ),
+                        progress=SignalProgress(
+                            functions_implemented=result.functions_implemented,
+                            functions_skipped=result.functions_skipped,
+                            worktree_branch=worktree_branch,
+                            latest_commit=latest_commit,
+                            artifacts={
+                                "patch_path": patch_path_hint,
+                                "notes_path": notes_path_hint,
+                            },
+                        ),
+                        search_hints=SearchHints(
+                            keywords=_signal_keywords(event),
+                            possible_owner_slices=[],
+                        ),
+                        payload={
+                            "origin_event_kind": event.kind,
+                            "origin_options": event.options,
+                            "origin_needed_for": event.needed_for or "",
+                            "origin_evidence_paths": event.evidence_paths,
+                        },
+                    )
+                    all_signals.append(signal)
+                break
 
             applied_for_function: list[dict[str, Any]] = []
             apply_failed = False
@@ -204,33 +284,6 @@ class ImplementationRunner:
             if output.notes_md:
                 all_notes.append(output.notes_md)
             result.functions_implemented += 1
-
-        all_signals: list[CoordinationSignal] = []
-        for event in all_under_spec:
-            classification = _classify_under_spec(event)
-            signal = CoordinationSignal(
-                run_id=self._run_id,
-                layer="l1",
-                slice_id="",
-                iteration=0,
-                classification=classification,
-                need=SignalNeed(
-                    summary=event.question,
-                    artifact_key=event.needed_for or "",
-                ),
-                spec_refs=[SpecRef(spec_text=event.question)],
-                progress=SignalProgress(
-                    functions_implemented=result.functions_implemented,
-                    functions_skipped=result.functions_skipped,
-                ),
-                payload={
-                    "origin_event_kind": event.kind,
-                    "origin_options": event.options,
-                    "origin_needed_for": event.needed_for or "",
-                    "origin_evidence_paths": event.evidence_paths,
-                },
-            )
-            all_signals.append(signal)
 
         result.applied_edits = all_edits
         result.pin_proposals = [p.to_dict() for p in all_pin_proposals]
@@ -491,6 +544,88 @@ class ImplementationRunner:
             except (OSError, UnicodeDecodeError):
                 continue
         return snapshot
+
+    @staticmethod
+    def _signature_line_text(*, file_content: str, line_number: int) -> str:
+        lines = file_content.splitlines()
+        if line_number <= 0 or line_number > len(lines):
+            return ""
+        return lines[line_number - 1].strip()
+
+    @staticmethod
+    def _build_spec_refs(
+        *,
+        func: Any,
+        file_rel: str,
+        symbol: str,
+        fallback_text: str,
+    ) -> list[SpecRef]:
+        refs: list[SpecRef] = []
+        for comment in getattr(func, "spec_comments", []):
+            spec_text = str(getattr(comment, "text", "")).strip()
+            if not spec_text:
+                continue
+            raw_line = getattr(comment, "line", 0)
+            try:
+                source_line_hint = int(raw_line or 0)
+            except (TypeError, ValueError):
+                source_line_hint = 0
+            refs.append(
+                SpecRef(
+                    spec_text=spec_text,
+                    source_file=file_rel,
+                    source_symbol=symbol,
+                    source_line_hint=source_line_hint,
+                )
+            )
+
+        if refs:
+            return refs
+
+        try:
+            fallback_line = int(getattr(func, "line_start", 0) or 0)
+        except (TypeError, ValueError):
+            fallback_line = 0
+        return [
+            SpecRef(
+                spec_text=str(fallback_text).strip(),
+                source_file=file_rel,
+                source_symbol=symbol,
+                source_line_hint=fallback_line,
+            )
+        ]
+
+    @staticmethod
+    def _resolve_git_context(slice_root: Path) -> tuple[str, str]:
+        branch = ""
+        latest_commit = ""
+        try:
+            branch_proc = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=slice_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if branch_proc.returncode == 0:
+                branch = branch_proc.stdout.strip()
+        except OSError:
+            branch = ""
+
+        try:
+            commit_proc = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=slice_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if commit_proc.returncode == 0:
+                latest_commit = commit_proc.stdout.strip()
+        except OSError:
+            latest_commit = ""
+
+        return branch, latest_commit
 
     @staticmethod
     def _build_patch(*, before_snapshot: dict[str, str], after_snapshot: dict[str, str]) -> str:
@@ -887,3 +1022,59 @@ def _classify_under_spec(event: UnderSpecEvent) -> str:
         )
         return "AMBIGUOUS_SPEC"
     return classification
+
+
+def _need_artifact_type(event: UnderSpecEvent) -> str:
+    kind = str(event.kind).strip().upper()
+    if kind in {"EXTERNAL_DEP_UNKNOWN", "NEEDS_API_DECISION"}:
+        return "git_symbol"
+    if kind in {"MISSING_CONSTRAINT", "NEEDS_PRODUCT_DECISION"}:
+        return "spec_comment"
+    if kind == "CONFLICTING_CONSTRAINTS":
+        return "spec_constraint_set"
+    return "unknown"
+
+
+def _need_expected_shape(event: UnderSpecEvent) -> dict[str, Any]:
+    kind = str(event.kind).strip().upper()
+    needed_for = str(event.needed_for or "").strip()
+    if kind in {"EXTERNAL_DEP_UNKNOWN", "NEEDS_API_DECISION"}:
+        return {"kind": "callable", "signature_hint": needed_for}
+    if kind == "CONFLICTING_CONSTRAINTS":
+        return {"kind": "constraint_resolution", "decision_type": event.decision_type}
+    if kind in {"MISSING_CONSTRAINT", "NEEDS_PRODUCT_DECISION"}:
+        return {"kind": "text_requirement", "decision_type": event.decision_type}
+    return {"kind": "unknown"}
+
+
+def _need_confidence(event: UnderSpecEvent) -> float:
+    kind = str(event.kind).strip().upper()
+    if kind == "EXTERNAL_DEP_UNKNOWN":
+        return 0.9
+    if kind in {"NEEDS_API_DECISION", "CONFLICTING_CONSTRAINTS"}:
+        return 0.8
+    if kind in {"MISSING_CONSTRAINT", "NEEDS_PRODUCT_DECISION"}:
+        return 0.7
+    return 0.6
+
+
+def _signal_keywords(event: UnderSpecEvent) -> list[str]:
+    raw = f"{event.needed_for or ''} {event.question}".strip()
+    if not raw:
+        return []
+    separators = [":", ".", "/", "\\", "_", ",", "(", ")", "[", "]", "{", "}"]
+    normalized = raw
+    for separator in separators:
+        normalized = normalized.replace(separator, " ")
+    seen: set[str] = set()
+    keywords: list[str] = []
+    for token in normalized.split():
+        cleaned = "".join(ch for ch in token if ch.isalnum())
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        keywords.append(cleaned)
+    return keywords

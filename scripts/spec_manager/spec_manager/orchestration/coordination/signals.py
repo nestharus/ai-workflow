@@ -51,7 +51,10 @@ class FunctionRef:
 
     file: str = ""
     symbol: str = ""
-    signature_line: int = 0
+    signature_line: str = ""
+
+    def __post_init__(self) -> None:
+        self.signature_line = str(self.signature_line)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,7 +68,7 @@ class FunctionRef:
         return cls(
             file=d.get("file", ""),
             symbol=d.get("symbol", ""),
-            signature_line=d.get("signature_line", 0),
+            signature_line=str(d.get("signature_line", "")),
         )
 
 
