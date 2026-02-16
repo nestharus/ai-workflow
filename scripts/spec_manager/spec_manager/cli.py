@@ -596,6 +596,13 @@ def cmd_phase(args: argparse.Namespace) -> int:
         return 1
 
     phase = PDD_PHASE_ORDER[phase_number]
+    if phase_number != 0:
+        print(
+            "Direct non-extraction phase execution is retired. "
+            "Use `uv run spec run --run-id <id>` for loop mode.",
+            file=sys.stderr,
+        )
+        return 1
     run_id = args.run_id
     input_folder = Path(args.input) if args.input else Path.cwd()
 

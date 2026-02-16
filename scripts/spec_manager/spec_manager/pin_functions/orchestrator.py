@@ -64,6 +64,8 @@ class PinFunctionOrchestrator:
     def scan(
         self,
         mode: str = "proposals",
+        *,
+        allow_scan_fallback: bool = False,
         pin_proposals: list[dict[str, Any]] | None = None,
         edge_proposals: list[dict[str, Any]] | None = None,
         pin_proposals_path: str | Path | None = None,
@@ -81,6 +83,9 @@ class PinFunctionOrchestrator:
             mode: One of ``"proposals"`` (authoritative proposals only),
                 ``"scan"`` (fallback scanner only), or ``"both"`` (scanner
                 suggestions + authoritative proposals).
+            allow_scan_fallback: Explicit opt-in for mechanical scanner modes.
+                Scanner-backed discovery is verification fallback only and is
+                not allowed on operational paths unless this flag is true.
             pin_proposals: Pin proposals from the IMPLEMENT step (P9).
                 Each dict should have at minimum ``function_name``,
                 ``module_path``, ``file_path``.
@@ -105,6 +110,11 @@ class PinFunctionOrchestrator:
         if mode not in allowed_modes:
             raise ValueError(
                 f"Unsupported scan mode {mode!r}; expected one of {sorted(allowed_modes)}"
+            )
+        if mode in {"scan", "both"} and not allow_scan_fallback:
+            raise ValueError(
+                "Scanner-backed pin discovery is fallback-only; pass "
+                "allow_scan_fallback=True to opt in explicitly."
             )
 
         pin_functions: list[PinFunction] = []
@@ -155,6 +165,17 @@ class PinFunctionOrchestrator:
 
         return registry
 
+    def load_registry(self) -> PinFunctionRegistry:
+        """Load the persisted pin registry from disk."""
+        path = self.registry_path
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Pin registry not found at {path}. "
+                "Promotion must materialize the registry before query/diff/report operations."
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return PinFunctionRegistry.model_validate(data)
+
     @staticmethod
     def _load_proposals(path: str | Path | None) -> list[dict[str, Any]]:
         """Load proposal payloads from a JSON file path.
@@ -194,8 +215,8 @@ class PinFunctionOrchestrator:
         old_data = json.loads(old_registry_path.read_text(encoding="utf-8"))
         old_registry = PinFunctionRegistry.model_validate(old_data)
 
-        # Scan current state
-        new_registry = self.scan(mode="scan")
+        # Load current persisted registry state
+        new_registry = self.load_registry()
 
         # Build index from new registry for propagation
         index = PinRegistryIndex.from_registry(new_registry)
@@ -216,7 +237,7 @@ class PinFunctionOrchestrator:
         Returns:
             List of ImportEdge objects for all importing locations.
         """
-        registry = self.scan(mode="scan")
+        registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
 
         pf = index.get_by_name(function_name)
@@ -234,7 +255,7 @@ class PinFunctionOrchestrator:
         Returns:
             List of PinFunction objects used by the file.
         """
-        registry = self.scan(mode="scan")
+        registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
 
         # Find all edges that reference this architectural file
@@ -274,7 +295,7 @@ class PinFunctionOrchestrator:
         Returns:
             Markdown string with the analysis report.
         """
-        registry = self.scan(mode="scan")
+        registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
 
         lines: list[str] = []

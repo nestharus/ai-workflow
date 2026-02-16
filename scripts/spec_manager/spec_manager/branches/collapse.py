@@ -9,21 +9,12 @@ This module ingests existing source code as span-routing decisions:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spec_manager.core.code_analysis import (
-    RawFunctionInfo,
-    SourceAnalysis,
-    analyze_source,
-    build_candidate_spans,
-    infer_adjacency_signals,
-)
 from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.refinement.formats import _strip_code_fences
 
@@ -37,7 +28,7 @@ _ROUTING_SIGNAL_TYPES = frozenset({"CALL", "STORE_TOUCH", "EVENT_PUBLISH", "EVEN
 _ROUTING_PROMPT_TEMPLATE = """\
 You are routing brownfield code spans into a PDD graph.
 
-Do not classify by AST categories. Route spans to graph decisions.
+Use raw source as the authority. Do not require parser-derived candidate spans.
 
 Return JSON only with this shape:
 {{
@@ -96,6 +87,9 @@ Return JSON only with this shape:
   "atom_candidates": [
     {{
       "span_id": "string",
+      "function_name": "string",
+      "signature": "string",
+      "content_hash": "string",
       "kind": "algorithm|store|shape",
       "confidence": 0.0,
       "rationale": "string"
@@ -120,17 +114,12 @@ Return JSON only with this shape:
 }}
 
 Rules:
-- Use only provided span_ids.
-- Prefer preserving source spans and routing metadata over summaries.
+- Derive span identifiers from the source as stable pointers (for example:
+  "<file_path>:<qualified_name>" or "<file_path>:L<start>-L<end>").
+- Prefer routing + pointer outputs over extracted structural summaries.
 - If uncertain, add an ambiguity item instead of guessing.
 
 File: {file_path}
-
-Candidate spans:
-{spans_json}
-
-Inferred adjacency evidence:
-{adjacency_json}
 
 Source:
 ```
@@ -249,29 +238,11 @@ class CollapseEngine:
                 continue
 
             rel_path = py_file.relative_to(source_dir).as_posix()
-            analysis = analyze_source(source, filepath=str(py_file), workspace=source_dir)
-            spans = build_candidate_spans(analysis, file_path=rel_path)
-            function_by_span = _index_functions_by_span(analysis, rel_path)
-
-            if not spans:
-                # No routable spans in this file.
-                continue
-
-            inferred = infer_adjacency_signals(
-                file_path=str(py_file),
-                source_text=source,
-                spans=spans,
-                requested=set(_ROUTING_SIGNAL_TYPES),
-                workspace=source_dir,
-            )
-            inferred_edges = _normalize_adjacency_edges(inferred.get("edges"))
 
             try:
                 routed = _llm_route_spans(
                     file_path=rel_path,
                     source_text=source,
-                    spans=spans,
-                    inferred_edges=inferred_edges,
                     workspace=source_dir,
                 )
             except Exception as exc:  # pragma: no cover - defensive LLM boundary
@@ -322,7 +293,7 @@ class CollapseEngine:
                 _coerce_dict_list(routed.get("ambiguities", [])), rel_path
             )
             routed_edges = _normalize_adjacency_edges(routed.get("adjacency_edges"))
-            combined_edges = inferred_edges + routed_edges
+            combined_edges = routed_edges
 
             if not file_store_touches:
                 file_store_touches = _derive_store_touches_from_edges(combined_edges, rel_path)
@@ -361,7 +332,6 @@ class CollapseEngine:
             for atom_data in atom_payload:
                 descriptor = self._to_atom_descriptor(
                     atom_data=atom_data,
-                    function_by_span=function_by_span,
                     file_path=rel_path,
                     source_text=source,
                     warnings=warnings,
@@ -373,28 +343,6 @@ class CollapseEngine:
                     continue
                 seen_atom_ids.add(descriptor.atom_id)
                 atom_candidates.append(descriptor)
-
-            routed_span_ids: set[str] = set()
-            for row in (
-                file_pin_spans
-                + file_slice_entrypoints
-                + file_store_touches
-                + file_event_routes
-                + file_promotions
-                + file_ambiguities
-                + file_gaps
-            ):
-                span_id = str(row.get("span_id", "")).strip()
-                if span_id:
-                    routed_span_ids.add(span_id)
-
-            candidate_span_ids = {
-                str(item.get("span_id", "")).strip() for item in spans if isinstance(item, dict)
-            }
-            candidate_span_ids.discard("")
-            unrouted_span_ids = sorted(candidate_span_ids - routed_span_ids)
-            if unrouted_span_ids:
-                gaps.extend(_gaps_from_unrouted_spans(unrouted_span_ids, rel_path))
 
             if (
                 not file_pin_spans
@@ -443,31 +391,14 @@ class CollapseEngine:
         self,
         *,
         atom_data: dict[str, Any],
-        function_by_span: dict[str, RawFunctionInfo],
         file_path: str,
         source_text: str,
         warnings: list[str],
         ambiguities: list[dict[str, Any]],
     ) -> AtomDescriptor | None:
-        """Build an atom descriptor for a routed function span."""
-        span_id = str(atom_data.get("span_id") or "").strip()
+        """Build an atom descriptor from router-produced pointers."""
+        span_id = str(atom_data.get("span_id") or atom_data.get("atom_id") or "").strip()
         if not span_id:
-            return None
-
-        func_info = function_by_span.get(span_id)
-        if func_info is None and ":" not in span_id:
-            func_info = function_by_span.get(f"{file_path}:{span_id}")
-            if func_info is not None:
-                span_id = f"{file_path}:{span_id}"
-        if func_info is None:
-            ambiguities.append(
-                {
-                    "file_path": file_path,
-                    "span_id": span_id,
-                    "question": "Span was routed as atom candidate but is not a function span.",
-                    "reason": "non_function_atom_candidate",
-                }
-            )
             return None
 
         kind_raw = str(atom_data.get("kind") or "algorithm").strip().lower()
@@ -476,55 +407,56 @@ class CollapseEngine:
             warnings.append(f"Unknown atom kind '{kind_raw}' for span '{span_id}'; skipping")
             return None
 
+        function_name = str(
+            atom_data.get("function_name")
+            or atom_data.get("pin_name")
+            or atom_data.get("qualified_name")
+            or span_id.rsplit(":", 1)[-1]
+        ).strip()
+        if not function_name:
+            ambiguities.append(
+                {
+                    "file_path": file_path,
+                    "span_id": span_id,
+                    "question": "Atom candidate missing function pointer.",
+                    "reason": "missing_function_name",
+                }
+            )
+            return None
+
+        signature = str(atom_data.get("signature") or "").strip()
+        content_hash = str(atom_data.get("content_hash") or "").strip()
+        if not content_hash:
+            pointer_material = (
+                f"{file_path}|{span_id}|{function_name}|{signature}|"
+                f"{str(atom_data.get('rationale') or '').strip()}|{len(source_text)}"
+            )
+            content_hash = _sha256(pointer_material)
+
+        atom_id = span_id if ":" in span_id else f"{file_path}:{span_id}"
+
         return AtomDescriptor(
-            atom_id=span_id,
+            atom_id=atom_id,
             kind=kind,
             file_path=file_path,
-            function_name=func_info.qualified_name or func_info.name,
-            signature=_reconstruct_signature(func_info),
-            content_hash=_compute_body_hash(func_info, source_text),
+            function_name=function_name,
+            signature=signature,
+            content_hash=content_hash,
             introduced_by="collapse-routing",
         )
 
 
-def _index_functions_by_span(
-    analysis: SourceAnalysis, file_path: str
-) -> dict[str, RawFunctionInfo]:
-    """Index function spans by the span identifier emitted by build_candidate_spans."""
-    indexed: dict[str, RawFunctionInfo] = {}
-    for func in analysis.functions:
-        span_name = (func.qualified_name or func.name).strip()
-        if not span_name:
-            continue
-        span_id = f"{file_path}:{span_name}"
-        indexed[span_id] = func
-    return indexed
+def _sha256(value: str) -> str:
+    """Compute deterministic SHA-256 hash for pointer material."""
+    import hashlib
 
-
-def _reconstruct_signature(func_info: RawFunctionInfo) -> str:
-    """Reconstruct a function signature from RawFunctionInfo."""
-    sig = f"({', '.join(func_info.args)})"
-    if func_info.return_annotation:
-        sig += f" -> {func_info.return_annotation}"
-    return sig
-
-
-def _compute_body_hash(func_info: RawFunctionInfo, source: str) -> str:
-    """Compute SHA-256 hash of the function body source."""
-    lines = source.splitlines()
-    body_start = max(0, func_info.start_line - 1)
-    body_end = min(len(lines), max(func_info.end_line, func_info.start_line))
-    body_text = "\n".join(lines[body_start:body_end])
-    body_text = textwrap.dedent(body_text).strip()
-    return hashlib.sha256(body_text.encode("utf-8")).hexdigest()
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _llm_route_spans(
     *,
     file_path: str,
     source_text: str,
-    spans: list[dict[str, Any]],
-    inferred_edges: list[dict[str, Any]],
     workspace: Path,
 ) -> dict[str, Any]:
     """Route spans for one file via an LLM pass."""
@@ -532,8 +464,6 @@ def _llm_route_spans(
 
     prompt = _ROUTING_PROMPT_TEMPLATE.format(
         file_path=file_path,
-        spans_json=json.dumps(spans, ensure_ascii=True),
-        adjacency_json=json.dumps(inferred_edges, ensure_ascii=True),
         source=source_text,
     )
     raw_output = run_agent(

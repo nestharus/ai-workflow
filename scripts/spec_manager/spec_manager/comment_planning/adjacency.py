@@ -1,4 +1,4 @@
-"""Call graph analysis and store-touch detection for adjacent detail discovery.
+"""Adjacent-detail discovery from canonical relationship evidence.
 
 After adding new pseudocode comments, this module reveals functions that
 interact with the modified function via call relationships, shared stores,
@@ -172,8 +172,99 @@ class CallGraph:
         return result
 
 
+def _normalize_signal_type(edge: dict[str, object]) -> str:
+    """Normalize relationship signal labels."""
+    signal = str(edge.get("signal_type") or edge.get("type") or "").strip().upper()
+    if signal in {"CALL", "CALLS"}:
+        return "CALL"
+    if signal in {"STORE_TOUCH", "AGGREGATION"}:
+        return "STORE_TOUCH"
+    if signal in {"EVENT", "EVENT_PUBLISH", "EVENT_SUBSCRIBE"}:
+        return "EVENT"
+    return ""
+
+
+def _relationship_endpoints(edge: dict[str, object]) -> tuple[str, str]:
+    """Return canonical (src, dst) identifiers from relationship payload."""
+    src = str(edge.get("src") or edge.get("src_id") or edge.get("pin_func_id") or "").strip()
+    dst = str(
+        edge.get("dst")
+        or edge.get("dst_id")
+        or edge.get("store_id")
+        or edge.get("arch_location")
+        or ""
+    ).strip()
+    return src, dst
+
+
+def build_call_graph_from_relationship_edges(
+    relationship_edges: list[dict[str, object]],
+) -> CallGraph:
+    """Build call graph from canonical relationship edges."""
+    graph = CallGraph()
+    for edge in relationship_edges:
+        if not isinstance(edge, dict):
+            continue
+        if _normalize_signal_type(edge) != "CALL":
+            continue
+        src, dst = _relationship_endpoints(edge)
+        if not src or not dst or src == dst:
+            continue
+        graph.nodes.add(src)
+        graph.nodes.add(dst)
+        graph.edges.append((src, dst))
+        graph.reverse_edges.setdefault(dst, set()).add(src)
+    return graph
+
+
+def find_store_touches_from_relationship_edges(
+    relationship_edges: list[dict[str, object]],
+) -> list[StoreTouchEdge]:
+    """Build store-touch edges from canonical relationship edges."""
+    touches: list[StoreTouchEdge] = []
+    for edge in relationship_edges:
+        if not isinstance(edge, dict):
+            continue
+        if _normalize_signal_type(edge) != "STORE_TOUCH":
+            continue
+        src, dst = _relationship_endpoints(edge)
+        if not src or not dst:
+            continue
+        operation = str(edge.get("operation") or "").strip().lower()
+        access_type = operation if operation in {"read", "write", "read_write"} else "read_write"
+        line_no_raw = edge.get("line") or edge.get("line_no") or edge.get("arch_line") or 0
+        try:
+            line_no = int(line_no_raw)
+        except (TypeError, ValueError):
+            line_no = 0
+        touches.append(
+            StoreTouchEdge(
+                function_name=src,
+                store_name=dst,
+                access_type=access_type,
+                line_no=max(line_no, 0),
+                file_path=str(edge.get("file_path") or edge.get("arch_file_path") or ""),
+            )
+        )
+    return touches
+
+
+def discover_adjacent_details_from_relationship_edges(
+    modified_function: str,
+    relationship_edges: list[dict[str, object]],
+    test_coverage: dict[str, bool] | None = None,
+) -> list[AdjacentDetail]:
+    """Discover adjacencies by consuming canonical relationship evidence."""
+    call_graph = build_call_graph_from_relationship_edges(relationship_edges)
+    store_touches = find_store_touches_from_relationship_edges(relationship_edges)
+    return discover_adjacent_details(modified_function, call_graph, store_touches, test_coverage)
+
+
 def build_call_graph(code_files: list[CodeFile]) -> CallGraph:
     """Build a call graph from parsed code files.
+
+    Legacy fallback path for local standalone tooling. Workflow orchestration
+    should prefer ``build_call_graph_from_relationship_edges``.
 
     Nodes are function names (qualified: module.class.function or module.function).
     Edges are call relationships extracted from AST.
@@ -230,6 +321,9 @@ def build_call_graph(code_files: list[CodeFile]) -> CallGraph:
 
 def find_store_touches(code_files: list[CodeFile]) -> list[StoreTouchEdge]:
     """Detect store access patterns (database calls, file I/O, queue operations).
+
+    Legacy fallback path for local standalone tooling. Workflow orchestration
+    should prefer ``find_store_touches_from_relationship_edges``.
 
     Identifies functions that read/write shared state.
     Two functions touching the same store are adjacent even if they never call each other.

@@ -1,10 +1,9 @@
-"""PDD orchestrator: sequences PDD modules through design phases 0-10.
+"""PDD orchestrator: loop-authoritative execution with optional intake entrypoint.
 
-This is the primary orchestration backbone for the spec manager.  It
-replaces the old 19-phase refinement pipeline with the 11-phase PDD
-execution model defined in EXPECTED_STATE.md.
+This orchestrator's authoritative path is the per-slice iterative
+PromotionLoop. Direct phase execution remains only for Phase 0 intake.
 
-Each phase delegates to the corresponding PDD module entry point:
+The legacy phase methods remain as internal building blocks:
 
     Phase 0  (EXTRACTION)         - intake/ (routing-based restructuring)
     Phase 1  (STRUCTURE_DISCOVERY) - dynamic source facts + core.edit_in_place
@@ -14,7 +13,7 @@ Each phase delegates to the corresponding PDD module entry point:
     Phase 5  (SPEC_BUILD)          - pin_functions.orchestrator + branches.promotion
     Phase 6  (CROSS_LIBRARY)       - analysis.adjacency.runner
     Phase 7  (PROJECTION_SYNC)     - projection.lineage + analysis.generator + projection.generator
-    Phase 8  (TASK_PLANNING)       - planning.workflow
+    Phase 8  (TASK_PLANNING)       - planning over shared evidence
     Phase 9  (IMPLEMENTATION)      - core.edit_in_place (gap analysis + report)
     Phase 10 (CONTINUOUS_QA)       - strategies.evolution + refinement_engine
 
@@ -141,7 +140,7 @@ class PromotionLoopRunner:
 
 
 class PddOrchestrator:
-    """Sequences PDD modules through design phases 0-10.
+    """Run loop-authoritative PDD orchestration with optional Phase 0 intake.
 
     Usage::
 
@@ -149,17 +148,11 @@ class PddOrchestrator:
         manager.initialize()
         orchestrator = PddOrchestrator(manager)
 
-        # Run all phases
+        # Run iterative loop (authoritative execution path)
         state = orchestrator.run()
 
-        # Or run a single phase
-        result = orchestrator.run_phase(Phase.STRUCTURE_DISCOVERY)
-
-        # Or run a range
-        state = orchestrator.run(
-            start_phase=Phase.STRUCTURE_DISCOVERY,
-            end_phase=Phase.COMPLIANCE_CLEAN,
-        )
+        # Optional: run extraction intake only
+        result = orchestrator.run_phase(Phase.EXTRACTION)
     """
 
     def __init__(
@@ -167,19 +160,8 @@ class PddOrchestrator:
         manager: WorkspaceManager,
     ) -> None:
         self.manager = manager
-        self._phase_runners: dict[Phase, str] = {
-            Phase.EXTRACTION: "_run_extraction",
-            Phase.STRUCTURE_DISCOVERY: "_run_structure_discovery",
-            Phase.DECOMPOSITION: "_run_decomposition",
-            Phase.COMPLIANCE_CLEAN: "_run_compliance_clean",
-            Phase.LIBRARY_DISCOVERY: "_run_library_discovery",
-            Phase.SPEC_BUILD: "_run_spec_build",
-            Phase.CROSS_LIBRARY: "_run_cross_library",
-            Phase.PROJECTION_SYNC: "_run_projection_sync",
-            Phase.TASK_PLANNING: "_run_task_planning",
-            Phase.IMPLEMENTATION: "_run_implementation",
-            Phase.CONTINUOUS_QA: "_run_continuous_qa",
-        }
+        self._canonical_file_facts_cache: list[dict[str, Any]] | None = None
+        self._canonical_file_facts_errors: list[str] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -204,6 +186,8 @@ class PddOrchestrator:
         Returns:
             Loop summary dict from :meth:`run_loop`.
         """
+        if start_phase is not None or end_phase is not None or stop_on_failure is not True:
+            raise ValueError("Direct phase sequencing arguments are retired; use run(mode='loop').")
         if mode != "loop":
             raise ValueError(
                 "PddOrchestrator sequential pipeline mode has been retired; use mode='loop'."
@@ -211,32 +195,19 @@ class PddOrchestrator:
         return self.run_loop()
 
     def run_phase(self, pdd_phase: Phase) -> dict[str, Any]:
-        """Run a single PDD phase.
+        """Compatibility shim for direct phase execution.
 
-        Handles state transitions (start_phase / complete_phase / fail_phase)
-        and delegates to the appropriate ``_run_*`` method.
-
-        After the phase runner completes, the continuous refinement post-phase
-        hook runs automatically (for phases 4+, where library structure exists).
-
-        Args:
-            pdd_phase: The phase to execute.
-
-        Returns:
-            Phase outputs dict on success.
-
-        Raises:
-            Exception: Re-raises after recording failure in state.
+        Direct execution is intentionally limited to Phase 0 intake.
+        All iterative work must run through :meth:`run_loop`.
         """
-        runner_name = self._phase_runners.get(pdd_phase)
-        if runner_name is None:
-            raise ValueError(f"No runner registered for phase {pdd_phase.value}")
-
-        runner = getattr(self, runner_name)
+        if pdd_phase != Phase.EXTRACTION:
+            raise ValueError(
+                "Direct non-extraction phase execution is retired; use run(mode='loop')."
+            )
+        runner = self._run_extraction
         self.manager.start_phase(pdd_phase)
         try:
             outputs = runner()
-            # Run post-phase refinement hook for phases where structure exists
             refinement_output = self._post_phase_refinement_hook(pdd_phase)
             if refinement_output:
                 outputs["refinement"] = refinement_output
@@ -655,6 +626,88 @@ class PddOrchestrator:
             )
         return payloads
 
+    def _build_canonical_file_facts(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """Build canonical per-file facts once for downstream phase consumers."""
+        from spec_manager.core.code_analysis import analyze_file_facts
+
+        facts_rows: list[dict[str, Any]] = []
+        errors: list[str] = []
+        all_files = self.manager.get_all_files()
+        for file_id, file_path in all_files.items():
+            if not file_path.exists():
+                errors.append(f"File not found: {file_path}")
+                continue
+            try:
+                source = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                errors.append(f"Failed to read {file_path}: {exc}")
+                continue
+
+            try:
+                rel_path = str(file_path.relative_to(self.manager.structure.root))
+            except ValueError:
+                rel_path = str(file_path)
+
+            try:
+                facts = analyze_file_facts(
+                    source,
+                    rel_path,
+                    workspace=self.manager.structure.root,
+                    run_id=self.manager.run_id,
+                )
+            except Exception as exc:
+                errors.append(f"Analysis failed for {rel_path}: {exc}")
+                continue
+
+            facts_rows.append(
+                {
+                    "file_id": file_id,
+                    "path": rel_path,
+                    "content_hash": facts.content_hash,
+                    "file_facts": {
+                        "structure_hints": dict(facts.structure_hints),
+                        "remaining_gap_pins": list(facts.gap_pins),
+                        "relationship_edges": list(facts.relationship_edges),
+                        "test_identity_hints": list(facts.test_identity_hints),
+                        "functions": dict(facts.functions),
+                        "stub_nodes": list(facts.stub_nodes),
+                        "call_graph_nodes": list(facts.call_graph_nodes),
+                        "call_graph_edges": list(facts.call_graph_edges),
+                        "stores": dict(facts.stores),
+                        "store_owners": dict(facts.store_owners),
+                    },
+                }
+            )
+
+        return facts_rows, errors
+
+    def _load_or_build_canonical_file_facts(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """Load canonical file-facts artifact from structure output or build it once."""
+        if self._canonical_file_facts_cache is not None:
+            return self._canonical_file_facts_cache, list(self._canonical_file_facts_errors)
+
+        structure_output = self.manager.read_agent_output(Phase.STRUCTURE_DISCOVERY) or {}
+        if isinstance(structure_output, dict):
+            rows = structure_output.get("canonical_file_facts", [])
+            errors = structure_output.get("canonical_file_facts_errors", [])
+            if isinstance(rows, list) and rows:
+                normalized_rows = [row for row in rows if isinstance(row, dict)]
+                self._canonical_file_facts_cache = normalized_rows
+                self._canonical_file_facts_errors = [
+                    str(err) for err in errors if isinstance(err, str)
+                ]
+                return normalized_rows, list(self._canonical_file_facts_errors)
+
+        rows, errors = self._build_canonical_file_facts()
+        self._canonical_file_facts_cache = rows
+        self._canonical_file_facts_errors = errors
+        merged_output = structure_output if isinstance(structure_output, dict) else {}
+        merged_output = dict(merged_output)
+        merged_output["canonical_file_facts"] = rows
+        merged_output["canonical_file_facts_errors"] = errors
+        self.manager.write_agent_output(Phase.STRUCTURE_DISCOVERY, merged_output)
+        return rows, list(errors)
+
     def _run_structure_discovery(self) -> dict[str, Any]:
         """Phase 1: dynamic source facts + edit-in-place gap analysis.
 
@@ -664,36 +717,34 @@ class PddOrchestrator:
         """
         from spec_manager.core.edit_in_place import analyze_project, find_gaps
 
-        all_files = self.manager.get_all_files()
-        profiled_count = 0
-        errors: list[str] = []
-        per_file_results: list[dict[str, Any]] = []
+        facts_rows, facts_errors = self._build_canonical_file_facts()
+        self._canonical_file_facts_cache = facts_rows
+        self._canonical_file_facts_errors = facts_errors
 
-        for file_id, file_path in all_files.items():
-            if not file_path.exists():
-                errors.append(f"File not found: {file_path}")
+        per_file_results: list[dict[str, Any]] = []
+        for row in facts_rows:
+            if not isinstance(row, dict):
                 continue
-            try:
-                line_count = 0
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                    line_count = text.count("\n") + (1 if text else 0)
-                except UnicodeDecodeError:
-                    line_count = 0
-                per_file_results.append(
-                    {
-                        "file_id": file_id,
-                        "path": str(file_path),
-                        "facts": {
-                            "suffix": file_path.suffix.lower(),
-                            "size_bytes": file_path.stat().st_size,
-                            "line_count": line_count,
-                        },
-                    }
-                )
-                profiled_count += 1
-            except Exception as exc:
-                errors.append(f"Failed to profile {file_path}: {exc}")
+            file_facts = row.get("file_facts")
+            if not isinstance(file_facts, dict):
+                continue
+            per_file_results.append(
+                {
+                    "file_id": str(row.get("file_id", "")),
+                    "path": str(row.get("path", "")),
+                    "facts": {
+                        "functions": len(file_facts.get("functions", {}))
+                        if isinstance(file_facts.get("functions", {}), dict)
+                        else 0,
+                        "gaps": len(file_facts.get("remaining_gap_pins", []))
+                        if isinstance(file_facts.get("remaining_gap_pins", []), list)
+                        else 0,
+                        "edges": len(file_facts.get("relationship_edges", []))
+                        if isinstance(file_facts.get("relationship_edges", []), list)
+                        else 0,
+                    },
+                }
+            )
 
         # Edit-in-place analysis: classify comments as gaps, track translation state
         project_root = str(self.manager.structure.root)
@@ -703,46 +754,40 @@ class PddOrchestrator:
         # Write aggregate structure output
         self.manager.write_agent_output(
             Phase.STRUCTURE_DISCOVERY,
-            {"files": per_file_results},
+            {
+                "files": per_file_results,
+                "canonical_file_facts": facts_rows,
+                "canonical_file_facts_errors": facts_errors,
+            },
         )
 
         return {
-            "files_profiled": profiled_count,
-            "total_files": len(all_files),
+            "files_profiled": len(per_file_results),
+            "total_files": len(self.manager.get_all_files()),
             "files_with_translation_state": len(project_state.files),
             "gaps_detected": len(gaps),
-            "errors": errors,
+            "canonical_facts_errors": facts_errors,
         }
 
     def _run_decomposition(self) -> dict[str, Any]:
         """Phase 2: Build decomposition from canonical code-analysis facts."""
-        from spec_manager.core.code_analysis import analyze_file_facts
-
-        all_files = self.manager.get_all_files()
+        facts_rows, facts_errors = self._load_or_build_canonical_file_facts()
         functions_processed = 0
         decomposition_units: list[dict[str, Any]] = []
-        errors: list[str] = []
+        errors: list[str] = list(facts_errors)
 
-        for _file_id, file_path in all_files.items():
-            if not file_path.exists():
+        for row in facts_rows:
+            if not isinstance(row, dict):
                 continue
-            try:
-                source = file_path.read_text(encoding="utf-8")
-                try:
-                    rel_path = str(file_path.relative_to(self.manager.structure.root))
-                except ValueError:
-                    rel_path = str(file_path)
-                facts = analyze_file_facts(
-                    source,
-                    rel_path,
-                    workspace=self.manager.structure.root,
-                    run_id=self.manager.run_id,
-                )
-            except Exception as exc:
-                errors.append(f"Analysis failed for {file_path}: {exc}")
+            rel_path = str(row.get("path", "")).strip()
+            file_facts = row.get("file_facts")
+            if not rel_path or not isinstance(file_facts, dict):
+                continue
+            functions = file_facts.get("functions", {})
+            if not isinstance(functions, dict):
                 continue
 
-            for qualified_name, fn_meta in facts.functions.items():
+            for qualified_name, fn_meta in functions.items():
                 if not isinstance(fn_meta, dict):
                     continue
                 signature = fn_meta.get("signature", {})
@@ -772,38 +817,27 @@ class PddOrchestrator:
 
     def _run_compliance_clean(self) -> dict[str, Any]:
         """Phase 3: Executable gap detection from canonical code-analysis facts."""
-        from spec_manager.core.code_analysis import analyze_file_facts
         from spec_manager.core.gap import GapEvidence, GapSynthesizer
         from spec_manager.core.gap_queue import GapQueue
         from spec_manager.core.gaps import Severity
 
-        all_files = self.manager.get_all_files()
-        filepaths = [fp for fp in all_files.values() if fp.exists()]
+        facts_rows, facts_errors = self._load_or_build_canonical_file_facts()
         gap_queue = GapQueue()
         synthesizer = GapSynthesizer()
         evidence_items: list[GapEvidence] = []
         comment_gaps = 0
         stub_gaps = 0
-        scan_errors: list[str] = []
+        scan_errors: list[str] = list(facts_errors)
 
-        for file_path in filepaths:
-            try:
-                source = file_path.read_text(encoding="utf-8")
-                try:
-                    rel_path = str(file_path.relative_to(self.manager.structure.root))
-                except ValueError:
-                    rel_path = str(file_path)
-                facts = analyze_file_facts(
-                    source,
-                    rel_path,
-                    workspace=self.manager.structure.root,
-                    run_id=self.manager.run_id,
-                )
-            except Exception as exc:
-                scan_errors.append(f"{file_path}: {exc}")
+        for row in facts_rows:
+            if not isinstance(row, dict):
+                continue
+            rel_path = str(row.get("path", "")).strip()
+            file_facts = row.get("file_facts")
+            if not isinstance(file_facts, dict):
                 continue
 
-            for gap in facts.gap_pins:
+            for gap in file_facts.get("remaining_gap_pins", []):
                 if not isinstance(gap, dict):
                     continue
                 kind = str(gap.get("kind", "")).strip()
@@ -820,7 +854,7 @@ class PddOrchestrator:
                 else:
                     continue
 
-                location = str(gap.get("file", "")).strip()
+                location = str(gap.get("file") or rel_path).strip()
                 line = (gap.get("span") or {}).get("start_line")
                 source_ref = f"{location}:{line}" if line else location
                 evidence_items.append(
@@ -847,7 +881,7 @@ class PddOrchestrator:
             "gaps_found": len(evidence_items),
             "comment_gaps": comment_gaps,
             "stub_gaps": stub_gaps,
-            "files_scanned": len(filepaths),
+            "files_scanned": len(facts_rows),
             "scan_errors": scan_errors,
             "gaps_queued": len(gap_queue.get_open_gaps()),
         }
@@ -1672,11 +1706,12 @@ class PddOrchestrator:
 
     def _run_task_planning(self) -> dict[str, Any]:
         """Phase 8: Build a task plan from canonical gap evidence."""
-        from spec_manager.core.code_analysis import analyze_file_facts
-
-        # Gather target files from workspace snapshot
-        all_files = self.manager.get_all_files()
-        target_files = [str(fp) for fp in all_files.values() if fp.exists()]
+        facts_rows, facts_errors = self._load_or_build_canonical_file_facts()
+        target_files = [
+            str(row.get("path", "")).strip()
+            for row in facts_rows
+            if isinstance(row, dict) and str(row.get("path", "")).strip()
+        ]
 
         # Derive intentions from Phase 3 compliance gap descriptions
         phase3_result = self.manager.state.phases.get(Phase.COMPLIANCE_CLEAN.value)
@@ -1689,32 +1724,33 @@ class PddOrchestrator:
                 )
 
         plan_items: list[dict[str, Any]] = []
-        for file_path in target_files:
-            path = Path(file_path)
-            try:
-                source = path.read_text(encoding="utf-8")
-                try:
-                    rel_path = str(path.relative_to(self.manager.structure.root))
-                except ValueError:
-                    rel_path = str(path)
-                facts = analyze_file_facts(
-                    source,
-                    rel_path,
-                    workspace=self.manager.structure.root,
-                    run_id=self.manager.run_id,
-                )
-            except Exception as exc:
+        for error in facts_errors:
+            plan_items.append(
+                {
+                    "file": "",
+                    "action": "inspect",
+                    "priority": "high",
+                    "reason": error,
+                }
+            )
+
+        for row in facts_rows:
+            if not isinstance(row, dict):
+                continue
+            rel_path = str(row.get("path", "")).strip()
+            file_facts = row.get("file_facts")
+            if not rel_path or not isinstance(file_facts, dict):
                 plan_items.append(
                     {
-                        "file": file_path,
+                        "file": rel_path,
                         "action": "inspect",
                         "priority": "high",
-                        "reason": f"Analysis failed: {exc}",
+                        "reason": "Missing canonical file-facts payload for planning.",
                     }
                 )
                 continue
 
-            for gap in facts.gap_pins:
+            for gap in file_facts.get("remaining_gap_pins", []):
                 if not isinstance(gap, dict):
                     continue
                 kind = str(gap.get("kind", "")).strip()

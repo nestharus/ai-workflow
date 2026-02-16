@@ -2026,84 +2026,26 @@ class GapExplorationStep:
             self._merge_gap_queue(self._report_from_gap_records([]), bundle)
             return StepResult(status="OK")
 
-        slice_root = Path(ctx.slice_root)
-        py_files = self._l1_gap_scan_targets(slice_root=slice_root, bundle=bundle)
-        if not py_files:
-            bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
-            self._merge_gap_queue(self._report_from_gap_records([]), bundle)
-            return StepResult(status="OK")
-
         try:
-            from spec_manager.core.code_analysis import analyze_file_facts
-
-            workspace = Path(ctx.workspace_root) if ctx.workspace_root else slice_root
-            existing_entries: dict[str, dict[str, Any]] = {
-                str(entry.get("path", "")).strip(): entry
-                for entry in (bundle.source_index.entries or [])
-                if isinstance(entry, dict) and str(entry.get("path", "")).strip()
-            }
-
-            entries: list[dict[str, Any]] = []
             gaps: list[dict[str, Any]] = []
 
-            for py_file in py_files:
-                if not py_file.exists() or not py_file.is_file():
+            for entry in bundle.source_index.entries or []:
+                if not isinstance(entry, dict):
                     continue
-                try:
-                    content = py_file.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as exc:
-                    logger.debug("Skipping L1 gap target %s: %s", py_file, exc)
+                payload = _extract_file_facts_payload(entry)
+                if not payload:
                     continue
-
-                relative_path = str(py_file.relative_to(slice_root))
-                content_hash = _hash_text(content)
-                cached_entry = existing_entries.get(relative_path)
-                cached_payload = (
-                    _extract_file_facts_payload(cached_entry)
-                    if isinstance(cached_entry, dict)
-                    else {}
-                )
-                if (
-                    isinstance(cached_entry, dict)
-                    and cached_entry.get("content_hash") == content_hash
-                    and cached_payload
-                ):
-                    source_entry = cached_entry
-                    payload = cached_payload
-                else:
-                    file_facts = analyze_file_facts(
-                        content,
-                        relative_path,
-                        workspace=workspace,
-                        run_id=ctx.run_id,
-                    )
-                    payload = {
-                        "structure_hints": dict(file_facts.structure_hints),
-                        "remaining_gap_pins": list(file_facts.gap_pins),
-                        "relationship_edges": list(file_facts.relationship_edges),
-                        "test_identity_hints": list(file_facts.test_identity_hints),
-                        "functions": dict(file_facts.functions),
-                        "stub_nodes": list(file_facts.stub_nodes),
-                        "call_graph_nodes": list(file_facts.call_graph_nodes),
-                        "call_graph_edges": list(file_facts.call_graph_edges),
-                        "stores": dict(file_facts.stores),
-                        "store_owners": dict(file_facts.store_owners),
-                    }
-                    source_entry = _build_l1_source_entry(
-                        relative_path=relative_path,
-                        content_hash=content_hash,
-                        source_analysis=file_facts.source_analysis,
-                        file_facts_payload=payload,
-                    )
-
-                entries.append(source_entry)
                 _merge_file_facts_payload(bundle, payload)
                 for gap in _gaps_from_file_facts(payload):
                     _append_unique_record(gaps, gap)
 
+            for gap in bundle.facts.remaining_gap_pins or []:
+                if isinstance(gap, dict):
+                    _append_unique_record(gaps, gap)
+
             normalized = [self._normalize_gap(g) for g in gaps]
-            bundle.source_index.entries = entries
-            bundle.source_index.path = "source_analysis.index.json"
+            if bundle.source_index.entries:
+                bundle.source_index.path = "source_analysis.index.json"
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=normalized)
             self._merge_gap_queue(self._report_from_gap_records(normalized), bundle)
         except Exception as exc:
@@ -8638,11 +8580,11 @@ class AlignStep:
 
 DEFAULT_BUILD_STEPS: tuple[type, ...] = (
     CollectBaselineStep,
+    AnalyzeStep,
     GapExplorationStep,
     PlanStep,
     ImplementStep,
     CoordinateStep,
-    AnalyzeStep,
     PromoteStep,
     IntegrateStep,
     VerifyStep,
@@ -8650,11 +8592,11 @@ DEFAULT_BUILD_STEPS: tuple[type, ...] = (
 )
 L1_REACTIVE_BUILD_STEPS: tuple[type, ...] = (
     CollectBaselineStep,
+    AnalyzeStep,
     GapExplorationStep,
     PlanStep,
     ImplementStep,
     CoordinateStep,
-    AnalyzeStep,
     PromoteStep,
     IntegrateStep,
     VerifyStep,
@@ -8662,11 +8604,11 @@ L1_REACTIVE_BUILD_STEPS: tuple[type, ...] = (
 )
 ARCHITECTURE_MODE_STEPS: tuple[type, ...] = (
     CollectBaselineStep,
+    AnalyzeStep,
     GapExplorationStep,
     PlanStep,
     ImplementStep,
     CoordinateStep,
-    AnalyzeStep,
     PromoteStep,
     IntegrateStep,
     VerifyStep,

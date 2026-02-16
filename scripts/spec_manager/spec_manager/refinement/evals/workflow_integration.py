@@ -808,10 +808,10 @@ class WorkspaceIntegration:
     def _run_pdd_phase(self, manager: WorkspaceManager, phase: str) -> dict[str, Any]:
         """Dispatch an eval phase through the PDD orchestrator.
 
-        Maps the eval's 8-phase names to PDD Phase enum values and runs
-        each through ``PddOrchestrator.run_phase()``.  Before running any
-        mapped phase, ensures that Phase 0 (extraction) has completed so
-        that the workspace contains structured data from prose input.
+        Before running iterative work, ensures that Phase 0 (extraction) has
+        completed so the workspace contains structured data from prose input.
+        Remaining execution is loop-authoritative and runs via
+        ``PddOrchestrator.run()``.
 
         Phase 0 is run through the orchestrator (not directly) so that
         its output is properly installed into the workspace structure.
@@ -867,19 +867,13 @@ class WorkspaceIntegration:
         combined_outputs: dict[str, Any] = {}
 
         if has_python:
-            for pdd_value in pdd_phase_values:
-                try:
-                    pdd_phase = PddPhase(pdd_value)
-                except ValueError:
-                    result["error"] = f"Unknown PDD phase value: {pdd_value}"
-                    return result
-
-                try:
-                    phase_outputs = orchestrator.run_phase(pdd_phase)
-                    combined_outputs[pdd_value] = phase_outputs
-                except Exception as exc:
-                    result["error"] = f"PDD phase {pdd_value} failed: {exc}"
-                    return result
+            try:
+                loop_outputs = orchestrator.run(mode="loop")
+            except Exception as exc:
+                result["error"] = f"PDD loop execution failed: {exc}"
+                return result
+            combined_outputs["loop"] = loop_outputs
+            combined_outputs["phase_map"] = list(pdd_phase_values)
 
         result["success"] = True
         result["outputs"] = combined_outputs

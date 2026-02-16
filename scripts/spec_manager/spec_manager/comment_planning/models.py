@@ -4,8 +4,9 @@ Defines the foundational types used across all planning submodules:
 pseudocode comments, insertion points, function info, code files,
 insertion plans, reverse plans, and adjacent details.
 
-Also provides ``parse_source`` / ``parse_file`` factory functions that
-build ``CodeFile`` instances from ``analyze_source()`` output.
+Also provides ``parse_source`` / ``parse_file`` factory functions for
+standalone tooling, plus canonical source-index adapters used by the
+workflow integration path.
 """
 
 from __future__ import annotations
@@ -13,12 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from spec_manager.core.code_analysis import (
     RawCommentInfo,
     RawFunctionInfo,
     SourceAnalysis,
-    analyze_source,
+    analyze_file_facts,
 )
 
 
@@ -423,7 +425,7 @@ def parse_file(file_path: str) -> CodeFile:
 def parse_source(source: str, file_path: str) -> CodeFile:
     """Parse source code into a CodeFile structure.
 
-    Delegates structural analysis to code_analysis.analyze_source().
+    Delegates structural analysis to the canonical file-facts provider.
 
     Args:
         source: Source code string.
@@ -432,23 +434,33 @@ def parse_source(source: str, file_path: str) -> CodeFile:
     Returns:
         CodeFile with functions, comments, imports, and classes.
     """
-    analysis: SourceAnalysis = analyze_source(source, file_path)
+    file_path_str = str(file_path)
+    source_path = Path(file_path_str)
+    workspace_root = source_path.parent if source_path.parent else Path(".")
+    file_facts = analyze_file_facts(source, file_path_str, workspace=workspace_root)
+    analysis: SourceAnalysis = file_facts.source_analysis
     lines = source.splitlines()
+    return _code_file_from_analysis(analysis=analysis, file_path=file_path_str, lines=lines)
 
-    # Convert RawFunctionInfo -> FunctionInfo
+
+def _code_file_from_analysis(
+    *,
+    analysis: SourceAnalysis,
+    file_path: str,
+    lines: list[str],
+) -> CodeFile:
+    """Convert canonical SourceAnalysis into the planning CodeFile view."""
+
     functions: list[FunctionInfo] = []
     for raw_func in analysis.functions:
         functions.append(_raw_func_to_function_info(raw_func, file_path, lines))
 
-    # Convert RawCommentInfo -> PseudocodeComment
     all_comments: list[PseudocodeComment] = []
     for raw_comment in analysis.comments:
         all_comments.append(_raw_comment_to_pseudocode(raw_comment, file_path))
 
-    # Assign comments to functions
     assigned_comments, top_level_comments = _assign_comments_to_functions(all_comments, functions)
 
-    # Group assigned comments by function and rebuild FunctionInfo with comments
     comments_by_func: dict[str, list[PseudocodeComment]] = {}
     for comment in assigned_comments:
         key = f"{comment.class_name or ''}.{comment.function_name}"
@@ -482,4 +494,112 @@ def parse_source(source: str, file_path: str) -> CodeFile:
         top_level_comments=top_level_comments,
         imports=[],  # Deprecated: only used for counting in orchestrator
         classes=[],  # Deprecated: only used for counting in orchestrator
+    )
+
+
+def parse_source_index_entry(entry: dict[str, Any], source_root: Path) -> CodeFile:
+    """Build ``CodeFile`` from canonical source-index entry data.
+
+    This is the preferred planning input path: consume evidence already
+    produced in the shared bundle instead of reparsing source independently.
+    """
+    rel_path = str(entry.get("path", "")).strip()
+    if not rel_path:
+        raise ValueError("source-index entry missing path")
+
+    analysis_block = entry.get("analysis")
+    if not isinstance(analysis_block, dict):
+        raise TypeError(f"source-index entry for {rel_path} missing analysis payload")
+
+    raw_functions = analysis_block.get("functions", [])
+    raw_comments = analysis_block.get("comments", [])
+    if not isinstance(raw_functions, list) or not isinstance(raw_comments, list):
+        raise TypeError(f"source-index entry for {rel_path} has invalid analysis lists")
+
+    source_path = source_root / rel_path
+    try:
+        source_text = source_path.read_text(encoding="utf-8")
+    except OSError:
+        source_text = ""
+    lines = source_text.splitlines()
+
+    analysis = SourceAnalysis(
+        functions=[
+            _dict_to_raw_function_info(item) for item in raw_functions if isinstance(item, dict)
+        ],
+        comments=[
+            _dict_to_raw_comment_info(item) for item in raw_comments if isinstance(item, dict)
+        ],
+        facets=analysis_block.get("facets", {})
+        if isinstance(analysis_block.get("facets", {}), dict)
+        else {},
+    )
+    return _code_file_from_analysis(analysis=analysis, file_path=str(source_path), lines=lines)
+
+
+def _dict_to_raw_function_info(data: dict[str, Any]) -> RawFunctionInfo:
+    """Coerce source-index function dictionary to ``RawFunctionInfo``."""
+    decorators_raw = data.get("decorators", [])
+    args_raw = data.get("args", [])
+    try:
+        start_line = int(data.get("start_line", 1) or 1)
+    except (TypeError, ValueError):
+        start_line = 1
+    try:
+        end_line = int(data.get("end_line", start_line) or start_line)
+    except (TypeError, ValueError):
+        end_line = start_line
+    if end_line < start_line:
+        end_line = start_line
+    try:
+        body_start_line = int(data.get("body_start_line", start_line) or start_line)
+    except (TypeError, ValueError):
+        body_start_line = start_line
+    try:
+        body_line_count = int(data.get("body_line_count", 0) or 0)
+    except (TypeError, ValueError):
+        body_line_count = 0
+    return RawFunctionInfo(
+        name=str(data.get("name", "")),
+        qualified_name=str(data.get("qualified_name") or data.get("name") or ""),
+        start_line=start_line,
+        end_line=end_line,
+        is_async=bool(data.get("is_async", False)),
+        is_stub=bool(data.get("is_stub", False)),
+        stub_reason=str(data.get("stub_reason")) if data.get("stub_reason") is not None else None,
+        has_docstring=bool(data.get("has_docstring", False)),
+        docstring=str(data.get("docstring")) if data.get("docstring") is not None else None,
+        decorators=tuple(
+            str(item).strip() for item in decorators_raw if isinstance(item, str) and item.strip()
+        ),
+        args=tuple(
+            str(item).strip() for item in args_raw if isinstance(item, str) and item.strip()
+        ),
+        return_annotation=(
+            str(data.get("return_annotation"))
+            if data.get("return_annotation") is not None
+            else None
+        ),
+        body_start_line=max(start_line, body_start_line),
+        body_line_count=max(body_line_count, 0),
+    )
+
+
+def _dict_to_raw_comment_info(data: dict[str, Any]) -> RawCommentInfo:
+    """Coerce source-index comment dictionary to ``RawCommentInfo``."""
+    try:
+        line = int(data.get("line", 1) or 1)
+    except (TypeError, ValueError):
+        line = 1
+    try:
+        col_offset = int(data.get("col_offset", 0) or 0)
+    except (TypeError, ValueError):
+        col_offset = 0
+    enclosing = data.get("enclosing_function")
+    return RawCommentInfo(
+        line=max(line, 1),
+        col_offset=max(col_offset, 0),
+        text=str(data.get("text", "")),
+        raw=str(data.get("raw", "")),
+        enclosing_function=str(enclosing) if enclosing is not None else None,
     )
