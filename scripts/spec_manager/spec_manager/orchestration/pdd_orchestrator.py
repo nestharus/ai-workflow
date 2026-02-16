@@ -39,9 +39,6 @@ from spec_manager.refinement.workspace.state import Phase
 
 logger = logging.getLogger(__name__)
 
-# Keep a public alias so external code that imported PddPhase still works.
-PddPhase = Phase
-
 # Ordered list of all PDD phases for iteration.
 PDD_PHASE_ORDER: list[Phase] = [
     Phase.EXTRACTION,
@@ -79,7 +76,7 @@ class PromotionLoopRunner:
         """Run discovered slices through PromotionLoop and return scheduler output."""
         from spec_manager.orchestration.promotion_loop import PromotionLoop
         from spec_manager.orchestration.promotion_scheduler import (
-            PromotionScheduler,
+            ReactivePromotionScheduler,
             SchedulerConfig,
         )
 
@@ -90,7 +87,7 @@ class PromotionLoopRunner:
             branch_manager=self._manager.branches,
             workspace_root=self._manager.workspace_path,
         )
-        scheduler = PromotionScheduler(
+        scheduler = ReactivePromotionScheduler(
             loop=loop,
             config=SchedulerConfig(max_parallel=self._max_parallel),
         )
@@ -129,7 +126,14 @@ class PromotionLoopRunner:
 
             target = worktree_root / slice_id
             if target.exists():
-                shutil.rmtree(target)
+                history_root = worktree_root / "_history"
+                history_root.mkdir(parents=True, exist_ok=True)
+                history_seq = 1
+                archived_target = history_root / f"{slice_id}-{history_seq:03d}"
+                while archived_target.exists():
+                    history_seq += 1
+                    archived_target = history_root / f"{slice_id}-{history_seq:03d}"
+                shutil.move(str(target), str(archived_target))
             shutil.copytree(source, target)
             ref.worktree_path = str(target)
             metadata = getattr(ref, "metadata", None)
@@ -387,16 +391,23 @@ class PddOrchestrator:
         downstream phases look for content. This bridge copies the output
         into those locations.
         """
-        import shutil
-
         # Install assembled library directories
         phase0_libs = phase0_dir / "libraries"
+        history_root = (
+            self.manager.workspace_path
+            / ".pdd_runs"
+            / self.manager.run_id
+            / "phase0_history"
+            / "libraries"
+        )
         if phase0_libs.exists():
             for lib_dir in sorted(phase0_libs.iterdir()):
                 if lib_dir.is_dir():
                     dest = self.manager.structure.libraries_dir / lib_dir.name
                     if dest.exists():
-                        shutil.rmtree(dest)
+                        self._archive_existing_path(
+                            dest, archive_root=history_root, label=lib_dir.name
+                        )
                     shutil.copytree(lib_dir, dest)
 
         # Install per-file summaries
@@ -417,6 +428,18 @@ class PddOrchestrator:
         if route_table.exists():
             dest = self.manager.structure.root / "route_table.jsonl"
             shutil.copy2(route_table, dest)
+
+    @staticmethod
+    def _archive_existing_path(existing: Path, *, archive_root: Path, label: str) -> Path:
+        """Move existing path to a run-scoped history location before replacement."""
+        archive_root.mkdir(parents=True, exist_ok=True)
+        seq = 1
+        archive_target = archive_root / f"{label}-{seq:03d}"
+        while archive_target.exists():
+            seq += 1
+            archive_target = archive_root / f"{label}-{seq:03d}"
+        shutil.move(str(existing), str(archive_target))
+        return archive_target
 
     def _run_library_quality_gate(
         self,
@@ -1332,14 +1355,68 @@ class PddOrchestrator:
 
         return outputs
 
-    @staticmethod
-    def _read_json_dict(path: Path) -> dict[str, Any] | None:
+    def _json_read_failures_path(self) -> Path:
+        return (
+            self.manager.workspace_path
+            / ".pdd_runs"
+            / self.manager.run_id
+            / "errors"
+            / "json_read_failures.jsonl"
+        )
+
+    def _record_json_read_failure(
+        self,
+        path: Path,
+        *,
+        reader: str,
+        reason: str,
+        detail: str = "",
+    ) -> None:
+        entry = {
+            "reader": str(reader).strip(),
+            "reason": str(reason).strip(),
+            "path": str(path),
+            "detail": str(detail).strip(),
+        }
+        log_path = self._json_read_failures_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+
+    def _read_json_dict(self, path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            self._record_json_read_failure(
+                path,
+                reader="read_json_dict",
+                reason="missing",
+            )
+            return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError as exc:
+            self._record_json_read_failure(
+                path,
+                reader="read_json_dict",
+                reason="unreadable",
+                detail=str(exc),
+            )
+            return None
+        except json.JSONDecodeError as exc:
+            self._record_json_read_failure(
+                path,
+                reader="read_json_dict",
+                reason="invalid_json",
+                detail=str(exc),
+            )
             return None
         if isinstance(payload, dict):
             return payload
+        self._record_json_read_failure(
+            path,
+            reader="read_json_dict",
+            reason="unexpected_type",
+            detail=type(payload).__name__,
+        )
         return None
 
     def _latest_slice_bundle_paths(self) -> list[Path]:
@@ -1661,7 +1738,21 @@ class PddOrchestrator:
         for ticket_path in sorted(tickets_dir.glob("*.json")):
             try:
                 payload = json.loads(ticket_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except OSError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="pending_routing_loader",
+                    reason="unreadable",
+                    detail=str(exc),
+                )
+                continue
+            except json.JSONDecodeError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="pending_routing_loader",
+                    reason="invalid_json",
+                    detail=str(exc),
+                )
                 continue
             ticket_raw = payload.get("ticket", payload) if isinstance(payload, dict) else None
             if not isinstance(ticket_raw, dict):

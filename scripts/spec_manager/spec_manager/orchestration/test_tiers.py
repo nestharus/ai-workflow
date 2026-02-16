@@ -38,8 +38,8 @@ class TierResult:
     Attributes:
         tier: Tier number (0-3).
         passed: Whether the tier passed.
-        output: Captured stdout (truncated to 2000 chars in serialization).
-        error: Captured stderr (truncated to 1000 chars in serialization).
+        output: Captured stdout.
+        error: Captured stderr.
         duration_ms: Wall-clock duration in milliseconds.
     """
 
@@ -50,12 +50,14 @@ class TierResult:
     duration_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict with truncated output."""
+        """Serialize full outputs with preview fields for display surfaces."""
         return {
             "tier": self.tier,
             "passed": self.passed,
-            "output": self.output[:2000],
-            "error": self.error[:1000],
+            "output": self.output,
+            "error": self.error,
+            "output_preview": self.output[:2000],
+            "error_preview": self.error[:1000],
             "duration_ms": self.duration_ms,
         }
 

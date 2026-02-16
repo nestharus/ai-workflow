@@ -26,12 +26,15 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from spec_manager.orchestration.demotion import DemotionTicket, RoutedPatch, RoutingItem
 
 logger = logging.getLogger(__name__)
 
 QUEUE_DIR_NAME = ".pdd_intake_queue"
+QUEUE_ERROR_DIR_NAME = ".pdd_intake_queue_errors"
+ROUTING_FAILURE_DIR_NAME = ".pdd_intake_routing_failures"
 
 
 class IntakeQueue:
@@ -71,6 +74,36 @@ class IntakeQueue:
         )
         logger.debug("Enqueued routing item %s", item.item_id)
         return path
+
+    def _deserialize_queue_item(self, path: Path) -> RoutingItem:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return RoutingItem(
+            item_id=data.get("item_id", path.stem),
+            text=data.get("text", ""),
+            source_path=data.get("source_path"),
+            desired_slice_hint=data.get("desired_slice_hint"),
+            tags=data.get("tags", []),
+        )
+
+    def _quarantine_unreadable_item(self, path: Path, exc: Exception) -> None:
+        """Move unreadable queue artifacts into an error directory for replay."""
+        error_root = self._root.parent / QUEUE_ERROR_DIR_NAME
+        error_root.mkdir(parents=True, exist_ok=True)
+        target = error_root / path.name
+        suffix = 1
+        while target.exists():
+            target = error_root / f"{path.stem}.{suffix}.json"
+            suffix += 1
+        path.replace(target)
+        error_payload = {
+            "source_path": str(path),
+            "quarantined_path": str(target),
+            "error": str(exc),
+        }
+        (target.with_suffix(".error.json")).write_text(
+            json.dumps(error_payload, indent=2),
+            encoding="utf-8",
+        )
 
     def enqueue_from_ticket(self, ticket: DemotionTicket) -> Path | None:
         """Enqueue a routing item from a DemotionTicket.
@@ -112,17 +145,8 @@ class IntakeQueue:
         items = []
         for path in sorted(self._root.glob("*.json")):
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                items.append(
-                    RoutingItem(
-                        item_id=data.get("item_id", path.stem),
-                        text=data.get("text", ""),
-                        source_path=data.get("source_path"),
-                        desired_slice_hint=data.get("desired_slice_hint"),
-                        tags=data.get("tags", []),
-                    )
-                )
-            except (json.JSONDecodeError, KeyError) as exc:
+                items.append(self._deserialize_queue_item(path))
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
                 logger.warning("Failed to read queue item %s: %s", path, exc)
         return items
 
@@ -132,11 +156,16 @@ class IntakeQueue:
         Returns:
             List of RoutingItems that were in the queue.
         """
-        items = self.peek()
-        # Remove processed files
-        if self._root.exists():
-            for path in self._root.glob("*.json"):
+        items: list[RoutingItem] = []
+        if not self._root.exists():
+            return items
+        for path in sorted(self._root.glob("*.json")):
+            try:
+                items.append(self._deserialize_queue_item(path))
                 path.unlink()
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                logger.warning("Failed to drain queue item %s: %s", path, exc)
+                self._quarantine_unreadable_item(path, exc)
         return items
 
     def needs_phase0(self, pending_tickets: list[DemotionTicket] | None = None) -> bool:
@@ -183,6 +212,7 @@ def route_items(
                 patches.append(patch)
         except Exception as exc:
             logger.warning("Failed to route item %s: %s", item.item_id, exc)
+            _persist_routing_failure(item, workspace_root, error=str(exc))
 
     logger.info(
         "Routed %d/%d items through Phase 0",
@@ -207,7 +237,9 @@ def _route_single_item(
     item_path = intake_dir / f"{item.item_id}.md"
     item_path.write_text(item.text, encoding="utf-8")
 
-    target_slice = item.desired_slice_hint or "default"
+    target_slice = str(item.desired_slice_hint or "").strip()
+    if not target_slice:
+        raise ValueError(f"Routing target is unresolved for intake item '{item.item_id}'")
 
     # Write the routed patch reference
     notes_path = intake_dir / f"{item.item_id}_notes.md"
@@ -224,3 +256,25 @@ def _route_single_item(
         unified_diff_path=str(item_path),
         notes_path=str(notes_path),
     )
+
+
+def _persist_routing_failure(item: RoutingItem, workspace_root: Path, *, error: str) -> None:
+    """Persist failed routing inputs so they are diagnosable and replayable."""
+    failure_dir = workspace_root / ROUTING_FAILURE_DIR_NAME
+    failure_dir.mkdir(parents=True, exist_ok=True)
+    failure_path = failure_dir / f"{item.item_id}.json"
+    suffix = 1
+    while failure_path.exists():
+        failure_path = failure_dir / f"{item.item_id}.{suffix}.json"
+        suffix += 1
+    payload: dict[str, Any] = {
+        "item": {
+            "item_id": item.item_id,
+            "text": item.text,
+            "source_path": item.source_path,
+            "desired_slice_hint": item.desired_slice_hint,
+            "tags": item.tags,
+        },
+        "error": str(error).strip(),
+    }
+    failure_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

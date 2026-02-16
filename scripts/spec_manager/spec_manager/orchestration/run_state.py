@@ -43,19 +43,19 @@ class RunConfig:
     enable_snapshots: bool = True
     enable_quality_scoring: bool = False
     created_at: float = 0.0
+    _extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RunConfig:
-        return cls(
-            **{
-                k: v
-                for k, v in data.items()
-                if k in {f.name for f in __import__("dataclasses").fields(cls)}
-            }
-        )
+        known = {f.name for f in __import__("dataclasses").fields(cls)}
+        payload = {k: v for k, v in data.items() if k in known}
+        extra = {k: v for k, v in data.items() if k not in known}
+        if extra:
+            payload["_extra"] = extra
+        return cls(**payload)
 
 
 @dataclass
@@ -74,19 +74,19 @@ class RunState:
     stagnated_slices: list[str] = field(default_factory=list)
     blocked_slices: list[str] = field(default_factory=list)
     updated_at: float = 0.0
+    _extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RunState:
-        return cls(
-            **{
-                k: v
-                for k, v in data.items()
-                if k in {f.name for f in __import__("dataclasses").fields(cls)}
-            }
-        )
+        known = {f.name for f in __import__("dataclasses").fields(cls)}
+        payload = {k: v for k, v in data.items() if k in known}
+        extra = {k: v for k, v in data.items() if k not in known}
+        if extra:
+            payload["_extra"] = extra
+        return cls(**payload)
 
 
 class RunStateManager:
@@ -130,6 +130,8 @@ class RunStateManager:
         for key, value in kwargs.items():
             if hasattr(state, key):
                 setattr(state, key, value)
+            else:
+                state._extra[key] = value
         state.updated_at = time.time()
         self._run_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")

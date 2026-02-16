@@ -60,7 +60,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from spec_manager.orchestration.models import Layer
+from spec_manager.core.layer_types import Layer
 from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 
@@ -368,12 +368,6 @@ class PddLifecycle:
                 return path
             if path:
                 return Path(str(path))
-        lane_map = getattr(self.worktree_manager, "_layer_worktrees", {}).get(layer, {})
-        candidate = lane_map.get(str(lane))
-        if isinstance(candidate, Path):
-            return candidate
-        if candidate:
-            return Path(str(candidate))
         return None
 
     def _propagate_clean_to_next_layer_result(self, from_layer: Layer) -> dict[str, Any]:
@@ -1336,6 +1330,7 @@ class PddLifecycle:
         final_qa: dict[str, Any] = {}
         final_gate: dict[str, Any] = {
             "passed": False,
+            "proceed": False,
             "enforcement": self.qa_enforcement,
             "error": "QA mode did not run",
             "pass_rate": 0.0,
@@ -1369,7 +1364,7 @@ class PddLifecycle:
             final_qa = qa_result
             final_gate = qa_gate
 
-            if qa_gate.get("passed", False):
+            if qa_gate.get("proceed", False):
                 rounds.append(round_payload)
                 break
 
@@ -1439,6 +1434,7 @@ class PddLifecycle:
         if not isinstance(qa_result, dict):
             return {
                 "passed": False,
+                "proceed": False,
                 "enforcement": self.qa_enforcement,
                 "error": "QA result is not a dict",
                 "pass_rate": 0.0,
@@ -1451,8 +1447,10 @@ class PddLifecycle:
         has_error = bool(str(qa_result.get("error", "")).strip())
         threshold_ok = pass_rate >= self.qa_min_pass_rate
         enforced_pass = not has_error and threshold_ok
+        proceed = enforced_pass or self.qa_enforcement == "soft"
         return {
-            "passed": enforced_pass if self.qa_enforcement == "hard" else True,
+            "passed": enforced_pass,
+            "proceed": proceed,
             "enforcement": self.qa_enforcement,
             "pass_rate": pass_rate,
             "min_pass_rate": self.qa_min_pass_rate,
@@ -1484,7 +1482,21 @@ class PddLifecycle:
         for ticket_path in sorted(tickets_dir.glob("*.json")):
             try:
                 payload = json.loads(ticket_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except OSError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="pending_demotion_counter",
+                    reason="unreadable",
+                    detail=str(exc),
+                )
+                continue
+            except json.JSONDecodeError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="pending_demotion_counter",
+                    reason="invalid_json",
+                    detail=str(exc),
+                )
                 continue
             ticket = payload.get("ticket", payload)
             if not isinstance(ticket, dict):
@@ -1552,7 +1564,7 @@ class PddLifecycle:
 
         effective_root = source_root or self.manager.workspace_path
         if source_root is None and self.worktree_manager is not None:
-            clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
+            clean_root = self._resolve_layer_worktree("l3", "clean")
             if clean_root is not None and Path(clean_root).exists():
                 effective_root = clean_root
 
@@ -1584,7 +1596,7 @@ class PddLifecycle:
 
         effective_root = source_root or self.manager.workspace_path
         if source_root is None and self.worktree_manager is not None:
-            clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
+            clean_root = self._resolve_layer_worktree("l3", "clean")
             if clean_root is not None and Path(clean_root).exists():
                 effective_root = clean_root
 
@@ -1702,7 +1714,7 @@ class PddLifecycle:
 
         root = source_root or self.manager.workspace_path
         if source_root is None and self.worktree_manager is not None:
-            clean_root = self.worktree_manager._layer_worktrees.get("l3", {}).get("clean")
+            clean_root = self._resolve_layer_worktree("l3", "clean")
             if clean_root is not None and Path(clean_root).exists():
                 root = clean_root
         try:
@@ -2578,7 +2590,21 @@ class PddLifecycle:
         for ticket_path in sorted(tickets_dir.glob("*.json")):
             try:
                 payload = json.loads(ticket_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except OSError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="pending_routing_loader",
+                    reason="unreadable",
+                    detail=str(exc),
+                )
+                continue
+            except json.JSONDecodeError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="pending_routing_loader",
+                    reason="invalid_json",
+                    detail=str(exc),
+                )
                 continue
             ticket_raw = payload.get("ticket", payload) if isinstance(payload, dict) else None
             if not isinstance(ticket_raw, dict):
@@ -2613,7 +2639,21 @@ class PddLifecycle:
                 continue
             try:
                 payload = json.loads(ticket_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except OSError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="new_demotion_loader",
+                    reason="unreadable",
+                    detail=str(exc),
+                )
+                continue
+            except json.JSONDecodeError as exc:
+                self._record_json_read_failure(
+                    ticket_path,
+                    reader="new_demotion_loader",
+                    reason="invalid_json",
+                    detail=str(exc),
+                )
                 continue
             ticket = payload.get("ticket", payload) if isinstance(payload, dict) else None
             if isinstance(ticket, dict):
@@ -5319,21 +5359,81 @@ class PddLifecycle:
 
         return findings
 
-    @staticmethod
-    def _read_json_payload(path: Path) -> dict[str, Any] | list[Any]:
+    def _json_read_failures_path(self) -> Path:
+        """Return run-scoped JSON read failure log path."""
+        return (
+            self.manager.workspace_path
+            / ".pdd_runs"
+            / self.manager.run_id
+            / "errors"
+            / "json_read_failures.jsonl"
+        )
+
+    def _record_json_read_failure(
+        self,
+        path: Path,
+        *,
+        reader: str,
+        reason: str,
+        detail: str = "",
+    ) -> None:
+        """Persist structured JSON read failure diagnostics."""
+        entry = {
+            "reader": str(reader).strip(),
+            "reason": str(reason).strip(),
+            "path": str(path),
+            "detail": str(detail).strip(),
+        }
+        log_path = self._json_read_failures_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+
+    def _read_json_payload(self, path: Path) -> dict[str, Any] | list[Any] | None:
         if not path.exists():
-            return {}
+            self._record_json_read_failure(
+                path,
+                reader="read_json_payload",
+                reason="missing",
+            )
+            return None
+        if not path.is_file():
+            self._record_json_read_failure(
+                path,
+                reader="read_json_payload",
+                reason="not_a_file",
+            )
+            return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
+        except json.JSONDecodeError as exc:
+            self._record_json_read_failure(
+                path,
+                reader="read_json_payload",
+                reason="invalid_json",
+                detail=str(exc),
+            )
+            return None
+        except OSError as exc:
+            self._record_json_read_failure(
+                path,
+                reader="read_json_payload",
+                reason="unreadable",
+                detail=str(exc),
+            )
+            return None
         if isinstance(payload, (dict, list)):
             return payload
-        return {}
+        self._record_json_read_failure(
+            path,
+            reader="read_json_payload",
+            reason="unexpected_type",
+            detail=type(payload).__name__,
+        )
+        return None
 
-    @staticmethod
-    def _read_json_dict(path: Path) -> dict[str, Any]:
-        payload = PddLifecycle._read_json_payload(path)
+    def _read_json_dict(self, path: Path) -> dict[str, Any]:
+        payload = self._read_json_payload(path)
         return payload if isinstance(payload, dict) else {}
 
     def _latest_l1_approval(self, approvals_dir: Path) -> tuple[dict[str, Any], Path]:

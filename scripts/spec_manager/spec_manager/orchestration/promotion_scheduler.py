@@ -650,7 +650,7 @@ class ReactivePromotionScheduler:
         run_context: RunContext,
     ) -> tuple[bool, str]:
         """Sync a waking slice against layer dirty before re-queueing execution."""
-        wm = getattr(self._loop, "_wm", None)
+        wm = getattr(self._loop, "worktree_manager", None)
         if wm is None or not hasattr(wm, "vcs") or not hasattr(wm, "layer_branch"):
             return True, ""
 
@@ -760,7 +760,3 @@ class ReactivePromotionScheduler:
             failed_slices=failed,
             waiting_slices=waiting,
         )
-
-
-# Backwards-compatible alias so existing imports keep working
-PromotionScheduler = ReactivePromotionScheduler  # type: ignore[assignment,misc]

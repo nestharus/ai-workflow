@@ -58,10 +58,10 @@ from time import monotonic
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
 
+from spec_manager.core.layer_types import Layer
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
 from spec_manager.orchestration.downward_flow.engine import DownwardFlowEngine, FailureEvidence
 from spec_manager.orchestration.evidence import EvidenceBundle
-from spec_manager.orchestration.models import Layer
 from spec_manager.schemas.lineage import RelationshipFacts
 
 logger = logging.getLogger(__name__)
@@ -304,13 +304,23 @@ def _write_iteration_json(bundle: EvidenceBundle, evidence_root: Path, name: str
 def _read_json_file(path: Path) -> dict[str, Any] | list[Any] | None:
     """Load JSON payload from *path* when present and valid."""
     if not path.exists() or not path.is_file():
+        logger.debug("JSON artifact missing or not a file: %s", path)
         return None
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError as exc:
+        logger.warning("Failed to read JSON artifact %s: %s", path, exc)
+        return None
+    except json.JSONDecodeError as exc:
+        logger.warning("Invalid JSON artifact %s: %s", path, exc)
         return None
     if isinstance(loaded, dict | list):
         return loaded
+    logger.warning(
+        "JSON artifact %s has unsupported top-level type: %s",
+        path,
+        type(loaded).__name__,
+    )
     return None
 
 
@@ -7515,11 +7525,14 @@ class IntegrateStep:
             dirty_root = Path(ctx.dirty_parent_root) if ctx.dirty_parent_root else None
             clean_root = Path(ctx.clean_sibling_root) if ctx.clean_sibling_root else None
             if wm is not None:
-                lane_map = getattr(wm, "_layer_worktrees", {}).get(ctx.layer, {})
-                if dirty_root is None and lane_map.get("dirty") is not None:
-                    dirty_root = Path(lane_map["dirty"])
-                if clean_root is None and lane_map.get("clean") is not None:
-                    clean_root = Path(lane_map["clean"])
+                get_layer_worktree = getattr(wm, "get_layer_worktree", None)
+                if callable(get_layer_worktree):
+                    dirty_candidate = get_layer_worktree(ctx.layer, "dirty")
+                    clean_candidate = get_layer_worktree(ctx.layer, "clean")
+                    if dirty_root is None and dirty_candidate is not None:
+                        dirty_root = Path(dirty_candidate)
+                    if clean_root is None and clean_candidate is not None:
+                        clean_root = Path(clean_candidate)
             return dirty_root, clean_root
 
         def record_artifacts(
@@ -8581,15 +8594,16 @@ class VerifyStep:
 
     @staticmethod
     def _resolve_verification_root(ctx: SliceContext, workspace: Path) -> Path:
-        """Prefer clean sibling for verification; fallback to dirty parent/workspace."""
-        candidates = [ctx.clean_sibling_root, ctx.dirty_parent_root, str(workspace)]
-        for candidate in candidates:
-            if not candidate:
-                continue
-            root = Path(candidate)
-            if root.exists():
-                return root
-        return workspace
+        """Resolve authoritative verification root (clean sibling only)."""
+        clean_root = str(ctx.clean_sibling_root or "").strip()
+        if not clean_root:
+            raise RuntimeError(
+                f"Verification requires clean sibling root for slice '{ctx.slice_id}'"
+            )
+        root = Path(clean_root)
+        if not root.exists():
+            raise RuntimeError(f"Verification clean sibling path missing: {root}")
+        return root
 
     def _build_l1_verification_payload(
         self,
@@ -9091,6 +9105,11 @@ class PromotionLoop:
         if normalized in {"build", "qa", "architecture", "code_quality"}:
             return cast("LifecycleRunMode", normalized)
         return "build"
+
+    @property
+    def worktree_manager(self) -> Any:
+        """Public accessor used by external scheduler integrations."""
+        return self._wm
 
     def _instantiate_steps(self, step_types: tuple[type, ...]) -> list[Any]:
         instances: list[Any] = []
@@ -9753,8 +9772,10 @@ class PromotionLoop:
             return None, "No slice root available for demotion apply"
 
         target_layer = self._ticket_target_layer_key(ticket.target_layer)
-        layer_roots = getattr(wm, "_layer_worktrees", {}).get(target_layer, {})
-        dirty_root = layer_roots.get("dirty")
+        get_layer_worktree = getattr(wm, "get_layer_worktree", None)
+        dirty_root = (
+            get_layer_worktree(target_layer, "dirty") if callable(get_layer_worktree) else None
+        )
         if dirty_root is None:
             return (
                 None,
@@ -9913,8 +9934,9 @@ class PromotionLoop:
 
         # Set dirty/clean parent paths if worktree manager available
         if ctx.worktree_manager:
-            dirty = ctx.worktree_manager._layer_worktrees.get(ctx.layer, {}).get("dirty")
-            clean = ctx.worktree_manager._layer_worktrees.get(ctx.layer, {}).get("clean")
+            get_layer_worktree = getattr(ctx.worktree_manager, "get_layer_worktree", None)
+            dirty = get_layer_worktree(ctx.layer, "dirty") if callable(get_layer_worktree) else None
+            clean = get_layer_worktree(ctx.layer, "clean") if callable(get_layer_worktree) else None
             if dirty:
                 ctx.dirty_parent_root = str(dirty)
             if clean:

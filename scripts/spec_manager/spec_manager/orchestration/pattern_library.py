@@ -92,7 +92,7 @@ class StrategyPack:
         """Reconstruct from a dict."""
         import dataclasses as _dc
 
-        raw_patterns = data.pop("patterns", []) if isinstance(data.get("patterns"), list) else []
+        raw_patterns = data.get("patterns", []) if isinstance(data.get("patterns"), list) else []
         patterns = [Pattern.from_dict(p) for p in raw_patterns]
         known = {f.name for f in _dc.fields(cls)} - {"patterns"}
         return cls(patterns=patterns, **{k: v for k, v in data.items() if k in known})

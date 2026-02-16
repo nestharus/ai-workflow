@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
-from spec_manager.orchestration.models import (
+from spec_manager.core.layer_types import (
     LAYER_ORDER,
     BatchResult,
     Lane,
@@ -133,6 +133,10 @@ class WorktreeManager:
     def layer_worktree_path(self, layer: Layer, lane: Lane) -> Path:
         """Return the filesystem path for a layer/lane worktree."""
         return self.worktrees_base / f"{self.run_id}-{layer}-{lane}"
+
+    def get_layer_worktree(self, layer: Layer, lane: Lane) -> Path | None:
+        """Return the concrete worktree path for a layer/lane, if initialized."""
+        return self._layer_worktrees.get(layer, {}).get(lane)
 
     def get_layer_heads(self, layer: Layer) -> dict[str, str | None]:
         """Return current SHAs for dirty, clean, and candidate at a layer."""

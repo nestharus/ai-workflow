@@ -74,22 +74,27 @@ class Finding:
 
     def __post_init__(self) -> None:
         """Normalize and validate canonical finding fields without hard-failing."""
+        coercion_tags: list[str] = []
         self.dimension = _normalize_token(self.dimension, upper=True)
         if self.dimension and self.dimension not in _CANONICAL_DIMENSIONS:
             logger.warning("Finding.dimension is non-canonical: %r", self.dimension)
             self.dimension = "CLARITY"
+            coercion_tags.append("coerced:dimension")
         if not self.dimension:
             self.dimension = "CLARITY"
+            coercion_tags.append("coerced:dimension")
 
         self.category = _normalize_token(self.category, upper=False)
         if self.category not in _CANONICAL_CATEGORIES:
             logger.warning("Finding.category is non-canonical: %r", self.category)
             self.category = "style"
+            coercion_tags.append("coerced:category")
 
         self.severity = _normalize_token(self.severity, upper=True)
         if self.severity not in _CANONICAL_SEVERITIES:
             logger.warning("Finding.severity is non-canonical: %r", self.severity)
             self.severity = "MINOR"
+            coercion_tags.append("coerced:severity")
 
         self.required_change_type = _normalize_token(self.required_change_type, upper=False)
         if self.required_change_type not in _CANONICAL_CHANGE_TYPES:
@@ -98,10 +103,18 @@ class Finding:
                 self.required_change_type,
             )
             self.required_change_type = "refactor_only"
+            coercion_tags.append("coerced:required_change_type")
 
-        self.location = _normalize_location(self.location)
+        self.location, location_coerced = _normalize_location(self.location)
+        if location_coerced:
+            coercion_tags.append("coerced:location")
         self.tags = _normalize_tags(self.tags)
-        self.confidence = _normalize_confidence(self.confidence)
+        self.confidence, confidence_coerced = _normalize_confidence(self.confidence)
+        if confidence_coerced:
+            coercion_tags.append("coerced:confidence")
+        for marker in coercion_tags:
+            if marker not in self.tags:
+                self.tags.append(marker)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict."""
@@ -450,17 +463,17 @@ def _normalize_token(value: Any, *, upper: bool) -> str:
     return token.upper() if upper else token.lower()
 
 
-def _normalize_location(location: Any) -> dict[str, Any]:
+def _normalize_location(location: Any) -> tuple[dict[str, Any], bool]:
     """Ensure location is an object with optional canonical keys."""
     if location is None:
-        return {}
+        return {}, False
     if not isinstance(location, dict):
         logger.warning("Finding.location must be an object; got %s", type(location).__name__)
-        return {}
+        return {}, True
     if location and not location.get("file"):
         logger.warning("Finding.location is non-empty but missing required 'file' field")
-        return {}
-    return location
+        return {}, True
+    return location, False
 
 
 def _normalize_tags(tags: Any) -> list[str]:
@@ -481,16 +494,16 @@ def _normalize_tags(tags: Any) -> list[str]:
     return normalized
 
 
-def _normalize_confidence(confidence: Any) -> float:
+def _normalize_confidence(confidence: Any) -> tuple[float, bool]:
     """Clamp confidence to [0, 1] when possible."""
     if isinstance(confidence, bool):
         logger.warning("Finding.confidence should be numeric in [0, 1], got bool")
-        return float(confidence)
+        return float(confidence), True
     if isinstance(confidence, int | float):
         value = float(confidence)
         if value < 0.0 or value > 1.0:
             logger.warning("Finding.confidence out of range [0, 1]: %r", confidence)
-            return min(max(value, 0.0), 1.0)
-        return value
+            return min(max(value, 0.0), 1.0), True
+        return value, False
     logger.warning("Finding.confidence must be numeric; got %s", type(confidence).__name__)
-    return 0.0
+    return 0.0, True
