@@ -29,6 +29,7 @@ class GateCheckResult:
         passed: Compatibility boolean used by older callers/reports.
         score: Numeric score (0.0-1.0) where applicable.
         findings: Detailed findings from the check.
+        evidence_refs: Evidence paths/IDs that support this gate result.
         summary: Human-readable summary.
         duration_ms: How long the check took.
     """
@@ -39,6 +40,7 @@ class GateCheckResult:
     passed: bool | None = None
     score: float = 1.0
     findings: list[dict[str, Any]] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
     summary: str = ""
     duration_ms: float = 0.0
 
@@ -65,6 +67,42 @@ class GateCheckResult:
         else:
             self.passed = bool(self.passed)
 
+        if not self.evidence_refs:
+            self.evidence_refs = self._extract_evidence_refs(self.findings)
+        else:
+            self.evidence_refs = [
+                str(ref).strip() for ref in self.evidence_refs if str(ref).strip()
+            ]
+
+    @staticmethod
+    def _extract_evidence_refs(findings: list[dict[str, Any]]) -> list[str]:
+        refs: list[str] = []
+        if not isinstance(findings, list):
+            return refs
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+
+            raw_refs = finding.get("evidence_refs")
+            if isinstance(raw_refs, str) and raw_refs.strip():
+                refs.append(raw_refs.strip())
+            elif isinstance(raw_refs, list):
+                refs.extend(str(ref).strip() for ref in raw_refs if str(ref).strip())
+
+            for key in (
+                "raw_excerpt_path",
+                "excerpt_path",
+                "artifact_path",
+                "path",
+                "file",
+                "file_path",
+            ):
+                value = finding.get(key)
+                if isinstance(value, str) and value.strip():
+                    refs.append(value.strip())
+
+        return list(dict.fromkeys(refs))
+
     @staticmethod
     def _status_counts_as_pass(status: GateStatus, mode: str) -> bool:
         """Map rich status to compatibility boolean for report plumbing."""
@@ -81,6 +119,7 @@ class GateCheckResult:
             "status": self.status.value,
             "score": self.score,
             "findings": self.findings,
+            "evidence_refs": self.evidence_refs,
             "summary": self.summary,
             "duration_ms": self.duration_ms,
         }

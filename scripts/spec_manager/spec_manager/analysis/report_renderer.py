@@ -131,6 +131,10 @@ def _render_atom_section(atom: AtomAnalysisEntry) -> list[str]:
         call_entries = [
             f"{fact.caller_pin} -> {fact.callee_pin}" for fact in atom.relationship_facts.calls
         ]
+        reference_entries = [
+            f"{fact.referrer_pin} -> {fact.referenced_id}"
+            for fact in atom.relationship_facts.references
+        ]
         event_entries = [
             (
                 f"{fact.emitter_pin} -({fact.event_id})-> {fact.consumer_pin}"
@@ -144,9 +148,11 @@ def _render_atom_section(atom: AtomAnalysisEntry) -> list[str]:
             for fact in atom.relationship_facts.stores
         ]
         calls = ", ".join(call_entries) if call_entries else "none"
+        references = ", ".join(reference_entries) if reference_entries else "none"
         events = ", ".join(event_entries) if event_entries else "none"
         stores = ", ".join(store_entries) if store_entries else "none"
         lines.append(f"- Calls: [{calls}]")
+        lines.append(f"- References: [{references}]")
         lines.append(f"- Events: [{events}]")
         lines.append(f"- Stores: [{stores}]")
     else:

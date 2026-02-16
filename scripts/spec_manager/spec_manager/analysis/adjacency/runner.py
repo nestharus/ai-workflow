@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from spec_manager.schemas.lineage import (
-    CallRelationshipFact,
+    ReferenceRelationshipFact,
     RelationshipFacts,
     StoreRelationshipFact,
 )
@@ -76,6 +76,7 @@ def _merge_relationship_facts(facts: list[RelationshipFacts]) -> RelationshipFac
     merged = RelationshipFacts()
     for item in facts:
         merged.calls.extend(item.calls)
+        merged.references.extend(item.references)
         merged.events.extend(item.events)
         merged.stores.extend(item.stores)
     return merged
@@ -86,10 +87,10 @@ def _facts_from_pin_registry(path: Path) -> RelationshipFacts:
     registry = PinFunctionRegistry.model_validate_json(path.read_text(encoding="utf-8"))
     facts = RelationshipFacts()
     for edge in registry.import_edges:
-        facts.calls.append(
-            CallRelationshipFact(
-                caller_pin=edge.arch_location,
-                callee_pin=edge.pin_func_id,
+        facts.references.append(
+            ReferenceRelationshipFact(
+                referrer_pin=edge.arch_location,
+                referenced_id=edge.pin_func_id,
                 confidence=edge.confidence,
                 evidence_pin=edge.pin_func_id,
             )
@@ -118,7 +119,7 @@ def _load_relationship_facts(path: Path) -> RelationshipFacts:
 
 
 def _has_relationship_data(facts: RelationshipFacts) -> bool:
-    return bool(facts.calls or facts.events or facts.stores)
+    return bool(facts.calls or facts.references or facts.events or facts.stores)
 
 
 def run_adjacency_analysis(config: AdjacencyAnalysisConfig) -> AdjacencyReport:

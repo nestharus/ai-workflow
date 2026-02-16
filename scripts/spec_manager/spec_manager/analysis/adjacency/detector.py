@@ -172,7 +172,7 @@ def build_unified_graph(
     """Build a unified graph directly from LLM relationship facts.
 
     Args:
-        relationship_facts: Unified calls/events/stores relationship payload
+        relationship_facts: Unified calls/references/events/stores payload
         weight_overrides: Optional weight multipliers per signal type.
             Overrides are multiplicative against DEFAULT_SIGNAL_WEIGHTS.
 
@@ -194,6 +194,22 @@ def build_unified_graph(
             details={"confidence": call.confidence, "evidence_pin": call.evidence_pin},
         )
         unified.add_edge(call.caller_pin, call.callee_pin, signal)
+
+    for reference in relationship_facts.references:
+        unified.add_node(
+            reference.referrer_pin,
+            NodeInfo(node_id=reference.referrer_pin, node_type="pin"),
+        )
+        unified.add_node(
+            reference.referenced_id,
+            NodeInfo(node_id=reference.referenced_id, node_type="pin"),
+        )
+        signal = EdgeSignal(
+            signal_type=SignalType.REFERENCE,
+            weight=weights[SignalType.REFERENCE] * reference.confidence,
+            details={"confidence": reference.confidence, "evidence_pin": reference.evidence_pin},
+        )
+        unified.add_edge(reference.referrer_pin, reference.referenced_id, signal)
 
     for event in relationship_facts.events:
         unified.add_node(event.emitter_pin, NodeInfo(node_id=event.emitter_pin, node_type="pin"))

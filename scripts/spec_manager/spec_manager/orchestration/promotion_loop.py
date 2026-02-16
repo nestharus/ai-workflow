@@ -62,6 +62,7 @@ from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
 from spec_manager.orchestration.downward_flow.engine import DownwardFlowEngine, FailureEvidence
 from spec_manager.orchestration.evidence import EvidenceBundle
 from spec_manager.orchestration.models import Layer
+from spec_manager.schemas.lineage import RelationshipFacts
 
 logger = logging.getLogger(__name__)
 
@@ -4758,7 +4759,7 @@ class AnalyzeStep:
                     file_facts = analyze_file_facts(
                         content,
                         relative_path,
-                        requested_relationship_facets={"CALL", "STORE_TOUCH", "EVENT"},
+                        requested_relationship_facets={"CALL", "REFERENCE", "STORE_TOUCH", "EVENT"},
                         workspace=workspace,
                         run_id=ctx.run_id,
                     )
@@ -8578,7 +8579,7 @@ class VerifyStep:
         workspace: Path,
     ) -> dict[str, Any]:
         """Build concrete P6/P7 evidence for L1 verification."""
-        relationship_edges: list[dict[str, Any]] = []
+        relationship_edge_records: list[dict[str, Any]] = []
         for entry in bundle.source_index.entries or []:
             if not isinstance(entry, dict):
                 continue
@@ -8588,13 +8589,13 @@ class VerifyStep:
                 continue
             for edge in raw_edges:
                 if isinstance(edge, dict):
-                    relationship_edges.append(edge)
+                    relationship_edge_records.append(edge)
 
-        if not relationship_edges:
+        if not relationship_edge_records:
             for edge in bundle.facts.call_graph_edges or []:
                 if not isinstance(edge, dict):
                     continue
-                relationship_edges.append(
+                relationship_edge_records.append(
                     {
                         "signal_type": "CALL",
                         "src_id": str(edge.get("src", "")),
@@ -8602,6 +8603,9 @@ class VerifyStep:
                         "confidence": edge.get("confidence", 1.0),
                     }
                 )
+
+        relationship_facts = RelationshipFacts.from_edge_records(relationship_edge_records)
+        relationship_edges = relationship_facts.to_edge_records()
 
         signal_type_counts: dict[str, int] = {}
         relation_nodes: set[str] = set()
