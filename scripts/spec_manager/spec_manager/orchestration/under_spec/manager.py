@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from uuid import uuid4
 
 from spec_manager.planner.constraints.store import Constraint, ConstraintsStore
 from spec_manager.planner.tools.constraints_tool import ConstraintsTool
@@ -514,7 +515,11 @@ class UnderSpecManager:
             raise TypeError("UnderSpecManager run_id must be a string")
         normalized_run_id = run_id.strip()
         if not normalized_run_id:
-            normalized_run_id = "default"
+            normalized_run_id = self._generated_run_id()
+            logger.warning(
+                "UnderSpecManager received empty run_id; generated isolated run_id '%s'",
+                normalized_run_id,
+            )
         self._workspace = workspace_root
         self._mode = mode
         self._store = ConstraintsStore(workspace_root)
@@ -935,22 +940,40 @@ class UnderSpecManager:
         if not isinstance(questions, list):
             return {}
 
+        events_by_id: dict[str, UnderSpecEvent] = {
+            str(event.event_id).strip(): event for event in events if str(event.event_id).strip()
+        }
         refined: dict[str, str] = {}
-        for index, raw_question in enumerate(questions):
-            if index >= len(events):
-                break
-            if isinstance(raw_question, dict):
-                question_text = str(
-                    raw_question.get("question")
-                    or raw_question.get("text")
-                    or raw_question.get("prompt")
-                    or ""
-                ).strip()
-            else:
-                question_text = str(raw_question).strip()
+        for raw_question in questions:
+            if not isinstance(raw_question, dict):
+                continue
+            question_text = str(
+                raw_question.get("question")
+                or raw_question.get("text")
+                or raw_question.get("prompt")
+                or ""
+            ).strip()
             if not question_text:
                 continue
-            refined[self._interactive_event_key(events[index])] = question_text
+            candidate_event_id = str(
+                raw_question.get("event_id", raw_question.get("decision_id", ""))
+            ).strip()
+            if not candidate_event_id:
+                logger.warning(
+                    "Interactive question refinement skipped unmapped question "
+                    "for slice '%s' (missing event_id/decision_id)",
+                    slice_id,
+                )
+                continue
+            event = events_by_id.get(candidate_event_id)
+            if event is None:
+                logger.warning(
+                    "Interactive question refinement produced unknown event_id '%s' for slice '%s'",
+                    candidate_event_id,
+                    slice_id,
+                )
+                continue
+            refined[self._interactive_event_key(event)] = question_text
         return refined
 
     def _resolve_auto(
@@ -1342,10 +1365,19 @@ class UnderSpecManager:
                             "evidence_needed": question_payload.get("evidence_needed", []),
                             "question_payload": question_payload,
                         }
+                    elif questions:
+                        blocked_event.context = {
+                            **dict(blocked_event.context or {}),
+                            "question_mapping_error": {
+                                "reason": "resolver_questions_unmatched",
+                                "event_id": blocked_event.event_id,
+                                "resolver_question_count": len(questions),
+                            },
+                        }
                     blocked.append(blocked_event)
 
-        except Exception as exc:
-            logger.warning("Resolver resolution failed: %s", exc)
+        except Exception:
+            logger.warning("Resolver resolution failed", exc_info=True)
             blocked = list(events)
 
         return _ResolutionPayload(
@@ -1534,14 +1566,87 @@ class UnderSpecManager:
                 return question
 
         if event_question:
+            question_matches: list[dict[str, Any]] = []
             for question in questions:
                 text = str(
                     question.get("question") or question.get("text") or question.get("prompt") or ""
                 ).strip()
                 if text and text == event_question:
-                    return question
+                    question_matches.append(question)
+            if len(question_matches) == 1:
+                return question_matches[0]
+            if len(question_matches) > 1:
+                logger.warning(
+                    "Ambiguous question payload mapping for event_id '%s' "
+                    "(matched %d question payloads)",
+                    event_id,
+                    len(question_matches),
+                )
+                return None
+        if questions:
+            logger.warning(
+                "No question payload matched under-spec event_id '%s'; leaving question unchanged",
+                event_id,
+            )
+        return None
 
-        return questions[0] if questions else None
+    def _write_versioned_under_spec_artifact(
+        self,
+        *,
+        slice_id: str,
+        filename: str,
+        content: str,
+    ) -> Path:
+        artifact_dir = self._under_spec_dir(slice_id)
+        latest_path = artifact_dir / filename
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        revision_suffix = uuid4().hex[:8]
+        revision_path = (
+            artifact_dir / f"{latest_path.stem}.{timestamp}.{revision_suffix}{latest_path.suffix}"
+        )
+
+        revision_path.write_text(content, encoding="utf-8")
+        latest_path.write_text(content, encoding="utf-8")
+        self._record_under_spec_artifact_revision(
+            slice_id=slice_id,
+            filename=filename,
+            revision_name=revision_path.name,
+        )
+        return latest_path
+
+    def _record_under_spec_artifact_revision(
+        self,
+        *,
+        slice_id: str,
+        filename: str,
+        revision_name: str,
+    ) -> None:
+        index_path = self._under_spec_dir(slice_id) / "artifact_versions.json"
+        index_payload: dict[str, Any] = {}
+        if index_path.exists():
+            try:
+                data = json.loads(index_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                logger.warning(
+                    "Failed to read artifact_versions index for slice '%s'; rebuilding index",
+                    slice_id,
+                    exc_info=True,
+                )
+                data = {}
+            if isinstance(data, dict):
+                index_payload = data
+        existing_entry = index_payload.get(filename, {})
+        previous_latest = (
+            str(existing_entry.get("latest", "")).strip()
+            if isinstance(existing_entry, dict)
+            else ""
+        )
+        index_payload[filename] = {
+            "latest": revision_name,
+            "supersedes": previous_latest,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        index_path.write_text(json.dumps(index_payload, indent=2), encoding="utf-8")
 
     def _write_constraint_request(self, slice_id: str, events: list[UnderSpecEvent]) -> Path:
         lines: list[str] = [
@@ -1600,9 +1705,11 @@ class UnderSpecManager:
             ]
         )
 
-        path = self._under_spec_dir(slice_id) / "constraint_request.md"
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return path
+        return self._write_versioned_under_spec_artifact(
+            slice_id=slice_id,
+            filename="constraint_request.md",
+            content="\n".join(lines),
+        )
 
     def _write_blockers(
         self,
@@ -1621,9 +1728,11 @@ class UnderSpecManager:
             "events": [event.to_dict() for event in blocked_events],
             "created_at": datetime.now(UTC).isoformat(),
         }
-        path = self._under_spec_dir(slice_id) / "blockers.json"
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return path
+        return self._write_versioned_under_spec_artifact(
+            slice_id=slice_id,
+            filename="blockers.json",
+            content=json.dumps(payload, indent=2),
+        )
 
     @staticmethod
     def _build_decisions(constraints: list[Constraint]) -> list[dict[str, Any]]:
@@ -1692,9 +1801,16 @@ class UnderSpecManager:
             "expansions": expansions,
             "created_at": datetime.now(UTC).isoformat(),
         }
-        path = self._under_spec_dir(slice_id) / "expansion_routing.json"
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return path
+        return self._write_versioned_under_spec_artifact(
+            slice_id=slice_id,
+            filename="expansion_routing.json",
+            content=json.dumps(payload, indent=2),
+        )
+
+    @staticmethod
+    def _generated_run_id() -> str:
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        return f"underspec-{timestamp}-{uuid4().hex[:8]}"
 
     @staticmethod
     def _default_applies_to_layers(layer: str) -> list[str]:
@@ -1957,7 +2073,7 @@ class UnderSpecManager:
             if isinstance(persisted_constraint_ids_raw, list)
             else set()
         )
-        if persisted_constraint_ids and not self._planner_has_constraint_saved_callback():
+        if persisted_constraint_ids and not self._planner_emits_constraint_saved_notifications():
             self._emit_constraint_saved_wake_events(
                 slice_id=slice_id,
                 layer=layer,
@@ -2000,10 +2116,20 @@ class UnderSpecManager:
                 uncovered.append(event)
         return covered, uncovered
 
-    def _planner_has_constraint_saved_callback(self) -> bool:
-        adapter = getattr(self._planner, "_constraints_adapter", None)
-        callback = getattr(adapter, "_on_constraint_saved", None)
-        return callable(callback)
+    def _planner_emits_constraint_saved_notifications(self) -> bool:
+        capability = getattr(self._planner, "emits_constraint_saved_notifications", None)
+        if callable(capability):
+            try:
+                return bool(capability())
+            except Exception:
+                logger.warning(
+                    "Planner notification-capability probe failed; assuming disabled",
+                    exc_info=True,
+                )
+                return False
+        if isinstance(capability, bool):
+            return capability
+        return False
 
     def _emit_constraint_saved_wake_events(
         self,

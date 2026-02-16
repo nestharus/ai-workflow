@@ -128,6 +128,10 @@ class ConstraintsTool:
             self._constraint_to_fact(constraint) for constraint in self._store.load_merged(slice_id)
         ]
 
+    def emits_constraint_saved_notifications(self) -> bool:
+        """Whether save operations invoke a runtime notification callback."""
+        return self._on_constraint_saved is not None
+
     def save_facts(self, slice_id: str, facts: list[ConstraintFact]) -> Path:
         """Persist planner facts and emit planner-update events/callbacks."""
         if self._store is None:

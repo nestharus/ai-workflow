@@ -8,6 +8,7 @@ Uncovered decisions become under-spec events that block the slice.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,8 +43,9 @@ class PlanningGateResult:
 
 def check_decision_coverage(
     *,
-    constraints_store: ConstraintsStore,
-    slice_id: str,
+    constraints_store: ConstraintsStore | None = None,
+    slice_id: str = "",
+    constraints_snapshot: list[Any] | None = None,
     decision: dict[str, Any],
 ) -> CoverageResult:
     """Check if a single decision requirement is covered by constraints.
@@ -52,14 +54,21 @@ def check_decision_coverage(
     ``constraint_id``.
 
     Args:
-        constraints_store: The file-based constraints store.
-        slice_id: Current slice identifier.
+        constraints_store: Optional constraints store fallback for one-off checks.
+        slice_id: Slice identifier used with ``constraints_store`` fallback loading.
+        constraints_snapshot: Stable merged-constraint snapshot for this gate run.
         decision: Decision requirement dict from the planning agent.
 
     Returns:
         CoverageResult with coverage status and rationale.
     """
-    constraints = constraints_store.load_merged(slice_id)
+    if constraints_snapshot is None:
+        if constraints_store is None:
+            raise ValueError(
+                "check_decision_coverage requires constraints_snapshot or constraints_store"
+            )
+        constraints_snapshot = constraints_store.load_merged(slice_id)
+
     decision_id = decision.get("decision_id", "")
     decision_question = str(decision.get("question", "")).strip()
 
@@ -71,7 +80,7 @@ def check_decision_coverage(
 
     covering: list[str] = []
 
-    for constraint in constraints:
+    for constraint in constraints_snapshot:
         status = str(constraint.status or "ACTIVE").strip().upper()
         if status != "ACTIVE":
             continue
@@ -89,6 +98,37 @@ def check_decision_coverage(
         covered=False,
         rationale=f"No constraint covers decision: {decision_question[:80]}",
     )
+
+
+def _snapshot_hash(constraints_snapshot: list[Any]) -> str:
+    serializable: list[dict[str, Any]] = []
+    for constraint in constraints_snapshot:
+        raw_trace = getattr(constraint, "trace", [])
+        trace = raw_trace if isinstance(raw_trace, list) else []
+        raw_layers = getattr(constraint, "applies_to_layers", [])
+        applies_to_layers = raw_layers if isinstance(raw_layers, (list, tuple, set)) else []
+        serializable.append(
+            {
+                "constraint_id": str(getattr(constraint, "constraint_id", "")).strip(),
+                "question": str(getattr(constraint, "question", "")).strip(),
+                "answer": str(getattr(constraint, "answer", "")).strip(),
+                "status": str(getattr(constraint, "status", "ACTIVE")).strip().upper(),
+                "trace": [str(item).strip() for item in trace if str(item).strip()],
+                "applies_to_layers": [
+                    str(item).strip() for item in applies_to_layers if str(item).strip()
+                ],
+            }
+        )
+    serializable.sort(
+        key=lambda row: (
+            row["constraint_id"],
+            row["status"],
+            row["question"],
+            row["answer"],
+        )
+    )
+    payload = json.dumps(serializable, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def run_planning_gate(
@@ -113,7 +153,8 @@ def run_planning_gate(
         PlanningGateResult with covered/uncovered partitions.
     """
     result = PlanningGateResult()
-    result.constraints_snapshot_hash = constraints_store.snapshot_hash(slice_id)
+    constraints_snapshot = constraints_store.load_merged(slice_id)
+    result.constraints_snapshot_hash = _snapshot_hash(constraints_snapshot)
 
     def _needed_for_target(intention: dict[str, Any]) -> Any:
         target_files = intention.get("target_files", [])
@@ -136,6 +177,55 @@ def run_planning_gate(
         seed = f"{intention_id}|{question}|{suffix}".strip("|")
         digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12] if seed else "unknown"
         return f"plan-underspec-{digest}"
+
+    def _collect_evidence_paths(
+        *,
+        intention: dict[str, Any],
+        decision: Any = None,
+    ) -> list[str]:
+        seen: set[str] = set()
+        collected: list[str] = []
+
+        def _append(raw_value: Any) -> None:
+            if isinstance(raw_value, str):
+                value = raw_value.strip()
+                if value and value not in seen:
+                    seen.add(value)
+                    collected.append(value)
+                return
+            if isinstance(raw_value, (list, tuple, set)):
+                for item in raw_value:
+                    _append(item)
+
+        def _read_fields(source: Any) -> None:
+            if not isinstance(source, dict):
+                return
+            for field_name in (
+                "evidence_paths",
+                "evidence_path",
+                "evidence_refs",
+                "spec_refs",
+                "source_paths",
+                "source_path",
+                "source_files",
+                "source_file",
+            ):
+                _append(source.get(field_name))
+
+        _read_fields(intention)
+        _read_fields(decision)
+        return collected
+
+    def _context_with_evidence_note(
+        context: dict[str, Any],
+        evidence_paths: list[str],
+    ) -> dict[str, Any]:
+        if evidence_paths:
+            return context
+        return {
+            **context,
+            "evidence_status": "not_provided_by_planning_output",
+        }
 
     plan_intentions = (
         plan_outputs.get("intentions", [])
@@ -164,6 +254,16 @@ def run_planning_gate(
                     "rationale": "decision_requirements field is required per intention",
                 }
             )
+            evidence_paths = _collect_evidence_paths(intention=intention)
+            context = _context_with_evidence_note(
+                {
+                    "intention_id": intention_id,
+                    "target_file": intention.get("target_file", ""),
+                    "target_files": intention.get("target_files", []),
+                    "target_symbols": intention.get("target_symbols", []),
+                },
+                evidence_paths,
+            )
             result.under_spec_events.append(
                 {
                     "event_id": _event_id(
@@ -174,13 +274,8 @@ def run_planning_gate(
                     ),
                     "kind": "AMBIGUOUS_REQUIREMENT",
                     "question": question,
-                    "context": {
-                        "intention_id": intention_id,
-                        "target_file": intention.get("target_file", ""),
-                        "target_files": intention.get("target_files", []),
-                        "target_symbols": intention.get("target_symbols", []),
-                    },
-                    "evidence_paths": [],
+                    "context": context,
+                    "evidence_paths": evidence_paths,
                 }
             )
             continue
@@ -200,6 +295,17 @@ def run_planning_gate(
                     "rationale": "decision_requirements must be a list",
                 }
             )
+            evidence_paths = _collect_evidence_paths(intention=intention, decision=decision_reqs)
+            context = _context_with_evidence_note(
+                {
+                    "intention_id": intention_id,
+                    "decision_requirements": decision_reqs,
+                    "target_file": intention.get("target_file", ""),
+                    "target_files": intention.get("target_files", []),
+                    "target_symbols": intention.get("target_symbols", []),
+                },
+                evidence_paths,
+            )
             result.under_spec_events.append(
                 {
                     "event_id": _event_id(
@@ -210,14 +316,8 @@ def run_planning_gate(
                     ),
                     "kind": "AMBIGUOUS_REQUIREMENT",
                     "question": question,
-                    "context": {
-                        "intention_id": intention_id,
-                        "decision_requirements": decision_reqs,
-                        "target_file": intention.get("target_file", ""),
-                        "target_files": intention.get("target_files", []),
-                        "target_symbols": intention.get("target_symbols", []),
-                    },
-                    "evidence_paths": [],
+                    "context": context,
+                    "evidence_paths": evidence_paths,
                 }
             )
             continue
@@ -238,6 +338,17 @@ def run_planning_gate(
                         "rationale": "decision requirement entries must be objects",
                     }
                 )
+                evidence_paths = _collect_evidence_paths(intention=intention, decision=decision)
+                context = _context_with_evidence_note(
+                    {
+                        "intention_id": intention_id,
+                        "decision_entry": decision,
+                        "target_file": intention.get("target_file", ""),
+                        "target_files": intention.get("target_files", []),
+                        "target_symbols": intention.get("target_symbols", []),
+                    },
+                    evidence_paths,
+                )
                 result.under_spec_events.append(
                     {
                         "event_id": _event_id(
@@ -248,14 +359,8 @@ def run_planning_gate(
                         ),
                         "kind": "AMBIGUOUS_REQUIREMENT",
                         "question": question,
-                        "context": {
-                            "intention_id": intention_id,
-                            "decision_entry": decision,
-                            "target_file": intention.get("target_file", ""),
-                            "target_files": intention.get("target_files", []),
-                            "target_symbols": intention.get("target_symbols", []),
-                        },
-                        "evidence_paths": [],
+                        "context": context,
+                        "evidence_paths": evidence_paths,
                     }
                 )
                 continue
@@ -276,8 +381,7 @@ def run_planning_gate(
             needed_for = decision.get("needed_for", _needed_for_target(intention))
 
             coverage = check_decision_coverage(
-                constraints_store=constraints_store,
-                slice_id=slice_id,
+                constraints_snapshot=constraints_snapshot,
                 decision=decision,
             )
 
@@ -298,6 +402,20 @@ def run_planning_gate(
                         "rationale": coverage.rationale,
                     }
                 )
+                evidence_paths = _collect_evidence_paths(intention=intention, decision=decision)
+                context = _context_with_evidence_note(
+                    {
+                        "decision_id": decision_id,
+                        "intention_id": intention_id,
+                        "options": options,
+                        "needed_for": needed_for,
+                        "coverage_rationale": coverage.rationale,
+                        "target_file": intention.get("target_file", ""),
+                        "target_files": intention.get("target_files", []),
+                        "target_symbols": intention.get("target_symbols", []),
+                    },
+                    evidence_paths,
+                )
                 result.under_spec_events.append(
                     {
                         "event_id": _event_id(
@@ -308,17 +426,8 @@ def run_planning_gate(
                         ),
                         "kind": "MISSING_CONSTRAINT",
                         "question": question,
-                        "context": {
-                            "decision_id": decision_id,
-                            "intention_id": intention_id,
-                            "options": options,
-                            "needed_for": needed_for,
-                            "coverage_rationale": coverage.rationale,
-                            "target_file": intention.get("target_file", ""),
-                            "target_files": intention.get("target_files", []),
-                            "target_symbols": intention.get("target_symbols", []),
-                        },
-                        "evidence_paths": [],
+                        "context": context,
+                        "evidence_paths": evidence_paths,
                     }
                 )
 

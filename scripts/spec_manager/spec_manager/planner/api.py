@@ -2770,6 +2770,24 @@ class GeneralPlanner:
             status=result.status,
         )
 
+    def emits_constraint_saved_notifications(self) -> bool:
+        """Whether planner constraint persistence emits runtime wake notifications."""
+        capability = getattr(
+            self._constraints_store_tool, "emits_constraint_saved_notifications", None
+        )
+        if callable(capability):
+            try:
+                return bool(capability())
+            except Exception:
+                logger.warning(
+                    "Constraint notification capability probe failed; assuming disabled",
+                    exc_info=True,
+                )
+                return False
+        if isinstance(capability, bool):
+            return capability
+        return False
+
     def persist_under_spec_constraints(
         self,
         *,
