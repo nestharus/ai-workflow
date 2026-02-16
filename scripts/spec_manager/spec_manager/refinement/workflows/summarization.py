@@ -17,6 +17,7 @@ from spec_manager.refinement.formats import (
 )
 from spec_manager.refinement.progress import ProgressTracker
 from spec_manager.refinement.validation_utils import (
+    PointerOmission,
     build_file_id_lookup,
     fix_cross_file_section_pointers,
     strip_invalid_file_pointers,
@@ -234,6 +235,28 @@ def _validate_bullets_have_pointers(content: str, file_id: str) -> list[dict[str
     return issues
 
 
+def _build_pointer_omission_issues(
+    file_id: str, omissions: list[PointerOmission]
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for omission in omissions:
+        issue: dict[str, Any] = {
+            "type": "pointer_removed",
+            "file_id": file_id,
+            "pointer": omission.pointer,
+            "reason": omission.reason,
+            "file_ref": omission.file_ref,
+            "section_ref": omission.section_ref,
+            "message": (
+                f"Removed invalid evidence pointer {omission.pointer} ({omission.reason})."
+            ),
+        }
+        if omission.resolved_file_id:
+            issue["resolved_file_id"] = omission.resolved_file_id
+        issues.append(issue)
+    return issues
+
+
 def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> dict[str, Any]:
     try:
         content = file_path.read_text(encoding="utf-8")
@@ -253,10 +276,16 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
 
     output = normalize_compound_pointers(output)
     output = fix_cross_file_section_pointers(output, manager.state.file_manifest)
-    output = strip_invalid_file_pointers(output, manager.state.file_manifest)
-    output = strip_invalid_section_pointers(
+    file_pointer_result = strip_invalid_file_pointers(output, manager.state.file_manifest)
+    output = file_pointer_result.content
+    section_pointer_result = strip_invalid_section_pointers(
         output, manager.state.file_manifest, manager.read_file_sections
     )
+    output = section_pointer_result.content
+    pointer_omissions = [
+        *file_pointer_result.omissions,
+        *section_pointer_result.omissions,
+    ]
 
     summary_path = manager.structure.summaries_dir / f"{file_id}.what.md"
     summary_path.write_text(output, encoding="utf-8")
@@ -272,6 +301,7 @@ def _process_file(file_id: str, file_path: Path, manager: WorkspaceManager) -> d
 
     issues = _validate_evidence_pointers(output, manager, file_id)
     issues.extend(_validate_bullets_have_pointers(output, file_id))
+    issues.extend(_build_pointer_omission_issues(file_id, pointer_omissions))
     format_evidence: list[dict[str, Any]] = []
     if issues:
         if any(issue.get("blocker") for issue in issues):

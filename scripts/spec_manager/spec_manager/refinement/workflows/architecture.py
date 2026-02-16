@@ -17,11 +17,31 @@ from spec_manager.refinement.formats import (
     parse_architecture_selection,
 )
 from spec_manager.refinement.progress import ProgressTracker
-from spec_manager.refinement.validation_utils import strip_invalid_file_pointers
+from spec_manager.refinement.validation_utils import PointerOmission, strip_invalid_file_pointers
 from spec_manager.refinement.workspace import Phase, PhaseStatus, WorkspaceManager
 
 # Only treat bracketed text containing a `::` segment separator as a citation.
 ARCH_CITATION_RE = re.compile(r"\[([^\[\]]*?::[^\[\]]*?)\]")
+
+
+def _pointer_omission_issues(omissions: list[PointerOmission]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for omission in omissions:
+        issue: dict[str, Any] = {
+            "type": "pointer_removed",
+            "reason": omission.reason,
+            "pointer": omission.pointer,
+            "file_ref": omission.file_ref,
+            "section_ref": omission.section_ref,
+            "message": (
+                f"Removed invalid architecture citation pointer {omission.pointer} "
+                f"({omission.reason})."
+            ),
+        }
+        if omission.resolved_file_id:
+            issue["resolved_file_id"] = omission.resolved_file_id
+        issues.append(issue)
+    return issues
 
 
 def propose_architectures(run_id: str) -> dict[str, Any]:
@@ -188,13 +208,15 @@ def select_architecture(run_id: str) -> dict[str, Any]:
         return {"selected_arch_id": None, "rejected_count": 0, "format_evidence": format_evidence}
 
     rationale = str(selection.get("rationale", "")).strip()
-    rationale = strip_invalid_file_pointers(
+    rationale_strip_result = strip_invalid_file_pointers(
         rationale,
         manager.state.file_manifest,
         allow_multi_hop=True,
     )
+    rationale = rationale_strip_result.content
     selection["rationale"] = rationale
-    issues = _validate_architecture_citations(rationale, manager)
+    issues = _pointer_omission_issues(rationale_strip_result.omissions)
+    issues.extend(_validate_architecture_citations(rationale, manager))
     if issues:
         from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact
 
@@ -333,13 +355,15 @@ def map_libraries_to_architecture(run_id: str) -> dict[str, Any]:
 
     formatted_output = _format_architecture_mapping(mapping, selected_content)
     formatted_output = normalize_compound_pointers(formatted_output)
-    formatted_output = strip_invalid_file_pointers(
+    formatted_strip_result = strip_invalid_file_pointers(
         formatted_output,
         manager.state.file_manifest,
         allow_multi_hop=True,
     )
+    formatted_output = formatted_strip_result.content
 
-    citation_issues = _validate_architecture_citations(formatted_output, manager)
+    citation_issues = _pointer_omission_issues(formatted_strip_result.omissions)
+    citation_issues.extend(_validate_architecture_citations(formatted_output, manager))
     issues.extend(citation_issues)
     if citation_issues:
         from spec_manager.refinement.repair import ArtifactType, get_repair_model, repair_artifact

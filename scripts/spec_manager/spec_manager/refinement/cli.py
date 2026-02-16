@@ -576,6 +576,8 @@ def cmd_spec_spotcheck_evidence(args: argparse.Namespace) -> int:
             lib_id = issue.get("lib_id", "unknown")
             message = issue.get("message", issue.get("type", "issue"))
             print(f"  - {lib_id}: {message}")
+    if not result.get("success", True) or result.get("errors") or result.get("issues"):
+        return 1
     return 0
 
 
@@ -1274,6 +1276,7 @@ def cmd_project(args: argparse.Namespace) -> int:
     from spec_manager.schemas.derived_elements import DerivedElement
 
     elements: list[DerivedElement] = []
+    provenance_errors: list[dict[str, str]] = []
 
     for lib_dir in sorted(libraries_dir.iterdir()):
         if not lib_dir.is_dir():
@@ -1311,22 +1314,45 @@ def cmd_project(args: argparse.Namespace) -> int:
             spec_data = json.loads(spec_index_path.read_text(encoding="utf-8"))
             for elem_data in spec_data.get("elements", []):
                 atom_ids = elem_data.get("evidence_atom_ids")
-                if not atom_ids:
-                    # C01: Missing provenance — surface, don't use placeholder
-                    print(
-                        f"  WARNING: element {elem_data.get('element_id', '?')} "
-                        f"in {lib_id} has no evidence_atom_ids"
+                element_id = str(elem_data.get("element_id", "")).strip() or "?"
+                if not isinstance(atom_ids, list) or not atom_ids:
+                    provenance_errors.append(
+                        {
+                            "lib_id": lib_id,
+                            "element_id": element_id,
+                            "message": "missing evidence_atom_ids",
+                        }
                     )
-                    atom_ids = []
+                    continue
+                cleaned_atom_ids = [
+                    atom_id.strip()
+                    for atom_id in atom_ids
+                    if isinstance(atom_id, str) and atom_id.strip()
+                ]
+                if len(cleaned_atom_ids) != len(atom_ids):
+                    provenance_errors.append(
+                        {
+                            "lib_id": lib_id,
+                            "element_id": element_id,
+                            "message": "contains invalid evidence_atom_ids entries",
+                        }
+                    )
+                    continue
                 elem = DerivedElement(
                     elem_id=elem_data.get("element_id", ""),
                     kind=elem_data.get("kind", "REQ"),
                     lib_id=lib_id,
                     title=elem_data.get("title", ""),
                     body=elem_data.get("text", ""),
-                    evidence_atom_ids=atom_ids,
+                    evidence_atom_ids=cleaned_atom_ids,
                 )
                 elements.append(elem)
+
+    if provenance_errors:
+        print("Projection blocked: missing or invalid evidence provenance detected.")
+        for error in provenance_errors:
+            print(f"  - {error['lib_id']}/{error['element_id']}: {error['message']}")
+        return 1
 
     if not libraries:
         print("No library directories found.")
@@ -1409,7 +1435,11 @@ def cmd_trace_atom(args: argparse.Namespace) -> int:
         print("Trace indexes are malformed.")
         return 1
 
-    report = format_atom_trace(atom_id, indexes, manager)
+    try:
+        report = format_atom_trace(atom_id, indexes, manager)
+    except ValueError as exc:
+        print(f"Trace index integrity error: {exc}")
+        return 1
     if report is None:
         print(f"Atom not found: {atom_id}")
         return 2
@@ -1437,7 +1467,11 @@ def cmd_trace_section(args: argparse.Namespace) -> int:
         print("Trace indexes are malformed.")
         return 1
 
-    report = format_section_trace(section_id, indexes, manager)
+    try:
+        report = format_section_trace(section_id, indexes, manager)
+    except ValueError as exc:
+        print(f"Trace index integrity error: {exc}")
+        return 1
     if report is None:
         print(f"Section not found: {section_id}")
         return 2
@@ -1465,7 +1499,11 @@ def cmd_trace_element(args: argparse.Namespace) -> int:
         print("Trace indexes are malformed.")
         return 1
 
-    report = format_element_trace(element_id, indexes, manager)
+    try:
+        report = format_element_trace(element_id, indexes, manager)
+    except ValueError as exc:
+        print(f"Trace index integrity error: {exc}")
+        return 1
     if report is None:
         print(f"Element not found: {element_id}")
         return 2
@@ -1493,7 +1531,11 @@ def cmd_trace_task(args: argparse.Namespace) -> int:
         print("Trace indexes are malformed.")
         return 1
 
-    report = format_task_trace(task_id, indexes, manager)
+    try:
+        report = format_task_trace(task_id, indexes, manager)
+    except ValueError as exc:
+        print(f"Trace index integrity error: {exc}")
+        return 1
     if report is None:
         print(f"Task not found: {task_id}")
         return 2
@@ -1531,7 +1573,7 @@ def cmd_qa_run(args: argparse.Namespace) -> int:
     if result.get("session_id"):
         print(f"Session: {result['session_id']}")
     print(f"Report: {result.get('report_path')}")
-    return 0
+    return 0 if result.get("passed") else 1
 
 
 def cmd_qa_run_all(args: argparse.Namespace) -> int:
@@ -1553,6 +1595,8 @@ def cmd_qa_run_all(args: argparse.Namespace) -> int:
         f"QA suite complete: {result['cases_passed']}/{result['cases_total']} passed "
         f"(session={result['session_id']})"
     )
+    if result["cases_passed"] != result["cases_total"]:
+        return 1
     return 0
 
 

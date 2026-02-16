@@ -5,40 +5,23 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from spec_manager.core.agent_utils import run_agent
 from spec_manager.refinement.workspace import WorkspaceManager
 
-_FALLBACK_REPAIR_MODEL = "gpt-5.2-low"
-_REPAIR_MODEL_SELECTION_PATH = (
-    Path(__file__).resolve().parent / "evaluation/results/REPAIR_MODEL_SELECTION.md"
-)
-_REPAIR_MODEL_RECOMMENDATION_PATTERN = re.compile(
-    r"recommend\s+\*\*(?P<model>[^*]+)\*\*",
-    re.IGNORECASE,
-)
-_REPAIR_MODEL_DEFAULT_PATTERN = re.compile(
-    r"Current default:\s*\*\*(?P<model>[^*]+)\*\*",
-    re.IGNORECASE,
-)
+_DEFAULT_REPAIR_MODEL = "gpt-5.2-low"
+_REPAIR_MODEL_DEFAULT_ENV = "SPEC_REPAIR_MODEL_DEFAULT"
 
 
 def _load_selected_repair_model() -> str:
-    try:
-        content = _REPAIR_MODEL_SELECTION_PATH.read_text(encoding="utf-8")
-    except OSError:
-        return _FALLBACK_REPAIR_MODEL
-    for pattern in (_REPAIR_MODEL_RECOMMENDATION_PATTERN, _REPAIR_MODEL_DEFAULT_PATTERN):
-        match = pattern.search(content)
-        if match:
-            return match.group("model").strip()
-    return _FALLBACK_REPAIR_MODEL
+    configured_default = (os.getenv(_REPAIR_MODEL_DEFAULT_ENV) or "").strip()
+    if not configured_default:
+        return _DEFAULT_REPAIR_MODEL
+    return configured_default
 
 
 DEFAULT_REPAIR_MODEL = _load_selected_repair_model()

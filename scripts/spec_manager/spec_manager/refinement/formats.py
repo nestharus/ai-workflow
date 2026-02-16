@@ -359,7 +359,28 @@ def _extract_file_id(content: str) -> str:
     match = re.search(r"File Summary:\s*([\w\-\.]+)", content, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    return "unknown"
+    raise ValueError("File summary is missing file identity (File ID header or title).")
+
+
+def _validate_required_fields(
+    data: dict[str, Any],
+    required_fields: dict[str, type[Any] | tuple[type[Any], ...]],
+    *,
+    context: str,
+) -> None:
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        raise ValueError(f"{context} missing required fields: {', '.join(sorted(missing_fields))}")
+
+    for field, expected_types in required_fields.items():
+        if not isinstance(expected_types, tuple):
+            expected_types = (expected_types,)
+        value = data[field]
+        if not isinstance(value, expected_types):
+            expected_names = ", ".join(tp.__name__ for tp in expected_types)
+            raise TypeError(
+                f"{context} field '{field}' must be {expected_names}, got {type(value).__name__}."
+            )
 
 
 def _extract_pointers(text: str) -> list[str]:
@@ -663,26 +684,15 @@ def parse_concern_assignment_judge(output: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise TypeError("Concern assignment output must be a JSON object.")
 
-    required_fields = ("assignments", "gaps", "decisions")
-    for field in required_fields:
-        if field not in data:
-            issues.append(
-                {
-                    "type": "missing_field",
-                    "field": field,
-                    "message": f"Missing required field: {field}",
-                }
-            )
-            data[field] = []
-        elif not isinstance(data[field], list):
-            issues.append(
-                {
-                    "type": "invalid_field_type",
-                    "field": field,
-                    "message": f"Field {field} must be a list.",
-                }
-            )
-            data[field] = []
+    _validate_required_fields(
+        data,
+        {
+            "assignments": list,
+            "gaps": list,
+            "decisions": list,
+        },
+        context="Concern assignment output",
+    )
 
     lib_id_re = re.compile(r"^LIB-\d{4}$")
     valid_gap_types = {"out_of_scope", "ambiguous"}
@@ -723,6 +733,7 @@ def parse_concern_assignment_judge(output: str) -> dict[str, Any]:
                         "message": "Assigned library id does not match LIB-#### format.",
                     }
                 )
+                continue
             cleaned_targets.append(lib_id_str)
         item["assigned_to"] = cleaned_targets
 
@@ -1392,6 +1403,15 @@ def parse_alignment_check_output(
     data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object for alignment check output.")
+    _validate_required_fields(
+        data,
+        {
+            "drift_findings": list,
+            "reward_hacking_findings": list,
+            "patches": list,
+        },
+        context="Alignment check output",
+    )
     return data
 
 
@@ -1407,6 +1427,14 @@ def parse_qa_evaluation_output(
     data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object for QA evaluation output.")
+    _validate_required_fields(
+        data,
+        {
+            "findings": list,
+            "total_findings": int,
+        },
+        context="QA evaluation output",
+    )
     return data
 
 
@@ -1422,4 +1450,12 @@ def parse_quality_gate_output(
     data = json.loads(extracted)
     if not isinstance(data, dict):
         raise TypeError("Expected JSON object for quality gate output.")
+    _validate_required_fields(
+        data,
+        {
+            "score": (int, float),
+            "findings": list,
+        },
+        context="Quality gate output",
+    )
     return data

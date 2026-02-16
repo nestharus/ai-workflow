@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from spec_manager.core.file_id_lookup import (
@@ -17,6 +18,32 @@ SECTION_ID_RE = re.compile(r"^SEC-[A-Za-z0-9]+-\d{4}$")
 _SECTION_FILE_ID_RE = re.compile(r"^SEC-(F\d{4})-\d{4}$")
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PointerOmission:
+    """Structured record for a pointer removed during validation cleanup."""
+
+    pointer: str
+    reason: str
+    file_ref: str
+    section_ref: str
+    resolved_file_id: str | None = None
+
+
+class PointerStripResult(str):
+    """Normalized output after stripping invalid pointers."""
+
+    omissions: tuple[PointerOmission, ...]
+
+    def __new__(cls, content: str, omissions: list[PointerOmission]) -> PointerStripResult:
+        obj = super().__new__(cls, content)
+        obj.omissions = tuple(omissions)
+        return obj
+
+    @property
+    def content(self) -> str:
+        return str(self)
 
 
 def build_section_alias_map(
@@ -103,7 +130,7 @@ def strip_invalid_file_pointers(
     file_manifest: dict[str, dict[str, str]],
     *,
     allow_multi_hop: bool = False,
-) -> str:
+) -> PointerStripResult:
     """Remove evidence pointers with invalid file references from content.
 
     When allow_multi_hop is True, keep multi-hop pointers (e.g. library
@@ -111,31 +138,39 @@ def strip_invalid_file_pointers(
     in the file manifest. Also collapses redundant whitespace from removed
     pointers.
     """
-    invalid_pointers: set[str] = set()
     file_id_lookup = build_file_id_lookup(file_manifest)
-    for match in EVIDENCE_POINTER_RE.finditer(content):
+    omissions: list[PointerOmission] = []
+
+    def _replace(match: re.Match[str]) -> str:
         file_ref = match.group(1).strip()
         section_ref = match.group(2).strip()
         resolved_file_id = file_id_lookup.get(file_ref)
-        if resolved_file_id is None:
-            if allow_multi_hop and "::" in section_ref:
-                continue
-            invalid_pointers.add(match.group(0))
+        if resolved_file_id is not None:
+            return match.group(0)
+        if allow_multi_hop and "::" in section_ref:
+            return match.group(0)
+        omissions.append(
+            PointerOmission(
+                pointer=match.group(0),
+                reason="unknown_file_reference",
+                file_ref=file_ref,
+                section_ref=section_ref,
+                resolved_file_id=resolved_file_id,
+            )
+        )
+        return ""
 
-    cleaned = content
-    for pointer in invalid_pointers:
-        cleaned = cleaned.replace(pointer, "")
-
+    cleaned = EVIDENCE_POINTER_RE.sub(_replace, content)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r" \n", "\n", cleaned)
-    return cleaned
+    return PointerStripResult(content=cleaned, omissions=omissions)
 
 
 def strip_invalid_section_pointers(
     content: str,
     file_manifest: dict[str, dict[str, str]],
     section_reader: Callable[[str], dict[str, Any] | None],
-) -> str:
+) -> PointerStripResult:
     """Remove evidence pointers whose section_ref doesn't exist in the resolved file.
 
     Args:
@@ -143,18 +178,18 @@ def strip_invalid_section_pointers(
         file_manifest: File manifest mapping file_id -> {relpath, sha256}.
         section_reader: Callable(file_id) -> dict or None that reads section data.
     """
-    invalid_pointers: set[str] = set()
     file_id_lookup = build_file_id_lookup(file_manifest)
+    omissions: list[PointerOmission] = []
 
-    for match in EVIDENCE_POINTER_RE.finditer(content):
+    def _replace(match: re.Match[str]) -> str:
         file_ref = match.group(1).strip()
         section_ref = match.group(2).strip()
         resolved_file_id = file_id_lookup.get(file_ref)
         if resolved_file_id is None:
-            continue
+            return match.group(0)
         sections_data = section_reader(resolved_file_id)
         if sections_data is None:
-            continue
+            return match.group(0)
         sections_list = sections_data.get("sections") if isinstance(sections_data, dict) else None
         valid_section_ids: set[str] = set()
         if isinstance(sections_list, list):
@@ -164,16 +199,24 @@ def strip_invalid_section_pointers(
                     if isinstance(sid, str) and sid:
                         valid_section_ids.add(sid)
         if valid_section_ids and section_ref not in valid_section_ids:
-            invalid_pointers.add(match.group(0))
+            pointer = match.group(0)
             logger.debug("Stripping invalid section pointer: %s", match.group(0))
+            omissions.append(
+                PointerOmission(
+                    pointer=pointer,
+                    reason="unknown_section_reference",
+                    file_ref=file_ref,
+                    section_ref=section_ref,
+                    resolved_file_id=resolved_file_id,
+                )
+            )
+            return ""
+        return match.group(0)
 
-    cleaned = content
-    for pointer in invalid_pointers:
-        cleaned = cleaned.replace(pointer, "")
-
+    cleaned = EVIDENCE_POINTER_RE.sub(_replace, content)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r" \n", "\n", cleaned)
-    return cleaned
+    return PointerStripResult(content=cleaned, omissions=omissions)
 
 
 def fix_cross_file_section_pointers(
