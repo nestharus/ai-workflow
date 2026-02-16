@@ -47,12 +47,17 @@ class PinFunctionOrchestrator:
     ) -> None:
         self._project_root = project_root
         self._config = config or PinFunctionConfig()
-        self._edge_counter = 0
 
     @property
     def registry_path(self) -> Path:
         """Path to the pin-function registry file."""
         return self._project_root / self._config.registry_dir / self._config.registry_filename
+
+    @property
+    def previous_registry_path(self) -> Path:
+        """Path to the previous pin-function registry snapshot."""
+        path = self.registry_path
+        return path.with_name(f"{path.stem}.previous{path.suffix}")
 
     def scan(
         self,
@@ -78,8 +83,13 @@ class PinFunctionOrchestrator:
         loaded_pin_proposals = self._load_proposals(pin_proposals_path)
         loaded_edge_proposals = self._load_proposals(edge_proposals_path)
 
+        existing_registry = self.load_registry() if self.registry_path.exists() else None
+        existing_pins = existing_registry.pin_functions if existing_registry is not None else []
+        existing_edges = existing_registry.import_edges if existing_registry is not None else []
+
         merged_pins, import_edges = self._merge_proposals(
-            existing_pins=[],
+            existing_pins=existing_pins,
+            existing_edges=existing_edges,
             pin_proposals=loaded_pin_proposals + (pin_proposals or []),
             edge_proposals=loaded_edge_proposals + (edge_proposals or []),
             changed_files=changed_files,
@@ -157,11 +167,12 @@ class PinFunctionOrchestrator:
         """Query which pin-functions a given architectural file uses."""
         registry = self.load_registry()
         index = PinRegistryIndex.from_registry(registry)
+        normalized_arch_file = self._normalize_project_relative_path(arch_file)
 
         result: list[PinFunction] = []
         seen: set[str] = set()
         for edge in registry.import_edges:
-            if edge.arch_file_path == arch_file and edge.pin_func_id not in seen:
+            if edge.arch_file_path == normalized_arch_file and edge.pin_func_id not in seen:
                 seen.add(edge.pin_func_id)
                 pf = index.get_by_id(edge.pin_func_id)
                 if pf is not None:
@@ -175,6 +186,9 @@ class PinFunctionOrchestrator:
         registry_dir.mkdir(parents=True, exist_ok=True)
 
         path = registry_dir / self._config.registry_filename
+        previous_path = self.previous_registry_path
+        if path.exists():
+            path.replace(previous_path)
         path.write_text(
             registry.model_dump_json(indent=2),
             encoding="utf-8",
@@ -236,6 +250,7 @@ class PinFunctionOrchestrator:
     def _merge_proposals(
         self,
         existing_pins: list[PinFunction],
+        existing_edges: list[ImportEdge],
         pin_proposals: list[dict[str, Any]],
         edge_proposals: list[dict[str, Any]],
         *,
@@ -245,6 +260,8 @@ class PinFunctionOrchestrator:
         existing_by_key = {(pf.function_name, pf.file_path): pf for pf in existing_pins}
         used_pin_ids: set[str] = {pf.pin_func_id for pf in existing_pins}
         merged_by_key: dict[tuple[str, str], PinFunction] = dict(existing_by_key)
+        proposed_by_key: dict[tuple[str, str], PinFunction] = {}
+        merged_edges_by_id: dict[str, ImportEdge] = {edge.edge_id: edge for edge in existing_edges}
 
         next_pin_seq = self._next_pin_sequence(used_pin_ids)
         normalized_pin_proposals = self._verify_pin_proposals(pin_proposals)
@@ -276,7 +293,7 @@ class PinFunctionOrchestrator:
                 )
 
             used_pin_ids.add(proposed_pin_id)
-            merged_by_key[key] = PinFunction(
+            pin = PinFunction(
                 pin_func_id=proposed_pin_id,
                 function_name=proposal["function_name"],
                 module_path=proposal["module_path"],
@@ -290,21 +307,31 @@ class PinFunctionOrchestrator:
                 store_touches=proposal["store_touches"],
                 evidence_atom_ids=proposal["evidence_atom_ids"],
             )
+            merged_by_key[key] = pin
+            proposed_by_key[key] = pin
 
         merged_pins = list(merged_by_key.values())
         pin_ids = {pin.pin_func_id for pin in merged_pins}
-        pin_ids_by_name: dict[str, str] = {}
-        for pin in merged_pins:
-            pin_ids_by_name[pin.function_name] = pin.pin_func_id
-            if pin.module_path:
-                pin_ids_by_name[f"{pin.module_path}.{pin.function_name}"] = pin.pin_func_id
         new_edges = self._verify_edge_proposals(
             edge_proposals=edge_proposals,
             pin_ids=pin_ids,
-            pin_ids_by_name=pin_ids_by_name,
+            existing_edge_ids=set(merged_edges_by_id),
         )
-        self._verify_diff_coverage(merged_pins, new_edges, changed_files)
-        return merged_pins, new_edges
+        self._verify_diff_coverage(list(proposed_by_key.values()), new_edges, changed_files)
+        for edge in new_edges:
+            merged_edges_by_id[edge.edge_id] = edge
+
+        merged_edges = list(merged_edges_by_id.values())
+        dangling_edge_ids = sorted(
+            edge.edge_id for edge in merged_edges if edge.pin_func_id not in pin_ids
+        )
+        if dangling_edge_ids:
+            raise ValueError(
+                "Pin registry contains edges targeting missing pin_func_id values: "
+                + ", ".join(dangling_edge_ids)
+            )
+
+        return merged_pins, merged_edges
 
     def _next_pin_sequence(self, used_pin_ids: set[str]) -> int:
         highest = 0
@@ -426,30 +453,20 @@ class PinFunctionOrchestrator:
         *,
         edge_proposals: list[dict[str, Any]],
         pin_ids: set[str],
-        pin_ids_by_name: dict[str, str],
+        existing_edge_ids: set[str],
     ) -> list[ImportEdge]:
         seen_edge_ids: set[str] = set()
+        used_edge_ids: set[str] = set(existing_edge_ids)
         materialized: list[ImportEdge] = []
 
-        next_edge_seq = self._edge_counter + 1
+        next_edge_seq = self._next_edge_sequence(used_edge_ids)
         for idx, proposal in enumerate(edge_proposals):
-            raw_pin_id = str(proposal.get("pin_func_id", "")).strip()
-            resolved_pin_id = raw_pin_id
-            if resolved_pin_id not in pin_ids:
-                lookup_name = raw_pin_id
-                if not lookup_name:
-                    lookup_name = str(
-                        proposal.get("function_name")
-                        or proposal.get("imported_name")
-                        or proposal.get("source_name")
-                        or ""
-                    ).strip()
-                resolved_pin_id = pin_ids_by_name.get(lookup_name, "")
-                if not resolved_pin_id and "." in lookup_name:
-                    resolved_pin_id = pin_ids_by_name.get(lookup_name.rsplit(".", 1)[-1], "")
+            resolved_pin_id = str(proposal.get("pin_func_id", "")).strip()
+            if not resolved_pin_id:
+                raise ValueError(f"edge_proposals[{idx}] missing pin_func_id")
             if resolved_pin_id not in pin_ids:
                 raise ValueError(
-                    f"edge_proposals[{idx}] references unknown pin_func_id/source {raw_pin_id!r}"
+                    f"edge_proposals[{idx}] references unknown pin_func_id {resolved_pin_id!r}"
                 )
 
             arch_file_path = self._normalize_project_relative_path(
@@ -481,12 +498,17 @@ class PinFunctionOrchestrator:
             confidence = self._coerce_confidence(proposal.get("confidence", 1.0), idx=idx)
             edge_id = str(proposal.get("edge_id", "")).strip()
             if not edge_id:
-                edge_id = f"IMEDGE-P-{next_edge_seq:04d}"
-                next_edge_seq += 1
+                while True:
+                    candidate = f"IMEDGE-P-{next_edge_seq:04d}"
+                    next_edge_seq += 1
+                    if candidate not in used_edge_ids:
+                        edge_id = candidate
+                        break
 
             if edge_id in seen_edge_ids:
                 raise ValueError(f"edge_proposals contains duplicate edge_id: {edge_id}")
             seen_edge_ids.add(edge_id)
+            used_edge_ids.add(edge_id)
 
             materialized.append(
                 ImportEdge(
@@ -501,8 +523,21 @@ class PinFunctionOrchestrator:
                 )
             )
 
-        self._edge_counter = next_edge_seq - 1
         return materialized
+
+    @staticmethod
+    def _next_edge_sequence(used_edge_ids: set[str]) -> int:
+        highest = 0
+        for edge_id in used_edge_ids:
+            if edge_id.startswith("IMEDGE-P-"):
+                suffix = edge_id.removeprefix("IMEDGE-P-")
+            elif edge_id.startswith("IMEDGE-"):
+                suffix = edge_id.removeprefix("IMEDGE-")
+            else:
+                continue
+            if suffix.isdigit():
+                highest = max(highest, int(suffix))
+        return highest + 1
 
     def _verify_diff_coverage(
         self,
@@ -550,7 +585,9 @@ class PinFunctionOrchestrator:
                 raise ValueError(
                     f"Path {raw!r} is outside project root {self._project_root}"
                 ) from exc
-        normalized = candidate.as_posix().lstrip("./")
+        normalized = candidate.as_posix()
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
         if ":" in normalized:
             possible_path, _, suffix = normalized.partition(":")
             if Path(possible_path).suffix and suffix:

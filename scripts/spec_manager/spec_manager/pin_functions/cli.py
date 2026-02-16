@@ -41,8 +41,9 @@ def setup_pin_parser(subparsers: argparse._SubParsersAction) -> None:
     # pin query
     p_query = pin_sub.add_parser("query", help="Query pin-function relationships")
     p_query.add_argument("--project-root", default=".", help="Project root directory")
-    p_query.add_argument("--function", help="Query importers of a function")
-    p_query.add_argument("--arch-file", help="Query pin-functions used by an arch file")
+    query_target = p_query.add_mutually_exclusive_group(required=True)
+    query_target.add_argument("--function", help="Query importers of a function")
+    query_target.add_argument("--arch-file", help="Query pin-functions used by an arch file")
 
     # pin analysis
     p_analysis = pin_sub.add_parser("analysis", help="Generate pin-function analysis report")
@@ -134,10 +135,14 @@ def _cmd_pin_diff(args: argparse.Namespace) -> int:
     orchestrator = PinFunctionOrchestrator(project_root)
 
     # Determine old registry path
-    old_path = Path(args.old_registry) if args.old_registry else orchestrator.registry_path
+    old_path = Path(args.old_registry) if args.old_registry else orchestrator.previous_registry_path
     if not old_path.exists():
         print(f"No previous registry found at: {old_path}", file=sys.stderr)
-        print("Run 'pin scan' first to create a baseline registry.")
+        print(
+            "Run 'pin scan' at least twice to create a previous snapshot, "
+            "or provide --old-registry.",
+            file=sys.stderr,
+        )
         return 1
 
     report = orchestrator.diff(old_path)
@@ -220,7 +225,7 @@ def _cmd_pin_query(args: argparse.Namespace) -> int:
             print(f"  - {pf.function_name}{shape} ({pf.module_path})")
         return 0
 
-    print("Specify --function or --arch-file", file=sys.stderr)
+    print("Specify exactly one of --function or --arch-file", file=sys.stderr)
     return 1
 
 
@@ -254,13 +259,9 @@ def _cmd_pin_test_check(args: argparse.Namespace) -> int:
 
     # Load or scan the PinFunctionRegistry
     orchestrator = PinFunctionOrchestrator(project_root)
-    registry_path = orchestrator.registry_path
-    if registry_path.exists():
-        registry_data = json.loads(registry_path.read_text(encoding="utf-8"))
-        from spec_manager.schemas.pin_functions import PinFunctionRegistry
-
-        registry = PinFunctionRegistry(**registry_data)
-    else:
+    try:
+        registry = orchestrator.load_registry()
+    except FileNotFoundError:
         print(
             "No pin registry found. Materialize one first via "
             "'pin scan --pin-proposals <path> [--edge-proposals <path>]'.",
