@@ -205,17 +205,40 @@ def scan_file_for_hardcoding_violations(
         List of HardcodingFinding objects for any violations found.
     """
     findings: list[HardcodingFinding] = []
+    file_str = str(file_path)
 
     try:
         content = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as exc:
+        findings.append(
+            HardcodingFinding(
+                severity="warning",
+                file=file_str,
+                line=0,
+                pattern_type="scan_error",
+                message=f"Could not read file for hardcoding scan: {exc}",
+                code_snippet="",
+            )
+        )
         return findings
 
     lines = content.splitlines()
-    file_str = str(file_path)
 
     # Analyze source to get comment line numbers (language-agnostic)
-    analysis = analyze_source(content, filepath=file_str)
+    try:
+        analysis = analyze_source(content, filepath=file_str)
+    except Exception as exc:
+        findings.append(
+            HardcodingFinding(
+                severity="warning",
+                file=file_str,
+                line=0,
+                pattern_type="scan_error",
+                message=f"Could not analyze file for hardcoding scan: {exc}",
+                code_snippet="",
+            )
+        )
+        return findings
     comment_lines = {comment.line for comment in analysis.comments}
 
     # Custom allowlist patterns

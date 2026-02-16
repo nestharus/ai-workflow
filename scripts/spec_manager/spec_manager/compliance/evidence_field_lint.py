@@ -19,9 +19,6 @@ from typing import Any
 
 from spec_manager.schemas.evidence_ranges import EVIDENCE_ID_PATTERN
 
-# Per CON-0021: Evidence fields must be EVID-* only
-EVID_FIELD_PATTERN = re.compile(r"^EVID-F\d{4}-R\d{4}-L\d+-L\d+$")
-
 # Derived artifact tokens to warn on (per CON-0021)
 DERIVED_ARTIFACT_PATTERNS = [
     re.compile(r"runs/"),
@@ -97,7 +94,7 @@ def validate_evid_value(value: str) -> bool:
     Returns:
         True if valid EVID format
     """
-    return EVID_FIELD_PATTERN.fullmatch(value.strip()) is not None
+    return EVIDENCE_ID_PATTERN.fullmatch(value.strip()) is not None
 
 
 def scan_evidence_fields(
@@ -138,14 +135,14 @@ def scan_evidence_fields(
         elif isinstance(value, list):
             for i, item in enumerate(value):
                 item_path = f"{path}[{i}]"
-                _scan_value(item, item_path, in_evidence_field, parent_field=path)
+                _scan_value(item, item_path, in_evidence_field, parent_field=parent_field)
         elif isinstance(value, dict):
             for key, val in value.items():
                 field_path = f"{path}.{key}" if path else key
                 is_evidence = is_evidence_field(key)
-                _scan_value(
-                    val, field_path, is_evidence, parent_field=key if is_evidence else parent_field
-                )
+                child_in_evidence = in_evidence_field or is_evidence
+                child_parent_field = key if is_evidence else parent_field
+                _scan_value(val, field_path, child_in_evidence, parent_field=child_parent_field)
 
     _scan_value(artifact, "")
     return errors, warnings
@@ -235,6 +232,11 @@ def lint_l1_artifact(
     elif artifact_path.suffix == ".md":
         result.errors.extend(_lint_markdown_evidence(content))
         result.warnings.extend(_lint_markdown_derived_refs(content))
+    else:
+        suffix = artifact_path.suffix or "<no extension>"
+        result.errors.append(
+            f"Unsupported artifact format: {suffix}. Supported formats are .json and .md"
+        )
 
     return result
 

@@ -108,7 +108,8 @@ def verify_coverage_or_emit_gap(
                 location=f"{coverage_report.file_uid}:{coverage_report.rev_id}",
                 detector="coverage_gate",
                 details={
-                    "unaccounted_atoms": coverage_report.unaccounted_atom_ids[:20],
+                    "unaccounted_atoms": coverage_report.unaccounted_atom_ids,
+                    "unaccounted_atoms_preview": coverage_report.unaccounted_atom_ids[:20],
                     "total_unaccounted": len(coverage_report.unaccounted_atom_ids),
                 },
             )

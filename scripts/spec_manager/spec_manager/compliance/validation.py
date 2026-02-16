@@ -118,8 +118,8 @@ def validate_artifact_contract(
         ContractValidationResult with validation outcome and any errors.
 
     Note:
-        If jsonschema library is not installed, validation always passes
-        with a warning. Install jsonschema for full validation support.
+        If jsonschema library is not installed, validation fails closed.
+        Install jsonschema for full validation support.
     """
     if registry is None:
         registry = get_default_registry()
@@ -129,13 +129,13 @@ def validate_artifact_contract(
 
     # Check if jsonschema is available
     if not _HAS_JSONSCHEMA:
-        _logger.warning("jsonschema library not installed; skipping schema validation")
+        _logger.warning("jsonschema library not installed; cannot perform schema validation")
         return ContractValidationResult(
             artifact_id=artifact_id,
             schema_id=schema_id,
-            valid=True,
-            errors=[],
-            warnings=["jsonschema library not installed; validation skipped"],
+            valid=False,
+            errors=["jsonschema library not installed; validation could not be performed"],
+            warnings=["jsonschema library not installed"],
         )
 
     # Load the schema

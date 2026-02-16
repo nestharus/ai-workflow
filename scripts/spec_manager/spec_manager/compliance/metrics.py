@@ -48,6 +48,27 @@ _annotation_parser = AnnotationParser()
 _id_validator = IdValidator()
 _logger = logging.getLogger(__name__)
 
+_UNIT_TYPE_TO_ID_CATEGORIES: dict[UnitType, set[IdCategory]] = {
+    UnitType.ALGORITHM: {IdCategory.ALGORITHM},
+    UnitType.DATA_STRUCTURE: {IdCategory.DATA_STRUCTURE},
+    UnitType.CLAIM: {IdCategory.CLAIM, IdCategory.PATCH_CLAIM},
+    UnitType.INVARIANT: {IdCategory.INVARIANT, IdCategory.PATCH_INVARIANT},
+    UnitType.GOAL: {IdCategory.GOAL, IdCategory.INVARIANT},
+}
+
+_STRUCTURED_UNIT_TYPES = frozenset(_UNIT_TYPE_TO_ID_CATEGORIES.keys())
+_STRUCTURED_ID_CATEGORIES = frozenset(
+    {
+        IdCategory.ALGORITHM,
+        IdCategory.DATA_STRUCTURE,
+        IdCategory.CLAIM,
+        IdCategory.PATCH_CLAIM,
+        IdCategory.INVARIANT,
+        IdCategory.PATCH_INVARIANT,
+        IdCategory.GOAL,
+    }
+)
+
 
 # =============================================================================
 # Helper Functions
@@ -117,61 +138,21 @@ def _is_format_compliant(
             if not validator.is_valid(id_value):
                 return False
 
-        # Check 4: Headers with IDs should have proper declaration
-        # Parse markdown header to extract ID and verify matching ([=ID]) declaration
+        # Check 4: Structured headers must carry declaration stamps near the header.
+        # This uses system-authored annotations, not inferred IDs from free text.
         lines = unit.content.splitlines()
-        if lines:
-            first_line = lines[0].strip()
-            if first_line.startswith("#"):
-                # Strip leading # characters and whitespace to get header text
-                header_text = first_line.lstrip("#").strip()
-
-                # Try to extract an ID from the header text
-                # Patterns for various ID types in headers (allowing title suffixes)
-                header_id_patterns = [
-                    (r"Algorithm\s+(\d+)", IdCategory.ALGORITHM, "Algorithm {}"),
-                    (r"D(\d+)", IdCategory.DATA_STRUCTURE, "D{}"),
-                    (r"Claim\s+(\d+)", IdCategory.CLAIM, "C{}"),
-                    (r"Invariant\s+(\d+)", IdCategory.INVARIANT, "I{}"),
-                    (r"Goal\s+G?(\d+(?:\.\d+)?)", IdCategory.GOAL, "G{}"),
-                    (r"I(\d+(?:\.\d+)?)", IdCategory.INVARIANT, "I{}"),
-                    (r"G(\d+(?:\.\d+)?)", IdCategory.GOAL, "G{}"),
-                    (r"C(\d+)", IdCategory.CLAIM, "C{}"),
-                    (r"Comp(\d+)", IdCategory.COMPONENT, "Comp{}"),
-                    (r"Lean(\d+)", IdCategory.LEAN, "Lean{}"),
-                ]
-
-                header_id = None
-                for pattern, _, template in header_id_patterns:
-                    match = re.search(pattern, header_text, re.IGNORECASE)
-                    if match:
-                        # Extract the ID from header
-                        if "{}" in template:
-                            # Single component pattern
-                            header_id = template.format(match.group(1))
-                        else:
-                            # Complex pattern like P{}I{}
-                            parts = match.groups()
-                            if len(parts) == 2:
-                                header_id = template.format(*parts)
-                            else:
-                                header_id = template.format(match.group(1))
-                        break
-
-                # If we found an ID in the header, check for matching declaration
-                if header_id:
-                    # Check if header line contains ([=ID]) for this header_id
-                    header_decl_pattern = rf"\(\[=\s*{re.escape(header_id)}\s*\]\)"
-                    if re.search(header_decl_pattern, first_line):
-                        # Header has the declaration - compliant
-                        pass
-                    # Check if first body line has the declaration
-                    elif len(lines) > 1:
-                        if not re.search(header_decl_pattern, lines[1]):
-                            return False
-                    else:
-                        # Header has ID but no declaration in header or body line
-                        return False
+        if lines and lines[0].strip().startswith("#") and unit.unit_type in _STRUCTURED_UNIT_TYPES:
+            expected_categories = _UNIT_TYPE_TO_ID_CATEGORIES[unit.unit_type]
+            expected_decls = {
+                decl_id
+                for decl_id in unit.declarations
+                if validator.get_category(decl_id) in expected_categories
+            }
+            if expected_decls:
+                header_window = "\n".join(lines[:2])
+                header_decls = {ann.id_value for ann in parser.parse_declarations(header_window)}
+                if not header_decls.intersection(expected_decls):
+                    return False
 
         return True
 
@@ -180,7 +161,7 @@ def _is_format_compliant(
         return False
 
 
-def _is_structured_element(unit: TrackedUnit) -> bool:
+def _is_structured_element(unit: TrackedUnit, validator: IdValidator = _id_validator) -> bool:
     """Check if a unit is a structured element type.
 
     Structured elements are elements that should have ID annotations:
@@ -190,49 +171,26 @@ def _is_structured_element(unit: TrackedUnit) -> bool:
     - INVARIANT
     - GOAL
 
-    Also checks content for markdown headers matching structured patterns.
-
     Args:
         unit: The TrackedUnit to check.
+        validator: IdValidator for stamped ID category checks.
 
     Returns:
         True if the unit is a structured element, False otherwise.
     """
     try:
         # Validate unit has required attributes
-        if not hasattr(unit, "unit_type") or not hasattr(unit, "content"):
-            _logger.warning("Unit missing required attributes (unit_type or content)")
+        if not hasattr(unit, "unit_type") or not hasattr(unit, "declarations"):
+            _logger.warning("Unit missing required attributes (unit_type or declarations)")
             return False
 
-        # Check unit_type first
-        structured_types = {
-            UnitType.ALGORITHM,
-            UnitType.DATA_STRUCTURE,
-            UnitType.CLAIM,
-            UnitType.INVARIANT,
-            UnitType.GOAL,
-        }
-
-        if unit.unit_type in structured_types:
+        if unit.unit_type in _STRUCTURED_UNIT_TYPES:
             return True
 
-        # Also check content for markdown headers matching patterns
-        # Loosened patterns to align with plan - don't require digits for type detection
-        # Allow optional separators/titles (e.g., "## Algorithm:", "## Claim - ...")
-        structured_patterns = [
-            r"^#{1,4}\s*Algorithm\b",  # Algorithm with or without digits
-            r"^#{1,4}\s*D\d+",  # D# (data structures)
-            r"^#{1,4}\s*Claim\b",  # Claim with optional punctuation/title
-            r"^#{1,4}\s*Invariant\b",  # Invariant with optional punctuation/title
-            r"^#{1,4}\s*Goal\b",  # Goal with optional punctuation/title
-            r"^#{1,4}\s*Comp\d+",  # Comp# (components)
-        ]
-
-        for line in unit.content.splitlines():
-            line = line.strip()
-            for pattern in structured_patterns:
-                if re.match(pattern, line, re.IGNORECASE):
-                    return True
+        # Fallback only to system-stamped IDs, not raw-content regex inference.
+        for decl_id in unit.declarations:
+            if validator.get_category(decl_id) in _STRUCTURED_ID_CATEGORIES:
+                return True
 
         return False
 
@@ -252,7 +210,7 @@ def _has_id_annotation(
     1. unit.declarations list is non-empty, AND
     2. At least one ([=ID]) pattern exists in unit content
     3. The declared ID is in unit.declarations (intersection check)
-    4. The ID matches the element type/category
+    4. The stamped ID category matches unit.unit_type
 
     Args:
         unit: The TrackedUnit to check.
@@ -287,68 +245,12 @@ def _has_id_annotation(
         if not content_decl_ids.intersection(unit.declarations):
             return False
 
-        # Verify that at least one ID matches the element type
-        # e.g., Algorithm -> "Algorithm #", D1 -> data structure, etc.
+        allowed_categories = _UNIT_TYPE_TO_ID_CATEGORIES.get(unit.unit_type)
+        if not allowed_categories:
+            return False
         for decl_id in content_decl_ids.intersection(unit.declarations):
-            category = validator.get_category(decl_id)
-
-            # Match ID category to unit_type
-            if category == IdCategory.ALGORITHM and unit.unit_type == UnitType.ALGORITHM:
+            if validator.get_category(decl_id) in allowed_categories:
                 return True
-            if category == IdCategory.DATA_STRUCTURE and unit.unit_type == UnitType.DATA_STRUCTURE:
-                return True
-            if category == IdCategory.CLAIM and unit.unit_type == UnitType.CLAIM:
-                return True
-            if category == IdCategory.INVARIANT and unit.unit_type == UnitType.INVARIANT:
-                return True
-            if category == IdCategory.GOAL and unit.unit_type == UnitType.GOAL:
-                return True
-            # GOAL units can be represented as I# (canonical format)
-            if category == IdCategory.INVARIANT and unit.unit_type == UnitType.GOAL:
-                return True
-            if category == IdCategory.PATCH_INVARIANT and unit.unit_type == UnitType.INVARIANT:
-                return True
-            if category == IdCategory.PATCH_CLAIM and unit.unit_type == UnitType.CLAIM:
-                return True
-
-            # Component handling - map to UNKNOWN unit type for header text matching
-            # Components don't have a dedicated UnitType, so we check via header text below
-
-            # If unit_type is not set, infer from header text
-            if unit.unit_type == UnitType.UNKNOWN:
-                lines = unit.content.splitlines()
-                if lines:
-                    first_line = lines[0].strip()
-                    if first_line.startswith("#"):
-                        header_text = first_line.lstrip("#").strip().lower()
-
-                        # Match header to ID category
-                        if category == IdCategory.ALGORITHM and header_text.startswith("algorithm"):
-                            return True
-                        if category == IdCategory.DATA_STRUCTURE and re.match(
-                            r"^d\d+", header_text
-                        ):
-                            return True
-                        if category == IdCategory.CLAIM and header_text.startswith("claim"):
-                            return True
-                        if category == IdCategory.INVARIANT and header_text.startswith("invariant"):
-                            return True
-                        if category == IdCategory.GOAL and header_text.startswith("goal"):
-                            return True
-                        # GOAL headers can have I# declarations (canonical format)
-                        if category == IdCategory.INVARIANT and header_text.startswith("goal"):
-                            return True
-                        if category == IdCategory.PATCH_INVARIANT and (
-                            header_text.startswith("invariant") or header_text.startswith("p")
-                        ):
-                            return True
-                        if category == IdCategory.PATCH_CLAIM and (
-                            header_text.startswith("claim") or header_text.startswith("p")
-                        ):
-                            return True
-                        # Component header matching
-                        if category == IdCategory.COMPONENT and header_text.startswith("component"):
-                            return True
 
         return False
 
@@ -469,14 +371,10 @@ def compute_format_compliance(units: list[TrackedUnit]) -> float:
         >>> score = compute_format_compliance(units)
         >>> print(f"Format compliance: {score:.1%}")
     """
-    # Validate input
     if units is None:
-        _logger.warning("units parameter is None, treating as empty list")
-        return 1.0
-
+        raise ValueError("units must not be None")
     if not isinstance(units, list):
-        _logger.error(f"units must be a list, got {type(units).__name__}")
-        return 1.0
+        raise TypeError(f"units must be a list, got {type(units).__name__}")
 
     if not units:
         return 1.0
@@ -484,9 +382,9 @@ def compute_format_compliance(units: list[TrackedUnit]) -> float:
     try:
         compliant_count = sum(1 for unit in units if _is_format_compliant(unit))
         return compliant_count / len(units)
-    except Exception:
-        _logger.exception("Error computing format compliance:")
-        return 1.0
+    except Exception as exc:
+        _logger.exception("Error computing format compliance")
+        raise RuntimeError("failed to compute format compliance") from exc
 
 
 def compute_annotation_coverage(units: list[TrackedUnit]) -> float:
@@ -509,14 +407,10 @@ def compute_annotation_coverage(units: list[TrackedUnit]) -> float:
         >>> score = compute_annotation_coverage(units)
         >>> print(f"Annotation coverage: {score:.1%}")
     """
-    # Validate input
     if units is None:
-        _logger.warning("units parameter is None, treating as empty list")
-        return 1.0
-
+        raise ValueError("units must not be None")
     if not isinstance(units, list):
-        _logger.error(f"units must be a list, got {type(units).__name__}")
-        return 1.0
+        raise TypeError(f"units must be a list, got {type(units).__name__}")
 
     if not units:
         return 1.0
@@ -529,9 +423,9 @@ def compute_annotation_coverage(units: list[TrackedUnit]) -> float:
 
         annotated_count = sum(1 for unit in structured_units if _has_id_annotation(unit))
         return annotated_count / len(structured_units)
-    except Exception:
-        _logger.exception("Error computing annotation coverage:")
-        return 1.0
+    except Exception as exc:
+        _logger.exception("Error computing annotation coverage")
+        raise RuntimeError("failed to compute annotation coverage") from exc
 
 
 def compute_id_normalization(units: list[TrackedUnit]) -> float:
@@ -554,14 +448,10 @@ def compute_id_normalization(units: list[TrackedUnit]) -> float:
         >>> score = compute_id_normalization(units)
         >>> print(f"ID normalization: {score:.1%}")
     """
-    # Validate input
     if units is None:
-        _logger.warning("units parameter is None, treating as empty list")
-        return 1.0
-
+        raise ValueError("units must not be None")
     if not isinstance(units, list):
-        _logger.error(f"units must be a list, got {type(units).__name__}")
-        return 1.0
+        raise TypeError(f"units must be a list, got {type(units).__name__}")
 
     if not units:
         return 1.0
@@ -574,9 +464,9 @@ def compute_id_normalization(units: list[TrackedUnit]) -> float:
 
         canonical_count = sum(1 for id_value in unique_ids if _is_canonical_format(id_value))
         return canonical_count / len(unique_ids)
-    except Exception:
-        _logger.exception("Error computing ID normalization:")
-        return 1.0
+    except Exception as exc:
+        _logger.exception("Error computing ID normalization")
+        raise RuntimeError("failed to compute ID normalization") from exc
 
 
 def compute_compliance_metrics(
@@ -606,32 +496,18 @@ def compute_compliance_metrics(
         >>> print(f"Coverage: {metrics.annotation_coverage:.1%}")
         >>> print(f"Normalization: {metrics.id_normalization:.1%}")
     """
-    # Validate input
     if units is None:
-        _logger.warning("units parameter is None, treating as empty list")
-        units = []
-
+        raise ValueError("units must not be None")
     if not isinstance(units, list):
-        _logger.error(f"units must be a list, got {type(units).__name__}")
         raise TypeError(f"units must be a list, got {type(units).__name__}")
 
-    try:
-        format_compliance = compute_format_compliance(units)
-        annotation_coverage = compute_annotation_coverage(units)
-        id_normalization = compute_id_normalization(units)
+    format_compliance = compute_format_compliance(units)
+    annotation_coverage = compute_annotation_coverage(units)
+    id_normalization = compute_id_normalization(units)
 
-        return ComplianceMetrics(
-            format_compliance=format_compliance,
-            annotation_coverage=annotation_coverage,
-            id_normalization=id_normalization,
-            gate_threshold=gate_threshold,
-        )
-    except Exception:
-        _logger.exception("Error computing compliance metrics:")
-        # Return default metrics on error
-        return ComplianceMetrics(
-            format_compliance=1.0,
-            annotation_coverage=1.0,
-            id_normalization=1.0,
-            gate_threshold=gate_threshold,
-        )
+    return ComplianceMetrics(
+        format_compliance=format_compliance,
+        annotation_coverage=annotation_coverage,
+        id_normalization=id_normalization,
+        gate_threshold=gate_threshold,
+    )

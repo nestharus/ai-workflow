@@ -28,6 +28,14 @@ class Evidence(Protocol):
 
 
 @dataclass
+class _EvidenceRecord:
+    detector: str
+    severity: str
+    message: str
+    details: dict[str, Any]
+
+
+@dataclass
 class ComplianceResult:
     """Result of compliance scoring."""
 
@@ -76,7 +84,38 @@ class ComplianceScorer:
         blockers.extend(self.check_schema_validity(run_root))
         blockers.extend(self.check_section_spans(run_root))
 
-        metrics, evidence_by_category = self._compute_metrics_from_evidence([])
+        evidence, evidence_blockers, evidence_warnings = self._load_run_evidence(run_root)
+        blockers.extend(evidence_blockers)
+        warnings.extend(evidence_warnings)
+
+        if not evidence:
+            blockers.append(
+                {
+                    "type": "missing_evidence",
+                    "severity": Severity.ERROR.value,
+                    "message": "No run evidence artifacts were found for compliance scoring",
+                    "details": {
+                        "expected_paths": [
+                            "workspace/intermediates/pass_01/gaps.json",
+                            "workspace/intermediates/pass_01/evidence.jsonl",
+                        ]
+                    },
+                }
+            )
+            evidence_by_category = {
+                "format": 0,
+                "coverage": 0,
+                "resolution": 0,
+                "truncation": 0,
+            }
+            metrics = ComplianceMetrics(
+                format_compliance=0.0,
+                annotation_coverage=0.0,
+                id_normalization=0.0,
+                gate_threshold=max(0.0, 1.0 - self.blocker_threshold),
+            )
+        else:
+            metrics, evidence_by_category = self._compute_metrics_from_evidence(evidence)
         base_score = (
             metrics.format_compliance + metrics.annotation_coverage + metrics.id_normalization
         ) / 3.0
@@ -108,21 +147,21 @@ class ComplianceScorer:
         manifest_dir = spec_folder / "manifest"
 
         checks = [
-            ("sections", manifest_dir / "sections", "manifest/sections.json"),
-            ("atoms", manifest_dir / "atoms", "manifest/atoms.jsonl"),
-            ("terms", manifest_dir / "terms", "manifest/terms.json"),
+            ("sections", manifest_dir / "sections", "*.sections.json"),
+            ("atoms", manifest_dir / "atoms", "*.atoms.jsonl"),
+            ("terms", manifest_dir / "terms", "*.terms.json"),
         ]
 
-        for name, per_file_dir, legacy_path in checks:
-            has_per_file = per_file_dir.exists() and any(per_file_dir.glob(f"*.{name}.json*"))
-            has_legacy = (spec_folder / legacy_path).exists()
-            if not has_per_file and not has_legacy:
+        for name, per_file_dir, pattern in checks:
+            has_per_file = per_file_dir.exists() and any(per_file_dir.glob(pattern))
+            if not has_per_file:
+                expected_path = f"manifest/{name}/{pattern}"
                 blockers.append(
                     {
                         "type": "missing_artifact",
                         "severity": Severity.ERROR.value,
-                        "message": f"Missing {legacy_path}",
-                        "details": {"expected_path": legacy_path},
+                        "message": f"Missing {expected_path}",
+                        "details": {"expected_path": expected_path},
                     }
                 )
 
@@ -133,21 +172,9 @@ class ComplianceScorer:
         blockers: list[dict[str, Any]] = []
         manifest_dir = spec_folder / "manifest"
 
-        sections_files = self._resolve_artifacts(
-            manifest_dir / "sections",
-            manifest_dir / "sections.json",
-            "*.sections.json",
-        )
-        atoms_files = self._resolve_artifacts(
-            manifest_dir / "atoms",
-            manifest_dir / "atoms.jsonl",
-            "*.atoms.jsonl",
-        )
-        terms_files = self._resolve_artifacts(
-            manifest_dir / "terms",
-            manifest_dir / "terms.json",
-            "*.terms.json",
-        )
+        sections_files = sorted((manifest_dir / "sections").glob("*.sections.json"))
+        atoms_files = sorted((manifest_dir / "atoms").glob("*.atoms.jsonl"))
+        terms_files = sorted((manifest_dir / "terms").glob("*.terms.json"))
 
         blockers.extend(self._validate_sections_files(sections_files))
         blockers.extend(self._validate_atoms_files(atoms_files))
@@ -241,6 +268,118 @@ class ComplianceScorer:
 
         return blockers
 
+    def _load_run_evidence(
+        self, run_root: Path
+    ) -> tuple[list[_EvidenceRecord], list[dict[str, Any]], list[dict[str, Any]]]:
+        evidence: list[_EvidenceRecord] = []
+        blockers: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+
+        pass_01_dir = run_root / "workspace" / "intermediates" / "pass_01"
+        gaps_path = pass_01_dir / "gaps.json"
+        evidence_jsonl_path = pass_01_dir / "evidence.jsonl"
+
+        if gaps_path.exists():
+            try:
+                payload = json.loads(gaps_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, list):
+                    raise TypeError("gaps.json must contain a JSON array")
+                for gap in payload:
+                    if not isinstance(gap, dict):
+                        continue
+                    severity = self._severity_value(gap.get("severity", Severity.WARNING.value))
+                    gap_category = self._category_from_gap(gap)
+                    base_message = str(gap.get("description") or gap.get("id") or "gap finding")
+                    gap_details = {
+                        "category": gap_category,
+                        "gap_id": gap.get("id"),
+                        "gap_type": gap.get("gap_type"),
+                    }
+                    gap_evidence = gap.get("evidence")
+                    if isinstance(gap_evidence, list) and gap_evidence:
+                        for item in gap_evidence:
+                            if not isinstance(item, dict):
+                                continue
+                            item_details_raw = item.get("details")
+                            item_details: dict[str, Any] = (
+                                dict(item_details_raw) if isinstance(item_details_raw, dict) else {}
+                            )
+                            item_details.setdefault("category", gap_category)
+                            invariant_family = item.get("invariant_family")
+                            if isinstance(invariant_family, str):
+                                item_details.setdefault("invariant_family", invariant_family)
+                            item_details.setdefault("gap_type", gap.get("gap_type"))
+                            evidence.append(
+                                _EvidenceRecord(
+                                    detector=str(item.get("detector") or "gap_synthesizer"),
+                                    severity=severity,
+                                    message=str(item.get("description") or base_message),
+                                    details=item_details,
+                                )
+                            )
+                    else:
+                        evidence.append(
+                            _EvidenceRecord(
+                                detector="gap_synthesizer",
+                                severity=severity,
+                                message=base_message,
+                                details=gap_details,
+                            )
+                        )
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                blockers.append(
+                    {
+                        "type": "evidence_unreadable",
+                        "severity": Severity.ERROR.value,
+                        "message": "Failed to load compliance evidence from gaps.json",
+                        "details": {"file": str(gaps_path), "error": str(exc)},
+                    }
+                )
+
+        if not evidence and evidence_jsonl_path.exists():
+            try:
+                with evidence_jsonl_path.open("r", encoding="utf-8") as handle:
+                    for line_no, line in enumerate(handle, start=1):
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        payload = json.loads(stripped)
+                        if not isinstance(payload, dict):
+                            raise TypeError("evidence record must be a JSON object")
+                        details_raw = payload.get("details")
+                        details: dict[str, Any] = (
+                            dict(details_raw) if isinstance(details_raw, dict) else {}
+                        )
+                        category = self._extract_category_from_payload(payload)
+                        if category is not None:
+                            details.setdefault("category", category)
+                        invariant_family = payload.get("invariant_family")
+                        if isinstance(invariant_family, str):
+                            details.setdefault("invariant_family", invariant_family)
+                        evidence.append(
+                            _EvidenceRecord(
+                                detector=str(payload.get("detector") or "pass_01_evidence"),
+                                severity=self._infer_payload_severity(payload),
+                                message=str(
+                                    payload.get("description")
+                                    or payload.get("message")
+                                    or f"evidence line {line_no}"
+                                ),
+                                details=details,
+                            )
+                        )
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                blockers.append(
+                    {
+                        "type": "evidence_unreadable",
+                        "severity": Severity.ERROR.value,
+                        "message": "Failed to load compliance evidence from evidence.jsonl",
+                        "details": {"file": str(evidence_jsonl_path), "error": str(exc)},
+                    }
+                )
+
+        return evidence, blockers, warnings
+
     def _compute_metrics_from_evidence(
         self, evidence: list[Evidence]
     ) -> tuple[ComplianceMetrics, dict[str, int]]:
@@ -276,40 +415,116 @@ class ComplianceScorer:
         )
 
     @staticmethod
-    def _extract_evidence_category(evidence: Evidence) -> str | None:
-        detector = getattr(evidence, "detector", "")
-        if not isinstance(detector, str) or not detector.startswith("strategy:"):
+    def _normalize_evidence_category(raw: str | None) -> str | None:
+        if not isinstance(raw, str):
             return None
+        lowered = raw.strip().lower()
+        if lowered in {"format", "format_violation"}:
+            return "format"
+        if lowered in {"coverage", "coverage_failure"}:
+            return "coverage"
+        if lowered in {"resolution", "entity_resolution", "entity_resolution_failure"}:
+            return "resolution"
+        if lowered in {"truncation", "remainder", "membership_failure"}:
+            return "truncation"
+        return None
+
+    @classmethod
+    def _extract_evidence_category(cls, evidence: Evidence) -> str | None:
         details = getattr(evidence, "details", None)
         if isinstance(details, dict):
             category = details.get("category")
             if isinstance(category, str):
-                return category
+                normalized = cls._normalize_evidence_category(category)
+                if normalized is not None:
+                    return normalized
+            invariant_family = details.get("invariant_family")
+            if isinstance(invariant_family, str):
+                normalized = cls._normalize_evidence_category(invariant_family)
+                if normalized is not None:
+                    return normalized
+        detector = getattr(evidence, "detector", "")
+        if isinstance(detector, str) and detector.startswith("strategy:"):
+            candidate = detector.split(":", 1)[1]
+            normalized = cls._normalize_evidence_category(candidate)
+            if normalized is not None:
+                return normalized
         message = getattr(evidence, "message", "")
         if isinstance(message, str) and ":" in message:
             candidate = message.split(":", 1)[0]
-            return candidate
+            normalized = cls._normalize_evidence_category(candidate)
+            if normalized is not None:
+                return normalized
         return None
 
     @staticmethod
-    def _severity_value(severity: str | Severity) -> str:
+    def _severity_value(severity: str | Severity | Any) -> str:
         if isinstance(severity, Severity):
             return severity.value
-        return str(severity)
+        normalized = str(severity).strip().lower()
+        if normalized == "warn":
+            return Severity.WARNING.value
+        return normalized
 
-    @staticmethod
-    def _resolve_artifacts(
-        per_file_dir: Path,
-        legacy_file: Path,
-        pattern: str,
-    ) -> list[Path]:
-        if per_file_dir.exists():
-            per_file = sorted(per_file_dir.glob(pattern))
-            if per_file:
-                return per_file
-        if legacy_file.exists():
-            return [legacy_file]
-        return []
+    @classmethod
+    def _category_from_gap(cls, gap: dict[str, Any]) -> str:
+        gap_type = gap.get("gap_type")
+        if isinstance(gap_type, str):
+            normalized = cls._normalize_evidence_category(gap_type)
+            if normalized is not None:
+                return normalized
+        for item in gap.get("evidence", []) if isinstance(gap.get("evidence"), list) else []:
+            if isinstance(item, dict):
+                category = cls._extract_category_from_payload(item)
+                if category is not None:
+                    return category
+        return "resolution"
+
+    @classmethod
+    def _extract_category_from_payload(cls, payload: dict[str, Any]) -> str | None:
+        details = payload.get("details")
+        if isinstance(details, dict):
+            category = details.get("category")
+            if isinstance(category, str):
+                normalized = cls._normalize_evidence_category(category)
+                if normalized is not None:
+                    return normalized
+        invariant_family = payload.get("invariant_family")
+        if isinstance(invariant_family, str):
+            normalized = cls._normalize_evidence_category(invariant_family)
+            if normalized is not None:
+                return normalized
+        detector = payload.get("detector")
+        if isinstance(detector, str):
+            normalized = cls._normalize_evidence_category(detector)
+            if normalized is not None:
+                return normalized
+        return None
+
+    @classmethod
+    def _infer_payload_severity(cls, payload: dict[str, Any]) -> str:
+        for key in ("severity",):
+            value = payload.get(key)
+            if value is not None:
+                normalized = cls._severity_value(value)
+                if normalized in {
+                    Severity.ERROR.value,
+                    Severity.WARNING.value,
+                    Severity.INFO.value,
+                }:
+                    return normalized
+        details = payload.get("details")
+        if isinstance(details, dict):
+            value = details.get("severity")
+            if value is not None:
+                normalized = cls._severity_value(value)
+                if normalized in {
+                    Severity.ERROR.value,
+                    Severity.WARNING.value,
+                    Severity.INFO.value,
+                }:
+                    return normalized
+        return Severity.WARNING.value
 
     def _validate_sections_files(self, files: list[Path]) -> list[dict[str, Any]]:
         blockers: list[dict[str, Any]] = []
@@ -411,16 +626,32 @@ class ComplianceScorer:
             try:
                 comments = scan_comments(filepath)
                 total_comments += len(comments)
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as exc:
                 # C03: Surface errors — file read failure during compliance scan
                 logger.warning("Failed to scan comments in %s", filepath, exc_info=True)
+                blockers.append(
+                    {
+                        "type": "scan_unavailable",
+                        "severity": Severity.ERROR.value,
+                        "message": f"Failed to scan comments in {filepath}",
+                        "details": {"file": str(filepath), "check": "comments", "error": str(exc)},
+                    }
+                )
 
             try:
                 stubs = scan_stubs(filepath)
                 total_stubs += len(stubs)
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as exc:
                 # C03: Surface errors — file read failure during compliance scan
                 logger.warning("Failed to scan stubs in %s", filepath, exc_info=True)
+                blockers.append(
+                    {
+                        "type": "scan_unavailable",
+                        "severity": Severity.ERROR.value,
+                        "message": f"Failed to scan stubs in {filepath}",
+                        "details": {"file": str(filepath), "check": "stubs", "error": str(exc)},
+                    }
+                )
 
         if total_comments > 0:
             blockers.append(

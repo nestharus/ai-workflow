@@ -5,7 +5,7 @@ the design templates directory and provides schema validation.
 
 Public API:
     SchemaRegistry: Registry for loading and accessing JSON schemas
-    get_default_registry: Get the singleton default registry instance
+    get_default_registry: Get a default schema registry instance
 
 Usage:
     from spec_manager.compliance.schema_registry import SchemaRegistry
@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -57,7 +58,7 @@ class SchemaRegistry:
             schema_dir: Directory containing schema files. Defaults to design templates.
         """
         self._schema_dir = schema_dir or _DEFAULT_SCHEMA_DIR
-        self._loaded: dict[str, dict[str, Any]] = {}
+        self._loaded: dict[str, tuple[str, dict[str, Any]]] = {}
 
     @property
     def schema_dir(self) -> Path:
@@ -68,34 +69,28 @@ class SchemaRegistry:
         """Get list of available schema IDs."""
         return list(self.SCHEMA_MAP.keys())
 
-    def _load_schema(self, schema_id: str) -> dict[str, Any]:
-        """Load a schema from file.
-
-        Args:
-            schema_id: The schema identifier (e.g., "atoms", "derived_elements").
-
-        Returns:
-            The JSON schema as a dictionary.
-
-        Raises:
-            KeyError: If schema_id is not in SCHEMA_MAP.
-            FileNotFoundError: If schema file doesn't exist.
-            json.JSONDecodeError: If schema file is not valid JSON.
-        """
+    def _schema_path_for(self, schema_id: str) -> Path:
+        """Resolve a schema id to an on-disk schema path."""
         if schema_id not in self.SCHEMA_MAP:
             raise KeyError(
                 f"Unknown schema ID: {schema_id}. Available: {list(self.SCHEMA_MAP.keys())}"
             )
+        return self._schema_dir / self.SCHEMA_MAP[schema_id]
 
-        filename = self.SCHEMA_MAP[schema_id]
-        schema_path = self._schema_dir / filename
+    @staticmethod
+    def _content_identity(content: str) -> str:
+        """Compute content identity for cache validation."""
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    def _load_schema(self, schema_id: str) -> tuple[str, dict[str, Any]]:
+        """Load a schema from file and return its content identity."""
+        schema_path = self._schema_path_for(schema_id)
         if not schema_path.exists():
             raise FileNotFoundError(f"Schema file not found: {schema_path}")
 
         _logger.debug(f"Loading schema '{schema_id}' from {schema_path}")
-        with open(schema_path, encoding="utf-8") as f:
-            return json.load(f)
+        content = schema_path.read_text(encoding="utf-8")
+        return self._content_identity(content), json.loads(content)
 
     def get_schema(self, schema_id: str) -> dict[str, Any]:
         """Get a schema by ID, loading from file if needed.
@@ -112,9 +107,14 @@ class SchemaRegistry:
             KeyError: If schema_id is unknown.
             FileNotFoundError: If schema file doesn't exist.
         """
-        if schema_id not in self._loaded:
-            self._loaded[schema_id] = self._load_schema(schema_id)
-        return self._loaded[schema_id]
+        identity, schema = self._load_schema(schema_id)
+        cached = self._loaded.get(schema_id)
+        if cached is not None:
+            cached_identity, cached_schema = cached
+            if cached_identity == identity:
+                return cached_schema
+        self._loaded[schema_id] = (identity, schema)
+        return schema
 
     def is_schema_available(self, schema_id: str) -> bool:
         """Check if a schema is available and its file exists.
@@ -127,8 +127,7 @@ class SchemaRegistry:
         """
         if schema_id not in self.SCHEMA_MAP:
             return False
-        filename = self.SCHEMA_MAP[schema_id]
-        schema_path = self._schema_dir / filename
+        schema_path = self._schema_path_for(schema_id)
         return schema_path.exists()
 
     def clear_cache(self) -> None:
@@ -136,17 +135,10 @@ class SchemaRegistry:
         self._loaded.clear()
 
 
-# Singleton default registry
-_default_registry: SchemaRegistry | None = None
-
-
 def get_default_registry() -> SchemaRegistry:
-    """Get the singleton default schema registry instance.
+    """Get a default schema registry instance.
 
     Returns:
-        The default SchemaRegistry instance.
+        A new SchemaRegistry instance.
     """
-    global _default_registry
-    if _default_registry is None:
-        _default_registry = SchemaRegistry()
-    return _default_registry
+    return SchemaRegistry()
