@@ -27,10 +27,12 @@ from spec_manager.orchestration.coordination.signals import (
 )
 from spec_manager.orchestration.implementation.types import (
     EdgeProposal,
+    FunctionTarget,
     ImplementorOutput,
     PinProposal,
     TestArtifact,
     UnderSpecEvent,
+    implementor_output_json_schema,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,13 @@ class ImplementationRunResult:
     functions_implemented: int = 0
     functions_skipped: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _JsonLoadResult:
+    status: str
+    payload: Any = None
+    error: str = ""
 
 
 class ImplementationRunner:
@@ -90,12 +99,17 @@ class ImplementationRunner:
         notes_path_hint = (iteration_dir / "notes.md").as_posix()
 
         before_snapshot = self._snapshot_text_files(slice_root)
-        plan_intentions = self._load_plan_intentions(plan_path)
-        gap_report = self._load_gap_report(gaps_path)
-        constraints_context = self._load_constraints_context(constraints_paths or [])
+        plan_intentions, plan_load_errors = self._load_plan_intentions(plan_path)
+        gap_report, gap_load_errors = self._load_gap_report(gaps_path)
+        constraints_context, constraint_load_errors = self._load_constraints_context(
+            constraints_paths or []
+        )
+        result.errors.extend(plan_load_errors)
+        result.errors.extend(gap_load_errors)
+        result.errors.extend(constraint_load_errors)
 
         project_state = analyze_project(str(slice_root))
-        candidates = self._collect_unresolved_candidates(
+        candidates, under_spec_without_requirements = self._collect_unresolved_candidates(
             project_state=project_state,
             slice_root=slice_root,
             unresolved_states={TranslationState.UNRESOLVED, TranslationState.STUB},
@@ -113,6 +127,19 @@ class ImplementationRunner:
         all_edits: list[dict[str, Any]] = []
         all_notes: list[str] = []
         all_signals: list[CoordinationSignal] = []
+
+        if under_spec_without_requirements:
+            all_under_spec.extend(under_spec_without_requirements)
+            result.functions_skipped += len(under_spec_without_requirements)
+            for event in under_spec_without_requirements:
+                result.errors.append(
+                    {
+                        "function": str(event.needed_for or ""),
+                        "error": (
+                            "Unresolved function has no spec comments; emitted under-spec event"
+                        ),
+                    }
+                )
 
         for idx, candidate in enumerate(prioritized):
             if result.functions_implemented >= max_functions:
@@ -155,6 +182,21 @@ class ImplementationRunner:
                         "error": "Agent returned invalid or unparseable output",
                     }
                 )
+                continue
+
+            target_matches, target_error = self._validate_function_target(
+                requested_candidate=candidate,
+                live_func=live_func,
+                returned_target=output.function_target,
+            )
+            if not target_matches:
+                result.errors.append(
+                    {
+                        "function": candidate["qualified_name"],
+                        "error": target_error,
+                    }
+                )
+                result.functions_skipped += 1
                 continue
 
             if output.under_spec_events:
@@ -276,6 +318,9 @@ class ImplementationRunner:
                         "error": "Function remains unresolved after edit application",
                     }
                 )
+                result.functions_skipped += 1
+                all_edits.extend(applied_for_function)
+                continue
 
             all_edits.extend(applied_for_function)
             all_pin_proposals.extend(output.pin_proposals)
@@ -324,10 +369,7 @@ class ImplementationRunner:
         file_rel: str,
     ) -> ImplementorOutput | None:
         """Call the pdd-function-implementor agent for one function."""
-        from spec_manager.refinement.formats import (
-            _extract_json_payload,
-            _strip_code_fences,
-        )
+        from spec_manager.refinement.formats import extract_json_from_llm_output
 
         prompt = self._build_prompt(
             func=func,
@@ -337,25 +379,32 @@ class ImplementationRunner:
             file_rel=file_rel,
         )
 
-        cleaned = ""
+        raw_output = ""
         try:
             from spec_manager.core.agent_utils import run_agent
 
-            output = run_agent(
+            raw_output = run_agent(
                 agent_name="pdd-function-implementor",
                 prompt=prompt,
                 workspace=self._workspace,
             )
-            cleaned = _strip_code_fences(output)
-            payload = _extract_json_payload(cleaned)
-            data = json.loads(payload)
+            data = extract_json_from_llm_output(
+                raw_output,
+                allow_array=False,
+                allow_object=True,
+                location="orchestration.implementation.runner._call_implementor",
+            )
+            if not isinstance(data, dict):
+                raise TypeError(
+                    f"Implementor output must be a JSON object, got {type(data).__name__}"
+                )
             return ImplementorOutput.from_dict(data)
-        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        except (ValueError, TypeError) as exc:
             logger.warning(
                 "Implementor returned invalid schema for %s: %s (raw: %.200s)",
                 getattr(func, "qualified_name", "<unknown>"),
                 exc,
-                cleaned,
+                raw_output,
             )
             return None
         except Exception as exc:
@@ -391,28 +440,7 @@ class ImplementationRunner:
                 class_methods.append(sig_line)
 
         signature = lines[func.line_start - 1].strip() if func.line_start - 1 < len(lines) else ""
-        schema = (
-            "{\n"
-            '  "function_target": {"file": "path/relative/to/slice_root.ext", '
-            '"fqn": "package.module:SymbolName", "signature": "string", '
-            '"span_hint": {"start_line": 1, "end_line": 2}},\n'
-            '  "edits": [{"path": "path/relative/to/slice_root.ext", '
-            '"unified_diff": "diff --git ..."}],\n'
-            '  "pin_proposals": [{"pin_id": "PIN-...", "role": "ATOM", '
-            '"fqn": "package.module:SymbolName", "file": "path/relative/to/slice_root.ext"'
-            ", "
-            '"span": {"start_line": 1, "end_line": 2, "anchor_before": "...", '
-            '"anchor_after": "..."}, "atom_id_hint": "ATOM-...", "evidence_paths": []}],\n'
-            '  "edge_proposals": [{"src": "PIN-... or fqn", "dst": "PIN-... or store/event id", '
-            '"signal_type": "CALL", "weight": 0.7, "evidence_paths": []}],\n'
-            '  "tests": [{"path": "tests/test_symbol.ext", "purpose": "...", "scope": "UNIT", "'
-            'runner_hint": null, "unified_diff": "diff --git ..."}],\n'
-            '  "under_spec_events": [{"kind": "MISSING_CONSTRAINT", "question": "...", '
-            '"options": ["..."], "needed_for": "package.module:SymbolName", '
-            '"evidence_paths": []}],\n'
-            '  "notes_md": "short markdown notes"\n'
-            "}"
-        )
+        schema = json.dumps(implementor_output_json_schema(), indent=2)
 
         parts = [
             "## FILE CONTEXT\n",
@@ -465,8 +493,8 @@ class ImplementationRunner:
             "Implement only this function target.\n"
             "If ambiguity blocks implementation, emit under_spec_events "
             "and avoid the ambiguous edit.\n"
-            "Return ONLY valid JSON matching this exact schema and include all top-level keys, "
-            "using empty arrays when there are no entries.\n\n"
+            "Return ONLY valid JSON object conforming to this schema, including all required "
+            "top-level keys and using empty arrays when there are no entries.\n\n"
             "## REQUIRED OUTPUT SCHEMA\n"
         )
         parts.append(schema)
@@ -650,59 +678,146 @@ class ImplementationRunner:
         return "".join(patch_chunks)
 
     @staticmethod
-    def _load_json(path: Path | None) -> Any:
-        if path is None or not path.exists():
-            return None
+    def _load_json(path: Path | None) -> _JsonLoadResult:
+        if path is None:
+            return _JsonLoadResult(status="not_provided")
+        if not path.exists():
+            return _JsonLoadResult(status="missing")
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return _JsonLoadResult(status="read_error", error=str(exc))
+
+        try:
+            return _JsonLoadResult(status="loaded", payload=json.loads(raw))
+        except json.JSONDecodeError as exc:
+            return _JsonLoadResult(status="invalid_json", error=str(exc))
 
     @classmethod
-    def _load_plan_intentions(cls, plan_path: Path | None) -> list[dict[str, Any]]:
-        payload = cls._load_json(plan_path)
+    def _load_plan_intentions(
+        cls, plan_path: Path | None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        load = cls._load_json(plan_path)
+        if load.status == "not_provided":
+            return [], []
+        if load.status == "missing":
+            return [], [
+                {
+                    "file": str(plan_path or ""),
+                    "error": "Plan artifact path was provided but file does not exist",
+                }
+            ]
+        if load.status in {"read_error", "invalid_json"}:
+            return [], [
+                {
+                    "file": str(plan_path or ""),
+                    "error": f"Failed to load plan artifact ({load.status}): {load.error}",
+                }
+            ]
+
+        payload = load.payload
         if isinstance(payload, dict):
             intentions = payload.get("intentions", [])
             if isinstance(intentions, list):
-                return [row for row in intentions if isinstance(row, dict)]
-            return []
+                return [row for row in intentions if isinstance(row, dict)], []
+            return [], [
+                {
+                    "file": str(plan_path or ""),
+                    "error": "Plan artifact must contain an intentions list",
+                }
+            ]
         if isinstance(payload, list):
-            return [row for row in payload if isinstance(row, dict)]
-        return []
+            return [row for row in payload if isinstance(row, dict)], []
+        return [], [
+            {
+                "file": str(plan_path or ""),
+                "error": "Plan artifact must be a JSON object or array",
+            }
+        ]
 
     @classmethod
-    def _load_gap_report(cls, gaps_path: Path | None) -> list[dict[str, Any]]:
-        payload = cls._load_json(gaps_path)
+    def _load_gap_report(
+        cls, gaps_path: Path | None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        load = cls._load_json(gaps_path)
+        if load.status == "not_provided":
+            return [], []
+        if load.status == "missing":
+            return [], [
+                {
+                    "file": str(gaps_path or ""),
+                    "error": "Gap artifact path was provided but file does not exist",
+                }
+            ]
+        if load.status in {"read_error", "invalid_json"}:
+            return [], [
+                {
+                    "file": str(gaps_path or ""),
+                    "error": f"Failed to load gap artifact ({load.status}): {load.error}",
+                }
+            ]
+
+        payload = load.payload
         if isinstance(payload, dict):
             rows = payload.get("open_gaps", payload.get("gaps", []))
             if isinstance(rows, list):
-                return [row for row in rows if isinstance(row, dict)]
-            return []
+                return [row for row in rows if isinstance(row, dict)], []
+            return [], [
+                {
+                    "file": str(gaps_path or ""),
+                    "error": "Gap artifact must contain open_gaps or gaps list",
+                }
+            ]
         if isinstance(payload, list):
-            return [row for row in payload if isinstance(row, dict)]
-        return []
+            return [row for row in payload if isinstance(row, dict)], []
+        return [], [
+            {
+                "file": str(gaps_path or ""),
+                "error": "Gap artifact must be a JSON object or array",
+            }
+        ]
 
     @staticmethod
-    def _load_constraints_context(paths: list[Path]) -> str:
+    def _load_constraints_context(paths: list[Path]) -> tuple[str, list[dict[str, str]]]:
         chunks: list[str] = []
+        errors: list[dict[str, str]] = []
         seen: set[Path] = set()
         for raw_path in paths:
             path = raw_path.expanduser().resolve() if raw_path else raw_path
-            if not path or path in seen or not path.exists() or not path.is_file():
+            if not path or path in seen:
                 continue
             seen.add(path)
+            if not path.exists():
+                errors.append(
+                    {
+                        "file": path.as_posix(),
+                        "error": "Constraint document path does not exist",
+                    }
+                )
+                continue
+            if not path.is_file():
+                errors.append(
+                    {
+                        "file": path.as_posix(),
+                        "error": "Constraint document path is not a file",
+                    }
+                )
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as exc:
+                errors.append(
+                    {
+                        "file": path.as_posix(),
+                        "error": f"Failed to read constraint document: {exc}",
+                    }
+                )
                 continue
             text = text.strip()
             if not text:
                 continue
-            # Keep context bounded to reduce prompt bloat.
-            if len(text) > 5000:
-                text = text[:5000] + "\n... (truncated)"
             chunks.append(f"### {path.name}\n{text}")
-        return "\n\n".join(chunks)
+        return "\n\n".join(chunks), errors
 
     @classmethod
     def _collect_unresolved_candidates(
@@ -711,8 +826,9 @@ class ImplementationRunner:
         project_state: Any,
         slice_root: Path,
         unresolved_states: set[Any],
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[UnderSpecEvent]]:
         candidates: list[dict[str, Any]] = []
+        under_spec_events: list[UnderSpecEvent] = []
         for file_path, file_state in sorted(project_state.files.items()):
             source_path = Path(file_path)
             if not source_path.is_absolute():
@@ -722,19 +838,37 @@ class ImplementationRunner:
                 fn for fn in file_state.functions if fn.translation_state in unresolved_states
             ]
             for func in sorted(unresolved, key=lambda item: item.line_start, reverse=True):
-                spec_texts = [c.text for c in getattr(func, "spec_comments", [])]
+                qualified_name = str(getattr(func, "qualified_name", "")).strip()
+                spec_texts = [
+                    str(getattr(comment, "text", "")).strip()
+                    for comment in getattr(func, "spec_comments", [])
+                    if str(getattr(comment, "text", "")).strip()
+                ]
                 if not spec_texts and func.translation_state in unresolved_states:
+                    needed_for = qualified_name or None
+                    under_spec_events.append(
+                        UnderSpecEvent(
+                            kind="MISSING_CONSTRAINT",
+                            question=(
+                                f"Cannot implement {qualified_name or '<unknown>'} in {file_rel}: "
+                                "function is unresolved but has no spec comments."
+                            ),
+                            options=[],
+                            needed_for=needed_for,
+                            evidence_paths=[file_rel] if file_rel else [],
+                        )
+                    )
                     continue
                 candidates.append(
                     {
                         "file_key": str(file_path),
                         "file_path": source_path,
                         "file_rel": file_rel,
-                        "qualified_name": str(getattr(func, "qualified_name", "")).strip(),
+                        "qualified_name": qualified_name,
                         "function": func,
                     }
                 )
-        return candidates
+        return candidates, under_spec_events
 
     @classmethod
     def _prioritize_candidates(
@@ -839,6 +973,64 @@ class ImplementationRunner:
 
         return any(sym in hint_symbols for sym in symbols if sym)
 
+    @classmethod
+    def _validate_function_target(
+        cls,
+        *,
+        requested_candidate: dict[str, Any],
+        live_func: Any,
+        returned_target: FunctionTarget,
+    ) -> tuple[bool, str]:
+        requested_file = cls._normalize_path(str(requested_candidate.get("file_rel", "")))
+        returned_file = cls._normalize_path(str(returned_target.file))
+        if requested_file != returned_file and not cls._path_matches(
+            candidate=requested_file,
+            hint=returned_file,
+        ):
+            return (
+                False,
+                (
+                    "Implementor returned mismatched function_target.file: "
+                    f"expected {requested_file!r}, got {returned_file!r}"
+                ),
+            )
+
+        requested_fqn = str(requested_candidate.get("qualified_name", "")).strip()
+        returned_fqn = str(returned_target.fqn).strip()
+        if requested_fqn != returned_fqn:
+            return (
+                False,
+                (
+                    "Implementor returned mismatched function_target.fqn: "
+                    f"expected {requested_fqn!r}, got {returned_fqn!r}"
+                ),
+            )
+
+        span_hint = returned_target.span_hint
+        if isinstance(span_hint, dict):
+            returned_start = cls._coerce_int(span_hint.get("start_line"))
+            returned_end = cls._coerce_int(span_hint.get("end_line"))
+            expected_start = cls._coerce_int(getattr(live_func, "line_start", 0))
+            expected_end = cls._coerce_int(getattr(live_func, "line_end", 0))
+            if returned_start > 0 and expected_start > 0 and returned_start != expected_start:
+                return (
+                    False,
+                    (
+                        "Implementor returned mismatched function_target.span_hint.start_line: "
+                        f"expected {expected_start}, got {returned_start}"
+                    ),
+                )
+            if returned_end > 0 and expected_end > 0 and returned_end != expected_end:
+                return (
+                    False,
+                    (
+                        "Implementor returned mismatched function_target.span_hint.end_line: "
+                        f"expected {expected_end}, got {returned_end}"
+                    ),
+                )
+
+        return True, ""
+
     @staticmethod
     def _lookup_live_function(
         *,
@@ -878,6 +1070,13 @@ class ImplementationRunner:
     @staticmethod
     def _normalize_path(path: str) -> str:
         return path.strip().replace("\\", "/").lstrip("./").lower()
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _path_matches(candidate: str, hint: str) -> bool:

@@ -30,52 +30,187 @@ _REQUIRED_FIELDS: dict[str, list[str]] = {
     ],
 }
 
-_VALID_DIMENSIONS = {
+_PIN_ROLES = ("ATOM", "STORE", "SHAPE", "TEST", "ARCH")
+_EDGE_SIGNAL_TYPES = (
+    "CALL",
+    "STORE_TOUCH",
+    "EVENT_EMIT",
+    "EVENT_HANDLE",
+    "IMPORT",
+    "REFERENCE",
+)
+_TEST_SCOPES = ("UNIT", "SLICE", "INTEGRATION")
+_UNDER_SPEC_KINDS = (
+    "MISSING_CONSTRAINT",
+    "CONFLICTING_CONSTRAINTS",
+    "EXTERNAL_DEP_UNKNOWN",
+    "NEEDS_PRODUCT_DECISION",
+    "NEEDS_API_DECISION",
+)
+_UNDER_SPEC_DIMENSIONS = (
     "software",
     "legal",
     "economic",
     "organizational",
     "temporal",
     "operational",
-}
-_VALID_DECISION_TYPES = {
+)
+_UNDER_SPEC_AUTHORITIES = ("planner_ok", "human_required")
+_UNDER_SPEC_DECISION_TYPES = (
     "dependency",
     "infrastructure",
     "data_policy",
     "security",
     "performance",
     "architecture",
-}
+)
 
 
-def _normalize_dimension(value: Any) -> str:
-    text = str(value).strip().lower()
-    if text in _VALID_DIMENSIONS:
-        return text
-    return "software"
+def _parse_literal(
+    value: Any,
+    *,
+    field_name: str,
+    allowed: tuple[str, ...],
+    default: str | None = None,
+) -> str:
+    if value is None:
+        if default is not None:
+            return default
+        raise ValueError(f"{field_name} is required")
+
+    text = str(value).strip()
+    if not text:
+        if default is not None:
+            return default
+        raise ValueError(f"{field_name} is required")
+
+    if text not in allowed:
+        allowed_values = ", ".join(allowed)
+        raise ValueError(f"{field_name} must be one of [{allowed_values}], got {text!r}")
+    return text
 
 
-def _normalize_authority_required(value: Any, *, dimension: str) -> str:
-    text = str(value).strip().lower()
-    if text == "user_required":
-        return "human_required"
-    if text in {"planner_ok", "human_required"}:
-        return text
-    if dimension != "software":
-        return "human_required"
-    return "planner_ok"
+def _parse_string_list(value: Any, *, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise TypeError(f"{field_name} must be a list")
+
+    values: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise TypeError(f"{field_name}[{index}] must be a string")
+        values.append(item)
+    return values
 
 
-def _normalize_decision_type(value: Any, *, kind: str) -> str:
-    text = str(value).strip().lower()
-    if text in _VALID_DECISION_TYPES:
-        return text
-    kind_upper = str(kind).strip().upper()
-    if kind_upper in {"EXTERNAL_DEP_UNKNOWN", "EXTERNAL_DEPENDENCY_UNKNOWN"}:
-        return "dependency"
-    if kind_upper in {"NEEDS_API_DECISION", "CONFLICTING_CONSTRAINTS"}:
-        return "architecture"
-    return "performance"
+def implementor_output_json_schema() -> dict[str, Any]:
+    """Single-source response schema for implementor prompting + parsing."""
+    return {
+        "type": "object",
+        "required": list(_REQUIRED_FIELDS["ImplementorOutput"]),
+        "properties": {
+            "function_target": {
+                "type": "object",
+                "required": list(_REQUIRED_FIELDS["FunctionTarget"]),
+                "properties": {
+                    "file": {"type": "string"},
+                    "fqn": {"type": "string"},
+                    "signature": {"type": "string"},
+                    "span_hint": {
+                        "type": "object",
+                        "required": ["start_line", "end_line"],
+                        "properties": {
+                            "start_line": {"type": "integer"},
+                            "end_line": {"type": "integer"},
+                        },
+                    },
+                },
+            },
+            "edits": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": list(_REQUIRED_FIELDS["EditEntry"]),
+                    "properties": {
+                        "path": {"type": "string"},
+                        "unified_diff": {"type": "string"},
+                    },
+                },
+            },
+            "pin_proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": list(_REQUIRED_FIELDS["PinProposal"]),
+                    "properties": {
+                        "pin_id": {"type": "string"},
+                        "role": {"type": "string", "enum": list(_PIN_ROLES)},
+                        "fqn": {"type": "string"},
+                        "file": {"type": "string"},
+                        "span": {"type": "object"},
+                        "atom_id_hint": {"type": ["string", "null"]},
+                        "evidence_paths": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "edge_proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": list(_REQUIRED_FIELDS["EdgeProposal"]),
+                    "properties": {
+                        "src": {"type": "string"},
+                        "dst": {"type": "string"},
+                        "signal_type": {
+                            "type": "string",
+                            "enum": list(_EDGE_SIGNAL_TYPES),
+                        },
+                        "weight": {"type": "number"},
+                        "evidence_paths": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "tests": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": list(_REQUIRED_FIELDS["TestArtifact"]),
+                    "properties": {
+                        "path": {"type": "string"},
+                        "purpose": {"type": "string"},
+                        "scope": {"type": "string", "enum": list(_TEST_SCOPES)},
+                        "runner_hint": {"type": ["string", "null"]},
+                        "unified_diff": {"type": "string"},
+                    },
+                },
+            },
+            "under_spec_events": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": list(_REQUIRED_FIELDS["UnderSpecEvent"]),
+                    "properties": {
+                        "kind": {"type": "string", "enum": list(_UNDER_SPEC_KINDS)},
+                        "question": {"type": "string"},
+                        "dimension": {"type": "string", "enum": list(_UNDER_SPEC_DIMENSIONS)},
+                        "authority_required": {
+                            "type": "string",
+                            "enum": list(_UNDER_SPEC_AUTHORITIES),
+                        },
+                        "decision_type": {
+                            "type": "string",
+                            "enum": list(_UNDER_SPEC_DECISION_TYPES),
+                        },
+                        "options": {"type": "array", "items": {"type": "string"}},
+                        "needed_for": {"type": ["string", "null"]},
+                        "evidence_paths": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "notes_md": {"type": "string"},
+        },
+    }
 
 
 def _check_required(cls_name: str, d: dict[str, Any]) -> None:
@@ -103,14 +238,25 @@ class PinProposal:
         span = d.get("span")
         if not isinstance(span, dict):
             raise TypeError("PinProposal.span must be an object")
+        atom_id_hint = d.get("atom_id_hint")
+        if atom_id_hint is not None and not isinstance(atom_id_hint, str):
+            raise TypeError("PinProposal.atom_id_hint must be a string or null")
         return cls(
             pin_id=str(d["pin_id"]).strip(),
             fqn=str(d["fqn"]).strip(),
             file=str(d["file"]).strip(),
-            role=str(d["role"]).strip() or "ATOM",
+            role=_parse_literal(
+                d.get("role"),
+                field_name="PinProposal.role",
+                allowed=_PIN_ROLES,
+                default="ATOM",
+            ),
             span=span,
-            atom_id_hint=d.get("atom_id_hint"),
-            evidence_paths=d.get("evidence_paths", []),
+            atom_id_hint=atom_id_hint,
+            evidence_paths=_parse_string_list(
+                d.get("evidence_paths"),
+                field_name="PinProposal.evidence_paths",
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -143,9 +289,17 @@ class EdgeProposal:
         return cls(
             src=str(d["src"]).strip(),
             dst=str(d["dst"]).strip(),
-            signal_type=str(d["signal_type"]).strip() or "CALL",
+            signal_type=_parse_literal(
+                d.get("signal_type"),
+                field_name="EdgeProposal.signal_type",
+                allowed=_EDGE_SIGNAL_TYPES,
+                default="CALL",
+            ),
             weight=float(d["weight"]),
-            evidence_paths=d.get("evidence_paths", []),
+            evidence_paths=_parse_string_list(
+                d.get("evidence_paths"),
+                field_name="EdgeProposal.evidence_paths",
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,11 +325,19 @@ class TestArtifact:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TestArtifact:
         _check_required("TestArtifact", d)
+        runner_hint = d.get("runner_hint")
+        if runner_hint is not None and not isinstance(runner_hint, str):
+            raise TypeError("TestArtifact.runner_hint must be a string or null")
         return cls(
             path=str(d["path"]).strip(),
             purpose=str(d["purpose"]).strip(),
-            scope=str(d["scope"]).strip() or "UNIT",
-            runner_hint=d.get("runner_hint"),
+            scope=_parse_literal(
+                d.get("scope"),
+                field_name="TestArtifact.scope",
+                allowed=_TEST_SCOPES,
+                default="UNIT",
+            ),
+            runner_hint=runner_hint,
             unified_diff=str(d["unified_diff"]),
         )
 
@@ -229,25 +391,51 @@ class UnderSpecEvent:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> UnderSpecEvent:
         _check_required("UnderSpecEvent", d)
-        kind = str(d.get("kind", "MISSING_CONSTRAINT")).strip() or "MISSING_CONSTRAINT"
-        dimension = _normalize_dimension(d.get("dimension", "software"))
-        authority_required = _normalize_authority_required(
-            d.get("authority_required", d.get("authority", "planner_ok")),
-            dimension=dimension,
+        kind = _parse_literal(
+            d.get("kind"),
+            field_name="UnderSpecEvent.kind",
+            allowed=_UNDER_SPEC_KINDS,
+            default="MISSING_CONSTRAINT",
         )
-        decision_type = _normalize_decision_type(
-            d.get("decision_type", ""),
-            kind=kind,
+        dimension = _parse_literal(
+            d.get("dimension"),
+            field_name="UnderSpecEvent.dimension",
+            allowed=_UNDER_SPEC_DIMENSIONS,
+            default="software",
         )
+        authority_required = _parse_literal(
+            d.get("authority_required"),
+            field_name="UnderSpecEvent.authority_required",
+            allowed=_UNDER_SPEC_AUTHORITIES,
+            default="planner_ok",
+        )
+        decision_type = _parse_literal(
+            d.get("decision_type"),
+            field_name="UnderSpecEvent.decision_type",
+            allowed=_UNDER_SPEC_DECISION_TYPES,
+            default="performance",
+        )
+        needed_for = d.get("needed_for")
+        if needed_for is not None and not isinstance(needed_for, str):
+            raise TypeError("UnderSpecEvent.needed_for must be a string or null")
+        question = d.get("question", "")
+        if not isinstance(question, str):
+            raise TypeError("UnderSpecEvent.question must be a string")
         return cls(
             kind=kind,
-            question=d.get("question", ""),
+            question=question,
             dimension=dimension,  # type: ignore[arg-type]
             authority_required=authority_required,  # type: ignore[arg-type]
             decision_type=decision_type,  # type: ignore[arg-type]
-            options=d.get("options", []),
-            needed_for=d.get("needed_for"),
-            evidence_paths=d.get("evidence_paths", []),
+            options=_parse_string_list(
+                d.get("options"),
+                field_name="UnderSpecEvent.options",
+            ),
+            needed_for=needed_for,
+            evidence_paths=_parse_string_list(
+                d.get("evidence_paths"),
+                field_name="UnderSpecEvent.evidence_paths",
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
