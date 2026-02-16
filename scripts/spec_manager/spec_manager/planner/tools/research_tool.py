@@ -7,6 +7,7 @@ research interface for the planner.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
 import re
 from dataclasses import dataclass, field
@@ -41,6 +42,15 @@ class ResearchFinding:
     text: str
     confidence: float = 0.0
     refs: list[str] = field(default_factory=list)
+    verified: bool = True
+
+
+@dataclass
+class ConstraintLookupResult:
+    """Outcome of constraints lookup with explicit error visibility."""
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -135,16 +145,7 @@ class ResearchTool:
         else:
             log_stage("routing", "failed", f"unsupported dimension={dimension!r}")
 
-        if findings:
-            best = max(findings, key=lambda finding: finding.confidence)
-            return ResearchResult(
-                findings=findings,
-                synthesis=best.text,
-                confidence=best.confidence,
-                metadata=metadata,
-            )
-
-        return ResearchResult(metadata=metadata)
+        return self._finalize_result(findings=findings, metadata=metadata)
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
@@ -526,7 +527,16 @@ class ResearchTool:
             log_stage("constraints_store", "skipped", "constraints tool not configured")
             return
 
-        rows = self._search_constraints(query)
+        lookup = self._search_constraints(query)
+        if lookup.errors and not lookup.rows:
+            log_stage(
+                "constraints_store",
+                "failed",
+                "; ".join(lookup.errors),
+            )
+            return
+
+        rows = lookup.rows
         if not rows:
             log_stage("constraints_store", "miss", "no matching constraints/decisions")
             return
@@ -543,12 +553,19 @@ class ResearchTool:
                     ],
                 )
             )
+        if lookup.errors:
+            log_stage(
+                "constraints_store",
+                "partial",
+                f"{len(rows)} matches with {len(lookup.errors)} lookup failures",
+            )
+            return
         log_stage("constraints_store", "hit", f"{len(rows)} matching constraints/decisions")
 
-    def _search_constraints(self, query: ResearchQuery) -> list[dict[str, Any]]:
+    def _search_constraints(self, query: ResearchQuery) -> ConstraintLookupResult:
         question = str(query.question or "").strip()
         if not question:
-            return []
+            return ConstraintLookupResult()
 
         tool = self._constraints_tool
         slice_id = str(query.slice_id or "").strip() or "__system__"
@@ -558,16 +575,21 @@ class ResearchTool:
 
         question_tokens = self._tokenize(question)
         rows: list[dict[str, Any]] = []
+        errors: list[str] = []
 
         if hasattr(tool, "load_constraints"):
             for target_slice_id in slice_ids:
                 try:
                     snapshot = tool.load_constraints(target_slice_id)
-                except Exception:
-                    logger.debug(
+                except Exception as exc:
+                    logger.warning(
                         "Constraints load failed for slice=%s",
                         target_slice_id,
                         exc_info=True,
+                    )
+                    errors.append(
+                        f"load_constraints failed for slice '{target_slice_id}': "
+                        f"{str(exc).strip() or exc.__class__.__name__}"
                     )
                     continue
 
@@ -598,11 +620,15 @@ class ResearchTool:
             for target_slice_id in slice_ids:
                 try:
                     coverage = tool.check_coverage(target_slice_id, [question])
-                except Exception:
-                    logger.debug(
+                except Exception as exc:
+                    logger.warning(
                         "Constraints coverage failed for slice=%s",
                         target_slice_id,
                         exc_info=True,
+                    )
+                    errors.append(
+                        f"check_coverage failed for slice '{target_slice_id}': "
+                        f"{str(exc).strip() or exc.__class__.__name__}"
                     )
                     continue
                 if not isinstance(coverage, dict):
@@ -636,7 +662,7 @@ class ResearchTool:
                 continue
             seen.add(marker)
             deduped.append(row)
-        return deduped
+        return ConstraintLookupResult(rows=deduped, errors=errors)
 
     def _match_score(
         self, question: str, question_tokens: set[str], candidate_question: str
@@ -696,6 +722,7 @@ class ResearchTool:
                         text=str(getattr(response, "response_text", "") or "").strip(),
                         confidence=0.7,
                         refs=refs,
+                        verified=False,
                     )
                 )
                 log_stage("web_research", "hit", "coordinator returned response")
@@ -740,31 +767,7 @@ class ResearchTool:
         tool = self._external_research_tool
         try:
             if callable(tool):
-                for kwargs in (
-                    {
-                        "question": payload["question"],
-                        "context": payload["context"],
-                        "trace_id": payload["trace_id"],
-                        "payload": payload,
-                    },
-                    {
-                        "query": payload["question"],
-                        "context": payload["context"],
-                        "trace_id": payload["trace_id"],
-                    },
-                    {
-                        "prompt": payload["question"],
-                        "context": payload["context"],
-                        "trace_id": payload["trace_id"],
-                    },
-                ):
-                    try:
-                        raw = tool(**kwargs)
-                        break
-                    except TypeError:
-                        continue
-                if raw is None:
-                    raw = tool(payload)
+                raw = self._invoke_external_callable(tool, payload)
             elif hasattr(tool, "research"):
                 raw = tool.research(payload)
             elif hasattr(tool, "run"):
@@ -789,9 +792,119 @@ class ResearchTool:
                     trace_contract=trace_contract,
                     fallback_ids=[str(trace_contract.get("event_id", "") or "")],
                 ),
+                verified=False,
             )
         )
         log_stage("external_research", "hit", "external tool returned response")
+
+    def _invoke_external_callable(self, tool: Any, payload: dict[str, Any]) -> Any:
+        signature = self._resolve_callable_signature(tool)
+        keyword_candidates = (
+            {
+                "question": payload["question"],
+                "context": payload["context"],
+                "trace_id": payload["trace_id"],
+                "payload": payload,
+            },
+            {
+                "question": payload["question"],
+            },
+            {
+                "query": payload["question"],
+                "context": payload["context"],
+                "trace_id": payload["trace_id"],
+            },
+            {
+                "query": payload["question"],
+            },
+            {
+                "prompt": payload["question"],
+                "context": payload["context"],
+                "trace_id": payload["trace_id"],
+            },
+            {
+                "prompt": payload["question"],
+            },
+            {
+                "payload": payload,
+            },
+        )
+        if signature is None:
+            return tool(payload)
+
+        for kwargs in keyword_candidates:
+            if self._signature_accepts_kwargs(signature, kwargs):
+                return tool(**kwargs)
+
+        if self._signature_accepts_payload(signature, payload):
+            return tool(payload)
+
+        raise TypeError(
+            "External research callable does not accept supported payload format "
+            "(question/query/prompt kwargs or single payload argument)"
+        )
+
+    @staticmethod
+    def _resolve_callable_signature(tool: Any) -> inspect.Signature | None:
+        try:
+            return inspect.signature(tool)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _signature_accepts_kwargs(signature: inspect.Signature, kwargs: dict[str, Any]) -> bool:
+        try:
+            signature.bind_partial(**kwargs)
+        except TypeError:
+            return False
+        return True
+
+    @staticmethod
+    def _signature_accepts_payload(signature: inspect.Signature, payload: dict[str, Any]) -> bool:
+        try:
+            signature.bind_partial(payload)
+        except TypeError:
+            return False
+        return True
+
+    def _finalize_result(
+        self,
+        *,
+        findings: list[ResearchFinding],
+        metadata: dict[str, Any],
+    ) -> ResearchResult:
+        metadata["finding_count"] = len(findings)
+        metadata["verified_finding_count"] = sum(1 for finding in findings if finding.verified)
+        metadata["unverified_finding_count"] = len(findings) - int(
+            metadata["verified_finding_count"]
+        )
+
+        if not findings:
+            metadata["synthesis_status"] = "none"
+            return ResearchResult(metadata=metadata)
+
+        verified_findings = [finding for finding in findings if finding.verified]
+        if verified_findings:
+            best = max(verified_findings, key=lambda finding: finding.confidence)
+            metadata["synthesis_status"] = "verified"
+            metadata["synthesis_source"] = best.source
+            return ResearchResult(
+                findings=findings,
+                synthesis=best.text,
+                confidence=best.confidence,
+                metadata=metadata,
+            )
+
+        best_unverified = max(findings, key=lambda finding: finding.confidence)
+        metadata["synthesis_status"] = "blocked_unverified"
+        metadata["synthesis_source"] = best_unverified.source
+        metadata["blocked_unverified_synthesis"] = best_unverified.text
+        return ResearchResult(
+            findings=findings,
+            synthesis="",
+            confidence=0.0,
+            metadata=metadata,
+        )
 
     def _collect_finding_refs(
         self,

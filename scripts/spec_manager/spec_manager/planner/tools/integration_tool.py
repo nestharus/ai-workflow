@@ -41,6 +41,7 @@ class IntegrationGraph:
 
     nodes: list[IntegrationNode] = field(default_factory=list)
     edges: list[IntegrationEdge] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class IntegrationGraph:
                 {"source": e.source, "target": e.target, "type": e.edge_type, **e.metadata}
                 for e in self.edges
             ],
+            "diagnostics": dict(self.diagnostics),
         }
 
 
@@ -63,6 +65,14 @@ class RiskAssessment:
     risk_level: str = "low"  # low | medium | high
     impacted_files: list[str] = field(default_factory=list)
     rationale: str = ""
+
+
+def _risk_level_for_blast_radius(blast_radius: int) -> str:
+    if blast_radius >= 10:
+        return "high"
+    if blast_radius >= 4:
+        return "medium"
+    return "low"
 
 
 class IntegrationAnalyzer:
@@ -84,10 +94,13 @@ class IntegrationAnalyzer:
 
         changed_targets = set(added_nodes + removed_nodes)
         changed_targets.update(self._collect_changed_targets(req))
+        known_node_ids = self._node_ids(proposed_graph)
+        changed_node_ids = {token for token in changed_targets if token in known_node_ids}
+        ignored_targets = sorted(token for token in changed_targets if token not in known_node_ids)
 
         impacted_nodes = self._estimate_impacted_nodes(
             graph=proposed_graph,
-            changed_nodes=changed_targets,
+            changed_nodes=changed_node_ids,
         )
         impacted_files = sorted(
             {
@@ -100,12 +113,13 @@ class IntegrationAnalyzer:
         )
 
         blast_radius = len(impacted_nodes)
-        if blast_radius >= 10:
-            risk_level = "high"
-        elif blast_radius >= 4:
-            risk_level = "medium"
-        else:
-            risk_level = "low"
+        risk_level = _risk_level_for_blast_radius(blast_radius)
+        rationale = f"{len(changed_node_ids)} changed nodes affect {blast_radius} reachable nodes"
+        if ignored_targets:
+            rationale = (
+                f"{rationale}; ignored {len(ignored_targets)} non-node targets "
+                "when estimating blast radius"
+            )
 
         return {
             "integration_diff": {
@@ -119,9 +133,8 @@ class IntegrationAnalyzer:
                 "risk_level": risk_level,
                 "impacted_nodes": sorted(impacted_nodes),
                 "impacted_files": impacted_files,
-                "rationale": (
-                    f"{len(changed_targets)} changed targets affect {blast_radius} reachable nodes"
-                ),
+                "ignored_targets": ignored_targets,
+                "rationale": rationale,
             },
         }
 
@@ -278,13 +291,22 @@ class IntegrationTool:
         if not self._source_cache:
             return graph
 
+        diagnostics: dict[str, Any] = {
+            "requested_files": [str(path) for path in file_paths],
+            "analyzed_files": [],
+            "missing_files": [],
+            "failed_files": [],
+        }
+
         for fp in file_paths:
             path = Path(fp)
             if not path.exists():
+                diagnostics["missing_files"].append(fp)
                 continue
             try:
                 content = path.read_text(encoding="utf-8", errors="replace")
                 analysis = self._source_cache.analyze_with_cache(content, fp)
+                diagnostics["analyzed_files"].append(fp)
 
                 # Add function nodes
                 for func in analysis.functions:
@@ -301,9 +323,16 @@ class IntegrationTool:
                             },
                         )
                     )
-            except Exception:
-                logger.debug("Failed to analyze %s for integration graph", fp)
+            except Exception as exc:
+                logger.debug("Failed to analyze %s for integration graph", fp, exc_info=True)
+                diagnostics["failed_files"].append(
+                    {
+                        "file": fp,
+                        "error": str(exc).strip() or "analysis failed",
+                    }
+                )
 
+        graph.diagnostics = diagnostics
         return graph
 
     def assess_risk(self, graph: IntegrationGraph, changed_nodes: list[str]) -> RiskAssessment:
@@ -311,17 +340,29 @@ class IntegrationTool:
 
         Walks edges from changed_nodes to find impacted files.
         """
+        valid_nodes = {
+            str(node.node_id).strip() for node in graph.nodes if str(node.node_id).strip()
+        }
+        changed_node_set = {str(node).strip() for node in changed_nodes if str(node).strip()}
+        changed_node_ids = {node for node in changed_node_set if node in valid_nodes}
+        ignored_nodes = sorted(node for node in changed_node_set if node not in valid_nodes)
+
         if not graph.edges:
+            rationale = "No edges in graph; blast radius equals changed node set."
+            if ignored_nodes:
+                rationale = (
+                    f"{rationale} Ignored {len(ignored_nodes)} non-node targets in changed set."
+                )
             return RiskAssessment(
-                blast_radius=len(changed_nodes),
-                risk_level="low",
+                blast_radius=len(changed_node_ids),
+                risk_level=_risk_level_for_blast_radius(len(changed_node_ids)),
                 impacted_files=[],
-                rationale="No edges in graph; blast radius equals changed set.",
+                rationale=rationale,
             )
 
         # BFS from changed nodes
-        visited: set[str] = set(changed_nodes)
-        frontier = list(changed_nodes)
+        visited: set[str] = set(changed_node_ids)
+        frontier = list(changed_node_ids)
         while frontier:
             current = frontier.pop(0)
             for edge in graph.edges:
@@ -329,14 +370,17 @@ class IntegrationTool:
                     visited.add(edge.target)
                     frontier.append(edge.target)
 
-        impacted_files = list({n.file for n in graph.nodes if n.node_id in visited and n.file})
+        impacted_files = sorted({n.file for n in graph.nodes if n.node_id in visited and n.file})
 
         blast = len(visited)
-        level = "low" if blast <= 3 else ("medium" if blast <= 10 else "high")
+        level = _risk_level_for_blast_radius(blast)
+        rationale = f"{blast} nodes reachable from {len(changed_node_ids)} changed nodes."
+        if ignored_nodes:
+            rationale = f"{rationale} Ignored {len(ignored_nodes)} non-node changed targets."
 
         return RiskAssessment(
             blast_radius=blast,
             risk_level=level,
             impacted_files=impacted_files,
-            rationale=f"{blast} nodes reachable from {len(changed_nodes)} changed nodes.",
+            rationale=rationale,
         )

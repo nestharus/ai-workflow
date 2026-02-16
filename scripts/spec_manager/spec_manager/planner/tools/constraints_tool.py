@@ -147,13 +147,15 @@ class ConstraintsTool:
         run_id = str(context.get("run_id", "")).strip()
         layer = str(context.get("layer", "")).strip()
         capability = str(context.get("capability", "")).strip()
+        planner_updates_run_id = run_id or "__orphan__"
 
         if not run_id:
-            logger.debug(
-                "save_facts persisted %d facts for slice %s but planner update context "
-                "has no run_id; skipping planner_updates.jsonl emission",
+            logger.warning(
+                "save_facts persisted %d facts for slice %s without run_id context; "
+                "planner updates will be written under run_id=%s with trace_status=orphaned",
                 len(facts),
                 slice_id,
+                planner_updates_run_id,
             )
 
         for fact in facts:
@@ -172,9 +174,11 @@ class ConstraintsTool:
                 "constraint_ids": [fact.constraint_id],
                 "canonical_key": canonical_key,
                 "canonical_keys": [canonical_key] if canonical_key else [],
+                "trace_status": "complete" if run_id else "orphaned",
             }
-            if run_id:
-                self._append_planner_update_event(run_id, event)
+            if not run_id:
+                event["trace_error"] = "missing_run_id_context"
+            self._append_planner_update_event(planner_updates_run_id, event)
 
             if self._on_constraint_saved is not None:
                 try:
@@ -199,12 +203,16 @@ class ConstraintsTool:
             updates_path.parent.mkdir(parents=True, exist_ok=True)
             with updates_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
-        except OSError:
+        except OSError as exc:
             logger.warning(
                 "Failed to append constraint_saved planner update for event_id=%s",
                 event.get("event_id", ""),
                 exc_info=True,
             )
+            raise RuntimeError(
+                "Failed to append constraint_saved planner update "
+                f"for event_id='{event.get('event_id', '')}' to '{updates_path}'"
+            ) from exc
 
     @staticmethod
     def _extract_canonical_key(fact: ConstraintFact) -> str:
@@ -228,7 +236,7 @@ class ConstraintsTool:
         return path
 
     def load_hypotheses(self, slice_id: str) -> list[ConstraintHypothesis]:
-        """Load hypotheses for *slice_id* (empty when unavailable/invalid)."""
+        """Load hypotheses for *slice_id* (empty only when unavailable)."""
         if self._workspace is None:
             return []
 
@@ -238,10 +246,14 @@ class ConstraintsTool:
 
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                raise TypeError(f"Expected hypotheses list, got {type(data).__name__}")
             return [ConstraintHypothesis.from_dict(row) for row in data]
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             logger.warning("Failed to load hypotheses for %s: %s", slice_id, exc)
-            return []
+            raise RuntimeError(
+                f"Failed to load hypotheses for slice '{slice_id}' from '{path}'"
+            ) from exc
 
     @staticmethod
     def _constraint_to_fact(constraint: Constraint) -> ConstraintFact:
