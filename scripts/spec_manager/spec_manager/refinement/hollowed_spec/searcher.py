@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass, field
 
-# Reuse the same stop words filter from the extractor
-from spec_manager.refinement.hollowed_spec.extractor import _ENTITY_REF_RE, _STOP_WORDS
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+from spec_manager.core.evidence_index import EvidenceIndex
+from spec_manager.refinement.hollowed_spec.extractor import ENTITY_REF_RE, extract_terms
 from spec_manager.schemas.hollowed_spec import HollowedParagraph
-
-_WORD_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 
 
 @dataclass
@@ -192,7 +188,7 @@ class EvidenceSearcher:
         combined = f"{ambiguity_text} {ambiguity_question} {context_section}"
 
         # Extract entity refs from all text
-        entity_refs = _ENTITY_REF_RE.findall(combined)
+        entity_refs = ENTITY_REF_RE.findall(combined)
         entity_refs = sorted(set(entity_refs))
 
         return self.search(
@@ -205,19 +201,4 @@ class EvidenceSearcher:
 
 def _extract_query_terms(query: str) -> list[str]:
     """Extract search terms from a query string."""
-    words = _WORD_RE.findall(query)
-    terms: list[str] = []
-    seen: set[str] = set()
-
-    for word in words:
-        lower = word.lower()
-        if len(lower) < 3:
-            continue
-        if lower in _STOP_WORDS:
-            continue
-        if lower in seen:
-            continue
-        seen.add(lower)
-        terms.append(lower)
-
-    return terms
+    return extract_terms(query)

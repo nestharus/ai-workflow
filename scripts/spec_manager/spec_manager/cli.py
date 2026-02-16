@@ -949,7 +949,7 @@ def cmd_evidence_store_rebuild_index(args: argparse.Namespace) -> int:
 
 def cmd_evidence_store_search(args: argparse.Namespace) -> int:
     """Interactive search for testing/debugging."""
-    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+    from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.refinement.hollowed_spec.searcher import EvidenceSearcher
     from spec_manager.refinement.workspace import WorkspaceManager as RefWorkspaceManager
 
@@ -988,7 +988,7 @@ def cmd_evidence_store_search(args: argparse.Namespace) -> int:
 
 def cmd_evidence_store_status(args: argparse.Namespace) -> int:
     """Show index stats."""
-    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+    from spec_manager.core.evidence_index import EvidenceIndex
     from spec_manager.refinement.workspace import WorkspaceManager as RefWorkspaceManager
 
     input_folder = Path(args.input_folder)

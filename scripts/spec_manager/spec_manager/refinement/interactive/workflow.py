@@ -83,7 +83,7 @@ class InteractiveWorkflow:
             evidence_index = None
             if use_evidence_store:
                 try:
-                    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+                    from spec_manager.core.evidence_index import EvidenceIndex
 
                     index_path = workspace / "workspace" / "indexes" / "evidence_store_index.json"
                     if index_path.exists():

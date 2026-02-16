@@ -13,8 +13,9 @@ from spec_manager.schemas.hollowed_spec import (
     ParagraphKind,
 )
 
-# Minimal stop words for keyword extraction
-_STOP_WORDS: frozenset[str] = frozenset(
+# Minimal English stop words for keyword extraction.
+# Non-English tokens are preserved and pass through unchanged.
+STOP_WORDS: frozenset[str] = frozenset(
     {
         "the",
         "a",
@@ -117,8 +118,8 @@ _STOP_WORDS: frozenset[str] = frozenset(
 )
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
-_ENTITY_REF_RE = re.compile(r"ENT-\d{4}")
-_WORD_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+ENTITY_REF_RE = re.compile(r"ENT-\d{4}")
+TERM_RE = re.compile(r"[^\W\d_][\w]*", re.UNICODE)
 
 
 def hollow_out_spec(lib_id: str, spec_content: str) -> HollowedSpec:
@@ -214,8 +215,7 @@ def _parse_sections(content: str) -> list[dict[str, Any]]:
         if match:
             level = len(match.group(1))
             heading_text = match.group(2).strip()
-            if level <= 4:
-                heading_positions.append((idx, level, heading_text))
+            heading_positions.append((idx, level, heading_text))
 
     if not heading_positions:
         # No headings: treat entire content as a single section
@@ -346,6 +346,29 @@ def _classify_paragraph(text: str) -> ParagraphKind:
     return ParagraphKind.PROSE
 
 
+def extract_terms(text: str, *, min_length: int = 3) -> list[str]:
+    """Extract deduplicated search terms from free-form text.
+
+    Tokenization is Unicode-aware and accepts any script's letter-leading tokens.
+    """
+    words = TERM_RE.findall(text)
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    for word in words:
+        lower = word.lower()
+        if len(lower) < min_length:
+            continue
+        if lower in STOP_WORDS:
+            continue
+        if lower in seen:
+            continue
+        seen.add(lower)
+        terms.append(lower)
+
+    return terms
+
+
 def _extract_keywords(text: str) -> list[str]:
     """Extract meaningful keywords from a paragraph.
 
@@ -353,25 +376,10 @@ def _extract_keywords(text: str) -> list[str]:
     specification contexts. Keywords are lowercased, deduplicated, and
     limited to terms >= 3 characters.
     """
-    words = _WORD_RE.findall(text)
-    keywords: list[str] = []
-    seen: set[str] = set()
-
-    for word in words:
-        lower = word.lower()
-        if len(lower) < 3:
-            continue
-        if lower in _STOP_WORDS:
-            continue
-        if lower in seen:
-            continue
-        seen.add(lower)
-        keywords.append(lower)
-
-    return keywords
+    return extract_terms(text)
 
 
 def _extract_entity_refs(text: str) -> list[str]:
     """Extract entity references (ENT-####) from paragraph text."""
-    refs = _ENTITY_REF_RE.findall(text)
+    refs = ENTITY_REF_RE.findall(text)
     return sorted(set(refs))

@@ -12,7 +12,7 @@ from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 from spec_manager.refinement.interactive.spec_patcher import SteeringResponse
 
 if TYPE_CHECKING:
-    from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+    from spec_manager.core.evidence_index import EvidenceIndex
 
 logger = logging.getLogger(__name__)
 

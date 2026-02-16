@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import logging
 
+from spec_manager.core.evidence_index import EvidenceIndex
 from spec_manager.refinement.hollowed_spec.extractor import hollow_out_spec
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 from spec_manager.refinement.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,11 @@ def on_spec_completed(
                 )
                 return
         except (json.JSONDecodeError, OSError):
-            pass  # Re-hollow on any error reading existing
+            logger.warning(
+                "Failed reading existing hollowed spec at %s; re-hollowing",
+                hollowed_path,
+                exc_info=True,
+            )
 
     # Write hollowed spec
     evidence_store_dir.mkdir(parents=True, exist_ok=True)
@@ -77,13 +81,13 @@ def on_spec_completed(
         try:
             index = EvidenceIndex.load(index_path)
         except Exception:
-            # C03: Surface errors — corrupted index needs diagnosis
             logger.warning(
-                "Failed to load evidence index at %s — starting fresh",
+                "Failed to load evidence index at %s; rebuilding from hollowed specs",
                 index_path,
                 exc_info=True,
             )
-            index = EvidenceIndex()
+            rebuild_evidence_index(manager)
+            return
     else:
         index = EvidenceIndex()
 
