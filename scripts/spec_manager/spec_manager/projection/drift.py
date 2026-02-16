@@ -8,10 +8,11 @@ Phase 7 Work Item 2: Atom-Aware Drift Comparator
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,8 @@ class DriftItem:
         best_match_score: Similarity score of best match (0.0-1.0)
         pin_id: Optional pin ID if drift is related to a specific pin
         target_id: Target ID referenced by the pin
+        urgency: Optional urgency classification for propagation-driven drift
+        trace_details: Structured trace metadata preserved through transformations
     """
 
     drift_type: Literal["PLAN_ONLY", "MISMATCH", "MISSING_PIN", "PIN_TARGET_MISSING"]
@@ -45,6 +48,8 @@ class DriftItem:
     best_match_score: float = 0.0
     pin_id: str | None = None
     target_id: str | None = None
+    urgency: str | None = None
+    trace_details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -211,12 +216,16 @@ class AtomAwareDriftComparator:
         """
         if target_kind == "LIBRARY":
             return spec_index.get_library(target_id) is not None
-        elif target_kind == "ELEMENT":
+        if target_kind == "ELEMENT":
             return spec_index.get_element(target_id) is not None
-        elif target_kind == "ATOM_RANGE":
-            # Check if any atom IDs in range exist
-            return target_id in spec_index.atom_to_elements
-        return False
+        if target_kind == "ATOM_RANGE":
+            return len(spec_index.get_elements_for_atom(target_id)) > 0
+        if target_kind == "ATOM_FUNCTION":
+            raise NotImplementedError(
+                "ATOM_FUNCTION pin targets cannot be validated against SpecIndexV2 without a "
+                "pin-function authority source."
+            )
+        raise ValueError(f"Unsupported pin target kind: {target_kind}")
 
     def _extract_excerpt(self, content: str, offset: int) -> str:
         """Extract an excerpt around an offset.
@@ -262,28 +271,100 @@ class AtomAwareDriftComparator:
             Tuple of (drift items, similarity score)
         """
         drift_items: list[DriftItem] = []
+        available_atom_ids = {atom.atom_id for atom in atoms}
+        expected_atoms_by_target = self._collect_expected_atoms_by_target(projection, spec_index)
 
-        # Build fingerprint index from provided atoms
-        fingerprint_to_atom: dict[str, LineAtom] = {}
-        for atom in atoms:
-            fp = atom.atom_fingerprint
-            fingerprint_to_atom[fp] = atom
+        total_expected_atoms = sum(len(atom_ids) for atom_ids in expected_atoms_by_target.values())
+        if total_expected_atoms == 0:
+            return drift_items, 1.0
 
-        # Check elements for atom coverage
-        total_element_atoms = 0
         matched_atoms = 0
+        for target_id, expected_atom_ids in expected_atoms_by_target.items():
+            missing_atom_ids = [
+                atom_id for atom_id in expected_atom_ids if atom_id not in available_atom_ids
+            ]
+            matched_atoms += len(expected_atom_ids) - len(missing_atom_ids)
 
-        for elem_id, _elem_data in spec_index.elements.items():
-            elem_atoms = spec_index.get_atoms_for_element(elem_id)
-            total_element_atoms += len(elem_atoms)
+            if not missing_atom_ids:
+                continue
 
-            for atom_id in elem_atoms:
-                # Check if atom exists (simplified - would need full atom lookup)
-                if atom_id in spec_index.atom_to_elements:
-                    matched_atoms += 1
+            pins_for_target = projection.get_pins_by_target(target_id)
+            pin_id = pins_for_target[0].pin_id if pins_for_target else None
+            excerpt = ""
+            if pins_for_target:
+                excerpt = self._extract_excerpt(
+                    projection.content,
+                    pins_for_target[0].from_projection_offset,
+                )
+            if not excerpt:
+                excerpt = f"Projection target {target_id} references missing atoms"
 
-        similarity = matched_atoms / total_element_atoms if total_element_atoms > 0 else 1.0
+            drift_items.append(
+                DriftItem(
+                    drift_type="MISMATCH",
+                    evidence_atom_ids=missing_atom_ids,
+                    projection_excerpt=excerpt,
+                    best_match_score=(
+                        (len(expected_atom_ids) - len(missing_atom_ids)) / len(expected_atom_ids)
+                        if expected_atom_ids
+                        else 1.0
+                    ),
+                    pin_id=pin_id,
+                    target_id=target_id,
+                    trace_details={
+                        "expected_atom_ids": expected_atom_ids,
+                        "missing_atom_ids": missing_atom_ids,
+                    },
+                )
+            )
+
+        similarity = matched_atoms / total_expected_atoms
         return drift_items, similarity
+
+    def _collect_expected_atoms_by_target(
+        self,
+        projection: ProjectionArtifact,
+        spec_index: SpecIndexV2,
+    ) -> dict[str, list[str]]:
+        """Collect expected atom IDs grouped by projection target."""
+        expected_atoms_by_target: dict[str, list[str]] = {}
+
+        for pin in projection.pins:
+            if pin.target_kind == "ELEMENT":
+                if spec_index.get_element(pin.target_id) is None:
+                    continue
+                atom_ids = self._dedupe_ids(spec_index.get_atoms_for_element(pin.target_id))
+                if atom_ids:
+                    expected_atoms_by_target[pin.target_id] = atom_ids
+                continue
+
+            if pin.target_kind == "LIBRARY":
+                for elem_data in spec_index.get_elements_by_library(pin.target_id):
+                    elem_id_raw = elem_data.get("elem_id")
+                    elem_id = str(elem_id_raw) if elem_id_raw is not None else ""
+                    if not elem_id:
+                        continue
+                    atom_ids = self._dedupe_ids(spec_index.get_atoms_for_element(elem_id))
+                    if atom_ids:
+                        expected_atoms_by_target[elem_id] = atom_ids
+                continue
+
+            if pin.target_kind == "ATOM_RANGE":
+                expected_atoms_by_target[pin.target_id] = [pin.target_id]
+
+        return expected_atoms_by_target
+
+    @staticmethod
+    def _dedupe_ids(values: list[str]) -> list[str]:
+        """Return IDs with order preserved and duplicates removed."""
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            ordered.append(value)
+        return ordered
 
     def align_atoms(
         self,
@@ -301,19 +382,26 @@ class AtomAwareDriftComparator:
         Returns:
             AtomAlignment with matched pairs and opcodes
         """
-        # Build fingerprint maps
-        old_fp_to_atom = {a.atom_fingerprint: a for a in old_atoms}
-        new_fp_to_atom = {a.atom_fingerprint: a for a in new_atoms}
+        # Build fingerprint maps that preserve duplicate fingerprints.
+        old_fp_to_atoms: dict[str, list[LineAtom]] = defaultdict(list)
+        new_fp_to_atoms: dict[str, list[LineAtom]] = defaultdict(list)
+        for atom in old_atoms:
+            old_fp_to_atoms[atom.atom_fingerprint].append(atom)
+        for atom in new_atoms:
+            new_fp_to_atoms[atom.atom_fingerprint].append(atom)
 
         # Find matching pairs by fingerprint
         matched_pairs: list[tuple[str, str]] = []
         old_matched: set[str] = set()
         new_matched: set[str] = set()
 
-        for fp in old_fp_to_atom:
-            if fp in new_fp_to_atom:
-                old_atom = old_fp_to_atom[fp]
-                new_atom = new_fp_to_atom[fp]
+        for fp in sorted(set(old_fp_to_atoms) & set(new_fp_to_atoms)):
+            old_group = old_fp_to_atoms[fp]
+            new_group = new_fp_to_atoms[fp]
+            pair_count = min(len(old_group), len(new_group))
+            for idx in range(pair_count):
+                old_atom = old_group[idx]
+                new_atom = new_group[idx]
                 matched_pairs.append((old_atom.atom_id, new_atom.atom_id))
                 old_matched.add(old_atom.atom_id)
                 new_matched.add(new_atom.atom_id)
@@ -352,46 +440,43 @@ def convert_drift_to_gaps(
     if policy is None:
         policy = DriftPolicy()
 
-    # If similarity is above floor, no gaps needed
-    if drift_report.similarity >= policy.drift_similarity_floor:
-        return []
-
     gaps: list[Gap] = []
 
-    # Create gap for overall drift
-    overall_gap = Gap(
-        id=f"GAP-DRIFT-{drift_report.projection_id[:8]}",
-        gap_type=GapType.content_mismatch,
-        severity=policy.drift_severity,
-        source=[drift_report.projection_id],
-        derived_artifact_target=f"projection:{drift_report.projection_id}",
-        description=(
-            f"Projection drift exceeds floor: similarity={drift_report.similarity:.2%}, "
-            f"threshold={policy.drift_similarity_floor:.2%}"
-        ),
-        evidence=[
-            GapEvidence(
-                invariant_family="content",
-                description="Projection-to-source drift detected",
-                details={
-                    "similarity": drift_report.similarity,
-                    "threshold": policy.drift_similarity_floor,
-                    "total_pins": drift_report.total_pins,
-                    "valid_pins": drift_report.valid_pins,
-                    "missing_targets": drift_report.missing_targets,
-                },
-                confidence=1.0,
-                detector="drift_comparator",
-            )
-        ],
-    )
-    gaps.append(overall_gap)
+    # Overall drift threshold controls only the aggregate-level gap.
+    if drift_report.similarity < policy.drift_similarity_floor:
+        overall_gap = Gap(
+            id=f"GAP-DRIFT-{drift_report.projection_id[:8]}",
+            gap_type=GapType.content_mismatch,
+            severity=policy.drift_severity,
+            source=[drift_report.projection_id],
+            derived_artifact_target=f"projection:{drift_report.projection_id}",
+            description=(
+                f"Projection drift exceeds floor: similarity={drift_report.similarity:.2%}, "
+                f"threshold={policy.drift_similarity_floor:.2%}"
+            ),
+            evidence=[
+                GapEvidence(
+                    invariant_family="content",
+                    description="Projection-to-source drift detected",
+                    details={
+                        "similarity": drift_report.similarity,
+                        "threshold": policy.drift_similarity_floor,
+                        "total_pins": drift_report.total_pins,
+                        "valid_pins": drift_report.valid_pins,
+                        "missing_targets": drift_report.missing_targets,
+                    },
+                    confidence=1.0,
+                    detector="drift_comparator",
+                )
+            ],
+        )
+        gaps.append(overall_gap)
 
-    # Create gaps for individual missing targets
-    for item in drift_report.drift_items:
+    # Evaluate item-level drift independently so local evidence is never dropped.
+    for idx, item in enumerate(drift_report.drift_items):
         if item.drift_type == "PIN_TARGET_MISSING" and item.target_id:
             target_gap = Gap(
-                id=f"GAP-DRIFT-{item.pin_id or 'UNKNOWN'}",
+                id=f"GAP-DRIFT-{item.pin_id or 'UNKNOWN'}-{idx}",
                 gap_type=GapType.content_mismatch,
                 severity=policy.drift_severity,
                 source=[item.pin_id or drift_report.projection_id],
@@ -405,6 +490,8 @@ def convert_drift_to_gaps(
                             "drift_type": item.drift_type,
                             "target_id": item.target_id,
                             "excerpt": item.projection_excerpt,
+                            "urgency": item.urgency,
+                            "trace_details": item.trace_details,
                         },
                         confidence=1.0,
                         detector="drift_comparator",
@@ -412,6 +499,46 @@ def convert_drift_to_gaps(
                 ],
             )
             gaps.append(target_gap)
+            continue
+
+        if item.drift_type in {"MISMATCH", "MISSING_PIN"}:
+            if item.best_match_score >= policy.drift_similarity_floor:
+                continue
+
+            mismatch_gap = Gap(
+                id=f"GAP-DRIFT-{item.pin_id or 'ITEM'}-{idx}",
+                gap_type=GapType.content_mismatch,
+                severity=policy.drift_severity,
+                source=[item.pin_id or drift_report.projection_id],
+                derived_artifact_target=(
+                    item.target_id or f"projection:{drift_report.projection_id}"
+                ),
+                description=(
+                    f"Drift item {item.drift_type} below floor: "
+                    "match="
+                    f"{item.best_match_score:.2%}, "
+                    f"threshold={policy.drift_similarity_floor:.2%}"
+                ),
+                evidence=[
+                    GapEvidence(
+                        invariant_family="content",
+                        description="Item-level projection drift detected",
+                        details={
+                            "drift_type": item.drift_type,
+                            "best_match_score": item.best_match_score,
+                            "threshold": policy.drift_similarity_floor,
+                            "evidence_atom_ids": item.evidence_atom_ids,
+                            "target_id": item.target_id,
+                            "excerpt": item.projection_excerpt,
+                            "urgency": item.urgency,
+                            "trace_details": item.trace_details,
+                        },
+                        confidence=1.0,
+                        detector="drift_comparator",
+                    )
+                ],
+            )
+            gaps.append(mismatch_gap)
 
     return gaps
 

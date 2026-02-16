@@ -8,6 +8,7 @@ projection type, and integration with the existing drift detection pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +29,8 @@ class PinChange:
     new_content_hash: str | None = None
     old_signature: str | None = None
     new_signature: str | None = None
+    old_evidence_atom_ids: list[str] = field(default_factory=list)
+    new_evidence_atom_ids: list[str] = field(default_factory=list)
     diff_summary: str = ""
 
 
@@ -95,6 +98,8 @@ class PinChangePropagator:
                     new_content_hash=None,
                     old_signature=old_pf.signature,
                     new_signature=None,
+                    old_evidence_atom_ids=list(old_pf.evidence_atom_ids),
+                    new_evidence_atom_ids=[],
                     diff_summary=f"Function '{old_pf.function_name}' was removed",
                 )
             )
@@ -111,6 +116,8 @@ class PinChangePropagator:
                     new_content_hash=new_pf.content_hash,
                     old_signature=None,
                     new_signature=new_pf.signature,
+                    old_evidence_atom_ids=[],
+                    new_evidence_atom_ids=list(new_pf.evidence_atom_ids),
                     diff_summary=f"Function '{new_pf.function_name}' was added",
                 )
             )
@@ -130,6 +137,8 @@ class PinChangePropagator:
                         new_content_hash=new_pf.content_hash,
                         old_signature=old_pf.signature,
                         new_signature=new_pf.signature,
+                        old_evidence_atom_ids=list(old_pf.evidence_atom_ids),
+                        new_evidence_atom_ids=list(new_pf.evidence_atom_ids),
                         diff_summary=(
                             f"Signature changed: '{old_pf.signature}' -> '{new_pf.signature}'"
                         ),
@@ -145,6 +154,8 @@ class PinChangePropagator:
                         new_content_hash=new_pf.content_hash,
                         old_signature=old_pf.signature,
                         new_signature=new_pf.signature,
+                        old_evidence_atom_ids=list(old_pf.evidence_atom_ids),
+                        new_evidence_atom_ids=list(new_pf.evidence_atom_ids),
                         diff_summary=f"Body of '{new_pf.function_name}' was modified",
                     )
                 )
@@ -252,6 +263,53 @@ class PinChangePropagator:
         )
 
 
+def _merge_evidence_atom_ids(old_ids: list[str], new_ids: list[str]) -> list[str]:
+    """Merge evidence IDs while preserving order and uniqueness."""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for atom_id in old_ids + new_ids:
+        if atom_id in seen:
+            continue
+        seen.add(atom_id)
+        merged.append(atom_id)
+    return merged
+
+
+def _jaccard_similarity(old_ids: list[str], new_ids: list[str]) -> float:
+    """Compute Jaccard similarity between two evidence-ID sets."""
+    old_set = set(old_ids)
+    new_set = set(new_ids)
+    if not old_set and not new_set:
+        return 1.0
+    union_size = len(old_set | new_set)
+    if union_size == 0:
+        return 1.0
+    return len(old_set & new_set) / union_size
+
+
+def _calculate_change_similarity(change: PinChange) -> float:
+    """Estimate similarity from concrete change evidence."""
+    score_parts: list[float] = []
+
+    if change.old_signature is not None and change.new_signature is not None:
+        score_parts.append(
+            SequenceMatcher(None, change.old_signature, change.new_signature).ratio()
+        )
+
+    if change.old_content_hash is not None and change.new_content_hash is not None:
+        score_parts.append(1.0 if change.old_content_hash == change.new_content_hash else 0.0)
+
+    if change.old_evidence_atom_ids or change.new_evidence_atom_ids:
+        score_parts.append(
+            _jaccard_similarity(change.old_evidence_atom_ids, change.new_evidence_atom_ids)
+        )
+
+    if not score_parts:
+        return 0.0
+
+    return sum(score_parts) / len(score_parts)
+
+
 def convert_propagation_to_drift(report: PropagationReport) -> list[DriftItem]:
     """Convert a PropagationReport to DriftItem objects for the drift pipeline.
 
@@ -267,22 +325,47 @@ def convert_propagation_to_drift(report: PropagationReport) -> list[DriftItem]:
     drift_items: list[DriftItem] = []
 
     for item in report.propagation_items:
-        # Map urgency to drift_type
-        if item.review_urgency == "breaking_change" or item.review_urgency == "review_required":
-            drift_type = "MISMATCH"
-        else:
-            drift_type = "PLAN_ONLY"
+        urgency_to_drift_type = {
+            "breaking_change": "MISMATCH",
+            "review_required": "MISMATCH",
+            "auto_propagated": "PLAN_ONLY",
+        }
+        drift_type = urgency_to_drift_type.get(item.review_urgency, "MISMATCH")
 
-        # Build evidence atom IDs from the pin-function
-        evidence_ids: list[str] = []
+        evidence_ids = _merge_evidence_atom_ids(
+            item.pin_change.old_evidence_atom_ids,
+            item.pin_change.new_evidence_atom_ids,
+        )
+        projection_type = getattr(
+            item.import_edge.projection_type,
+            "value",
+            item.import_edge.projection_type,
+        )
+        match_score = _calculate_change_similarity(item.pin_change)
 
         drift_item = DriftItem(
             drift_type=drift_type,
-            evidence_atom_ids=evidence_ids,
+            evidence_atom_ids=list(evidence_ids),
             projection_excerpt=item.reason,
-            best_match_score=0.0 if item.review_urgency == "breaking_change" else 0.5,
+            best_match_score=match_score,
             pin_id=item.pin_change.pin_func_id,
             target_id=item.import_edge.arch_location,
+            urgency=item.review_urgency,
+            trace_details={
+                "change_type": item.pin_change.change_type,
+                "function_name": item.pin_change.function_name,
+                "old_content_hash": item.pin_change.old_content_hash,
+                "new_content_hash": item.pin_change.new_content_hash,
+                "old_signature": item.pin_change.old_signature,
+                "new_signature": item.pin_change.new_signature,
+                "old_evidence_atom_ids": item.pin_change.old_evidence_atom_ids,
+                "new_evidence_atom_ids": item.pin_change.new_evidence_atom_ids,
+                "import_edge_id": item.import_edge.edge_id,
+                "projection_type": str(projection_type),
+                "arch_file_path": item.import_edge.arch_file_path,
+                "arch_line": item.import_edge.arch_line,
+                "reason": item.reason,
+            },
         )
         drift_items.append(drift_item)
 

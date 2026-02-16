@@ -86,6 +86,25 @@ class ProjectionGenerator:
 
         # Group elements by library
         if self.policy.group_by_library:
+            library_ids = {lib.lib_id for lib in libraries}
+            unmapped_by_library: dict[str, list[str]] = {}
+            for elem in elements:
+                if elem.lib_id in library_ids:
+                    continue
+                if elem.lib_id not in unmapped_by_library:
+                    unmapped_by_library[elem.lib_id] = []
+                unmapped_by_library[elem.lib_id].append(elem.elem_id)
+
+            if unmapped_by_library:
+                unmapped_summary = ", ".join(
+                    f"{lib_id} ({', '.join(sorted(elem_ids))})"
+                    for lib_id, elem_ids in sorted(unmapped_by_library.items())
+                )
+                raise ValueError(
+                    "Projection generation failed: elements reference unknown libraries: "
+                    f"{unmapped_summary}"
+                )
+
             elements_by_lib = self._group_by_library(elements)
 
             for lib in sorted(libraries, key=lambda x: x.lib_id):
@@ -281,7 +300,16 @@ def load_projection_pins(pins_path: Path) -> list[Pin]:
         List of Pin objects
     """
     data = json.loads(pins_path.read_text(encoding="utf-8"))
-    return [Pin.model_validate(pin_data) for pin_data in data.get("pins", [])]
+    if not isinstance(data, dict):
+        raise TypeError(f"Pins file must contain a JSON object: {pins_path}")
+    if "pins" not in data:
+        raise ValueError(f"Pins file is missing required 'pins' field: {pins_path}")
+
+    pins_payload = data["pins"]
+    if not isinstance(pins_payload, list):
+        raise TypeError(f"'pins' field must be a JSON list in {pins_path}")
+
+    return [Pin.model_validate(pin_data) for pin_data in pins_payload]
 
 
 __all__ = [
