@@ -21,7 +21,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from spec_manager.orchestration.intent_agent.taxonomy import normalize_taxonomy_type
+from spec_manager.orchestration.intent_agent.taxonomy import (
+    QuestionTaxonomy,
+    normalize_taxonomy_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +107,10 @@ class FollowupQuestionDraft:
         if normalized_answer_spec is None:
             raise ValueError("followup_question_draft.answer_spec is invalid")
         # Keep internal-only taxonomy labels so the enqueue path can reframe-or-reject.
-        self.taxonomy_type = normalize_taxonomy_type(self.taxonomy_type)
+        normalized_taxonomy = normalize_taxonomy_type(self.taxonomy_type)
+        if normalized_taxonomy == QuestionTaxonomy.UNKNOWN.value:
+            raise ValueError("followup_question_draft.taxonomy_type is invalid")
+        self.taxonomy_type = normalized_taxonomy
         self.answer_spec = normalized_answer_spec
 
 
@@ -711,8 +717,13 @@ def _parse_followup_question_drafts(
         invalid_fields: list[str] = []
 
         taxonomy_value = raw_followup.get("taxonomy_type")
+        normalized_taxonomy = ""
         if not isinstance(taxonomy_value, str) or not taxonomy_value.strip():
             missing_fields.append("taxonomy_type")
+        else:
+            normalized_taxonomy = normalize_taxonomy_type(taxonomy_value)
+            if normalized_taxonomy == QuestionTaxonomy.UNKNOWN.value:
+                invalid_fields.append("taxonomy_type")
 
         scenario_value = raw_followup.get("scenario")
         if not isinstance(scenario_value, str) or not scenario_value.strip():
@@ -747,7 +758,7 @@ def _parse_followup_question_drafts(
         drafts.append(
             FollowupQuestionDraft(
                 draft_id=draft_id if isinstance(draft_id, str) else "",
-                taxonomy_type=taxonomy_value,
+                taxonomy_type=normalized_taxonomy,
                 canonical_key_hint=(
                     canonical_key_hint if isinstance(canonical_key_hint, str) else ""
                 ),

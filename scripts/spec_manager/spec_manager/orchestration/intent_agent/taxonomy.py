@@ -309,33 +309,30 @@ def infer_constraint_dimensions_with_key(
             matched.add(ConstraintDimension.DATA.value)
 
     normalized = normalize_constraint_dimensions(sorted(matched))
-    if normalized:
-        return normalized
-    # CONSTRAINT questions must map to at least one dimension.
-    return [ConstraintDimension.OPERATIONAL.value]
+    return normalized
 
 
 def normalize_user_facing_taxonomy(raw_taxonomy: Any) -> str:
     """Return only valid user-facing taxonomy enum values."""
     normalized = _normalize_taxonomy_value(raw_taxonomy)
     if not normalized:
-        return QuestionTaxonomy.CONSTRAINT.value
+        return QuestionTaxonomy.UNKNOWN.value
     try:
         parsed = QuestionTaxonomy(normalized)
     except ValueError:
-        return QuestionTaxonomy.CONSTRAINT.value
-    return parsed.value if parsed in USER_VALID_TYPES else QuestionTaxonomy.CONSTRAINT.value
+        return QuestionTaxonomy.UNKNOWN.value
+    return parsed.value if parsed in USER_VALID_TYPES else QuestionTaxonomy.UNKNOWN.value
 
 
 def normalize_taxonomy_type(raw_taxonomy: Any) -> str:
     """Normalize any taxonomy-like value into a `QuestionTaxonomy` value."""
     normalized = _normalize_taxonomy_value(raw_taxonomy)
     if not normalized:
-        return QuestionTaxonomy.CONSTRAINT.value
+        return QuestionTaxonomy.UNKNOWN.value
     try:
         return QuestionTaxonomy(normalized).value
     except ValueError:
-        return QuestionTaxonomy.CONSTRAINT.value
+        return QuestionTaxonomy.UNKNOWN.value
 
 
 def infer_constraint_dimensions(text: str) -> list[str]:
@@ -535,11 +532,11 @@ def classify_question(
     """Classify a question into its taxonomy type.
 
     Uses LLM to determine which QuestionTaxonomy value best fits the
-    question *text*.  Falls back to CONSTRAINT when the LLM is
-    unavailable or returns something unparseable.
+    question *text*. Returns UNKNOWN when classification is unavailable
+    or invalid.
     """
     if run_agent is None:
-        return QuestionTaxonomy.CONSTRAINT
+        return QuestionTaxonomy.UNKNOWN
 
     prompt = _classification_prompt_from_mapping(text, context)
     agent_outcome = _run_agent_json(prompt, run_agent=run_agent)
@@ -548,15 +545,14 @@ def classify_question(
     if parsed is None:
         if agent_outcome.error is not None:
             logger.debug(
-                "classify_question LLM parse failed (%s), defaulting to CONSTRAINT",
+                "classify_question LLM parse failed (%s), returning UNKNOWN",
                 agent_outcome.error,
             )
         else:
             logger.debug(
-                "classify_question LLM parse failed (invalid taxonomy_type), "
-                "defaulting to CONSTRAINT"
+                "classify_question LLM parse failed (invalid taxonomy_type), returning UNKNOWN"
             )
-        return QuestionTaxonomy.CONSTRAINT
+        return QuestionTaxonomy.UNKNOWN
     return parsed
 
 
@@ -702,15 +698,7 @@ def _validate_reframed_question_candidate(
         return None
     if question.reframed_type in target_types:
         return question
-    return ReframedQuestion(
-        original_text=question.original_text,
-        original_type=question.original_type,
-        reframed_text=question.reframed_text,
-        reframed_type=target_types[0],
-        scenario=question.scenario,
-        answer_spec_kind=question.answer_spec_kind,
-        choices=question.choices,
-    )
+    return None
 
 
 def reframe_to_user_valid(

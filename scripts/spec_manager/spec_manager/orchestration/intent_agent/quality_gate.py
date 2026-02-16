@@ -48,13 +48,11 @@ def _normalize_text(value: Any) -> str:
 
 
 def _normalize_answer_spec_kind(value: str) -> str:
-    normalized = _normalize_text(value).replace("-", "_").lower()
-    return normalized if normalized in _VALID_ANSWER_SPEC_KINDS else "choice"
+    return _normalize_text(value).replace("-", "_").lower()
 
 
 def _normalize_taxonomy_type(value: str) -> str:
-    normalized = _normalize_text(value).upper()
-    return normalized if normalized in _VALID_TAXONOMY_TYPES else "CONSTRAINT"
+    return _normalize_text(value).upper()
 
 
 def _first_non_empty(*values: Any) -> str:
@@ -380,6 +378,10 @@ class QualityValidatorStrategy:
         if candidate.answer_spec_kind not in _VALID_ANSWER_SPEC_KINDS:
             deterministic_failures.append(
                 f"Invalid answer_spec_kind '{candidate.answer_spec_kind}'.",
+            )
+        if candidate.taxonomy_type not in _VALID_TAXONOMY_TYPES:
+            deterministic_failures.append(
+                f"Invalid taxonomy_type '{candidate.taxonomy_type}'.",
             )
         if candidate.scenario:
             checks.scenario_grounded = True

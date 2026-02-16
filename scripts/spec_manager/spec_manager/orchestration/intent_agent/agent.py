@@ -1373,7 +1373,7 @@ class IntentAgentOrchestrator:
                 return item
 
         if canonical_key:
-            for candidate in self._queue._items.values():
+            for candidate in self._queue.get_open_items():
                 if candidate.status == "OPEN" and candidate.canonical_key == canonical_key:
                     return candidate
         return None
@@ -1853,22 +1853,19 @@ class IntentAgentOrchestrator:
         if self._state is None or self._queue is None:
             return
 
-        open_ids: list[str] = []
-        closed_ids: list[str] = []
-        stale_ids: list[str] = []
+        state_ids = self._queue.state_ids()
+        open_ids = self._coerce_str_list(state_ids.get("open_ids", []))
+        closed_ids = self._coerce_str_list(state_ids.get("closed_ids", []))
+        stale_ids = self._coerce_str_list(state_ids.get("stale_ids", []))
         open_constraint_ids: list[str] = []
         closed_constraint_ids: list[str] = []
         open_constraint_dims: set[str] = set()
         closed_constraint_dims: set[str] = set()
 
-        for item in self._queue._items.values():
-            if item.status == "OPEN":
-                open_ids.append(item.question_id)
-            elif item.status in {"ANSWERED", "SUPERSEDED", "DISMISSED", "UNASKABLE"}:
-                closed_ids.append(item.question_id)
-            elif item.status == "STALE":
-                stale_ids.append(item.question_id)
-
+        for question_id in [*open_ids, *closed_ids]:
+            item = self._queue.get_item(question_id)
+            if item is None:
+                continue
             if item.taxonomy_type == QuestionTaxonomy.CONSTRAINT.value:
                 dimensions = self._infer_constraint_dimensions_for_item(item)
                 if item.status == "OPEN":
@@ -2058,7 +2055,11 @@ class IntentAgentOrchestrator:
         if self._state is not None:
             planner_watermark = self._state.watermarks.planner_update_watermark
 
-        resolved_count = sum(count for action, count in action_counts.items() if action != "KEEP")
+        resolved_count = sum(
+            count
+            for action, count in action_counts.items()
+            if action not in {"KEEP", "REASSESS_FAILED"}
+        )
         return ResumeProgressSummaryProjection(
             planner_watermark=planner_watermark,
             planner_updates_seen=len(updates),
@@ -4591,10 +4592,11 @@ class IntentAgentOrchestrator:
             ],
         }
         queue_state = self._state.question_queue_state
-        raw_tradeoff_positions = queue_state._passthrough_fields.get("tradeoff_positions", [])
-        frame_dict["tradeoff_positions"] = (
-            list(raw_tradeoff_positions) if isinstance(raw_tradeoff_positions, list) else []
-        )
+        frame_dict["tradeoff_positions"] = [
+            dict(position)
+            for position in queue_state.tradeoff_positions
+            if isinstance(position, dict)
+        ]
         if not should_produce_skeleton(frame_dict, queue_state.to_dict()):
             return None
 

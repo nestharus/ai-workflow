@@ -93,6 +93,7 @@ class AnswerProvenance:
     created_at: str = ""
     answer_translation_ref: str = ""
     planner_ingest_trace_id: str = ""
+    _passthrough_fields: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -119,6 +120,24 @@ def _clone_shallow(value: Any) -> Any:
     if isinstance(value, list):
         return list(value)
     return value
+
+
+def _normalize_tradeoff_positions(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    positions: list[dict[str, Any]] = []
+    for raw_position in value:
+        if not isinstance(raw_position, dict):
+            continue
+        normalized_position: dict[str, Any] = {}
+        for raw_key, raw_val in raw_position.items():
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            normalized_position[key] = _clone_shallow(raw_val)
+        if normalized_position:
+            positions.append(normalized_position)
+    return positions
 
 
 @dataclass
@@ -187,6 +206,7 @@ class QuestionQueueStateProjection:
     open_ids: list[str] = field(default_factory=list)
     closed_ids: list[str] = field(default_factory=list)
     stale_ids: list[str] = field(default_factory=list)
+    tradeoff_positions: list[dict[str, Any]] = field(default_factory=list)
     last_presented_question_id: str = ""
     active_batch_id: str = ""
     _passthrough_fields: dict[str, Any] = field(default_factory=dict)
@@ -196,6 +216,7 @@ class QuestionQueueStateProjection:
             "open_ids": _clone_shallow(self.open_ids),
             "closed_ids": _clone_shallow(self.closed_ids),
             "stale_ids": _clone_shallow(self.stale_ids),
+            "tradeoff_positions": _normalize_tradeoff_positions(self.tradeoff_positions),
             "last_presented_question_id": self.last_presented_question_id,
             "active_batch_id": self.active_batch_id,
         }
@@ -211,6 +232,7 @@ class QuestionQueueStateProjection:
             "open_ids",
             "closed_ids",
             "stale_ids",
+            "tradeoff_positions",
             "last_presented_question_id",
             "active_batch_id",
         }
@@ -218,6 +240,7 @@ class QuestionQueueStateProjection:
             open_ids=_clone_shallow(raw.get("open_ids", [])),
             closed_ids=_clone_shallow(raw.get("closed_ids", [])),
             stale_ids=_clone_shallow(raw.get("stale_ids", [])),
+            tradeoff_positions=_normalize_tradeoff_positions(raw.get("tradeoff_positions", [])),
             last_presented_question_id=raw.get("last_presented_question_id", ""),
             active_batch_id=raw.get("active_batch_id", ""),
         )
@@ -336,6 +359,19 @@ class IntentSessionState:
                     "created_at": answer.created_at,
                     "answer_translation_ref": answer.answer_translation_ref,
                     "planner_ingest_trace_id": answer.planner_ingest_trace_id,
+                    **{
+                        key: _clone_shallow(value)
+                        for key, value in answer._passthrough_fields.items()
+                        if key
+                        not in {
+                            "answer_id",
+                            "question_id",
+                            "raw_text",
+                            "created_at",
+                            "answer_translation_ref",
+                            "planner_ingest_trace_id",
+                        }
+                    },
                 }
                 for answer in self.answer_provenance
             ],
@@ -710,6 +746,19 @@ class IntentSessionState:
                 created_at=answer.get("created_at", ""),
                 answer_translation_ref=answer.get("answer_translation_ref", ""),
                 planner_ingest_trace_id=answer.get("planner_ingest_trace_id", ""),
+                _passthrough_fields={
+                    key: _clone_shallow(value)
+                    for key, value in answer.items()
+                    if key
+                    not in {
+                        "answer_id",
+                        "question_id",
+                        "raw_text",
+                        "created_at",
+                        "answer_translation_ref",
+                        "planner_ingest_trace_id",
+                    }
+                },
             )
             for answer in answer_provenance_raw
         ]
@@ -888,6 +937,21 @@ def save_answer(run_dir: Path, answer: AnswerProvenance) -> Path:
         "answer_translation_ref": answer.answer_translation_ref,
         "planner_ingest_trace_id": answer.planner_ingest_trace_id,
     }
+    record.update(
+        {
+            key: _clone_shallow(value)
+            for key, value in answer._passthrough_fields.items()
+            if key
+            not in {
+                "answer_id",
+                "question_id",
+                "raw_text",
+                "created_at",
+                "answer_translation_ref",
+                "planner_ingest_trace_id",
+            }
+        }
+    )
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
     logger.debug("Saved answer %s to %s", answer.answer_id, path)
@@ -921,13 +985,15 @@ def load_answers(run_dir: Path) -> list[AnswerProvenance]:
                 f"Invalid answer record at {path}:{line_number}; "
                 f"expected object, got {type(d).__name__}"
             )
-        dropped_fields = sorted(key for key in d if key not in recognized_keys)
-        if dropped_fields:
+        passthrough_fields = {
+            key: _clone_shallow(value) for key, value in d.items() if key not in recognized_keys
+        }
+        if passthrough_fields:
             logger.warning(
-                "Dropping unmodeled answer record field(s) at %s:%s: %s",
+                "Preserving unmodeled answer record field(s) at %s:%s: %s",
                 path,
                 line_number,
-                dropped_fields,
+                sorted(passthrough_fields),
             )
         missing_fields = sorted(key for key in required_keys if key not in d)
         if missing_fields:
@@ -942,6 +1008,7 @@ def load_answers(run_dir: Path) -> list[AnswerProvenance]:
                 created_at=d["created_at"],
                 answer_translation_ref=d.get("answer_translation_ref", ""),
                 planner_ingest_trace_id=d.get("planner_ingest_trace_id", ""),
+                _passthrough_fields=passthrough_fields,
             )
         )
     return sorted(

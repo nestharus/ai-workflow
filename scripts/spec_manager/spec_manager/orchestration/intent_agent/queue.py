@@ -41,11 +41,6 @@ def _question_queue_history_dir(run_dir: Path) -> Path:
     return _question_queue_snapshot_dir(run_dir) / "history"
 
 
-_QUEUE_HISTORY_RETENTION_LIMIT = 100
-_QUEUE_HISTORY_SNAPSHOT_GLOB = "question_queue.*.json"
-_QUEUE_HISTORY_PRUNE_LOG = "question_queue.history.prune.jsonl"
-
-
 _VALID_STATUSES = frozenset({"OPEN", "ANSWERED", "STALE", "SUPERSEDED", "DISMISSED", "UNASKABLE"})
 _VALID_TAXONOMY_TYPES = frozenset(
     {"INTENT", "CONSTRAINT", "TRADEOFF", "SCOPE", "VALIDATION"},
@@ -67,6 +62,7 @@ _VALID_TRIGGER_KINDS = frozenset(
 _VALID_REASSESS_ACTIONS = frozenset(
     {
         "KEEP",
+        "REASSESS_FAILED",
         "ANSWERED",
         "STALE",
         "SUPERSEDED",
@@ -1506,7 +1502,7 @@ class QuestionQueue:
             return [
                 {
                     "question_id": item.question_id,
-                    "action": "KEEP",
+                    "action": "REASSESS_FAILED",
                     "reason": "no LLM reassess agent",
                 }
                 for item in open_items
@@ -1586,11 +1582,15 @@ class QuestionQueue:
                 if action == "SUPERSEDED":
                     action = "STALE"
                 if action not in _VALID_LLM_REASSESS_ACTIONS:
-                    action = "KEEP"
+                    action = "REASSESS_FAILED"
 
                 reason = str(entry.get("reason", "")).strip()
                 if not reason:
-                    reason = "llm reassess decision"
+                    reason = (
+                        "llm reassess decision"
+                        if action != "REASSESS_FAILED"
+                        else ("invalid llm reassess action")
+                    )
 
                 normalized: dict[str, Any] = {
                     "question_id": question_id,
@@ -1618,13 +1618,13 @@ class QuestionQueue:
                 normalized_by_question_id[question_id] = normalized
         except Exception:
             logger.warning(
-                "LLM reassess pass failed; falling back to KEEP for unresolved questions",
+                "LLM reassess pass failed; emitting REASSESS_FAILED for unresolved questions",
                 exc_info=True,
             )
             return [
                 {
                     "question_id": item.question_id,
-                    "action": "KEEP",
+                    "action": "REASSESS_FAILED",
                     "reason": "llm reassess parse failure",
                 }
                 for item in open_items
@@ -1636,12 +1636,22 @@ class QuestionQueue:
                 item.question_id,
                 {
                     "question_id": item.question_id,
-                    "action": "KEEP",
+                    "action": "REASSESS_FAILED",
                     "reason": "no llm decision",
                 },
             )
             action = decision["action"]
             reason = decision["reason"]
+
+            if action == "REASSESS_FAILED":
+                llm_actions.append(
+                    {
+                        "question_id": item.question_id,
+                        "action": "REASSESS_FAILED",
+                        "reason": reason,
+                    }
+                )
+                continue
 
             if action == "KEEP":
                 llm_actions.append(
@@ -2153,22 +2163,6 @@ class QuestionQueue:
             history_dir / f"question_queue.{snapshot_suffix}.{uuid.uuid4().hex[:8]}.json"
         )
         snapshot_path.write_text(payload, encoding="utf-8")
-
-        history_snapshots = sorted(history_dir.glob(_QUEUE_HISTORY_SNAPSHOT_GLOB))
-        overflow_count = len(history_snapshots) - _QUEUE_HISTORY_RETENTION_LIMIT
-        if overflow_count > 0:
-            pruned = history_snapshots[:overflow_count]
-            prune_record = {
-                "pruned_at": datetime.now(UTC).isoformat(),
-                "retention_limit": _QUEUE_HISTORY_RETENTION_LIMIT,
-                "deleted_snapshots": [path.name for path in pruned],
-            }
-            prune_log_path = history_dir / _QUEUE_HISTORY_PRUNE_LOG
-            with prune_log_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(prune_record, sort_keys=True))
-                handle.write("\n")
-            for stale_path in pruned:
-                stale_path.unlink(missing_ok=True)
 
         return out_path
 
