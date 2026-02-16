@@ -30,6 +30,7 @@ FIXTURES: list[RepairFixture] = [
     RepairFixture(
         artifact_type=ArtifactType.EVIDENCE_JSON,
         invalid_output=(
+            '["INTRO", "MISSING"]}\n  ]\n}\n'
             '{\n  "sources": [\n    {"file_id": "F0001", "sections": ["MISSING"]}\n  ]\n}\n'
         ),
         expected_errors=[{"type": "unknown_section_reference"}],

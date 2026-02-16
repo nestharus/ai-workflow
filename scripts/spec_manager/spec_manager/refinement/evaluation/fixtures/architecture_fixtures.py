@@ -11,7 +11,7 @@ def _allowlists() -> dict[str, object]:
         "library_ids": ["LIB-0001"],
         "library_files": {
             "LIB-0001": {
-                "spec.md": ["CONSTRAINTS", "RISKS"],
+                "spec.md": ["CONSTRAINTS", "RISKS", "CONSTRAINTS,RISKS"],
                 "charter.md": ["INTENT"],
             }
         },
@@ -58,9 +58,7 @@ FIXTURES: list[RepairFixture] = [
     ),
     RepairFixture(
         artifact_type=ArtifactType.ARCHITECTURE_SELECTION,
-        invalid_output=(
-            "Decision uses [LIB-0001::spec.md::CONSTRAINTS, LIB-0001::spec.md::RISKS] for latency."
-        ),
+        invalid_output=("Decision uses [LIB-0001::spec.md::CONSTRAINTS,RISKS] for latency."),
         expected_errors=[{"type": "compound_pointer"}],
         allowlists=_allowlists(),
         description="Compound pointer in architecture citation.",

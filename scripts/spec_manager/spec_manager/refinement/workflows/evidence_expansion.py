@@ -468,6 +468,13 @@ def _validate_evidence_entry(
     return issues, normalized
 
 
+def validate_evidence_entry(
+    entry: dict[str, Any], manager: WorkspaceManager, lib_id: str
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Public projection for evidence entry validation."""
+    return _validate_evidence_entry(entry, manager, lib_id)
+
+
 def _process_pair(
     lib_id: str,
     charter_content: str,

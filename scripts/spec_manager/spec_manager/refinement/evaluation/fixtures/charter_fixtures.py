@@ -10,7 +10,7 @@ def _allowlists() -> dict[str, object]:
     return {
         "file_ids": ["F0001", "F0002"],
         "sections": {
-            "F0001": ["INTRO", "REQS"],
+            "F0001": ["INTRO", "REQS", "INTRO,REQS"],
             "F0002": ["OVERVIEW"],
         },
     }
@@ -122,7 +122,7 @@ FIXTURES: list[RepairFixture] = [
             "#### Intent\n"
             "Provide core services.\n\n"
             "#### Evidence\n"
-            "- [F0001::INTRO, F0001::REQS]\n\n"
+            "- [F0001::INTRO,REQS]\n\n"
             "#### Overlap Resolutions\n"
             "- None\n"
         ),

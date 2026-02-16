@@ -370,6 +370,23 @@ def _validate_overlap_resolutions(charters: list[LibraryCharter]) -> list[dict[s
     return issues
 
 
+def validate_library_ids(charters: list[LibraryCharter]) -> list[dict[str, Any]]:
+    """Public projection for charter library ID validation."""
+    return _validate_library_ids(charters)
+
+
+def validate_evidence_sources(
+    charters: list[LibraryCharter], manager: WorkspaceManager
+) -> list[dict[str, Any]]:
+    """Public projection for charter evidence-source validation."""
+    return _validate_evidence_sources(charters, manager)
+
+
+def validate_overlap_resolutions(charters: list[LibraryCharter]) -> list[dict[str, Any]]:
+    """Public projection for overlap-resolution validation."""
+    return _validate_overlap_resolutions(charters)
+
+
 def _format_charter(charter: LibraryCharter, manager: WorkspaceManager) -> str:
     lines = [f"# Library Charter: {charter.lib_id}", ""]
     lines.extend(["## Intent", charter.intent or "", ""])

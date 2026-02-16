@@ -664,6 +664,13 @@ def _validate_architecture_citations(
     return issues
 
 
+def validate_architecture_citations(
+    content: str, manager: WorkspaceManager
+) -> list[dict[str, Any]]:
+    """Public projection for architecture citation validation."""
+    return _validate_architecture_citations(content, manager)
+
+
 def _format_architecture_candidate(candidate: dict[str, Any]) -> str:
     lines = [f"# Architecture Candidate: {candidate.get('arch_id', 'unknown')}", ""]
     lines.extend(["## Pattern", str(candidate.get("pattern", "")).strip(), ""])

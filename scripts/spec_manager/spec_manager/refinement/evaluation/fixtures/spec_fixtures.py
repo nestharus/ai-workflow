@@ -59,15 +59,15 @@ FIXTURES: list[RepairFixture] = [
             "## Boundaries\n"
             "- Covers core [F0001::INTRO]\n\n"
             "## Requirements\n"
-            "- Must do X\n\n"
+            "- Must do X [F0001::REQS]\n\n"
             "## Constraints\n"
-            "- Keep simple [F0002::OVERVIEW]\n\n"
+            "- Keep simple\n\n"
             "## Dependencies\n"
             "- Depends on Y [F0001::INTRO]\n"
         ),
         expected_errors=[{"type": "missing_citation"}],
         allowlists=_allowlists(),
-        description="Missing citation in requirements bullet.",
+        description="Missing citation in constraints bullet.",
     ),
     RepairFixture(
         artifact_type=ArtifactType.SPEC,

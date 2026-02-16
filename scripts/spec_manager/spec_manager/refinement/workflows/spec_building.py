@@ -733,6 +733,13 @@ def _validate_spec_citations(
     return issues
 
 
+def validate_spec_citations(
+    content: str, manager: WorkspaceManager, lib_id: str
+) -> list[dict[str, Any]]:
+    """Public projection for spec citation validation."""
+    return _validate_spec_citations(content, manager, lib_id)
+
+
 def _read_evidence_sources(lib_dir: Path) -> list[dict[str, Any]]:
     evidence_path = lib_dir / "evidence.json"
     if not evidence_path.exists():

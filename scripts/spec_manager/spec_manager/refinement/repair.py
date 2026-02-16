@@ -84,7 +84,7 @@ def repair_artifact(
     if not errors:
         logger.info("Repair skipped; no validation errors (artifact_type=%s).", artifact_type.value)
         return output, evidence_records
-    prompt = _build_repair_prompt(
+    prompt = build_repair_prompt(
         output=output,
         errors=errors,
         allowlists=allowlists,
@@ -175,6 +175,22 @@ def _build_repair_prompt(
         "Return ONLY the corrected output. No preamble, no code fences, no explanations.",
     ]
     return "\n".join(lines)
+
+
+def build_repair_prompt(
+    *,
+    output: str,
+    errors: list[dict[str, Any]],
+    allowlists: dict[str, Any],
+    artifact_type: ArtifactType,
+) -> str:
+    """Public projection for repair prompt construction."""
+    return _build_repair_prompt(
+        output=output,
+        errors=errors,
+        allowlists=allowlists,
+        artifact_type=artifact_type,
+    )
 
 
 def _select_repair_agent(

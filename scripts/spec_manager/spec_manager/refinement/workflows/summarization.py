@@ -194,6 +194,13 @@ def _validate_evidence_pointers(
     return issues
 
 
+def validate_evidence_pointers(
+    content: str, manager: WorkspaceManager, file_id: str
+) -> list[dict[str, Any]]:
+    """Public projection for summary evidence-pointer validation."""
+    return _validate_evidence_pointers(content, manager, file_id)
+
+
 def _validate_bullets_have_pointers(content: str, file_id: str) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     sections = _extract_sections(content, level=2)

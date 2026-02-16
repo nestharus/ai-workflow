@@ -19,18 +19,18 @@ from spec_manager.refinement.evaluation.fixtures import FixtureCategory, RepairF
 from spec_manager.refinement.formats import parse_library_synthesis
 from spec_manager.refinement.repair import (
     ArtifactType,
-    _build_repair_prompt,
+    build_repair_prompt,
     repair_artifact,
 )
-from spec_manager.refinement.workflows.architecture import _validate_architecture_citations
-from spec_manager.refinement.workflows.evidence_expansion import _validate_evidence_entry
+from spec_manager.refinement.workflows.architecture import validate_architecture_citations
+from spec_manager.refinement.workflows.evidence_expansion import validate_evidence_entry
 from spec_manager.refinement.workflows.library_synthesis import (
-    _validate_evidence_sources,
-    _validate_library_ids,
-    _validate_overlap_resolutions,
+    validate_evidence_sources,
+    validate_library_ids,
+    validate_overlap_resolutions,
 )
-from spec_manager.refinement.workflows.spec_building import _validate_spec_citations
-from spec_manager.refinement.workflows.summarization import _validate_evidence_pointers
+from spec_manager.refinement.workflows.spec_building import validate_spec_citations
+from spec_manager.refinement.workflows.summarization import validate_evidence_pointers
 from spec_manager.refinement.workspace import RunFolderStructure, WorkspaceManager, WorkspaceState
 
 _PRELUDE_PREFIXES = (
@@ -163,28 +163,29 @@ def _index_fixtures(fixtures: list[RepairFixture]) -> None:
         per_type[fixture.artifact_type] = count
         fixture_id = f"{fixture.artifact_type.value}_{count:03d}"
         _FIXTURE_ID_BY_OBJECT[id(fixture)] = fixture_id
-        _FIXTURE_CATEGORY_BY_ID[fixture_id] = _infer_fixture_categories(fixture)
+        _FIXTURE_CATEGORY_BY_ID[fixture_id] = _observed_fixture_categories(fixture)
 
 
-def _infer_fixture_categories(fixture: RepairFixture) -> set[FixtureCategory]:
+def _categories_from_errors(errors: list[dict[str, Any]]) -> set[FixtureCategory]:
     categories: set[FixtureCategory] = set()
-    for error in fixture.expected_errors:
+    for error in errors:
         category = _ERROR_CATEGORY_MAP.get(str(error.get("type", "")))
         if category:
             categories.add(category)
-    if not categories:
-        description = fixture.description.lower()
-        for keyword, category in (
-            ("preamble", FixtureCategory.STRAY_PREAMBLE),
-            ("fence", FixtureCategory.TRAILING_FENCE),
-            ("compound", FixtureCategory.COMPOUND_POINTER),
-            ("section", FixtureCategory.INVENTED_SECTION),
-            ("file", FixtureCategory.INVALID_FILE_ID),
-            ("citation", FixtureCategory.MISSING_CITATION),
-        ):
-            if keyword in description:
-                categories.add(category)
-    return categories or {FixtureCategory.MISSING_CITATION}
+    return categories
+
+
+def _observed_fixture_categories(fixture: RepairFixture) -> set[FixtureCategory]:
+    observed_errors = validate_repaired_output(
+        fixture.invalid_output,
+        fixture.artifact_type,
+        fixture.allowlists,
+    )
+    return _categories_from_errors(observed_errors)
+
+
+def _infer_fixture_categories(fixture: RepairFixture) -> set[FixtureCategory]:
+    return _observed_fixture_categories(fixture)
 
 
 def _filter_fixtures(
@@ -195,7 +196,11 @@ def _filter_fixtures(
         return fixtures
     filtered: list[RepairFixture] = []
     for fixture in fixtures:
-        if _infer_fixture_categories(fixture) & categories:
+        fixture_id = _FIXTURE_ID_BY_OBJECT.get(id(fixture))
+        observed = _FIXTURE_CATEGORY_BY_ID.get(fixture_id) if fixture_id is not None else None
+        if observed is None:
+            observed = _observed_fixture_categories(fixture)
+        if observed and observed & categories:
             filtered.append(fixture)
     return filtered
 
@@ -377,7 +382,7 @@ def _detect_stray_preamble(output: str, anchors: tuple[str, ...]) -> list[dict[s
     return []
 
 
-def _infer_file_id(output: str, allowlists: dict[str, Any]) -> str:
+def _infer_file_id(output: str, allowlists: dict[str, Any]) -> str | None:
     file_id = allowlists.get("file_id")
     if isinstance(file_id, str) and file_id:
         return file_id
@@ -387,17 +392,17 @@ def _infer_file_id(output: str, allowlists: dict[str, Any]) -> str:
     match = re.search(r"File Summary:\s*([\w\-\.]+)", output, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    return "unknown"
+    return None
 
 
-def _infer_lib_id(output: str, allowlists: dict[str, Any]) -> str:
+def _infer_lib_id(output: str, allowlists: dict[str, Any]) -> str | None:
     lib_id = allowlists.get("lib_id")
     if isinstance(lib_id, str) and lib_id:
         return lib_id
     match = re.search(r"Library Spec:\s*([\w\-\.]+)", output, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    return "LIB-0000"
+    return None
 
 
 def _build_validation_manager(allowlists: dict[str, Any], root: Path) -> WorkspaceManager:
@@ -521,23 +526,39 @@ def validate_repaired_output(
 
         if artifact_type == ArtifactType.SUMMARY:
             file_id = _infer_file_id(output, allowlists)
-            issues.extend(_validate_evidence_pointers(output, manager, file_id))
+            if file_id is None:
+                issues.append(
+                    {
+                        "type": "missing_file_id",
+                        "message": "Could not infer file_id from summary output or allowlists.",
+                    }
+                )
+                file_id = ""
+            issues.extend(validate_evidence_pointers(output, manager, file_id))
         elif artifact_type == ArtifactType.CHARTER:
             charters, _ = parse_library_synthesis(output)
-            issues.extend(_validate_library_ids(charters))
-            issues.extend(_validate_evidence_sources(charters, manager))
-            issues.extend(_validate_overlap_resolutions(charters))
+            issues.extend(validate_library_ids(charters))
+            issues.extend(validate_evidence_sources(charters, manager))
+            issues.extend(validate_overlap_resolutions(charters))
             issues.extend(_validate_charter_evidence_lines(output))
         elif artifact_type == ArtifactType.SPEC:
             lib_id = _infer_lib_id(output, allowlists)
-            issues.extend(_validate_spec_citations(output, manager, lib_id))
+            if lib_id is None:
+                issues.append(
+                    {
+                        "type": "missing_lib_id",
+                        "message": "Could not infer lib_id from spec output or allowlists.",
+                    }
+                )
+                lib_id = ""
+            issues.extend(validate_spec_citations(output, manager, lib_id))
         elif artifact_type == ArtifactType.EVIDENCE_JSON:
             issues.extend(_validate_evidence_json(output, manager, allowlists))
         elif artifact_type in {
             ArtifactType.ARCHITECTURE_SELECTION,
             ArtifactType.ARCHITECTURE_MAPPING,
         }:
-            issues.extend(_validate_architecture_citations(output, manager))
+            issues.extend(validate_architecture_citations(output, manager))
 
     return issues
 
@@ -579,7 +600,15 @@ def _validate_evidence_json(
         List of validation error dictionaries.
     """
     issues: list[dict[str, Any]] = []
-    lib_id = str(allowlists.get("lib_id") or "LIB-0000")
+    raw_lib_id = allowlists.get("lib_id")
+    lib_id = raw_lib_id.strip() if isinstance(raw_lib_id, str) else ""
+    if not lib_id:
+        issues.append(
+            {
+                "type": "missing_lib_id",
+                "message": "Evidence JSON validation requires a lib_id in allowlists.",
+            }
+        )
     try:
         payload = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -608,7 +637,7 @@ def _validate_evidence_json(
                 }
             )
             continue
-        entry_issues, _ = _validate_evidence_entry(entry, manager, lib_id)
+        entry_issues, _ = validate_evidence_entry(entry, manager, lib_id)
         issues.extend(entry_issues)
         sections = entry.get("sections")
         if isinstance(sections, list) and not sections:
@@ -671,7 +700,7 @@ def run_repair_with_model(
     model_workspace = workspace / f"{fixture_id}_{model.name}"
     manager = _build_validation_manager(fixture.allowlists, model_workspace)
 
-    prompt = _build_repair_prompt(
+    prompt = build_repair_prompt(
         output=fixture.invalid_output,
         errors=errors,
         allowlists=fixture.allowlists,
@@ -980,6 +1009,7 @@ def main() -> None:
     args = parser.parse_args()
 
     fixtures = _load_fixtures()
+    _index_fixtures(fixtures)
     category_filter: set[FixtureCategory] | None = None
     if args.fixtures:
         category_filter = {
