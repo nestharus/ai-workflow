@@ -21,6 +21,73 @@ from spec_manager.refinement.formats import _strip_code_fences
 logger = logging.getLogger(__name__)
 
 
+def _parse_library_defs(payload: object, *, context: str) -> list[LibraryDef]:
+    """Parse a library payload into validated ``LibraryDef`` objects."""
+    if not isinstance(payload, list):
+        raise TypeError(
+            f"{context} expected 'libraries' to be a list. Got: {type(payload).__name__}"
+        )
+
+    libraries: list[LibraryDef] = []
+    seen_ids: set[str] = set()
+    for idx, lib_data in enumerate(payload, start=1):
+        if not isinstance(lib_data, dict):
+            raise TypeError(f"{context} library #{idx} is not an object: {lib_data!r}")
+
+        lib_id = str(lib_data.get("lib_id", "")).strip()
+        name = str(lib_data.get("name", "")).strip()
+        description = str(lib_data.get("description", "")).strip()
+        if not lib_id or not name or not description:
+            raise ValueError(
+                f"{context} library #{idx} missing required fields: "
+                f"lib_id={lib_id!r}, name={name!r}, description={description!r}"
+            )
+        if lib_id in seen_ids:
+            raise ValueError(f"{context} includes duplicate library id: {lib_id}")
+        seen_ids.add(lib_id)
+        libraries.append(
+            LibraryDef(
+                lib_id=lib_id,
+                name=name,
+                description=description,
+            )
+        )
+    return libraries
+
+
+def _merge_library_sets(
+    discovered: list[LibraryDef],
+    *,
+    existing_libraries: list[LibraryDef] | None,
+) -> list[LibraryDef]:
+    """Merge discovered libraries additively, preserving all existing libraries."""
+    if not existing_libraries:
+        return discovered
+
+    merged = list(existing_libraries)
+    existing_by_id = {lib.lib_id: lib for lib in existing_libraries}
+    for discovered_lib in discovered:
+        existing = existing_by_id.get(discovered_lib.lib_id)
+        if existing is not None:
+            if (
+                existing.name != discovered_lib.name
+                or existing.description != discovered_lib.description
+            ):
+                logger.warning(
+                    "Ignoring conflicting rediscovery for existing library %s: "
+                    "existing=(%r, %r) discovered=(%r, %r)",
+                    existing.lib_id,
+                    existing.name,
+                    existing.description,
+                    discovered_lib.name,
+                    discovered_lib.description,
+                )
+            continue
+        merged.append(discovered_lib)
+        existing_by_id[discovered_lib.lib_id] = discovered_lib
+    return merged
+
+
 def discover_libraries(
     summaries: list[dict],
     output_dir: Path,
@@ -99,15 +166,14 @@ def discover_libraries(
             f"Library discovery JSON missing 'libraries' key. Got keys: {sorted(data.keys())}"
         )
 
-    libraries: list[LibraryDef] = []
-    for lib_data in data["libraries"]:
-        libraries.append(
-            LibraryDef(
-                lib_id=lib_data["lib_id"],
-                name=lib_data["name"],
-                description=lib_data["description"],
-            )
-        )
+    discovered_libraries = _parse_library_defs(
+        data["libraries"],
+        context="Library discovery",
+    )
+    libraries = _merge_library_sets(
+        discovered_libraries,
+        existing_libraries=existing_libraries,
+    )
 
     libraries_file = output_dir / "libraries.yaml"
     libraries_file.write_text(

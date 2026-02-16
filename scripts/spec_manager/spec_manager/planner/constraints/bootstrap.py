@@ -609,6 +609,11 @@ def _classify_constraint_subtype(element_id: str, text: str) -> ConstraintIndexE
     )
 
 
+def classify_constraint_subtype(element_id: str, text: str) -> ConstraintIndexEntry:
+    """Public classifier for constraint index projection."""
+    return _classify_constraint_subtype(element_id, text)
+
+
 # ------------------------------------------------------------------
 # Normalization helpers
 # ------------------------------------------------------------------

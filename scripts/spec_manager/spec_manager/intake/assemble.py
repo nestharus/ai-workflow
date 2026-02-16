@@ -152,13 +152,16 @@ def _write_constraints_indexes(
     For each library that has CONSTRAINTS bucket routes, classifies each
     constraint element and writes a JSON index file alongside constraints.md.
     """
-    from spec_manager.planner.constraints.bootstrap import _classify_constraint_subtype
+    from spec_manager.planner.constraints.bootstrap import classify_constraint_subtype
 
     # Group CONSTRAINTS routes by library
     lib_constraint_routes: dict[str, list[RouteEntry]] = defaultdict(list)
     for route in routes:
         if route.bucket == "CONSTRAINTS":
             lib_constraint_routes[route.library].append(route)
+
+    entries_by_library: dict[str, list[dict[str, str | list[str]]]] = {}
+    missing_sources: list[dict[str, str | int]] = []
 
     for lib_id, constraint_routes in lib_constraint_routes.items():
         entries: list[dict[str, str | list[str]]] = []
@@ -167,10 +170,19 @@ def _write_constraints_indexes(
                 try:
                     source_cache[route.src.file] = _read_source_lines(source_dir, route.src.file)
                 except FileNotFoundError:
+                    missing_sources.append(
+                        {
+                            "library": lib_id,
+                            "route_id": route.route_id,
+                            "source_file": route.src.file,
+                            "start": route.src.start,
+                            "end": route.src.end,
+                        }
+                    )
                     continue
             source_lines = source_cache[route.src.file]
             text = _extract_verbatim(source_lines, route.src.start, route.src.end)
-            entry = _classify_constraint_subtype(route.element_id, text)
+            entry = classify_constraint_subtype(route.element_id, text)
             entries.append(
                 {
                     "element_id": entry.element_id,
@@ -180,7 +192,22 @@ def _write_constraints_indexes(
                     "text_preview": entry.text_preview,
                 }
             )
+        entries_by_library[lib_id] = entries
 
+    if missing_sources:
+        missing_details = ", ".join(
+            (
+                f"{item['library']}:{item['route_id']} "
+                f"{item['source_file']}:{item['start']}-{item['end']}"
+            )
+            for item in missing_sources
+        )
+        raise FileNotFoundError(
+            "Missing source files while building constraints indexes. "
+            f"Run is incomplete. Missing routes: {missing_details}"
+        )
+
+    for lib_id, entries in entries_by_library.items():
         if entries:
             lib_dir = libraries_dir / lib_id
             lib_dir.mkdir(parents=True, exist_ok=True)

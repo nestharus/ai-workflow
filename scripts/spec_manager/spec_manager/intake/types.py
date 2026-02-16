@@ -43,6 +43,7 @@ class RouteEntry:
     notes: str = ""  # free-text from LLM explaining decision
     ref_stubs: list[str] = field(default_factory=list)  # unresolved cross-file references
     resolved_refs: list[ResolvedReference] = field(default_factory=list)
+    unresolved_refs: list[UnresolvedReference] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +54,14 @@ class ResolvedReference:
     target: SourceSpan
     target_route_id: str = ""
     target_element_id: str = ""
+
+
+@dataclass
+class UnresolvedReference:
+    """Unresolved cross-file reference and why it could not be resolved."""
+
+    stub: str
+    reason: str
 
 
 @dataclass

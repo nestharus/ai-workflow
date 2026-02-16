@@ -135,6 +135,7 @@ def summarize_sources(
         )
 
         last_json_error: json.JSONDecodeError | None = None
+        attempt_artifacts: list[dict[str, object]] = []
         for attempt in range(3):
             raw_output = run_agent(
                 agent_name="spec-intake-summarize",
@@ -145,9 +146,25 @@ def summarize_sources(
             cleaned = _strip_code_fences(raw_output)
             try:
                 summary = json.loads(cleaned)
+                attempt_artifacts.append(
+                    {
+                        "attempt": attempt + 1,
+                        "raw_output": raw_output,
+                        "cleaned_output": cleaned,
+                        "parse_error": "",
+                    }
+                )
                 break
             except json.JSONDecodeError as e:
                 last_json_error = e
+                attempt_artifacts.append(
+                    {
+                        "attempt": attempt + 1,
+                        "raw_output": raw_output,
+                        "cleaned_output": cleaned,
+                        "parse_error": str(e),
+                    }
+                )
                 logger.warning(
                     "JSON parse attempt %d/3 failed for %s: %s",
                     attempt + 1,
@@ -185,6 +202,23 @@ def summarize_sources(
                 source_rel_path,
                 summary,
                 include_decomposition_hints=include_decomposition_hints,
+            ),
+            encoding="utf-8",
+        )
+        summary_payload_file = summaries_dir / f"{source_file.stem}.summary.json"
+        summary_payload_file.write_text(
+            json.dumps(
+                {
+                    "source_file": source_rel_path,
+                    "file_id": summary["file_id"],
+                    "intake_mode": normalized_mode,
+                    "include_decomposition_hints": include_decomposition_hints,
+                    "prompt": prompt,
+                    "llm_attempts": attempt_artifacts,
+                    "parsed_summary": summary,
+                },
+                indent=2,
+                ensure_ascii=False,
             ),
             encoding="utf-8",
         )

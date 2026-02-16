@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,30 @@ from spec_manager.intake.types import CoverageException, CoverageLedgerEntry, Ro
 logger = logging.getLogger(__name__)
 
 _MAX_FILTER_ITERATIONS = 3
+_DETERMINISTIC_NOISE_TABLE_RULE = re.compile(r"^\|?[:\-\s|]+\|?$")
+_DETERMINISTIC_NOISE_SYMBOL_RULE = re.compile(r"^[#>*_\-=`~:\s|]+$")
+
+
+def _is_deterministic_noise_line(line: str) -> bool:
+    """Return whether a line is deterministically ignorable formatting noise."""
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped in {"```", "~~~"}:
+        return True
+    if _DETERMINISTIC_NOISE_TABLE_RULE.fullmatch(stripped):
+        return True
+    return bool(_DETERMINISTIC_NOISE_SYMBOL_RULE.fullmatch(stripped))
+
+
+def _is_deterministic_noise_range(lines: list[str], start: int, end: int) -> bool:
+    """Return whether every line in a range is formatting-only noise."""
+    for line_num in range(start, end + 1):
+        if line_num < 1 or line_num > len(lines):
+            return False
+        if not _is_deterministic_noise_line(lines[line_num - 1]):
+            return False
+    return True
 
 
 def _collect_explicit_ignored_ranges(
@@ -74,6 +99,7 @@ def check_coverage(
     file_lines: dict[str, list[str]] = {}
     uncovered_ranges: list[tuple[str, int, int]] = []
     explicit_ignored: dict[str, list[CoverageException]] = defaultdict(list)
+    invalid_route_spans: list[dict[str, Any]] = []
     total_lines = 0
 
     for source_file in source_files:
@@ -91,18 +117,38 @@ def check_coverage(
         ignored_route_ids: dict[int, list[str]] = defaultdict(list)
 
         for route in routed_routes.get(rel_path, []):
-            start = max(1, route.src.start)
-            end = min(line_count, route.src.end)
-            if start > end:
+            if route.src.start < 1 or route.src.end < route.src.start or route.src.end > line_count:
+                invalid_route_spans.append(
+                    {
+                        "route_id": route.route_id,
+                        "file": rel_path,
+                        "bucket": route.bucket,
+                        "start": route.src.start,
+                        "end": route.src.end,
+                        "line_count": line_count,
+                    }
+                )
                 continue
+            start = route.src.start
+            end = route.src.end
             for line_num in range(start, end + 1):
                 covered[line_num] = True
 
         for route in ignored_routes.get(rel_path, []):
-            start = max(1, route.src.start)
-            end = min(line_count, route.src.end)
-            if start > end:
+            if route.src.start < 1 or route.src.end < route.src.start or route.src.end > line_count:
+                invalid_route_spans.append(
+                    {
+                        "route_id": route.route_id,
+                        "file": rel_path,
+                        "bucket": route.bucket,
+                        "start": route.src.start,
+                        "end": route.src.end,
+                        "line_count": line_count,
+                    }
+                )
                 continue
+            start = route.src.start
+            end = route.src.end
             for line_num in range(start, end + 1):
                 covered[line_num] = True
                 ignored_marks[line_num] = True
@@ -122,6 +168,20 @@ def check_coverage(
             while line_num <= line_count and not covered[line_num]:
                 line_num += 1
             uncovered_ranges.append((rel_path, start, line_num - 1))
+
+    if invalid_route_spans:
+        details = ", ".join(
+            (
+                f"{item['route_id']}:{item['file']}:"
+                f"{item['start']}-{item['end']}"
+                f"(file_lines={item['line_count']})"
+            )
+            for item in invalid_route_spans
+        )
+        raise ValueError(
+            "Coverage closure detected invalid route spans (out-of-bounds or inverted). "
+            f"Upstream routing output is malformed: {details}"
+        )
 
     llm_classified = (
         _classify_uncovered(uncovered_ranges, file_lines, output_dir) if uncovered_ranges else {}
@@ -305,6 +365,20 @@ def _classify_uncovered(
         item_id = f"{file_path}:{start}-{end}"
         verdict = classifications.get(item_id, "content")
         if verdict == "noise":
+            lines = file_lines.get(file_path, [])
+            if not _is_deterministic_noise_range(lines, start, end):
+                classified[file_path].append(
+                    CoverageException(
+                        start=start,
+                        end=end,
+                        status="uncovered",
+                        reason=(
+                            "llm_proposed_noise_unverified: "
+                            + (reasons.get(item_id, "").strip() or "requires routing decision")
+                        ),
+                    )
+                )
+                continue
             classified[file_path].append(
                 CoverageException(
                     start=start,

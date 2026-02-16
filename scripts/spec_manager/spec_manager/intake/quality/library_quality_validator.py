@@ -15,7 +15,6 @@ Dimension 5 is advisory (warn-only, can be promoted to gate later).
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import re
@@ -32,6 +31,9 @@ from spec_manager.core.json_extraction import _extract_json_payload
 logger = logging.getLogger(__name__)
 
 _ELEMENT_MARKER_RE = re.compile(r"\(\[=([A-Za-z0-9_-]+)\]\)")
+_PROMPT_CHUNK_CHAR_LIMIT = 6000
+_MAX_SEMANTIC_CHUNK_COMPARISONS = 64
+_MAX_ISOLATION_CHUNKS = 16
 
 
 @dataclass
@@ -121,11 +123,13 @@ class LibraryQualityValidator:
         self._semantic_judge_agent = semantic_judge_agent
         self._isolation_judge_agent = isolation_judge_agent
         self._dependency_judge_agent = dependency_judge_agent
+        self._artifact_load_errors: list[dict[str, Any]] = []
 
     def validate(self, phase0_output_dir: Path | None = None) -> LibraryQualityReport:
         """Run all quality checks on Phase 0 output and persist report artifacts."""
         output_dir = phase0_output_dir or (self._workspace / "phase0_output")
         report = LibraryQualityReport()
+        self._artifact_load_errors = []
 
         # Load Phase 0 artifacts
         route_table = self._load_route_table(output_dir)
@@ -190,6 +194,10 @@ class LibraryQualityValidator:
             issues.append("coverage_ledger.jsonl is missing or empty.")
         if not libraries:
             issues.append("No assembled libraries found under phase0_output/libraries/.")
+        if self._artifact_load_errors:
+            issues.append(
+                f"{len(self._artifact_load_errors)} artifact parse/load error(s) detected."
+            )
 
         total_files = 0
         incomplete_files = 0
@@ -241,6 +249,7 @@ class LibraryQualityValidator:
                 "routed_elements": len(routed_element_ids),
                 "assembled_elements": len(assembled_element_ids),
                 "missing_routed_elements": missing_elements[:100],
+                "artifact_load_errors": self._artifact_load_errors[:200],
             },
             issues=issues,
         )
@@ -339,6 +348,7 @@ class LibraryQualityValidator:
                     "overlap_score": overlap_score,
                     "relationship": relationship,
                     "rationale": rationale,
+                    "chunk_comparisons": int(judgment.get("chunk_comparisons", 1) or 1),
                 }
                 pair_results.append(pair_result)
 
@@ -538,61 +548,128 @@ class LibraryQualityValidator:
         lib_a: dict[str, Any],
         lib_b: dict[str, Any],
     ) -> dict[str, Any]:
-        prompt = (
-            "## TASK\n"
-            "Evaluate semantic overlap between two libraries.\n\n"
-            "Return ONLY JSON with this schema:\n"
-            "{"
-            '"overlap_score": 0.0, '
-            '"relationship": '
-            '"distinct|subset|redundant|crosscutting intentional", '
-            '"rationale": "..."'
-            "}\n\n"
-            "Rules:\n"
-            "- overlap_score is in [0,1]\n"
-            "- relationship must match the allowed set\n"
-            "- Use 'crosscutting intentional' only when overlap is deliberate and healthy\n\n"
-            f"## Library A\n{self._render_library_for_prompt(lib_a)}\n\n"
-            f"## Library B\n{self._render_library_for_prompt(lib_b)}\n"
-        )
-        data = self._run_json_agent(
-            agent_name=self._semantic_judge_agent,
-            prompt=prompt,
-            workspace=output_dir,
-        )
-        if not isinstance(data, dict):
-            raise TypeError("Semantic judge output must be a JSON object.")
-        return data
+        chunks_a = self._render_library_for_prompt_chunks(lib_a)
+        chunks_b = self._render_library_for_prompt_chunks(lib_b)
+        pair_count = len(chunks_a) * len(chunks_b)
+        if pair_count > _MAX_SEMANTIC_CHUNK_COMPARISONS:
+            raise ValueError(
+                "Semantic overlap chunk comparison exceeds bound: "
+                f"{pair_count} > {_MAX_SEMANTIC_CHUNK_COMPARISONS}. "
+                "Increase chunk size or split inputs before validation."
+            )
+
+        judgments: list[dict[str, Any]] = []
+        for idx_a, chunk_a in enumerate(chunks_a, start=1):
+            for idx_b, chunk_b in enumerate(chunks_b, start=1):
+                prompt = (
+                    "## TASK\n"
+                    "Evaluate semantic overlap between two libraries.\n\n"
+                    "Return ONLY JSON with this schema:\n"
+                    "{"
+                    '"overlap_score": 0.0, '
+                    '"relationship": '
+                    '"distinct|subset|redundant|crosscutting intentional", '
+                    '"rationale": "..."'
+                    "}\n\n"
+                    "Rules:\n"
+                    "- overlap_score is in [0,1]\n"
+                    "- relationship must match the allowed set\n"
+                    "- Use 'crosscutting intentional' only when overlap is deliberate "
+                    "and healthy\n\n"
+                    f"## Library A chunk {idx_a}/{len(chunks_a)}\n{chunk_a}\n\n"
+                    f"## Library B chunk {idx_b}/{len(chunks_b)}\n{chunk_b}\n"
+                )
+                data = self._run_json_agent(
+                    agent_name=self._semantic_judge_agent,
+                    prompt=prompt,
+                    workspace=output_dir,
+                )
+                if not isinstance(data, dict):
+                    raise TypeError("Semantic judge output must be a JSON object.")
+                judgments.append(
+                    {
+                        "chunk_a": idx_a,
+                        "chunk_b": idx_b,
+                        "overlap_score": self._clamp01(data.get("overlap_score", 0.0)),
+                        "relationship": str(data.get("relationship", "distinct")).strip().lower(),
+                        "rationale": str(data.get("rationale", "")).strip(),
+                    }
+                )
+
+        if not judgments:
+            raise ValueError("Semantic overlap judge produced no chunk judgments.")
+        best = max(judgments, key=lambda item: float(item.get("overlap_score", 0.0)))
+        return {
+            "overlap_score": best["overlap_score"],
+            "relationship": best["relationship"],
+            "rationale": best["rationale"],
+            "chunk_comparisons": len(judgments),
+        }
 
     def _judge_concern_isolation(
         self,
         output_dir: Path,
         library: dict[str, Any],
     ) -> dict[str, Any]:
-        prompt = (
-            "## TASK\n"
-            "Evaluate concern isolation for one library.\n\n"
-            "Return ONLY JSON with this schema:\n"
-            "{"
-            '"cohesion_score": 0.0, '
-            '"top_concerns": ["..."], '
-            '"mixed_concerns": ["..."], '
-            '"rationale": "..."'
-            "}\n\n"
-            "Rules:\n"
-            "- cohesion_score is in [0,1]\n"
-            "- top_concerns should list the library's primary coherent themes\n"
-            "- mixed_concerns should list concerns that appear out of scope\n\n"
-            f"## Library\n{self._render_library_for_prompt(library)}\n"
-        )
-        data = self._run_json_agent(
-            agent_name=self._isolation_judge_agent,
-            prompt=prompt,
-            workspace=output_dir,
-        )
-        if not isinstance(data, dict):
-            raise TypeError("Concern isolation judge output must be a JSON object.")
-        return data
+        chunks = self._render_library_for_prompt_chunks(library)
+        if len(chunks) > _MAX_ISOLATION_CHUNKS:
+            raise ValueError(
+                "Concern isolation chunk count exceeds bound: "
+                f"{len(chunks)} > {_MAX_ISOLATION_CHUNKS}. "
+                "Increase chunk size or split inputs before validation."
+            )
+
+        chunk_scores: list[float] = []
+        top_concern_frequency: dict[str, int] = {}
+        mixed_concerns: set[str] = set()
+        rationales: list[str] = []
+
+        for idx, chunk in enumerate(chunks, start=1):
+            prompt = (
+                "## TASK\n"
+                "Evaluate concern isolation for one library.\n\n"
+                "Return ONLY JSON with this schema:\n"
+                "{"
+                '"cohesion_score": 0.0, '
+                '"top_concerns": ["..."], '
+                '"mixed_concerns": ["..."], '
+                '"rationale": "..."'
+                "}\n\n"
+                "Rules:\n"
+                "- cohesion_score is in [0,1]\n"
+                "- top_concerns should list the library's primary coherent themes\n"
+                "- mixed_concerns should list concerns that appear out of scope\n\n"
+                f"## Library chunk {idx}/{len(chunks)}\n{chunk}\n"
+            )
+            data = self._run_json_agent(
+                agent_name=self._isolation_judge_agent,
+                prompt=prompt,
+                workspace=output_dir,
+            )
+            if not isinstance(data, dict):
+                raise TypeError("Concern isolation judge output must be a JSON object.")
+
+            chunk_scores.append(self._clamp01(data.get("cohesion_score", 0.0)))
+            for concern in self._normalize_string_list(data.get("top_concerns", [])):
+                top_concern_frequency[concern] = top_concern_frequency.get(concern, 0) + 1
+            mixed_concerns.update(self._normalize_string_list(data.get("mixed_concerns", [])))
+            rationale = str(data.get("rationale", "")).strip()
+            if rationale:
+                rationales.append(rationale)
+
+        if not chunk_scores:
+            raise ValueError("Concern isolation judge produced no chunk judgments.")
+        top_concerns = sorted(
+            top_concern_frequency.keys(),
+            key=lambda concern: (-top_concern_frequency[concern], concern),
+        )[:10]
+        return {
+            "cohesion_score": min(chunk_scores),
+            "top_concerns": top_concerns,
+            "mixed_concerns": sorted(mixed_concerns),
+            "rationale": " | ".join(rationales[:3]),
+            "chunk_count": len(chunks),
+        }
 
     def _judge_dependency_edges(
         self,
@@ -824,50 +901,119 @@ class LibraryQualityValidator:
                 total += end - start + 1
         return total
 
-    @staticmethod
-    def _load_route_table(output_dir: Path) -> list[dict[str, Any]]:
+    def _record_artifact_load_error(
+        self,
+        *,
+        artifact: str,
+        message: str,
+        line_number: int | None = None,
+        raw_line: str = "",
+    ) -> None:
+        self._artifact_load_errors.append(
+            {
+                "artifact": artifact,
+                "line_number": line_number,
+                "message": message,
+                "raw_line": raw_line[:500],
+            }
+        )
+
+    def _load_route_table(self, output_dir: Path) -> list[dict[str, Any]]:
         """Load route_table.jsonl from Phase 0 output."""
         path = output_dir / "route_table.jsonl"
         if not path.exists():
             return []
         entries = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line_number, line in enumerate(lines, start=1):
             line = line.strip()
-            if line:
-                with contextlib.suppress(json.JSONDecodeError):
-                    entries.append(json.loads(line))
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                self._record_artifact_load_error(
+                    artifact=str(path),
+                    line_number=line_number,
+                    raw_line=line,
+                    message=f"Invalid JSON: {exc}",
+                )
+                continue
+            if not isinstance(parsed, dict):
+                self._record_artifact_load_error(
+                    artifact=str(path),
+                    line_number=line_number,
+                    raw_line=line,
+                    message=f"Expected JSON object, got {type(parsed).__name__}",
+                )
+                continue
+            entries.append(parsed)
         return entries
 
-    @staticmethod
-    def _load_coverage_ledger(output_dir: Path) -> list[dict[str, Any]]:
+    def _load_coverage_ledger(self, output_dir: Path) -> list[dict[str, Any]]:
         """Load coverage_ledger.jsonl from Phase 0 output."""
         path = output_dir / "coverage_ledger.jsonl"
         if not path.exists():
             return []
         entries = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line_number, line in enumerate(lines, start=1):
             line = line.strip()
-            if line:
-                with contextlib.suppress(json.JSONDecodeError):
-                    entries.append(json.loads(line))
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                self._record_artifact_load_error(
+                    artifact=str(path),
+                    line_number=line_number,
+                    raw_line=line,
+                    message=f"Invalid JSON: {exc}",
+                )
+                continue
+            if not isinstance(parsed, dict):
+                self._record_artifact_load_error(
+                    artifact=str(path),
+                    line_number=line_number,
+                    raw_line=line,
+                    message=f"Expected JSON object, got {type(parsed).__name__}",
+                )
+                continue
+            entries.append(parsed)
         return entries
 
-    @staticmethod
-    def _load_library_catalog(output_dir: Path) -> list[dict[str, Any]]:
+    def _load_library_catalog(self, output_dir: Path) -> list[dict[str, Any]]:
         """Load libraries.yaml from Phase 0 output."""
         path = output_dir / "libraries.yaml"
         if not path.exists():
             return []
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (yaml.YAMLError, OSError):
+        except (yaml.YAMLError, OSError) as exc:
+            self._record_artifact_load_error(
+                artifact=str(path),
+                message=f"Invalid YAML: {exc}",
+            )
             return []
 
         if isinstance(data, dict):
             libraries = data.get("libraries", [])
+            if not isinstance(libraries, list):
+                self._record_artifact_load_error(
+                    artifact=str(path),
+                    message=(
+                        "Invalid YAML structure: expected mapping key 'libraries' to be a list."
+                    ),
+                )
+                return []
             return [entry for entry in libraries if isinstance(entry, dict)]
         if isinstance(data, list):
             return [entry for entry in data if isinstance(entry, dict)]
+        if data is not None:
+            self._record_artifact_load_error(
+                artifact=str(path),
+                message=f"Invalid YAML structure: expected list/dict, got {type(data).__name__}",
+            )
         return []
 
     @staticmethod
@@ -982,13 +1128,6 @@ class LibraryQualityValidator:
             return []
         return [str(item).strip() for item in value if str(item).strip()]
 
-    @staticmethod
-    def _truncate_for_prompt(text: str, limit: int = 6000) -> str:
-        if len(text) <= limit:
-            return text
-        suffix = "\n\n[... truncated for prompt size ...]"
-        return text[: max(0, limit - len(suffix))] + suffix
-
     def _render_library_for_prompt(self, library: dict[str, Any]) -> str:
         detail_blocks = []
         details = library.get("details", {})
@@ -1008,7 +1147,47 @@ class LibraryQualityValidator:
             ]
             if str(part).strip()
         )
-        return self._truncate_for_prompt(body)
+        return body
+
+    @staticmethod
+    def _chunk_text_for_prompt(text: str, *, limit: int) -> list[str]:
+        """Split text into bounded chunks without dropping content."""
+        if len(text) <= limit:
+            return [text]
+
+        chunks: list[str] = []
+        start = 0
+        while start < len(text):
+            hard_end = min(len(text), start + limit)
+            if hard_end == len(text):
+                chunks.append(text[start:].strip())
+                break
+
+            split = text.rfind("\n\n", start, hard_end)
+            if split <= start:
+                split = text.rfind("\n", start, hard_end)
+            if split <= start:
+                split = hard_end
+            chunk = text[start:split].strip()
+            if chunk:
+                chunks.append(chunk)
+            start = split
+            while start < len(text) and text[start] == "\n":
+                start += 1
+
+        return chunks or [text]
+
+    def _render_library_for_prompt_chunks(
+        self,
+        library: dict[str, Any],
+        *,
+        limit: int = _PROMPT_CHUNK_CHAR_LIMIT,
+    ) -> list[str]:
+        """Render a library as one or more bounded prompt chunks."""
+        return self._chunk_text_for_prompt(
+            self._render_library_for_prompt(library),
+            limit=limit,
+        )
 
 
 def validate_libraries(

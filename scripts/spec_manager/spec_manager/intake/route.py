@@ -17,11 +17,28 @@ from spec_manager.intake.types import (
     ResolvedReference,
     RouteEntry,
     SourceSpan,
+    UnresolvedReference,
     normalize_intake_mode,
 )
 from spec_manager.refinement.formats import _strip_code_fences
 
 logger = logging.getLogger(__name__)
+
+
+class RouteParseError(ValueError):
+    """Structured routing parse error for stable control flow decisions."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        source_file: str,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.source_file = source_file
+
 
 # Classification guidance embedded in the routing prompt.
 # This is from 00_CLASSIFICATION.md and CONSOLIDATION_CONCLUSIONS.md.
@@ -105,45 +122,83 @@ def _parse_route_entries(
     source_file: str,
     *,
     intake_mode: IntakeMode,
+    total_lines: int,
 ) -> list[RouteEntry]:
     """Parse JSON routing output into RouteEntry objects."""
     entries: list[RouteEntry] = []
 
     if "routes" not in data:
-        raise ValueError(
-            f"Routing JSON for {source_file} missing 'routes' key. Got keys: {sorted(data.keys())}"
+        raise RouteParseError(
+            f"Routing JSON for {source_file} missing 'routes' key. Got keys: {sorted(data.keys())}",
+            code="missing_routes_array",
+            source_file=source_file,
+        )
+    if not isinstance(data["routes"], list):
+        raise RouteParseError(
+            f"Routing JSON for {source_file} has non-list 'routes': "
+            f"{type(data['routes']).__name__}",
+            code="invalid_routes_array",
+            source_file=source_file,
         )
 
     for route_data in data["routes"]:
         bucket = route_data.get("bucket")
         if bucket is None:
-            raise ValueError(f"Route in {source_file} missing 'bucket'. Route data: {route_data}")
+            raise RouteParseError(
+                f"Route in {source_file} missing 'bucket'. Route data: {route_data}",
+                code="missing_bucket",
+                source_file=source_file,
+            )
 
         raw_library = str(route_data.get("library", "")).strip()
         raw_destination = str(route_data.get("destination", "")).strip()
         destination = raw_destination or raw_library
         if not destination:
             expected_field = "destination" if intake_mode == INTAKE_MODE_INTENT else "library"
-            raise ValueError(
+            raise RouteParseError(
                 f"Route in {source_file} missing '{expected_field}'. "
-                f"Bucket={bucket}, lines {route_data.get('start')}-{route_data.get('end')}."
+                f"Bucket={bucket}, lines {route_data.get('start')}-{route_data.get('end')}.",
+                code="missing_destination",
+                source_file=source_file,
             )
         if intake_mode == INTAKE_MODE_INTENT and destination not in _INTENT_DESTINATIONS:
-            raise ValueError(
+            raise RouteParseError(
                 f"Route in {source_file} has invalid destination {destination!r}. "
-                f"Expected one of: {_INTENT_DESTINATIONS}"
+                f"Expected one of: {_INTENT_DESTINATIONS}",
+                code="invalid_destination",
+                source_file=source_file,
+            )
+        try:
+            start = int(route_data["start"])
+            end = int(route_data["end"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RouteParseError(
+                f"Route in {source_file} has invalid span fields start/end: {route_data!r}",
+                code="invalid_source_span",
+                source_file=source_file,
+            ) from exc
+        if start < 1 or end < start or end > total_lines:
+            raise RouteParseError(
+                f"Route in {source_file} has out-of-bounds span {start}-{end} "
+                f"for file with {total_lines} lines.",
+                code="invalid_source_span",
+                source_file=source_file,
             )
         raw_ref_stubs = route_data.get("ref_stubs", [])
         if not isinstance(raw_ref_stubs, list):
-            raise TypeError(f"Route in {source_file} has non-list 'ref_stubs': {raw_ref_stubs!r}")
+            raise RouteParseError(
+                f"Route in {source_file} has non-list 'ref_stubs': {raw_ref_stubs!r}",
+                code="invalid_ref_stubs",
+                source_file=source_file,
+            )
 
         entries.append(
             RouteEntry(
                 route_id="",
                 src=SourceSpan(
                     file=source_file,
-                    start=route_data["start"],
-                    end=route_data["end"],
+                    start=start,
+                    end=end,
                 ),
                 library=destination,
                 bucket=bucket,
@@ -332,28 +387,37 @@ def _line_overlap(route: RouteEntry, line_hint: tuple[int, int]) -> bool:
 def _resolve_stub_file(
     stub: str,
     alias_to_files: dict[str, set[str]],
-) -> str | None:
+) -> tuple[str | None, str]:
     """Resolve a stub to a specific source file path."""
     for file_match in _FILE_REF_PATTERN.finditer(stub):
         raw_ref = file_match.group("file").lower()
         for alias in (raw_ref, _normalize_identifier(raw_ref)):
-            candidates = alias_to_files.get(alias, set())
-            if candidates:
-                return sorted(candidates)[0]
+            candidates = sorted(alias_to_files.get(alias, set()))
+            if len(candidates) == 1:
+                return candidates[0], ""
+            if len(candidates) > 1:
+                return None, (f"ambiguous_file_reference:{raw_ref}:{','.join(candidates)}")
 
     normalized_stub = _normalize_identifier(stub)
-    best_file: str | None = None
+    best_files: set[str] = set()
     best_alias_len = 0
     for alias, files in alias_to_files.items():
         normalized_alias = _normalize_identifier(alias)
         if len(normalized_alias) < 4:
             continue
         if normalized_alias in normalized_stub:
-            candidate_file = sorted(files)[0]
+            alias_candidates = set(files)
             if len(normalized_alias) > best_alias_len:
                 best_alias_len = len(normalized_alias)
-                best_file = candidate_file
-    return best_file
+                best_files = alias_candidates
+            elif len(normalized_alias) == best_alias_len:
+                best_files.update(alias_candidates)
+
+    if len(best_files) == 1:
+        return next(iter(best_files)), ""
+    if len(best_files) > 1:
+        return None, f"ambiguous_alias_match:{','.join(sorted(best_files))}"
+    return None, "no_file_match"
 
 
 def _build_route_token_cache(
@@ -385,16 +449,18 @@ def _pick_best_route_candidate(
     token_cache: dict[str, set[str]],
     line_hint: tuple[int, int] | None,
     min_score: float,
-) -> RouteEntry | None:
+) -> tuple[RouteEntry | None, str]:
     """Pick the best route candidate for a cross-file stub."""
     if not candidates:
-        return None
+        return None, "no_candidates"
 
     scoped = [candidate for candidate in candidates if candidate.bucket != "IGNORED"] or candidates
     if line_hint:
         overlapping = [candidate for candidate in scoped if _line_overlap(candidate, line_hint)]
-        if overlapping:
-            return min(
+        if len(overlapping) == 1:
+            return overlapping[0], ""
+        if len(overlapping) > 1:
+            ranked = sorted(
                 overlapping,
                 key=lambda route: (
                     abs(route.src.start - line_hint[0]),
@@ -402,9 +468,29 @@ def _pick_best_route_candidate(
                     route.route_id,
                 ),
             )
+            if len(ranked) > 1:
+                first_key = (
+                    abs(ranked[0].src.start - line_hint[0]),
+                    ranked[0].src.end,
+                )
+                second_key = (
+                    abs(ranked[1].src.start - line_hint[0]),
+                    ranked[1].src.end,
+                )
+                if first_key == second_key:
+                    return None, (
+                        "ambiguous_line_hint_candidates:"
+                        + ",".join(route.route_id for route in ranked[:5])
+                    )
+            return ranked[0], ""
 
     if not stub_tokens:
-        return scoped[0]
+        if len(scoped) == 1:
+            return scoped[0], ""
+        return None, (
+            "insufficient_stub_evidence_multiple_candidates:"
+            + ",".join(route.route_id for route in scoped[:5])
+        )
 
     scored: list[tuple[float, RouteEntry]] = []
     for candidate in scoped:
@@ -418,17 +504,27 @@ def _pick_best_route_candidate(
         scored.append((score, candidate))
 
     if not scored:
-        return None
+        return None, "no_token_overlap"
 
-    score, route = max(
-        scored,
+    scored.sort(
         key=lambda item: (
             item[0],
             -item[1].src.start,
             item[1].route_id,
         ),
+        reverse=True,
     )
-    return route if score >= min_score else None
+    best_score = scored[0][0]
+    top = [item for item in scored if abs(item[0] - best_score) < 1e-9]
+    if len(top) > 1:
+        return None, (
+            "ambiguous_token_overlap_candidates:" + ",".join(route.route_id for _, route in top[:5])
+        )
+
+    score, route = scored[0]
+    if score < min_score:
+        return None, f"score_below_threshold:{score:.3f}<{min_score:.3f}"
+    return route, ""
 
 
 def _resolve_ref_stubs(routes: list[RouteEntry], source_dir: Path) -> None:
@@ -457,40 +553,51 @@ def _resolve_ref_stubs(routes: list[RouteEntry], source_dir: Path) -> None:
     unresolved_count = 0
 
     for route in routes:
+        route.unresolved_refs = []
         if not route.ref_stubs:
             continue
 
         unresolved_stubs: list[str] = []
+        unresolved_refs: list[UnresolvedReference] = []
         for stub in route.ref_stubs:
             stub_text = str(stub).strip()
             if not stub_text:
                 continue
 
             resolved_route: RouteEntry | None = None
+            unresolved_reason = ""
             route_id_match = _ROUTE_ID_PATTERN.search(stub_text)
             if route_id_match:
                 resolved_route = routes_by_route_id.get(route_id_match.group(0).upper())
+                if resolved_route is None:
+                    unresolved_reason = f"unknown_route_id:{route_id_match.group(0).upper()}"
             if resolved_route is None:
                 element_match = _ELEMENT_ID_PATTERN.search(stub_text)
                 if element_match:
                     resolved_route = routes_by_element_id.get(element_match.group(0).upper())
+                    if resolved_route is None:
+                        unresolved_reason = f"unknown_element_id:{element_match.group(0).upper()}"
 
             line_hint = _extract_line_hint(stub_text)
             if resolved_route is None:
-                target_file = _resolve_stub_file(stub_text, alias_to_files)
+                target_file, file_reason = _resolve_stub_file(stub_text, alias_to_files)
+                if file_reason and not unresolved_reason:
+                    unresolved_reason = file_reason
                 if target_file:
                     candidates = [
                         candidate
                         for candidate in routes_by_file.get(target_file, [])
                         if candidate.route_id != route.route_id
                     ]
-                    resolved_route = _pick_best_route_candidate(
+                    resolved_route, candidate_reason = _pick_best_route_candidate(
                         candidates=candidates,
                         stub_tokens=_tokenize(stub_text),
                         token_cache=token_cache,
                         line_hint=line_hint,
                         min_score=0.0,
                     )
+                    if candidate_reason:
+                        unresolved_reason = candidate_reason
 
             if resolved_route is None:
                 candidates = [
@@ -498,16 +605,24 @@ def _resolve_ref_stubs(routes: list[RouteEntry], source_dir: Path) -> None:
                     for candidate in routes
                     if candidate.route_id != route.route_id and candidate.src.file != route.src.file
                 ]
-                resolved_route = _pick_best_route_candidate(
+                resolved_route, fallback_reason = _pick_best_route_candidate(
                     candidates=candidates,
                     stub_tokens=_tokenize(stub_text),
                     token_cache=token_cache,
                     line_hint=line_hint,
                     min_score=0.35,
                 )
+                if fallback_reason:
+                    unresolved_reason = fallback_reason
 
             if resolved_route is None:
                 unresolved_stubs.append(stub_text)
+                unresolved_refs.append(
+                    UnresolvedReference(
+                        stub=stub_text,
+                        reason=unresolved_reason or "unresolved_reference",
+                    )
+                )
                 unresolved_count += 1
                 continue
 
@@ -526,6 +641,7 @@ def _resolve_ref_stubs(routes: list[RouteEntry], source_dir: Path) -> None:
             resolved_count += 1
 
         route.ref_stubs = unresolved_stubs
+        route.unresolved_refs = unresolved_refs
 
     if resolved_count:
         logger.info("Resolved %d cross-file reference stubs", resolved_count)
@@ -600,7 +716,12 @@ def _route_file(
         )
 
     rel_path = str(source_file.relative_to(source_dir))
-    entries = _parse_route_entries(data, rel_path, intake_mode=intake_mode)
+    entries = _parse_route_entries(
+        data,
+        rel_path,
+        intake_mode=intake_mode,
+        total_lines=total_lines,
+    )
     logger.info(
         "Routed %s: %d entries (%d lines)",
         source_file.name,
@@ -671,14 +792,15 @@ def route_sources(
                     intake_mode=normalized_mode,
                 )
                 all_routes.extend(entries)
-            except ValueError as e:
+            except RouteParseError as e:
                 error_msg = str(e)
-                if rediscovery_enabled and "missing 'library'" in error_msg:
+                if rediscovery_enabled and e.code == "missing_destination":
                     failed_files.append(source_file)
-                    failed_errors.append(error_msg)
+                    failed_errors.append(f"{e.code}: {error_msg}")
                     logger.warning(
-                        "Routing %s failed (missing library): %s",
+                        "Routing %s failed (%s): %s",
                         source_file.name,
+                        e.code,
                         error_msg,
                     )
                 else:
@@ -771,6 +893,13 @@ def route_sources(
                         "target_element_id": ref.target_element_id,
                     }
                     for ref in entry.resolved_refs
+                ],
+                "unresolved_refs": [
+                    {
+                        "stub": ref.stub,
+                        "reason": ref.reason,
+                    }
+                    for ref in entry.unresolved_refs
                 ],
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
