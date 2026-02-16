@@ -9,6 +9,8 @@ Orchestrates the strategy evolution loop where:
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -66,6 +68,11 @@ class StrategyPerformanceRecord:
 
     def record_application(self, result: StrategyResult, success: bool) -> None:
         """Record an application of this strategy."""
+        if isinstance(result.metrics.get("failure_mode_counts_before"), dict):
+            self.failure_mode_counts_before = dict(result.metrics["failure_mode_counts_before"])
+        if isinstance(result.metrics.get("failure_mode_counts_after"), dict):
+            self.failure_mode_counts_after = dict(result.metrics["failure_mode_counts_after"])
+
         self.applications.append(
             {
                 "actions": result.actions_taken,
@@ -187,7 +194,10 @@ class TemplateStrategyProposer:
 
     def propose(self, gap: StrategyGapEvidence) -> StrategyDefinition | None:
         """Look up a template for the gap's failure mode."""
-        return self.templates.get(gap.failure_mode)
+        template = self.templates.get(gap.failure_mode)
+        if template is None:
+            return None
+        return copy.deepcopy(template)
 
 
 @dataclass
@@ -195,6 +205,7 @@ class LLMStrategyProposer:
     """Proposes strategies via LLM for unknown failure modes."""
 
     llm_client: LLMClient | None = None
+    last_error: dict[str, str] | None = None
 
     def propose(self, gap: StrategyGapEvidence) -> StrategyDefinition | None:
         """Use LLM to propose a strategy for an unclassified failure mode.
@@ -203,6 +214,11 @@ class LLMStrategyProposer:
         failure context and translation details.
         """
         if not self.llm_client:
+            self.last_error = {
+                "kind": "dependency",
+                "error_type": "llm_client_unavailable",
+                "message": "No LLM client configured",
+            }
             return None
 
         prompt = f"""A spec processing workflow encountered a failure that no existing \
@@ -233,22 +249,73 @@ Output as JSON:
 
         try:
             response = self.llm_client.complete(prompt)
-            data = json.loads(response)
+        except (TimeoutError, ConnectionError) as exc:
+            self.last_error = {
+                "kind": "transient",
+                "error_type": exc.__class__.__name__,
+                "message": str(exc),
+            }
+            logger.warning("Transient LLM proposal failure: %s", exc, exc_info=True)
+            return None
+        except Exception as exc:
+            self.last_error = {
+                "kind": "systematic",
+                "error_type": exc.__class__.__name__,
+                "message": str(exc),
+            }
+            logger.warning("LLM proposal request failed: %s", exc, exc_info=True)
+            return None
 
-            proposed = StrategyDefinition(
+        try:
+            data = json.loads(response)
+            when_conditions = data.get("when_conditions", [])
+            if not isinstance(when_conditions, list):
+                raise TypeError("when_conditions must be a list")
+            tools_used = data.get("tools_used", [])
+            if not isinstance(tools_used, list):
+                raise TypeError("tools_used must be a list")
+
+            self.last_error = None
+            return StrategyDefinition(
                 name=data["name"],
                 purpose=data["purpose"],
-                when_conditions=data.get("when_conditions", []),
-                tools_used=data.get("tools_used", []),
+                when_conditions=when_conditions,
+                tools_used=tools_used,
                 phases=[gap.failure_category],
                 risk_addressed=data.get("risk_addressed", ""),
                 metadata={"status": "proposed", "from_gap": gap.failure_mode},
             )
-
-            return proposed
-
-        except Exception:
-            logger.debug("Strategy evolution proposal failed", exc_info=True)
+        except json.JSONDecodeError as exc:
+            self.last_error = {
+                "kind": "systematic",
+                "error_type": "invalid_json_response",
+                "message": str(exc),
+            }
+            logger.warning("LLM proposal returned invalid JSON: %s", exc, exc_info=True)
+            return None
+        except KeyError as exc:
+            self.last_error = {
+                "kind": "systematic",
+                "error_type": "missing_required_field",
+                "message": str(exc),
+            }
+            logger.warning("LLM proposal missing required field: %s", exc, exc_info=True)
+            return None
+        except TypeError as exc:
+            self.last_error = {
+                "kind": "systematic",
+                "error_type": "invalid_field_type",
+                "message": str(exc),
+            }
+            logger.warning("LLM proposal has invalid field types: %s", exc, exc_info=True)
+            return None
+        except Exception as exc:
+            self.last_error = {
+                "kind": "systematic",
+                "error_type": exc.__class__.__name__,
+                "message": str(exc),
+            }
+            logger.warning("LLM proposal processing failed: %s", exc, exc_info=True)
             return None
 
 
@@ -271,6 +338,83 @@ class StrategyEvolutionPipeline:
     performance_records: dict[str, StrategyPerformanceRecord] = field(default_factory=dict)
     state_store: EvolutionStateStore | None = None
 
+    @staticmethod
+    def _classify_trigger(trigger: str) -> str:
+        """Classify a trigger string into a FailureMode constant."""
+        if trigger.startswith("remainder_stuck"):
+            return FailureMode.INSUFFICIENT_DETAIL
+        if trigger.startswith("resolution_failures"):
+            return FailureMode.VAGUE_ENTITY_REFERENCE
+        if trigger.startswith("prose_stuck"):
+            return FailureMode.MULTI_CONCERN_COMMENT
+        return FailureMode.UNKNOWN_PROJECTION_TYPE
+
+    def check_evolution_triggers(
+        self, context: ProcessingContext, previous_context: ProcessingContext | None = None
+    ) -> list[str]:
+        """Check if current state warrants strategy evolution."""
+        if previous_context is None:
+            return []
+
+        triggers: list[str] = []
+        prev_remainder = len(previous_context.results.get("remainders", []))
+        curr_remainder = len(context.results.get("remainders", []))
+        if curr_remainder >= prev_remainder and prev_remainder > 0:
+            triggers.append(f"remainder_stuck: {prev_remainder} -> {curr_remainder}")
+
+        resolution_failures = context.results.get("resolution_failures", 0)
+        total_refs = context.results.get("total_references", 1)
+        failure_rate = resolution_failures / total_refs if total_refs > 0 else 0.0
+        if failure_rate > 0.1:
+            triggers.append(f"resolution_failures: {failure_rate:.1%}")
+
+        prev_prose = previous_context.results.get("prose_ratio", 1.0)
+        curr_prose = context.results.get("prose_ratio", 1.0)
+        if curr_prose >= prev_prose and curr_prose > 0.3:
+            triggers.append(f"prose_stuck: {prev_prose:.1%} -> {curr_prose:.1%}")
+
+        return triggers
+
+    def check_and_evolve(
+        self,
+        context: ProcessingContext,
+        previous_context: ProcessingContext | None = None,
+    ) -> list[StrategyDefinition]:
+        """Check triggers and register strategies for any triggered failures."""
+        new_strategies: list[StrategyDefinition] = []
+        for trigger in self.check_evolution_triggers(context, previous_context):
+            failure_mode = self._classify_trigger(trigger)
+            proposed = self.on_translation_failure(context=context, failure_mode=failure_mode)
+            if proposed is not None:
+                new_strategies.append(proposed)
+        return new_strategies
+
+    def _normalize_proposed_name(
+        self,
+        proposed: StrategyDefinition,
+        gap: StrategyGapEvidence,
+    ) -> StrategyDefinition:
+        """Prevent a derived proposal from overwriting an authoritative strategy."""
+        if proposed.name not in self.registry.definitions:
+            return proposed
+
+        original_name = proposed.name
+        collision_suffix = gap.gap_id.replace("gap_", "")[:8]
+        candidate_name = f"experimental_{original_name}_{collision_suffix}"
+        counter = 1
+        while candidate_name in self.registry.definitions:
+            candidate_name = f"experimental_{original_name}_{collision_suffix}_{counter}"
+            counter += 1
+        proposed.name = candidate_name
+        proposed.metadata = proposed.metadata or {}
+        proposed.metadata["name_collision_with"] = original_name
+        logger.warning(
+            "Proposed strategy name collision for '%s'; renamed to '%s'",
+            original_name,
+            proposed.name,
+        )
+        return proposed
+
     def on_translation_failure(
         self,
         context: ProcessingContext,
@@ -292,6 +436,9 @@ class StrategyEvolutionPipeline:
             "decomposition": "decomposition",
         }
         failure_category = phase_to_category.get(context.phase.value, "translation")
+        strategies_attempted = [
+            d.name for d in self.registry.definitions.values() if context.phase.value in d.phases
+        ]
 
         # Build gap evidence
         gap = StrategyGapEvidence(
@@ -301,11 +448,17 @@ class StrategyEvolutionPipeline:
                 "failure_mode": failure_mode,
                 "failure_category": failure_category,
                 "inputs": [
-                    {"id": u.id, "content": u.content[:500], "type": u.unit_type.value}
-                    for u in context.units[:5]
+                    {
+                        "id": u.id,
+                        "content": u.content,
+                        "content_hash": hashlib.sha256(u.content.encode("utf-8")).hexdigest(),
+                        "type": u.unit_type.value,
+                    }
+                    for u in context.units
                 ],
                 "context": {
                     "phase": context.phase.value,
+                    "source_file": context.source_file,
                     "patch_id": context.patch_id,
                     "comment_text": (
                         context.translation_context.comment_text
@@ -328,26 +481,15 @@ class StrategyEvolutionPipeline:
                         else []
                     ),
                 },
-                "strategies_attempted": [
-                    d.name
-                    for d in self.registry.definitions.values()
-                    if context.phase.value in d.phases
-                ],
+                "strategies_attempted": strategies_attempted,
                 "error_details": error_details,
             },
             translation_context=context.translation_context,
-            strategies_attempted=[
-                d.name
-                for d in self.registry.definitions.values()
-                if context.phase.value in d.phases
-            ],
+            strategies_attempted=strategies_attempted,
         )
 
         self.gap_log.append(gap)
-
-        # Persist gap if state store is available
-        if self.state_store is not None:
-            self.state_store.save_gap(gap)
+        self.llm_proposer.last_error = None
 
         # Try template proposer first
         proposed = self.template_proposer.propose(gap)
@@ -357,14 +499,27 @@ class StrategyEvolutionPipeline:
             proposed = self.llm_proposer.propose(gap)
 
         if proposed is None:
+            if self.llm_proposer.last_error is not None:
+                gap.fixture["proposal_error"] = self.llm_proposer.last_error
+            if self.state_store is not None:
+                self.state_store.save_gap(gap)
             return None
 
         # Register as experimental
+        proposed = self._normalize_proposed_name(proposed, gap)
         gap.proposed_strategy = proposed
+        gap.proposed_strategy_name = proposed.name
         proposed.metadata = proposed.metadata or {}
         proposed.metadata["status"] = "experimental"
         proposed.metadata["source_gap"] = gap.gap_id
-        self.registry.definitions[proposed.name] = proposed
+        self.registry.add_strategy(
+            proposed,
+            source=f"evolution_gap:{gap.gap_id}",
+            allow_overwrite=False,
+        )
+
+        if self.state_store is not None:
+            self.state_store.save_gap(gap)
 
         # Persist experimental definition if state store is available
         if self.state_store is not None:
@@ -421,7 +576,9 @@ class StrategyEvolutionPipeline:
                     "failure_mode": gap.failure_mode,
                     "failure_category": gap.failure_category,
                     "proposed_strategy": (
-                        gap.proposed_strategy.name if gap.proposed_strategy else None
+                        gap.proposed_strategy.name
+                        if gap.proposed_strategy
+                        else gap.proposed_strategy_name
                     ),
                     "timestamp": gap.timestamp.isoformat(),
                 }
@@ -485,7 +642,11 @@ class EvolutionStateStore:
             "fixture": gap.fixture,
             "strategies_attempted": gap.strategies_attempted,
             "timestamp": gap.timestamp.isoformat(),
-            "proposed_strategy": (gap.proposed_strategy.name if gap.proposed_strategy else None),
+            "proposed_strategy": (
+                gap.proposed_strategy.name
+                if gap.proposed_strategy is not None
+                else gap.proposed_strategy_name
+            ),
         }
 
         # Include translation context if present
@@ -569,6 +730,7 @@ class EvolutionStateStore:
                 fixture=data.get("fixture", {}),
                 translation_context=tc,
                 strategies_attempted=data.get("strategies_attempted", []),
+                proposed_strategy_name=data.get("proposed_strategy"),
                 timestamp=datetime.fromisoformat(data["timestamp"]),
                 gap_id=data["gap_id"],
             )

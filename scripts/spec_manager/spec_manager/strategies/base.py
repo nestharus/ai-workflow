@@ -207,7 +207,7 @@ class StrategyDefinition:
     example_output: str | None = None
 
     # Metadata for runtime strategy management
-    # Used by: capture_strategy_gap, propose_strategy_via_llm, promote_experimental
+    # Used by strategy evolution and promotion pipelines.
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -224,6 +224,13 @@ class StrategyDefinition:
         }
         if self.risk_category:
             data["risk_category"] = self.risk_category
+        if self.example_input is not None or self.example_output is not None:
+            data["example"] = {
+                "input": self.example_input,
+                "output": self.example_output,
+            }
+        if self.metadata:
+            data["metadata"] = self.metadata
         return data
 
     def to_strategy(self, tools: dict[str, Tool]) -> Strategy:
@@ -243,6 +250,10 @@ class StrategyDefinition:
         strategy_class = getattr(module, class_name)
 
         # Get required tools
-        strategy_tools = {name: tools[name] for name in self.tools_used if name in tools}
+        missing_tools = [name for name in self.tools_used if name not in tools]
+        if missing_tools:
+            missing = ", ".join(sorted(missing_tools))
+            raise ValueError(f"Strategy '{self.name}' missing required tools: {missing}")
+        strategy_tools = {name: tools[name] for name in self.tools_used}
 
         return strategy_class(definition=self, tools=strategy_tools)
