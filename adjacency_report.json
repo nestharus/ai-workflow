@@ -1,29 +1,11 @@
 {
-  "total_nodes": 2,
-  "total_edges": 2,
-  "num_components": 1,
-  "components": [
-    {
-      "component_id": 0,
-      "nodes": [
-        "Algorithm 1",
-        "Algorithm 2"
-      ],
-      "size": 2,
-      "signal_types_present": [
-        "co_occurrence"
-      ],
-      "total_internal_weight": 0.3,
-      "classification": null,
-      "classification_reason": "",
-      "bridge_candidates": []
-    }
-  ],
-  "signal_type_counts": {
-    "co_occurrence": 2
-  },
-  "signal_type_weights": {
-    "co_occurrence": 0.3
-  },
-  "disconnected_warnings": []
+  "total_nodes": 0,
+  "total_edges": 0,
+  "num_components": 0,
+  "components": [],
+  "signal_type_counts": {},
+  "signal_type_weights": {},
+  "disconnected_warnings": [
+    "No RelationshipFacts were provided or discovered. Adjacency graph is empty until LLM relationship output is supplied."
+  ]
 }

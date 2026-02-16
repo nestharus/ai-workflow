@@ -1,6 +1,19 @@
 {
   "layer": "l1",
   "slice_id": "",
-  "timestamp": 1770980935.0842493,
-  "findings": []
+  "verification_root": ".",
+  "timestamp": 1771145897.375845,
+  "findings": [
+    {
+      "dimension": "GOVERNANCE",
+      "category": "governance",
+      "severity": "BLOCKER",
+      "location": {},
+      "evidence": "Pipeline oversight verifier produced no valid PASS/WARN/FAIL status; failing closed.",
+      "required_change_type": "refactor_only",
+      "suggested_fix": "",
+      "confidence": 1.0,
+      "tags": []
+    }
+  ]
 }

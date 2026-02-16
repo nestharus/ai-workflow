@@ -1,0 +1,8 @@
+name = "oulipoly-automaton"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-02-15"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oulipoly-landing-page"
+database_id = "b76267e7-1d23-43cd-86e1-05b5c9d295b0"

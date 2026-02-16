@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Oulipoly Automaton: Discovery and implementation happen in parallel. Code earns its way to production through layered quality gates.">
+  <title>Oulipoly Automaton: AI Quality Pipeline</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:opsz,wght@14..32,400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- SVG noise filter for grain overlay -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+  </svg>
+
+  <!-- WebGL background -->
+  <canvas id="bg-canvas" class="bg-canvas"></canvas>
+
+  <!-- Grain overlay -->
+  <div class="grain-overlay" aria-hidden="true"></div>
+
+  <!-- ============================================ -->
+  <!-- NAVIGATION -->
+  <!-- ============================================ -->
+  <nav class="nav" id="nav">
+    <div class="nav__inner container">
+      <a href="#" class="nav__logo brand"><span class="brand__name">Oulipoly</span><span class="brand__type">Automaton</span></a>
+      <a href="#waitlist-final" class="btn-primary nav__cta">Join Waitlist</a>
+    </div>
+  </nav>
+
+  <!-- ============================================ -->
+  <!-- HERO -->
+  <!-- ============================================ -->
+  <section class="hero" id="hero">
+    <div class="hero__split container">
+      <div class="hero__content">
+        <span class="eyebrow hero__eyebrow">Prototype driven development</span>
+        <h1 class="hero__headline">
+          Code earns its way to
+          <span class="hero__headline-accent">production</span>
+        </h1>
+        <p class="hero__subhead">
+          Discovery and implementation happen in parallel. Your code moves
+          through layered quality gates. When something is unclear, the
+          system stops and asks.
+        </p>
+        <div class="hero__cta-group">
+          <div class="hero__cta-buttons">
+            <a href="#pipeline" class="btn-primary btn-primary--lg">See how it works</a>
+          </div>
+          <p class="hero__friction">Be first when we launch. No credit card needed.</p>
+        </div>
+      </div>
+
+      <!-- 3D Isometric Layer Stack -->
+      <div class="layer-stack" id="layer-stack" aria-label="Quality pipeline: P0 through Main">
+        <div class="layer-stack__scene" id="layer-scene">
+          <div class="layer-panel" data-layer="p0" style="--layer-i: 0">
+            <div class="layer-panel__surface">
+              <div class="layer-panel__grid"></div>
+              <span class="layer-panel__label">P0</span>
+              <span class="layer-panel__desc">Discovery</span>
+            </div>
+          </div>
+          <div class="layer-panel" data-layer="l1" style="--layer-i: 1">
+            <div class="layer-panel__surface">
+              <div class="layer-panel__grid"></div>
+              <span class="layer-panel__label">L1</span>
+              <span class="layer-panel__desc">Build</span>
+            </div>
+          </div>
+          <div class="layer-panel" data-layer="l2" style="--layer-i: 2">
+            <div class="layer-panel__surface">
+              <div class="layer-panel__grid"></div>
+              <span class="layer-panel__label">L2</span>
+              <span class="layer-panel__desc">Architecture</span>
+            </div>
+          </div>
+          <div class="layer-panel" data-layer="l3" style="--layer-i: 3">
+            <div class="layer-panel__surface">
+              <div class="layer-panel__grid"></div>
+              <span class="layer-panel__label">L3</span>
+              <span class="layer-panel__desc">Quality</span>
+            </div>
+          </div>
+          <div class="layer-panel" data-layer="main" style="--layer-i: 4">
+            <div class="layer-panel__surface">
+              <div class="layer-panel__grid"></div>
+              <span class="layer-panel__label">Main</span>
+              <span class="layer-panel__desc">Production</span>
+            </div>
+          </div>
+        </div>
+        <canvas class="layer-stack__particles" id="layer-particles"></canvas>
+      </div>
+    </div>
+
+    <!-- Scroll indicator -->
+    <div class="hero__scroll-cue" id="scroll-cue" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <span class="hero__scroll-text">Scroll</span>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- PROBLEM SECTION -->
+  <!-- ============================================ -->
+  <section class="section section--alt" id="problem">
+    <div class="container container--narrow">
+      <h2 class="section__headline" data-animate>The gaps AI tools leave open</h2>
+
+      <div class="problem-grid">
+        <article class="problem-card glass-panel" data-animate="slide-left">
+          <div class="problem-card__icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          </div>
+          <div class="problem-card__body">
+            <h3 class="problem-card__title">AI forgets things</h3>
+            <p class="problem-card__text">
+              Your AI handles small tasks fine. As your project grows, it drops
+              details. 45 out of 52 requirements? You won't notice the 7 missing
+              until production breaks.
+            </p>
+          </div>
+        </article>
+
+        <article class="problem-card glass-panel" data-animate="slide-left">
+          <div class="problem-card__icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div class="problem-card__body">
+            <h3 class="problem-card__title">AI guesses instead of asking</h3>
+            <p class="problem-card__text">
+              When requirements are unclear, AI fills in the blanks with
+              assumptions. You get code that looks right but does the wrong
+              thing. The bug hides behind confident syntax.
+            </p>
+          </div>
+        </article>
+
+        <article class="problem-card glass-panel" data-animate="slide-left">
+          <div class="problem-card__icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </div>
+          <div class="problem-card__body">
+            <h3 class="problem-card__title">Fixes land at the wrong layer</h3>
+            <p class="problem-card__text">
+              A logic bug gets patched in the architecture layer. The patch
+              works today but creates coupling that breaks tomorrow. No system
+              ensures fixes go to the right level.
+            </p>
+          </div>
+        </article>
+
+        <article class="problem-card glass-panel" data-animate="slide-left">
+          <div class="problem-card__icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <div class="problem-card__body">
+            <h3 class="problem-card__title">Nobody checks the AI's work</h3>
+            <p class="problem-card__text">
+              You are the only quality gatekeeper. One person, reviewing
+              AI-generated code you may not fully understand.
+            </p>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- LAYER EXPLORER (replaces pipeline demo) -->
+  <!-- ============================================ -->
+  <section class="section" id="pipeline">
+    <div class="container">
+      <span class="eyebrow" data-animate>How it works</span>
+      <h2 class="section__headline" data-animate>Watch the pipeline work</h2>
+
+      <div class="layer-explorer" id="layer-explorer" data-animate>
+        <!-- Layer tabs -->
+        <div class="layer-explorer__tabs">
+          <button class="layer-tab is-active" data-layer-tab="p0">
+            <span class="layer-tab__label">P0</span>
+          </button>
+          <button class="layer-tab" data-layer-tab="l1">
+            <span class="layer-tab__label">L1</span>
+          </button>
+          <button class="layer-tab" data-layer-tab="l2">
+            <span class="layer-tab__label">L2</span>
+          </button>
+          <button class="layer-tab" data-layer-tab="l3">
+            <span class="layer-tab__label">L3</span>
+          </button>
+          <button class="layer-tab" data-layer-tab="main">
+            <span class="layer-tab__label">Main</span>
+          </button>
+        </div>
+
+        <!-- Animated viewport -->
+        <div class="layer-explorer__viewport glass-panel" id="layer-viewport">
+          <!-- P0: Spec splitting animation -->
+          <div class="layer-view layer-view--p0 is-active" data-view="p0">
+            <div class="p0-spec">
+              <div class="p0-spec__block p0-spec__block--1">Authentication flow</div>
+              <div class="p0-spec__block p0-spec__block--2">Session management</div>
+              <div class="p0-spec__block p0-spec__block--3">Token validation</div>
+              <div class="p0-spec__block p0-spec__block--4">User profiles</div>
+              <div class="p0-spec__block p0-spec__block--5">Rate limiting</div>
+            </div>
+            <div class="p0-targets">
+              <div class="p0-target p0-target--1"><span class="p0-target__label">auth_lib</span></div>
+              <div class="p0-target p0-target--2"><span class="p0-target__label">session_lib</span></div>
+              <div class="p0-target p0-target--3"><span class="p0-target__label">token_lib</span></div>
+              <div class="p0-target p0-target--4"><span class="p0-target__label">user_lib</span></div>
+              <div class="p0-target p0-target--5"><span class="p0-target__label">rate_lib</span></div>
+            </div>
+          </div>
+
+          <!-- L1: Discover + Build (reuses existing animation logic) -->
+          <div class="layer-view layer-view--l1" data-view="l1">
+            <svg class="demo-connections" id="demo-connections" aria-hidden="true"></svg>
+            <span class="demo-column-header" data-col="discover-spec" style="left: 4%">Spec text</span>
+            <span class="demo-column-header" data-col="discover-libs" style="left: 50%">Libraries</span>
+            <div class="demo-node demo-node--blob" data-node="blob">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">spec.md</span>
+            </div>
+            <div class="demo-node" data-node="0">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">auth_lib</span>
+              <div class="demo-node__progress"><div class="demo-node__bar"></div></div>
+              <span class="demo-node__check">&#10003;</span>
+              <span class="demo-node__blocked">?</span>
+            </div>
+            <div class="demo-node" data-node="1">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">session_lib</span>
+              <div class="demo-node__progress"><div class="demo-node__bar"></div></div>
+              <span class="demo-node__check">&#10003;</span>
+              <span class="demo-node__blocked">?</span>
+            </div>
+            <div class="demo-node" data-node="2">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">token_lib</span>
+              <div class="demo-node__progress"><div class="demo-node__bar"></div></div>
+              <span class="demo-node__check">&#10003;</span>
+              <span class="demo-node__blocked">?</span>
+            </div>
+            <div class="demo-node" data-node="3">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">user_lib</span>
+              <div class="demo-node__progress"><div class="demo-node__bar"></div></div>
+              <span class="demo-node__check">&#10003;</span>
+              <span class="demo-node__blocked">?</span>
+            </div>
+            <div class="demo-node" data-node="4">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">rate_lib</span>
+              <div class="demo-node__progress"><div class="demo-node__bar"></div></div>
+              <span class="demo-node__check">&#10003;</span>
+              <span class="demo-node__blocked">?</span>
+            </div>
+            <div class="demo-node" data-node="5">
+              <div class="demo-node__dot"></div>
+              <span class="demo-node__label">oauth_lib</span>
+              <div class="demo-node__progress"><div class="demo-node__bar"></div></div>
+              <span class="demo-node__check">&#10003;</span>
+              <span class="demo-node__blocked">?</span>
+            </div>
+            <div class="demo-route-line" data-route="0" aria-hidden="true"></div>
+            <div class="demo-route-line" data-route="1" aria-hidden="true"></div>
+            <div class="demo-route-line" data-route="2" aria-hidden="true"></div>
+            <div class="demo-route-line" data-route="3" aria-hidden="true"></div>
+            <div class="demo-route-line" data-route="4" aria-hidden="true"></div>
+            <div class="demo-route-line" data-route="5" aria-hidden="true"></div>
+          </div>
+
+          <!-- L2: Architecture review -->
+          <div class="layer-view layer-view--l2" data-view="l2">
+            <div class="l2-reviewers">
+              <div class="l2-reviewer l2-reviewer--1">
+                <div class="l2-reviewer__icon">R1</div>
+                <span class="l2-reviewer__name">Topology</span>
+              </div>
+              <div class="l2-reviewer l2-reviewer--2">
+                <div class="l2-reviewer__icon">R2</div>
+                <span class="l2-reviewer__name">Coupling</span>
+              </div>
+              <div class="l2-reviewer l2-reviewer--3">
+                <div class="l2-reviewer__icon">R3</div>
+                <span class="l2-reviewer__name">Interface</span>
+              </div>
+              <div class="l2-reviewer l2-reviewer--4">
+                <div class="l2-reviewer__icon">R4</div>
+                <span class="l2-reviewer__name">Cohesion</span>
+              </div>
+              <div class="l2-reviewer l2-reviewer--5">
+                <div class="l2-reviewer__icon">R5</div>
+                <span class="l2-reviewer__name">Contracts</span>
+              </div>
+            </div>
+            <div class="l2-gate">
+              <div class="l2-gate__bar"></div>
+              <div class="l2-gate__status">
+                <span class="l2-gate__icon-pass">&#10003;</span>
+                <span class="l2-gate__icon-fail">&#10007;</span>
+              </div>
+              <span class="l2-gate__label">Gate</span>
+            </div>
+          </div>
+
+          <!-- L3: Quality review -->
+          <div class="layer-view layer-view--l3" data-view="l3">
+            <div class="l3-code">
+              <div class="l3-code__line l3-code__line--1"><span class="l3-code__ln">12</span><span class="l3-code__text">def validate(token):</span></div>
+              <div class="l3-code__line l3-code__line--2"><span class="l3-code__ln">13</span><span class="l3-code__text">    if not token:</span></div>
+              <div class="l3-code__line l3-code__line--3 l3-code__line--highlight"><span class="l3-code__ln">14</span><span class="l3-code__text">        return False</span></div>
+              <div class="l3-code__line l3-code__line--4"><span class="l3-code__ln">15</span><span class="l3-code__text">    payload = decode(token)</span></div>
+              <div class="l3-code__line l3-code__line--5 l3-code__line--refactor"><span class="l3-code__ln">16</span><span class="l3-code__text">    return verify(payload)</span></div>
+              <div class="l3-code__line l3-code__line--6"><span class="l3-code__ln">17</span><span class="l3-code__text">    </span></div>
+            </div>
+            <div class="l3-metrics">
+              <div class="l3-metric l3-metric--1">
+                <span class="l3-metric__label">Complexity</span>
+                <div class="l3-metric__bar"><div class="l3-metric__fill"></div></div>
+              </div>
+              <div class="l3-metric l3-metric--2">
+                <span class="l3-metric__label">Diff impact</span>
+                <div class="l3-metric__bar"><div class="l3-metric__fill"></div></div>
+              </div>
+              <div class="l3-metric l3-metric--3">
+                <span class="l3-metric__label">Coverage</span>
+                <div class="l3-metric__bar"><div class="l3-metric__fill"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Main: Merge animation -->
+          <div class="layer-view layer-view--main" data-view="main">
+            <svg class="main-merge-svg" viewBox="0 0 400 200" aria-hidden="true">
+              <line class="main-branch main-branch--1" x1="40" y1="40" x2="260" y2="100" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+              <line class="main-branch main-branch--2" x1="40" y1="100" x2="260" y2="100" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+              <line class="main-branch main-branch--3" x1="40" y1="160" x2="260" y2="100" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+              <line class="main-trunk" x1="260" y1="100" x2="380" y2="100" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+              <circle class="main-dot main-dot--1" cx="40" cy="40" r="4" fill="rgba(255,255,255,0.5)"/>
+              <circle class="main-dot main-dot--2" cx="40" cy="100" r="4" fill="rgba(255,255,255,0.5)"/>
+              <circle class="main-dot main-dot--3" cx="40" cy="160" r="4" fill="rgba(255,255,255,0.5)"/>
+              <circle class="main-merge-point" cx="260" cy="100" r="6" fill="none" stroke="var(--success)" stroke-width="2"/>
+              <circle class="main-check-bg" cx="360" cy="100" r="16" fill="rgba(52,211,153,0.1)" stroke="var(--success)" stroke-width="2"/>
+              <text class="main-check-mark" x="360" y="106" text-anchor="middle" fill="var(--success)" font-size="18">&#10003;</text>
+            </svg>
+            <div class="main-labels">
+              <span class="main-label main-label--branches">Branches</span>
+              <span class="main-label main-label--merge">Merge</span>
+              <span class="main-label main-label--prod">Production</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Layer description -->
+        <p class="layer-explorer__desc" id="layer-desc">
+          The spec gets classified and routed into library buckets. Each bucket
+          implements in parallel. When a slice hits a gap, planning researches
+          and integrates a solution.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- FEATURES BENTO GRID -->
+  <!-- ============================================ -->
+  <section class="section section--alt" id="features">
+    <div class="container container--wide">
+      <span class="eyebrow" data-animate>Features</span>
+      <h2 class="section__headline" data-animate>What you get</h2>
+
+      <div class="bento-grid">
+        <article class="bento-card bento-card--span3 glass-panel" data-animate>
+          <div class="bento-demo bento-demo--routing" aria-hidden="true">
+            <div class="routing-code">
+              <div class="routing-line routing-line--1"><span class="routing-cursor"></span>def authenticate(user):</div>
+              <div class="routing-line routing-line--2"><span class="routing-cursor"></span>    validate_token()</div>
+              <div class="routing-line routing-line--3"><span class="routing-cursor"></span>    check_session()</div>
+              <div class="routing-line routing-line--4"><span class="routing-cursor"></span>    return grant()</div>
+            </div>
+          </div>
+          <span class="bento-card__eyebrow">Routing</span>
+          <h3 class="bento-card__title">Edits in place, never rewrites</h3>
+          <p class="bento-card__text">
+            The system routes code to where it belongs and edits it in place.
+            No extraction, no rephrasing. Your requirements travel through the
+            pipeline without losing information.
+          </p>
+        </article>
+
+        <article class="bento-card bento-card--span3 glass-panel" data-animate>
+          <div class="bento-demo bento-demo--healing" aria-hidden="true">
+            <div class="healing-flow">
+              <div class="hf-step hf-step--fail">
+                <div class="hf-icon hf-icon--fail">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </div>
+                <span class="hf-label">Test fails</span>
+              </div>
+              <div class="hf-arrow hf-arrow--1">
+                <svg width="16" height="10" viewBox="0 0 16 10"><path d="M0 5h12M10 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+              </div>
+              <div class="hf-step hf-step--investigate">
+                <div class="hf-icon hf-icon--investigate">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                </div>
+                <span class="hf-label">Root cause</span>
+              </div>
+              <div class="hf-arrow hf-arrow--2">
+                <svg width="16" height="10" viewBox="0 0 16 10"><path d="M0 5h12M10 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+              </div>
+              <div class="hf-step hf-step--fix">
+                <div class="hf-icon hf-icon--fix">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                </div>
+                <span class="hf-label">Fix applied</span>
+              </div>
+              <div class="hf-arrow hf-arrow--3">
+                <svg width="16" height="10" viewBox="0 0 16 10"><path d="M0 5h12M10 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+              </div>
+              <div class="hf-step hf-step--pass">
+                <div class="hf-icon hf-icon--pass">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <span class="hf-label">Tests pass</span>
+              </div>
+            </div>
+          </div>
+          <span class="bento-card__eyebrow">Self-healing</span>
+          <h3 class="bento-card__title">Failures trace back to the source</h3>
+          <p class="bento-card__text">
+            When tests fail, an investigator works in a CI sandbox to root cause
+            the failure. It applies a fix, confirms tests pass, then submits a
+            report to the planner. No manual debugging.
+          </p>
+        </article>
+
+        <article class="bento-card bento-card--span2 glass-panel" data-animate>
+          <div class="bento-demo bento-demo--coverage" aria-hidden="true">
+            <div class="coverage-grid-demo">
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+              <div class="coverage-cell"></div>
+            </div>
+            <span class="coverage-counter">0/12</span>
+          </div>
+          <span class="bento-card__eyebrow">Coverage</span>
+          <h3 class="bento-card__title">Every requirement tracked</h3>
+          <p class="bento-card__text">
+            A coverage ledger maps every spec requirement to the code that
+            implements it. Nothing gets marked complete until the ledger
+            confirms full coverage.
+          </p>
+        </article>
+
+        <article class="bento-card bento-card--span2 glass-panel" data-animate>
+          <div class="bento-demo bento-demo--clarity" aria-hidden="true">
+            <div class="clarity-flow">
+              <div class="cf-underspec">
+                <span class="cf-underspec__icon">?</span>
+                <span class="cf-underspec__text">Under-specified</span>
+              </div>
+              <div class="cf-options">
+                <div class="cf-option cf-option--1">
+                  <span class="cf-option__radio"></span>
+                  <span class="cf-option__label">Stateless JWT</span>
+                </div>
+                <div class="cf-option cf-option--2">
+                  <span class="cf-option__radio"></span>
+                  <span class="cf-option__label">Session tokens</span>
+                </div>
+                <div class="cf-option cf-option--3">
+                  <span class="cf-option__radio"></span>
+                  <span class="cf-option__label">OAuth delegation</span>
+                </div>
+              </div>
+              <div class="cf-constraint">
+                <span class="cf-constraint__icon">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                </span>
+                <span class="cf-constraint__text">Constraint set</span>
+              </div>
+            </div>
+          </div>
+          <span class="bento-card__eyebrow">Clarity</span>
+          <h3 class="bento-card__title">Ambiguity stops the line</h3>
+          <p class="bento-card__text">
+            When the system hits something underspecified, it researches the
+            space, generates diverse constraint options, and asks you to choose.
+            Your answer becomes a permanent rule for the rest of the build.
+          </p>
+        </article>
+
+        <article class="bento-card bento-card--span2 glass-panel" data-animate>
+          <div class="bento-demo bento-demo--workspaces" aria-hidden="true">
+            <svg class="workspaces-svg" viewBox="0 0 260 80" aria-hidden="true">
+              <line x1="10" y1="15" x2="170" y2="15" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+              <line x1="10" y1="40" x2="170" y2="40" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+              <line x1="10" y1="65" x2="170" y2="65" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+              <line x1="170" y1="15" x2="220" y2="40" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+              <line x1="170" y1="40" x2="220" y2="40" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+              <line x1="170" y1="65" x2="220" y2="40" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+              <line x1="220" y1="40" x2="250" y2="40" stroke="var(--success)" stroke-width="2" opacity="0.5"/>
+              <circle class="ws-dot ws-dot--1" cx="10" cy="15" r="3" fill="rgba(255,255,255,0.5)"/>
+              <circle class="ws-dot ws-dot--2" cx="10" cy="40" r="3" fill="rgba(255,255,255,0.5)"/>
+              <circle class="ws-dot ws-dot--3" cx="10" cy="65" r="3" fill="rgba(255,255,255,0.5)"/>
+              <circle class="ws-merge" cx="220" cy="40" r="4" fill="none" stroke="var(--success)" stroke-width="1.5"/>
+            </svg>
+          </div>
+          <span class="bento-card__eyebrow">Workspaces</span>
+          <h3 class="bento-card__title">Isolated workspaces, clean branches</h3>
+          <p class="bento-card__text">
+            Parallel work happens in isolated git worktrees. A clean branch
+            holds only verified code. Changes cross from dirty to clean
+            only after passing all tests.
+          </p>
+        </article>
+
+        <article class="bento-card bento-card--span6 glass-panel" data-animate>
+          <div class="bento-demo bento-demo--transparency" aria-hidden="true">
+            <div class="transparency-log">
+              <div class="transparency-entry transparency-entry--1">
+                <span class="transparency-hash">a3f8c2</span>
+                <span class="transparency-msg">route auth_lib to L1</span>
+              </div>
+              <div class="transparency-chain transparency-chain--1">
+                <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v6M6 14v6M3 6a3 3 0 016 0v2a3 3 0 01-6 0V6z" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>
+              </div>
+              <div class="transparency-entry transparency-entry--2">
+                <span class="transparency-hash">7b21e0</span>
+                <span class="transparency-msg">promote slice to L2</span>
+              </div>
+              <div class="transparency-chain transparency-chain--2">
+                <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v6M6 14v6M3 6a3 3 0 016 0v2a3 3 0 01-6 0V6z" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>
+              </div>
+              <div class="transparency-entry transparency-entry--3">
+                <span class="transparency-hash">e9d4f1</span>
+                <span class="transparency-msg">gate passed: merge to main</span>
+              </div>
+            </div>
+          </div>
+          <span class="bento-card__eyebrow">Transparency</span>
+          <h3 class="bento-card__title">Trust through transparency</h3>
+          <p class="bento-card__text">
+            Every decision the system makes gets written to append-only logs
+            with integrity chaining. The chain is tamper-evident. If a log
+            entry gets altered after the fact, the hash chain breaks.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- REVIEW SECTION -->
+  <!-- ============================================ -->
+  <section class="section" id="review">
+    <div class="container container--narrow">
+      <span class="eyebrow" data-animate>How you interact</span>
+      <h2 class="section__headline" data-animate>You answer questions. The system builds.</h2>
+
+      <div class="review-grid">
+        <article class="review-card glass-panel" data-animate>
+          <div class="review-demo review-demo--question" aria-hidden="true">
+            <div class="rq-signals">
+              <div class="rq-signal rq-signal--1"></div>
+              <div class="rq-signal rq-signal--2"></div>
+              <div class="rq-signal rq-signal--3"></div>
+            </div>
+            <div class="rq-queue">
+              <div class="rq-queue__item rq-queue__item--1"></div>
+              <div class="rq-queue__item rq-queue__item--2"></div>
+            </div>
+            <div class="rq-output">
+              <span class="rq-output__text">?</span>
+            </div>
+          </div>
+          <span class="review-card__step">Question</span>
+          <h3 class="review-card__title">The Intent Agent asks when something is unclear</h3>
+          <p class="review-card__text">
+            Internal agents never contact you directly. They emit signals
+            when blocked. The Intent Agent collects these into a priority
+            queue with full context about what is unclear and which part
+            of the build is waiting. You see one focused question at a time.
+          </p>
+        </article>
+
+        <article class="review-card glass-panel" data-animate>
+          <div class="review-demo review-demo--constraint" aria-hidden="true">
+            <div class="rc-text">
+              <div class="rc-text__line rc-text__line--1">Tokens must verify</div>
+              <div class="rc-text__line rc-text__line--2">without server calls</div>
+            </div>
+            <div class="rc-arrow">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+            <div class="rc-yaml">
+              <div class="rc-yaml__line rc-yaml__line--1">scope: token_lib</div>
+              <div class="rc-yaml__line rc-yaml__line--2">requires: stateless_verify</div>
+              <div class="rc-yaml__line rc-yaml__line--3">rationale: no_round_trips</div>
+            </div>
+          </div>
+          <span class="review-card__step">Constraint</span>
+          <h3 class="review-card__title">Your answer becomes a permanent rule</h3>
+          <p class="review-card__text">
+            You provide a constraint, not a solution. The system decides
+            how to implement it. Your constraint gets stored as YAML and
+            applied to every future decision on that slice. The blocked
+            work resumes. Everything else kept building the whole time.
+          </p>
+        </article>
+
+        <article class="review-card glass-panel" data-animate>
+          <div class="review-demo review-demo--audit" aria-hidden="true">
+            <div class="ra-log">
+              <div class="ra-entry ra-entry--1">
+                <span class="ra-hash">a3f8</span>
+                <span class="ra-action">signal.emit</span>
+              </div>
+              <div class="ra-chain-link ra-chain-link--1">
+                <svg width="10" height="14" viewBox="0 0 10 14"><path d="M5 0v3M5 11v3M2.5 3a2.5 2.5 0 015 0v2a2.5 2.5 0 01-5 0V3z" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/></svg>
+              </div>
+              <div class="ra-entry ra-entry--2">
+                <span class="ra-hash">7b21</span>
+                <span class="ra-action">constraint.apply</span>
+              </div>
+              <div class="ra-chain-link ra-chain-link--2">
+                <svg width="10" height="14" viewBox="0 0 10 14"><path d="M5 0v3M5 11v3M2.5 3a2.5 2.5 0 015 0v2a2.5 2.5 0 01-5 0V3z" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/></svg>
+              </div>
+              <div class="ra-entry ra-entry--3">
+                <span class="ra-hash">e9d4</span>
+                <span class="ra-action">promote.pass</span>
+              </div>
+            </div>
+          </div>
+          <span class="review-card__step">Audit</span>
+          <h3 class="review-card__title">Every decision lives on disk</h3>
+          <p class="review-card__text">
+            Append-only logs record every signal and constraint the system
+            processes. Pick any function in the output and trace the chain
+            back to the spec line that produced it. The coverage ledger
+            shows what is done and what is still missing.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- DIFFERENTIATOR SECTION -->
+  <!-- ============================================ -->
+  <section class="section section--feature" id="differentiator">
+    <div class="container container--narrow">
+      <span class="eyebrow" data-animate>What makes us different</span>
+      <h2 class="section__headline" data-animate>A pipeline stands between AI and your branch</h2>
+
+      <p class="differentiator__body" data-animate>
+        Other tools give you raw AI output and leave quality control to you.
+        Oulipoly Automaton runs code through layered gates before it reaches
+        your branch. Every function that lands in your project has passed
+        compliance checks at every layer. A coverage ledger maps each
+        requirement to the code that implements it.
+      </p>
+
+      <div class="accuracy-comparison" id="accuracy-comparison" data-animate>
+        <div class="accuracy-bars-h">
+          <div class="accuracy-row" data-bar="system">
+            <span class="accuracy-row__label">Oulipoly Automaton</span>
+            <div class="accuracy-row__track">
+              <div class="accuracy-row__fill" data-fill="100"></div>
+            </div>
+            <span class="accuracy-row__value">100%</span>
+          </div>
+          <div class="accuracy-row" data-bar="opus">
+            <span class="accuracy-row__label">Opus 4.6</span>
+            <div class="accuracy-row__track">
+              <div class="accuracy-row__fill" data-fill="73"></div>
+            </div>
+            <span class="accuracy-row__value">73%</span>
+          </div>
+          <div class="accuracy-row" data-bar="sonnet">
+            <span class="accuracy-row__label">Sonnet 4.5</span>
+            <div class="accuracy-row__track">
+              <div class="accuracy-row__fill" data-fill="58"></div>
+            </div>
+            <span class="accuracy-row__value">58%</span>
+          </div>
+        </div>
+        <p class="accuracy-comparison__note">Internal benchmark: spec coverage across accuracy, architecture, and code quality</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- PRICING SECTION -->
+  <!-- ============================================ -->
+  <section class="section section--pricing" id="pricing">
+    <div class="container">
+      <h2 class="section__headline" data-animate>Start free. Scale when ready.</h2>
+
+      <div class="pricing-grid">
+        <article class="pricing-card glass-panel" data-animate>
+          <span class="pricing-card__badge">Available at launch</span>
+          <h3 class="pricing-card__name">Free (Local)</h3>
+          <p class="pricing-card__price">$0</p>
+          <ul class="pricing-card__features">
+            <li>Runs on your machine</li>
+            <li>Full privacy</li>
+            <li>Bring your own AI keys</li>
+            <li>All quality gates and workflows</li>
+          </ul>
+        </article>
+
+        <article class="pricing-card pricing-card--featured glass-panel" data-animate>
+          <span class="pricing-card__badge pricing-card__badge--accent">Coming soon</span>
+          <h3 class="pricing-card__name">Hybrid</h3>
+          <p class="pricing-card__price">$15<span class="pricing-card__period">/mo</span></p>
+          <ul class="pricing-card__features">
+            <li>Remote management</li>
+            <li>Local execution</li>
+            <li>Easier setup</li>
+            <li>Use your AI subscriptions</li>
+          </ul>
+        </article>
+
+        <article class="pricing-card glass-panel" data-animate>
+          <span class="pricing-card__badge">Future</span>
+          <h3 class="pricing-card__name">Cloud</h3>
+          <p class="pricing-card__price">TBD</p>
+          <ul class="pricing-card__features">
+            <li>Fully managed</li>
+            <li>Easiest experience</li>
+            <li>No setup required</li>
+            <li>AI keys and hosting included</li>
+          </ul>
+        </article>
+      </div>
+
+      <!-- CTA removed: form at bottom is the single conversion point -->
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- FAQ SECTION -->
+  <!-- ============================================ -->
+  <section class="section section--alt" id="faq">
+    <div class="container container--narrow">
+      <h2 class="section__headline" data-animate>Questions</h2>
+
+      <div class="faq-list">
+        <details class="faq-item glass-panel" data-animate>
+          <summary class="faq-item__question">
+            Is this just another Cursor/Copilot?
+            <span class="faq-item__chevron" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </summary>
+          <div class="faq-item__answer">
+            <p>
+              No. Those give you one AI that writes code for you to review.
+              Oulipoly Automaton runs your code through a pipeline of quality
+              gates before it reaches your branch. The difference is who does
+              the quality control: you alone, or a system of layered gates
+              with demotion for failures.
+            </p>
+          </div>
+        </details>
+
+        <details class="faq-item glass-panel" data-animate>
+          <summary class="faq-item__question">
+            Do I need to know how to code?
+            <span class="faq-item__chevron" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </summary>
+          <div class="faq-item__answer">
+            <p>
+              No. You write specs in plain language. The system handles
+              implementation and review. When it needs clarity, it asks
+              you for constraints instead of guessing.
+            </p>
+          </div>
+        </details>
+
+        <details class="faq-item glass-panel" data-animate>
+          <summary class="faq-item__question">
+            How do I review the code it produces?
+            <span class="faq-item__chevron" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </summary>
+          <div class="faq-item__answer">
+            <p>
+              You don't review code directly. The system surfaces questions
+              through an Intent Agent queue when it hits ambiguity. You
+              answer with constraints. The system handles everything else
+              autonomously through layered quality gates.
+            </p>
+          </div>
+        </details>
+
+        <details class="faq-item glass-panel" data-animate>
+          <summary class="faq-item__question">
+            What if I already use Cursor/Copilot?
+            <span class="faq-item__chevron" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </summary>
+          <div class="faq-item__answer">
+            <p>
+              The workflow engine integrates with Claude Code, Cursor, and
+              Windsurf. It adds a quality pipeline on top rather than replacing
+              your existing tools.
+            </p>
+          </div>
+        </details>
+
+        <details class="faq-item glass-panel" data-animate>
+          <summary class="faq-item__question">
+            Is my code private?
+            <span class="faq-item__chevron" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </summary>
+          <div class="faq-item__answer">
+            <p>
+              The free local version never sends code anywhere except to the AI
+              APIs you configure. Your code stays on your machine.
+            </p>
+          </div>
+        </details>
+
+        <details class="faq-item glass-panel" data-animate>
+          <summary class="faq-item__question">
+            When does it launch?
+            <span class="faq-item__chevron" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </summary>
+          <div class="faq-item__answer">
+            <p>
+              We're building the prototype now. Join the waitlist to be first
+              when we launch.
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- FINAL CTA -->
+  <!-- ============================================ -->
+  <section class="section section--cta" id="waitlist-final">
+    <div class="container container--narrow">
+      <h2 class="section__headline section__headline--cta" data-animate>
+        Ready to ship code you can trust?
+      </h2>
+      <p class="section__intro section__intro--cta" data-animate>
+        Your AI writes the code. Oulipoly Automaton checks if it's right.
+      </p>
+
+      <form class="waitlist-form" id="waitlist-form" data-animate>
+        <div class="waitlist-form__row">
+          <input
+            type="email"
+            class="input-email"
+            id="waitlist-email"
+            placeholder="you@example.com"
+            required
+            autocomplete="email"
+            aria-label="Email address"
+          >
+          <button type="submit" class="btn-primary btn-primary--lg waitlist-form__btn">
+            Join Waitlist
+          </button>
+        </div>
+        <p class="waitlist-form__status" id="waitlist-status" role="status" aria-live="polite"></p>
+        <p class="waitlist-form__friction">Free to start. No credit card required.</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- FOOTER -->
+  <!-- ============================================ -->
+  <footer class="footer">
+    <div class="container footer__inner">
+      <p class="footer__brand brand"><span class="brand__name">Oulipoly</span><span class="brand__type">Automaton</span></p>
+      <p class="footer__credit">Built by Nestharus</p>
+      <p class="footer__copy">&copy; 2026 Oulipoly Automaton. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/motion@12.4.7/dist/motion.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

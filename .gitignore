@@ -33,6 +33,7 @@ Thumbs.db
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pdd_cache/
 
 # Coverage / testing
 .coverage*
@@ -40,6 +41,7 @@ coverage.xml
 htmlcov/
 nosetests.xml
 junit.xml
+reports/
 
 # Generated / output
 openapi/
@@ -56,6 +58,7 @@ runs/
 *.zip
 .pdd_runs/
 *.bak
+analysis/
 
 # Local config / secrets
 .env
@@ -75,6 +78,9 @@ runs/
 *.duckdb
 *.duckdb.wal
 to_adapt/
+
+# External repositories
+.repositories/
 
 # Auto Claude data directory
 .auto-claude/

@@ -180,6 +180,12 @@ preserves old patterns. This policy ensures the codebase stays clean,
 maintainable, and free of technical debt from accumulated compatibility
 layers.
 
+## External Repositories
+
+The `.repositories/` directory contains cloned external repositories that
+the root tooling can work with. Each subdirectory is an independent git
+repository. This directory is git-ignored from the root project.
+
 ## External Resources
 
 When stuck on implementation details, library usage, or unfamiliar patterns,
