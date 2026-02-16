@@ -30,6 +30,185 @@ OPUS_PREFERRED_TASKS = [
     "context_understanding",
 ]
 
+SCHEMA_METADATA_KEYWORDS = {
+    "title",
+    "description",
+    "default",
+    "examples",
+}
+SCHEMA_VALIDATION_KEYWORDS = {
+    "type",
+    "properties",
+    "required",
+    "items",
+    "enum",
+    "additionalProperties",
+}
+SUPPORTED_SCHEMA_KEYWORDS = SCHEMA_METADATA_KEYWORDS | SCHEMA_VALIDATION_KEYWORDS
+SUPPORTED_SCHEMA_TYPES = {
+    "object",
+    "array",
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "null",
+}
+
+
+def _serialize_context_value(value: Any) -> str:
+    """Serialize context values with a deterministic prompt-facing format."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, ensure_ascii=True)
+    raise TypeError(f"Unsupported context value type: {type(value).__name__}")
+
+
+def _find_unsupported_schema_features(schema: Any, path: str = "root") -> list[str]:
+    errors: list[str] = []
+
+    if isinstance(schema, dict):
+        for key, value in schema.items():
+            if key not in SUPPORTED_SCHEMA_KEYWORDS:
+                errors.append(f"{path}: unsupported schema keyword '{key}'")
+
+            if key == "type":
+                schema_types = value if isinstance(value, list) else [value]
+                if not isinstance(schema_types, list):
+                    errors.append(f"{path}.type: expected string or list of strings")
+                else:
+                    for schema_type in schema_types:
+                        if schema_type not in SUPPORTED_SCHEMA_TYPES:
+                            errors.append(f"{path}.type: unsupported schema type '{schema_type}'")
+
+            if key == "properties":
+                if not isinstance(value, dict):
+                    errors.append(f"{path}.properties: expected object")
+                else:
+                    for prop_name, prop_schema in value.items():
+                        errors.extend(
+                            _find_unsupported_schema_features(
+                                prop_schema,
+                                f"{path}.properties.{prop_name}",
+                            )
+                        )
+
+            if key == "items":
+                errors.extend(_find_unsupported_schema_features(value, f"{path}.items"))
+
+            if key == "additionalProperties" and isinstance(value, dict):
+                errors.extend(
+                    _find_unsupported_schema_features(value, f"{path}.additionalProperties")
+                )
+
+    return errors
+
+
+def _matches_schema_type(value: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return False
+
+
+def _validate_against_schema(data: Any, schema: dict[str, Any]) -> tuple[bool, list[str]]:
+    schema_support_errors = _find_unsupported_schema_features(schema)
+    if schema_support_errors:
+        return False, schema_support_errors
+
+    def _validate(value: Any, schema_fragment: dict[str, Any], path: str) -> list[str]:
+        fragment_errors: list[str] = []
+        schema_type = schema_fragment.get("type")
+        schema_types = schema_type if isinstance(schema_type, list) else [schema_type]
+
+        if schema_type is not None and not any(
+            _matches_schema_type(value, allowed_type) for allowed_type in schema_types
+        ):
+            return [f"{path}: expected {schema_types}, got {type(value).__name__}"]
+
+        if "enum" in schema_fragment and value not in schema_fragment["enum"]:
+            fragment_errors.append(f"{path}: value must be one of {schema_fragment['enum']}")
+
+        if "object" in schema_types and isinstance(value, dict):
+            properties = schema_fragment.get("properties", {})
+            required = schema_fragment.get("required", [])
+
+            for required_field in required:
+                if required_field not in value:
+                    fragment_errors.append(f"{path}.{required_field}: required field missing")
+
+            for prop_name, prop_schema in properties.items():
+                if prop_name in value:
+                    fragment_errors.extend(
+                        _validate(value[prop_name], prop_schema, f"{path}.{prop_name}")
+                    )
+
+            additional_properties = schema_fragment.get("additionalProperties", True)
+            extra_keys = sorted(set(value) - set(properties))
+            if additional_properties is False and extra_keys:
+                for key in extra_keys:
+                    fragment_errors.append(f"{path}.{key}: additional property not allowed")
+            elif isinstance(additional_properties, dict):
+                for key in extra_keys:
+                    fragment_errors.extend(
+                        _validate(value[key], additional_properties, f"{path}.{key}")
+                    )
+
+        if "array" in schema_types and isinstance(value, list):
+            items_schema = schema_fragment.get("items")
+            if isinstance(items_schema, dict):
+                for index, item in enumerate(value):
+                    fragment_errors.extend(_validate(item, items_schema, f"{path}[{index}]"))
+
+        return fragment_errors
+
+    validation_errors = _validate(data, schema, "root")
+    return len(validation_errors) == 0, validation_errors
+
+
+def _validate_tool_output(
+    structured_data: Any,
+    tool_request: ToolUseRequest | None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Validate tool output against the current task tool schema."""
+    if structured_data is None:
+        return None, []
+
+    if not isinstance(structured_data, dict):
+        return None, [f"Structured output must be an object, got {type(structured_data).__name__}"]
+
+    if tool_request is None:
+        return None, ["Structured output is unverified: no tool schema available for task"]
+
+    schema = {
+        "type": "object",
+        "properties": tool_request.input_schema,
+        "required": tool_request.required_fields,
+        "additionalProperties": False,
+    }
+    is_valid, errors = _validate_against_schema(structured_data, schema)
+    if not is_valid:
+        return None, errors
+    return structured_data, []
+
 
 @dataclass
 class ToolUseRequest:
@@ -80,9 +259,10 @@ class OpusOutput:
     intent_captured: str
     structured_data: dict[str, Any] | None = None
     raw_text: str = ""
-    confidence: float = 1.0
+    confidence: float = 0.0
     needs_refinement: bool = False
     refinement_areas: list[str] = field(default_factory=list)
+    validation_errors: list[str] = field(default_factory=list)
 
 
 def create_library_synthesis_tool() -> ToolUseRequest:
@@ -291,7 +471,11 @@ class OpusWrapper:
         """
         # Opus benefits from explicit context framing
         if context:
-            context_text = "\n".join(f"- {k}: {v}" for k, v in context.items())
+            context_lines: list[str] = []
+            for key, value in context.items():
+                serialized = _serialize_context_value(value)
+                context_lines.append(f"- {key}: {serialized}")
+            context_text = "\n".join(context_lines)
             prompt = f"Context:\n{context_text}\n\nTask:\n{prompt}"
 
         tools: list[dict[str, Any]] = []
@@ -315,37 +499,59 @@ class OpusWrapper:
         Returns:
             OpusOutput with processed data.
         """
-        structured_data = tool_use_result
+        candidate_structured_data: Any = tool_use_result
         raw_text = raw_output if isinstance(raw_output, str) else ""
 
-        if structured_data is None and isinstance(raw_output, dict):
-            structured_data = raw_output
+        if candidate_structured_data is None and isinstance(raw_output, dict):
+            candidate_structured_data = raw_output
+
+        tool_request = self.get_tool_for_task()
+        structured_data, validation_errors = _validate_tool_output(
+            candidate_structured_data,
+            tool_request,
+        )
+
+        if not raw_text and candidate_structured_data is not None:
+            raw_text = json.dumps(candidate_structured_data, sort_keys=True, ensure_ascii=True)
 
         # Extract intent from output
         intent = ""
+        confidence = 0.0
         if structured_data:
-            intent = (
-                structured_data.get("purpose")
-                or structured_data.get("overview")
-                or structured_data.get("description", "")
-            )
+            for intent_field in ("purpose", "overview", "description"):
+                candidate_intent = structured_data.get(intent_field, "")
+                if isinstance(candidate_intent, str) and candidate_intent.strip():
+                    intent = candidate_intent.strip()
+                    break
+            confidence = 0.95 if intent else 0.7
         elif raw_text:
             # Try to extract intent from first paragraph
-            paragraphs = raw_text.split("\n\n")
+            paragraphs = [p.strip() for p in raw_text.split("\n\n") if p.strip()]
             if paragraphs:
                 intent = paragraphs[0][:500]
+                confidence = 0.4
 
         # Identify what needs refinement
         refinement_areas: list[str] = []
         if structured_data:
             refinement_areas = identify_refinement_needs(structured_data)
 
+        if validation_errors:
+            refinement_areas.append("Structured output failed schema validation")
+            confidence = min(confidence, 0.3)
+
+        if not intent:
+            refinement_areas.append("Intent extraction is weak or missing")
+            confidence = min(confidence, 0.2 if raw_text else 0.0)
+
         return OpusOutput(
             intent_captured=intent,
             structured_data=structured_data,
             raw_text=raw_text,
+            confidence=confidence,
             needs_refinement=len(refinement_areas) > 0,
             refinement_areas=refinement_areas,
+            validation_errors=validation_errors,
         )
 
     def create_refinement_prompt(

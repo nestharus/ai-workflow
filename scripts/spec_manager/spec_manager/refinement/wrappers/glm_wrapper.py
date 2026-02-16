@@ -33,6 +33,31 @@ GLM_TASK_SIZE_LIMITS = {
     "default": {"max_input_chars": 5000, "max_output_tokens": 800},
 }
 
+SCHEMA_METADATA_KEYWORDS = {
+    "title",
+    "description",
+    "default",
+    "examples",
+}
+SCHEMA_VALIDATION_KEYWORDS = {
+    "type",
+    "properties",
+    "required",
+    "items",
+    "enum",
+    "additionalProperties",
+}
+SUPPORTED_SCHEMA_KEYWORDS = SCHEMA_METADATA_KEYWORDS | SCHEMA_VALIDATION_KEYWORDS
+SUPPORTED_SCHEMA_TYPES = {
+    "object",
+    "array",
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "null",
+}
+
 
 def simplify_prompt_for_glm(prompt: str) -> str:
     """Simplify a prompt for GLM model.
@@ -53,60 +78,19 @@ def simplify_prompt_for_glm(prompt: str) -> str:
     Returns:
         Simplified prompt suitable for GLM.
     """
-    lines = prompt.split("\n")
+    lines = prompt.splitlines()
     simplified_lines: list[str] = []
 
-    skip_patterns = [
-        r"^Note:",
-        r"^Remember:",
-        r"^Important:",
-        r"^For example,",
-        r"^This means",
-        r"^In other words",
-    ]
-
     for line in lines:
-        stripped = line.strip()
+        stripped = re.sub(r"\s+", " ", line.strip())
 
-        # Skip empty lines in sequence
+        # Collapse runs of blank lines while preserving line ordering/content.
         if not stripped:
             if simplified_lines and simplified_lines[-1] != "":
                 simplified_lines.append("")
             continue
 
-        # Skip verbose explanation patterns
-        if any(re.match(pattern, stripped, re.IGNORECASE) for pattern in skip_patterns):
-            continue
-
-        # Simplify conditional statements
-        if "if possible" in stripped.lower():
-            stripped = stripped.replace("if possible", "").replace("If possible", "")
-            stripped = re.sub(r"\s+", " ", stripped).strip()
-
-        if "when applicable" in stripped.lower():
-            stripped = stripped.replace("when applicable", "").replace("When applicable", "")
-            stripped = re.sub(r"\s+", " ", stripped).strip()
-
-        # Remove hedging language
-        hedging_phrases = [
-            "you might want to",
-            "consider",
-            "it would be good to",
-            "you could",
-            "perhaps",
-            "maybe",
-        ]
-        for phrase in hedging_phrases:
-            if phrase in stripped.lower():
-                # Convert to direct instruction
-                stripped = re.sub(
-                    rf"(?i){re.escape(phrase)}\s*",
-                    "",
-                    stripped,
-                )
-
-        if stripped:
-            simplified_lines.append(stripped)
+        simplified_lines.append(stripped)
 
     # Remove trailing empty lines
     while simplified_lines and simplified_lines[-1] == "":
@@ -167,6 +151,7 @@ class ExtractedOutput:
     """
 
     is_valid: bool
+    is_verified: bool = False
     value: Any = None
     partial_value: Any = None
     errors: list[str] = field(default_factory=list)
@@ -201,17 +186,89 @@ def extract_structured_output(
         )
 
     # Validate against schema if provided
-    if output_schema is not None:
-        is_valid, validation_errors = _validate_against_schema(json_data, output_schema)
-        if not is_valid:
-            errors.extend(validation_errors)
-            return ExtractedOutput(
-                is_valid=False,
-                partial_value=json_data,
-                errors=errors,
-            )
+    if output_schema is None:
+        errors.append("Output extracted but unverified: output_schema is required for validation")
+        return ExtractedOutput(
+            is_valid=False,
+            is_verified=False,
+            value=json_data,
+            errors=errors,
+        )
 
-    return ExtractedOutput(is_valid=True, value=json_data)
+    is_valid, validation_errors = _validate_against_schema(json_data, output_schema)
+    if not is_valid:
+        errors.extend(validation_errors)
+        return ExtractedOutput(
+            is_valid=False,
+            is_verified=False,
+            partial_value=json_data,
+            errors=errors,
+        )
+
+    return ExtractedOutput(is_valid=True, is_verified=True, value=json_data)
+
+
+def _find_unsupported_schema_features(schema: Any, path: str = "root") -> list[str]:
+    """Find unsupported JSON-schema features.
+
+    This validator intentionally supports a strict subset. Unknown validation
+    keywords are rejected so callers do not assume checks that were never run.
+    """
+    errors: list[str] = []
+
+    if isinstance(schema, dict):
+        for key, value in schema.items():
+            if key not in SUPPORTED_SCHEMA_KEYWORDS:
+                errors.append(f"{path}: unsupported schema keyword '{key}'")
+
+            if key == "type":
+                schema_types = value if isinstance(value, list) else [value]
+                if not isinstance(schema_types, list):
+                    errors.append(f"{path}.type: expected string or list of strings")
+                else:
+                    for schema_type in schema_types:
+                        if schema_type not in SUPPORTED_SCHEMA_TYPES:
+                            errors.append(f"{path}.type: unsupported schema type '{schema_type}'")
+
+            if key == "properties":
+                if not isinstance(value, dict):
+                    errors.append(f"{path}.properties: expected object")
+                else:
+                    for prop_name, prop_schema in value.items():
+                        errors.extend(
+                            _find_unsupported_schema_features(
+                                prop_schema,
+                                f"{path}.properties.{prop_name}",
+                            )
+                        )
+
+            if key == "items":
+                errors.extend(_find_unsupported_schema_features(value, f"{path}.items"))
+
+            if key == "additionalProperties" and isinstance(value, dict):
+                errors.extend(
+                    _find_unsupported_schema_features(value, f"{path}.additionalProperties")
+                )
+
+    return errors
+
+
+def _matches_schema_type(data: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(data, dict)
+    if schema_type == "array":
+        return isinstance(data, list)
+    if schema_type == "string":
+        return isinstance(data, str)
+    if schema_type == "number":
+        return isinstance(data, (int, float)) and not isinstance(data, bool)
+    if schema_type == "integer":
+        return isinstance(data, int) and not isinstance(data, bool)
+    if schema_type == "boolean":
+        return isinstance(data, bool)
+    if schema_type == "null":
+        return data is None
+    return False
 
 
 def _validate_against_schema(data: Any, schema: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -224,50 +281,61 @@ def _validate_against_schema(data: Any, schema: dict[str, Any]) -> tuple[bool, l
     Returns:
         Tuple of (is_valid, list of error messages).
     """
-    errors: list[str] = []
+    errors = _find_unsupported_schema_features(schema)
+    if errors:
+        return False, errors
 
-    schema_type = schema.get("type")
+    def _validate(value: Any, schema_fragment: dict[str, Any], path: str) -> list[str]:
+        fragment_errors: list[str] = []
+        schema_type = schema_fragment.get("type")
 
-    if schema_type == "object":
-        if not isinstance(data, dict):
-            return False, [f"Expected object, got {type(data).__name__}"]
+        if schema_type is not None:
+            schema_types = schema_type if isinstance(schema_type, list) else [schema_type]
+            if not any(_matches_schema_type(value, allowed_type) for allowed_type in schema_types):
+                fragment_errors.append(
+                    f"{path}: expected {schema_types}, got {type(value).__name__}"
+                )
+                return fragment_errors
 
-        required = schema.get("required", [])
-        for req_field in required:
-            if req_field not in data:
-                errors.append(f"Missing required field: {req_field}")
+        if "enum" in schema_fragment and value not in schema_fragment["enum"]:
+            fragment_errors.append(f"{path}: value must be one of {schema_fragment['enum']}")
 
-        properties = schema.get("properties", {})
-        for prop_name, prop_schema in properties.items():
-            if prop_name in data:
-                is_valid, prop_errors = _validate_against_schema(data[prop_name], prop_schema)
-                if not is_valid:
-                    errors.extend([f"{prop_name}: {e}" for e in prop_errors])
+        schema_types = schema_type if isinstance(schema_type, list) else [schema_type]
+        if "object" in schema_types and isinstance(value, dict):
+            properties = schema_fragment.get("properties", {})
+            required = schema_fragment.get("required", [])
 
-    elif schema_type == "array":
-        if not isinstance(data, list):
-            return False, [f"Expected array, got {type(data).__name__}"]
+            for required_field in required:
+                if required_field not in value:
+                    fragment_errors.append(f"{path}.{required_field}: required field missing")
 
-        items_schema = schema.get("items")
-        if items_schema:
-            for i, item in enumerate(data):
-                is_valid, item_errors = _validate_against_schema(item, items_schema)
-                if not is_valid:
-                    errors.extend([f"[{i}]: {e}" for e in item_errors])
+            for prop_name, prop_schema in properties.items():
+                if prop_name in value:
+                    fragment_errors.extend(
+                        _validate(value[prop_name], prop_schema, f"{path}.{prop_name}")
+                    )
 
-    elif schema_type == "string":
-        if not isinstance(data, str):
-            return False, [f"Expected string, got {type(data).__name__}"]
+            additional_properties = schema_fragment.get("additionalProperties", True)
+            extra_keys = sorted(set(value) - set(properties))
+            if additional_properties is False and extra_keys:
+                for key in extra_keys:
+                    fragment_errors.append(f"{path}.{key}: additional property not allowed")
+            elif isinstance(additional_properties, dict):
+                for key in extra_keys:
+                    fragment_errors.extend(
+                        _validate(value[key], additional_properties, f"{path}.{key}")
+                    )
 
-    elif schema_type == "number":
-        if not isinstance(data, (int, float)):
-            return False, [f"Expected number, got {type(data).__name__}"]
+        if "array" in schema_types and isinstance(value, list):
+            items_schema = schema_fragment.get("items")
+            if isinstance(items_schema, dict):
+                for index, item in enumerate(value):
+                    fragment_errors.extend(_validate(item, items_schema, f"{path}[{index}]"))
 
-    elif schema_type == "boolean":
-        if not isinstance(data, bool):
-            return False, [f"Expected boolean, got {type(data).__name__}"]
+        return fragment_errors
 
-    return len(errors) == 0, errors
+    validation_errors = _validate(data, schema, "root")
+    return len(validation_errors) == 0, validation_errors
 
 
 @dataclass
@@ -308,15 +376,27 @@ class GLMWrapper:
         Returns:
             Prepared prompt.
         """
+        source_prompt = prompt
         if simplify:
-            prompt = simplify_prompt_for_glm(prompt)
+            simplified_prompt = simplify_prompt_for_glm(source_prompt)
+            if simplified_prompt != source_prompt:
+                prompt = (
+                    "AUTHORITATIVE SOURCE PROMPT:\n"
+                    f"{source_prompt}\n\n"
+                    "SIMPLIFIED WORKING VIEW (do not drop source requirements):\n"
+                    f"{simplified_prompt}"
+                )
+            else:
+                prompt = source_prompt
 
         if enforce_limits:
             limits = self.get_task_limits()
             max_chars = limits["max_input_chars"]
             if len(prompt) > max_chars:
-                # Truncate with ellipsis
-                prompt = prompt[: max_chars - 3] + "..."
+                raise ValueError(
+                    "Prepared GLM prompt exceeds task limit "
+                    f"({len(prompt)} chars > {max_chars} chars for task_type='{self.task_type}')"
+                )
 
         return prompt
 

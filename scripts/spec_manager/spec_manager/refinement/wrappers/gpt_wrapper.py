@@ -14,6 +14,7 @@ This wrapper optimizes interactions with GPT by:
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass, field
@@ -176,6 +177,135 @@ GPT_STRICT_OUTPUT_FORMATS = {
     },
 }
 
+SCHEMA_METADATA_KEYWORDS = {
+    "title",
+    "description",
+    "default",
+    "examples",
+}
+SCHEMA_VALIDATION_KEYWORDS = {
+    "type",
+    "properties",
+    "required",
+    "items",
+    "enum",
+    "additionalProperties",
+}
+SUPPORTED_SCHEMA_KEYWORDS = SCHEMA_METADATA_KEYWORDS | SCHEMA_VALIDATION_KEYWORDS
+SUPPORTED_SCHEMA_TYPES = {
+    "object",
+    "array",
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "null",
+}
+
+
+def _allow_null(schema: dict[str, Any]) -> dict[str, Any]:
+    schema_copy = copy.deepcopy(schema)
+    schema_type = schema_copy.get("type")
+    if schema_type is None:
+        return schema_copy
+
+    if isinstance(schema_type, str):
+        if schema_type != "null":
+            schema_copy["type"] = [schema_type, "null"]
+    elif isinstance(schema_type, list) and "null" not in schema_type:
+        schema_copy["type"] = [*schema_type, "null"]
+
+    if "enum" in schema_copy and None not in schema_copy["enum"]:
+        schema_copy["enum"] = [*schema_copy["enum"], None]
+
+    return schema_copy
+
+
+def _build_runtime_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    schema_copy = copy.deepcopy(schema)
+    schema_type = schema_copy.get("type")
+
+    if schema_type == "object":
+        required = set(schema_copy.get("required", []))
+        properties = schema_copy.get("properties", {})
+        if isinstance(properties, dict):
+            rewritten_properties: dict[str, Any] = {}
+            for prop_name, prop_schema in properties.items():
+                rewritten_property_schema = _build_runtime_schema(prop_schema)
+                if prop_name not in required:
+                    rewritten_property_schema = _allow_null(rewritten_property_schema)
+                rewritten_properties[prop_name] = rewritten_property_schema
+            schema_copy["properties"] = rewritten_properties
+
+        additional_properties = schema_copy.get("additionalProperties")
+        if isinstance(additional_properties, dict):
+            schema_copy["additionalProperties"] = _build_runtime_schema(additional_properties)
+
+    if schema_type == "array":
+        items_schema = schema_copy.get("items")
+        if isinstance(items_schema, dict):
+            schema_copy["items"] = _build_runtime_schema(items_schema)
+
+    return schema_copy
+
+
+def _find_unsupported_schema_features(schema: Any, path: str = "root") -> list[str]:
+    errors: list[str] = []
+
+    if isinstance(schema, dict):
+        for key, value in schema.items():
+            if key not in SUPPORTED_SCHEMA_KEYWORDS:
+                errors.append(f"{path}: unsupported schema keyword '{key}'")
+
+            if key == "type":
+                schema_types = value if isinstance(value, list) else [value]
+                if not isinstance(schema_types, list):
+                    errors.append(f"{path}.type: expected string or list of strings")
+                else:
+                    for schema_type in schema_types:
+                        if schema_type not in SUPPORTED_SCHEMA_TYPES:
+                            errors.append(f"{path}.type: unsupported schema type '{schema_type}'")
+
+            if key == "properties":
+                if not isinstance(value, dict):
+                    errors.append(f"{path}.properties: expected object")
+                else:
+                    for prop_name, prop_schema in value.items():
+                        errors.extend(
+                            _find_unsupported_schema_features(
+                                prop_schema,
+                                f"{path}.properties.{prop_name}",
+                            )
+                        )
+
+            if key == "items":
+                errors.extend(_find_unsupported_schema_features(value, f"{path}.items"))
+
+            if key == "additionalProperties" and isinstance(value, dict):
+                errors.extend(
+                    _find_unsupported_schema_features(value, f"{path}.additionalProperties")
+                )
+
+    return errors
+
+
+def _matches_schema_type(value: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return False
+
 
 def create_format_enforcement_suffix(output_format: dict[str, Any]) -> str:
     """Create a suffix that enforces output format.
@@ -199,7 +329,7 @@ IMPORTANT:
 - Do NOT include any text before or after the JSON
 - Do NOT wrap in markdown code blocks
 - ALL required fields must be present
-- Use null for optional fields with no value"""
+- Optional fields may be omitted or set to null when the schema permits it"""
 
 
 def validate_gpt_output(
@@ -233,6 +363,10 @@ def validate_gpt_output(
         errors.append(f"Invalid JSON: {e}")
         return False, None, errors
 
+    schema_support_errors = _find_unsupported_schema_features(expected_format)
+    if schema_support_errors:
+        return False, None, schema_support_errors
+
     # Validate structure
     def validate_against_schema(
         data: Any,
@@ -242,44 +376,52 @@ def validate_gpt_output(
         schema_errors: list[str] = []
         schema_type = schema.get("type")
 
-        if schema_type == "object":
-            if not isinstance(data, dict):
-                return [f"{path}: expected object, got {type(data).__name__}"]
+        if schema_type is not None:
+            schema_types = schema_type if isinstance(schema_type, list) else [schema_type]
+            if not any(_matches_schema_type(data, allowed_type) for allowed_type in schema_types):
+                return [f"{path}: expected {schema_types}, got {type(data).__name__}"]
+        else:
+            schema_types = []
 
+        if "enum" in schema and data not in schema["enum"]:
+            schema_errors.append(f"{path}: must be one of {schema['enum']}")
+
+        if "object" in schema_types and isinstance(data, dict):
+            properties = schema.get("properties", {})
             # Check required fields
             for req in schema.get("required", []):
                 if req not in data:
                     schema_errors.append(f"{path}.{req}: required field missing")
 
             # Validate properties
-            for prop, prop_schema in schema.get("properties", {}).items():
+            for prop, prop_schema in properties.items():
                 if prop in data:
                     schema_errors.extend(
                         validate_against_schema(data[prop], prop_schema, f"{path}.{prop}")
                     )
 
-        elif schema_type == "array":
-            if not isinstance(data, list):
-                return [f"{path}: expected array, got {type(data).__name__}"]
+            additional_properties = schema.get("additionalProperties", True)
+            extra_keys = sorted(set(data) - set(properties))
+            if additional_properties is False and extra_keys:
+                for key in extra_keys:
+                    schema_errors.append(f"{path}.{key}: additional property not allowed")
+            elif isinstance(additional_properties, dict):
+                for key in extra_keys:
+                    schema_errors.extend(
+                        validate_against_schema(
+                            data[key],
+                            additional_properties,
+                            f"{path}.{key}",
+                        )
+                    )
 
+        if "array" in schema_types and isinstance(data, list):
             items_schema = schema.get("items")
-            if items_schema:
+            if isinstance(items_schema, dict):
                 for i, item in enumerate(data):
                     schema_errors.extend(
                         validate_against_schema(item, items_schema, f"{path}[{i}]")
                     )
-
-        elif schema_type == "string":
-            if not isinstance(data, str):
-                schema_errors.append(f"{path}: expected string, got {type(data).__name__}")
-
-            # Check enum constraint
-            if "enum" in schema and data not in schema["enum"]:
-                schema_errors.append(f"{path}: must be one of {schema['enum']}")
-
-        elif schema_type == "number" or schema_type == "integer":
-            if not isinstance(data, (int, float)):
-                schema_errors.append(f"{path}: expected number, got {type(data).__name__}")
 
         return schema_errors
 
@@ -348,10 +490,13 @@ class GPTWrapper:
         Returns:
             JSON schema for expected output.
         """
-        return GPT_STRICT_OUTPUT_FORMATS.get(
-            self.task_type,
-            GPT_STRICT_OUTPUT_FORMATS["requirement_audit"],
-        )
+        if self.task_type not in GPT_STRICT_OUTPUT_FORMATS:
+            raise ValueError(f"Unknown GPT task_type '{self.task_type}'")
+        return GPT_STRICT_OUTPUT_FORMATS[self.task_type]
+
+    def get_runtime_output_format(self) -> dict[str, Any]:
+        """Get runtime schema used for both prompting and validation."""
+        return _build_runtime_schema(self.get_output_format())
 
     def prepare_prompt(
         self,
@@ -378,7 +523,7 @@ class GPTWrapper:
 
         # Add format enforcement
         if self.strict_format:
-            output_format = self.get_output_format()
+            output_format = self.get_runtime_output_format()
             parts.append(create_format_enforcement_suffix(output_format))
 
         return "\n\n".join(parts)
@@ -395,7 +540,7 @@ class GPTWrapper:
         Returns:
             Tuple of (is_valid, parsed_data, errors).
         """
-        output_format = self.get_output_format()
+        output_format = self.get_runtime_output_format()
         return validate_gpt_output(raw_output, output_format)
 
     def create_correction_prompt(
@@ -424,4 +569,4 @@ Original output (truncated):
 {raw_output[:500]}
 
 Please provide corrected output following the exact format specified.
-{create_format_enforcement_suffix(self.get_output_format())}"""
+{create_format_enforcement_suffix(self.get_runtime_output_format())}"""

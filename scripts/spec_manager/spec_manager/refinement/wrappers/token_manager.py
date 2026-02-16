@@ -18,6 +18,97 @@ TOKEN_RATIOS = {
 }
 
 
+def _max_prefix_length_within_tokens(text: str, max_tokens: int, content_type: str) -> int:
+    """Find the longest prefix length whose token estimate fits max_tokens."""
+    low = 1
+    high = len(text)
+    best = 0
+
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = text[:mid]
+        if estimate_tokens(candidate, content_type) <= max_tokens:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return best
+
+
+def _max_suffix_length_within_tokens(text: str, max_tokens: int, content_type: str) -> int:
+    """Find the longest suffix length whose token estimate fits max_tokens."""
+    low = 1
+    high = len(text)
+    best = 0
+
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = text[-mid:]
+        if estimate_tokens(candidate, content_type) <= max_tokens:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return best
+
+
+def _split_text_to_token_budget(text: str, max_tokens: int, content_type: str) -> list[str]:
+    """Split text into pieces where every piece is <= max_tokens."""
+    remaining = text.strip()
+    if not remaining:
+        return []
+
+    pieces: list[str] = []
+    while remaining:
+        if estimate_tokens(remaining, content_type) <= max_tokens:
+            pieces.append(remaining)
+            break
+
+        prefix_len = _max_prefix_length_within_tokens(remaining, max_tokens, content_type)
+        if prefix_len <= 0:
+            raise ValueError(
+                "Unable to split text into chunks within token budget; "
+                "max_tokens is too small for the content estimator"
+            )
+
+        split_idx = max(
+            remaining.rfind("\n", 0, prefix_len + 1),
+            remaining.rfind(" ", 0, prefix_len + 1),
+        )
+        if split_idx <= 0:
+            split_idx = prefix_len
+
+        piece = remaining[:split_idx].strip()
+        if not piece:
+            split_idx = prefix_len
+            piece = remaining[:split_idx].strip()
+            if not piece:
+                raise ValueError("Failed to create non-empty chunk within token budget")
+
+        pieces.append(piece)
+        remaining = remaining[split_idx:].strip()
+
+    return pieces
+
+
+def _tail_within_token_budget(text: str, max_tokens: int, content_type: str) -> str:
+    """Return the largest tail section that fits max_tokens."""
+    trimmed = text.strip()
+    if not trimmed or max_tokens <= 0:
+        return ""
+
+    if estimate_tokens(trimmed, content_type) <= max_tokens:
+        return trimmed
+
+    suffix_len = _max_suffix_length_within_tokens(trimmed, max_tokens, content_type)
+    if suffix_len <= 0:
+        return ""
+
+    return trimmed[-suffix_len:].strip()
+
+
 def estimate_tokens(text: str, content_type: str = "english") -> int:
     """Estimate token count for text.
 
@@ -104,6 +195,11 @@ class TokenBudget:
             Number of tokens consumed.
         """
         tokens = estimate_tokens(text, content_type)
+        if tokens > self.available_input_tokens:
+            raise ValueError(
+                "Input token budget exceeded: "
+                f"requested={tokens}, available={self.available_input_tokens}"
+            )
         self.used_input_tokens += tokens
         return tokens
 
@@ -118,6 +214,11 @@ class TokenBudget:
             Number of tokens consumed.
         """
         tokens = estimate_tokens(text, content_type)
+        if tokens > self.available_output_tokens:
+            raise ValueError(
+                "Output token budget exceeded: "
+                f"requested={tokens}, available={self.available_output_tokens}"
+            )
         self.used_output_tokens += tokens
         return tokens
 
@@ -172,7 +273,7 @@ class TokenManager:
             Dictionary with input/output token counts for the interaction.
         """
         if interaction_id not in self.budgets:
-            return {"input_tokens": 0, "output_tokens": 0}
+            raise KeyError(f"Unknown interaction_id '{interaction_id}'")
 
         budget = self.budgets[interaction_id]
         self.total_input_tokens += budget.used_input_tokens
@@ -216,45 +317,65 @@ class TokenManager:
         Returns:
             List of text chunks.
         """
+        if max_tokens is not None and max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than 0")
+        if overlap_tokens < 0:
+            raise ValueError("overlap_tokens must be >= 0")
+
         if max_tokens is None:
             max_tokens = self.default_budget.max_input_tokens - self.default_budget.reserved_tokens
+
+        if not text:
+            return [text]
 
         total_tokens = estimate_tokens(text, content_type)
         if total_tokens <= max_tokens:
             return [text]
 
-        # Split by paragraphs first
-        paragraphs = re.split(r"\n\n+", text)
+        paragraphs = [p for p in re.split(r"\n\n+", text) if p.strip()]
+        units: list[str] = []
+        for paragraph in paragraphs:
+            units.extend(_split_text_to_token_budget(paragraph, max_tokens, content_type))
+
+        if not units:
+            units = _split_text_to_token_budget(text, max_tokens, content_type)
+
         chunks: list[str] = []
-        current_chunk: list[str] = []
-        current_tokens = 0
+        current_chunk = ""
 
-        for para in paragraphs:
-            para_tokens = estimate_tokens(para, content_type)
+        for unit in units:
+            if not current_chunk:
+                current_chunk = unit
+                continue
 
-            if current_tokens + para_tokens <= max_tokens:
-                current_chunk.append(para)
-                current_tokens += para_tokens
-            else:
-                if current_chunk:
-                    chunks.append("\n\n".join(current_chunk))
+            candidate = f"{current_chunk}\n\n{unit}"
+            if estimate_tokens(candidate, content_type) <= max_tokens:
+                current_chunk = candidate
+                continue
 
-                # Start new chunk with overlap
-                if chunks and overlap_tokens > 0:
-                    # Get last paragraph(s) for overlap
-                    overlap_text = current_chunk[-1] if current_chunk else ""
-                    overlap_actual = estimate_tokens(overlap_text, content_type)
-                    if overlap_actual <= overlap_tokens:
-                        current_chunk = [overlap_text, para]
-                        current_tokens = overlap_actual + para_tokens
-                    else:
-                        current_chunk = [para]
-                        current_tokens = para_tokens
-                else:
-                    current_chunk = [para]
-                    current_tokens = para_tokens
+            chunks.append(current_chunk)
+
+            overlap_budget = min(overlap_tokens, max_tokens)
+            overlap_text = _tail_within_token_budget(current_chunk, overlap_budget, content_type)
+            if overlap_text:
+                overlap_candidate = f"{overlap_text}\n\n{unit}"
+                if estimate_tokens(overlap_candidate, content_type) <= max_tokens:
+                    current_chunk = overlap_candidate
+                    continue
+
+            current_chunk = unit
 
         if current_chunk:
-            chunks.append("\n\n".join(current_chunk))
+            chunks.append(current_chunk)
+
+        oversized_chunks: list[int] = []
+        for chunk in chunks:
+            chunk_tokens = estimate_tokens(chunk, content_type)
+            if chunk_tokens > max_tokens:
+                oversized_chunks.append(chunk_tokens)
+        if oversized_chunks:
+            raise RuntimeError(
+                f"chunk_text produced oversized chunks despite enforcement: {oversized_chunks}"
+            )
 
         return chunks
