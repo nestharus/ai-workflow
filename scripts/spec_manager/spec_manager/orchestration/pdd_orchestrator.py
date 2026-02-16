@@ -31,6 +31,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from spec_manager.core.agent_utils import run_agent
+from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.refinement.workspace.manager import WorkspaceManager
 from spec_manager.refinement.workspace.state import Phase
 
@@ -315,13 +319,17 @@ class PddOrchestrator:
                 patches = route_items(routing_items, self.manager.workspace_path)
                 results["intake_routed"] = len(patches)
                 results["extraction"] = "skipped (route-items mode)"
+                quality_report, remediation = self._run_library_quality_gate(
+                    output_dir=self.manager.workspace_path / "phase0_output",
+                    source_dir=self.manager.structure.spec_snapshot_dir,
+                )
+                results["library_quality"] = quality_report.to_dict()
+                results["library_quality_passed"] = quality_report.gate_passed
+                if remediation:
+                    results["library_quality_remediation"] = remediation
             elif run_extraction:
-                try:
-                    extraction_result = self.run_phase(Phase.EXTRACTION)
-                    results["extraction"] = extraction_result
-                except Exception as exc:
-                    logger.warning("Phase 0 extraction failed: %s", exc)
-                    results["extraction"] = {"error": str(exc)}
+                extraction_result = self.run_phase(Phase.EXTRACTION)
+                results["extraction"] = extraction_result
             else:
                 results["extraction"] = "skipped (no routing payloads)"
         else:
@@ -422,28 +430,14 @@ class PddOrchestrator:
         self._install_phase0_output(output_dir)
 
         # Library quality validation (post-Phase 0 gate)
-        try:
-            from spec_manager.intake.quality.library_quality_validator import (
-                validate_libraries,
-            )
-
-            quality_report = validate_libraries(
-                self.manager.workspace_path,
-                phase0_output_dir=output_dir,
-            )
-            result["library_quality"] = quality_report.to_dict()
-
-            if not quality_report.gate_passed:
-                logger.warning(
-                    "Library quality gate failed: %s",
-                    [d.name for d in quality_report.dimensions if not d.passed],
-                )
-                result["library_quality_passed"] = False
-            else:
-                result["library_quality_passed"] = True
-        except Exception as exc:
-            logger.warning("Library quality validation failed: %s", exc)
-            result["library_quality"] = {"error": str(exc)}
+        quality_report, remediation = self._run_library_quality_gate(
+            output_dir=output_dir,
+            source_dir=source_dir,
+        )
+        result["library_quality"] = quality_report.to_dict()
+        result["library_quality_passed"] = quality_report.gate_passed
+        if remediation:
+            result["library_quality_remediation"] = remediation
 
         return result
 
@@ -485,6 +479,214 @@ class PddOrchestrator:
         if route_table.exists():
             dest = self.manager.structure.root / "route_table.jsonl"
             shutil.copy2(route_table, dest)
+
+    def _run_library_quality_gate(
+        self,
+        *,
+        output_dir: Path,
+        source_dir: Path,
+    ) -> tuple[Any, dict[str, Any] | None]:
+        """Validate Phase 0 library quality and enforce gate semantics."""
+        from spec_manager.intake.quality.library_quality_validator import validate_libraries
+
+        quality_report = validate_libraries(
+            self.manager.workspace_path,
+            phase0_output_dir=output_dir,
+        )
+        remediation: dict[str, Any] | None = None
+
+        if quality_report.gate_passed:
+            return quality_report, remediation
+
+        logger.warning(
+            "Library quality gate failed; attempting remediation for dimensions: %s",
+            ", ".join(quality_report.failed_gate_dimensions),
+        )
+        remediation = self._attempt_library_quality_remediation(
+            output_dir=output_dir,
+            source_dir=source_dir,
+            quality_report=quality_report.to_dict(),
+        )
+
+        if remediation.get("applied", False):
+            # Re-run gate after route/coverage/assemble remediation.
+            self._install_phase0_output(output_dir)
+            quality_report = validate_libraries(
+                self.manager.workspace_path,
+                phase0_output_dir=output_dir,
+            )
+            if quality_report.gate_passed:
+                return quality_report, remediation
+
+        failed_dims = ",".join(quality_report.failed_gate_dimensions)
+        raise ValueError(f"Library quality gate failed after remediation: {failed_dims}")
+
+    def _attempt_library_quality_remediation(
+        self,
+        *,
+        output_dir: Path,
+        source_dir: Path,
+        quality_report: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attempt one bounded auto-remediation pass for failed library quality gates."""
+        from spec_manager.intake.assemble import assemble_output
+        from spec_manager.intake.coverage import check_coverage
+        from spec_manager.intake.route import route_sources
+        from spec_manager.intake.types import normalize_intake_mode
+
+        failed_dims = quality_report.get("failed_gate_dimensions", [])
+        if not isinstance(failed_dims, list):
+            failed_dims = []
+
+        details: dict[str, Any] = {
+            "attempted": True,
+            "applied": False,
+            "failed_dimensions": [str(dim) for dim in failed_dims],
+            "agent_name": "spec-intake-library-repair",
+        }
+
+        try:
+            repaired_libraries = self._request_library_repair_plan(
+                output_dir=output_dir,
+                quality_report=quality_report,
+            )
+            if not repaired_libraries:
+                details["error"] = "repair agent did not return any libraries"
+                return details
+
+            self._write_libraries_yaml(output_dir, repaired_libraries)
+            summaries = self._load_phase0_summary_payloads(output_dir)
+            intake_mode = normalize_intake_mode(str(quality_report.get("intake_mode") or "prose"))
+            routes, final_libraries = route_sources(
+                source_dir,
+                repaired_libraries,
+                summaries,
+                output_dir,
+                intake_mode=intake_mode,
+            )
+            ledger = check_coverage(source_dir, routes, output_dir)
+            incomplete = [entry for entry in ledger if entry.status != "fully_routed"]
+            if incomplete:
+                unresolved_lines = sum(
+                    exc.end - exc.start + 1
+                    for entry in incomplete
+                    for exc in entry.exceptions
+                    if exc.status == "uncovered"
+                )
+                raise ValueError(
+                    "Coverage closure failed during remediation reroute: "
+                    f"{len(incomplete)} file(s), {unresolved_lines} uncovered line(s)."
+                )
+
+            assemble_output(source_dir, routes, final_libraries, output_dir)
+            self._write_libraries_yaml(output_dir, final_libraries)
+            details["applied"] = True
+            details["routes_created"] = len(routes)
+            details["libraries"] = [lib.lib_id for lib in final_libraries]
+            details["coverage_files_fully_routed"] = len(ledger)
+            return details
+        except Exception as exc:
+            logger.warning("Library quality remediation attempt failed: %s", exc)
+            details["error"] = str(exc)
+            return details
+
+    def _request_library_repair_plan(
+        self,
+        *,
+        output_dir: Path,
+        quality_report: dict[str, Any],
+    ) -> list[Any]:
+        """Invoke the repair agent and parse revised library definitions."""
+        from spec_manager.intake.types import LibraryDef
+
+        libraries_yaml = output_dir / "libraries.yaml"
+        libraries_text = ""
+        if libraries_yaml.exists():
+            libraries_text = libraries_yaml.read_text(encoding="utf-8")
+
+        report_json = json.dumps(quality_report, indent=2, ensure_ascii=False)
+        prompt = (
+            "## TASK\n"
+            "Repair Phase 0 library boundaries after quality-gate failures.\n\n"
+            "Return ONLY JSON with this schema:\n"
+            '{"libraries": [{"lib_id": "LIB-0001", "name": "...", '
+            '"description": "..."}], '
+            '"notes": ["..."]}\n\n'
+            "Rules:\n"
+            "- Keep lib_id stable when possible.\n"
+            "- Output complete replacement libraries list.\n"
+            "- Focus on split/merge/rename boundary corrections only.\n\n"
+            "## Current libraries.yaml\n"
+            f"{libraries_text}\n\n"
+            "## Quality report\n"
+            f"{report_json}\n"
+        )
+        raw_output = run_agent(
+            agent_name="spec-intake-library-repair",
+            prompt=prompt,
+            workspace=output_dir,
+        )
+        parsed = json.loads(_extract_json_payload(raw_output))
+        if not isinstance(parsed, dict):
+            raise TypeError("Library repair response must be a JSON object.")
+
+        raw_libraries = parsed.get("libraries", [])
+        if not isinstance(raw_libraries, list):
+            raise TypeError("Library repair response missing 'libraries' list.")
+
+        repaired_libraries: list[LibraryDef] = []
+        for item in raw_libraries:
+            if not isinstance(item, dict):
+                continue
+            lib_id = str(item.get("lib_id", "")).strip()
+            name = str(item.get("name", "")).strip()
+            description = str(item.get("description", "")).strip()
+            if not lib_id or not name:
+                continue
+            repaired_libraries.append(
+                LibraryDef(
+                    lib_id=lib_id,
+                    name=name,
+                    description=description,
+                )
+            )
+        return repaired_libraries
+
+    @staticmethod
+    def _write_libraries_yaml(output_dir: Path, libraries: list[Any]) -> None:
+        """Persist full library definition list in Phase 0 format."""
+        payload = {
+            "libraries": [
+                {
+                    "lib_id": str(getattr(lib, "lib_id", "")),
+                    "name": str(getattr(lib, "name", "")),
+                    "description": str(getattr(lib, "description", "")),
+                }
+                for lib in libraries
+                if str(getattr(lib, "lib_id", "")).strip()
+            ]
+        }
+        libraries_path = output_dir / "libraries.yaml"
+        libraries_path.write_text(
+            yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _load_phase0_summary_payloads(output_dir: Path) -> list[dict[str, Any]]:
+        """Load summary payloads from existing summary markdown artifacts."""
+        summaries_dir = output_dir / "summaries"
+        if not summaries_dir.exists():
+            return []
+        payloads: list[dict[str, Any]] = []
+        for summary_file in sorted(summaries_dir.glob("*.md")):
+            payloads.append(
+                {
+                    "file_id": summary_file.stem,
+                    "summary": summary_file.read_text(encoding="utf-8"),
+                }
+            )
+        return payloads
 
     def _run_structure_discovery(self) -> dict[str, Any]:
         """Phase 1: dynamic source facts + edit-in-place gap analysis.

@@ -4291,12 +4291,24 @@ class PddLifecycle:
                         add_reason("coverage_below_100")
                     if name == "routing_overlap" and not passed:
                         add_reason("fatal_routing_overlap")
+                    if name == "semantic_overlap" and not passed:
+                        add_reason("fatal_semantic_overlap")
+                    if name == "concern_isolation" and not passed:
+                        add_reason("fatal_concern_isolation")
 
         error_text = str(result.get("error", "")).lower()
         if "coverage" in error_text:
             add_reason("coverage_below_100")
         if "routing overlap" in error_text or ("overlap" in error_text and "route" in error_text):
             add_reason("fatal_routing_overlap")
+        if "semantic_overlap" in error_text or (
+            "semantic" in error_text and "overlap" in error_text
+        ):
+            add_reason("fatal_semantic_overlap")
+        if "concern_isolation" in error_text or (
+            "concern" in error_text and "isolation" in error_text
+        ):
+            add_reason("fatal_concern_isolation")
 
         return reasons
 

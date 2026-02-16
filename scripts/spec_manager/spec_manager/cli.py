@@ -629,6 +629,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
     check coverage, assemble verbatim output).
     """
     from spec_manager.intake import run_phase0
+    from spec_manager.intake.quality.library_quality_validator import validate_libraries
 
     input_path = Path(args.path) if args.path else Path.cwd()
     run_id = args.run_id
@@ -643,6 +644,21 @@ def cmd_extract(args: argparse.Namespace) -> int:
         print("\nPhase 0 routing completed.")
         for key, value in outputs.items():
             print(f"  {key}: {value}")
+
+        quality_report = validate_libraries(Path.cwd(), phase0_output_dir=output_dir)
+        failed_dims = quality_report.failed_gate_dimensions
+        print("\nLibrary quality validation:")
+        print(f"  Gate passed: {quality_report.gate_passed}")
+        print("  Failed gate dimensions: " + (", ".join(failed_dims) if failed_dims else "none"))
+        for label, path in sorted(quality_report.artifacts.items()):
+            print(f"  {label}: {path}")
+
+        if not quality_report.gate_passed:
+            print(
+                "\nPhase 0 quality gate failed. Review the remediation plan/report artifacts.",
+                file=sys.stderr,
+            )
+            return 2
         return 0
     except Exception as exc:
         print(f"\nPhase 0 routing failed: {exc}", file=sys.stderr)
