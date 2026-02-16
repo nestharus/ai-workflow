@@ -19,6 +19,72 @@ NON_SOFTWARE_DIMENSIONS: tuple[str, ...] = (
     "operational",
 )
 
+_NON_SOFTWARE_DIMENSION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "legal": (
+        "legal",
+        "license",
+        "licensing",
+        "compliance",
+        "regulation",
+        "regulatory",
+        "contract",
+        "gdpr",
+        "hipaa",
+        "soc2",
+        "pci",
+        "privacy",
+    ),
+    "economic": (
+        "economic",
+        "cost",
+        "budget",
+        "pricing",
+        "fee",
+        "spend",
+        "expense",
+        "roi",
+        "tco",
+        "vendor lock-in",
+    ),
+    "organizational": (
+        "organizational",
+        "team",
+        "staff",
+        "staffing",
+        "headcount",
+        "owner",
+        "ownership",
+        "hiring",
+        "onboarding",
+        "capacity",
+        "support",
+    ),
+    "temporal": (
+        "temporal",
+        "timeline",
+        "deadline",
+        "deprecation",
+        "sunset",
+        "migration window",
+        "schedule",
+        "rollout date",
+        "eol",
+    ),
+    "operational": (
+        "operational",
+        "operations",
+        "runbook",
+        "on-call",
+        "incident",
+        "uptime",
+        "sla",
+        "slo",
+        "deployment",
+        "monitoring",
+        "maintenance",
+    ),
+}
+
 
 def build_non_software_checklist_requirements(
     *,
@@ -34,6 +100,8 @@ def build_non_software_checklist_requirements(
         if str(requirement.dimension).strip()
     }
     signaled_dimensions = detect_non_software_dimensions(gaps=gaps, context=context)
+    if not signaled_dimensions and str(impact).strip().upper() == "HIGH":
+        signaled_dimensions = set(NON_SOFTWARE_DIMENSIONS)
     if not signaled_dimensions:
         return []
 
@@ -71,8 +139,16 @@ def detect_non_software_dimensions(
     except (TypeError, ValueError):
         context_text = str(context).lower()
 
+    combined_text = f"{gap_text} {context_text}".strip()
     return {
         dimension
         for dimension in NON_SOFTWARE_DIMENSIONS
-        if dimension in gap_text or dimension in context_text
+        if _is_dimension_signaled(combined_text, dimension)
     }
+
+
+def _is_dimension_signaled(text: str, dimension: str) -> bool:
+    if not text:
+        return False
+    keywords = _NON_SOFTWARE_DIMENSION_KEYWORDS.get(dimension, ())
+    return any(keyword in text for keyword in keywords)

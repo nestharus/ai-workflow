@@ -8,6 +8,31 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+
+def _coerce_confidence(value: Any, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_validated(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"true", "1", "yes"}:
+            return True
+        if token in {"false", "0", "no", ""}:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    return default
+
+
 # ------------------------------------------------------------------
 # Core fact
 # ------------------------------------------------------------------
@@ -71,13 +96,15 @@ class ConstraintFact:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ConstraintFact:
+        confidence_raw = d.get("confidence")
+        validated_raw = d.get("validated")
         return cls(
             constraint_id=d.get("constraint_id", ""),
             question=d.get("question", ""),
             answer=d.get("answer", ""),
             source=d.get("source", "existing"),
-            confidence=d.get("confidence", 1.0),
-            validated=d.get("validated", True),
+            confidence=_coerce_confidence(confidence_raw, default=0.0),
+            validated=_coerce_validated(validated_raw, default=False),
             dimension=d.get("dimension", "software"),
             authority_required=d.get("authority_required", "planner_ok"),
             decision_type=d.get("decision_type", ""),

@@ -14,7 +14,7 @@ def classify_impact(
     layer: str,
     gap_kinds: list[str] | None = None,
     gap_severities: list[str] | None = None,
-    touched_files_count: int = 0,
+    touched_files_count: int | str | None = 0,
     introduces_external_dep: bool = False,
     introduces_infra: bool = False,
     cross_library_contract: bool = False,
@@ -56,9 +56,11 @@ def classify_impact(
 
     triggers: list[str] = []
     layer_upper = str(layer).upper()
+    touched_files_invalid = False
     try:
         touched_files = max(int(touched_files_count), 0)
     except (TypeError, ValueError):
+        touched_files_invalid = True
         touched_files = 0
     gap_lower = [str(g).strip().lower() for g in gap_kinds if str(g).strip()]
     severity_lower = [str(s).strip().lower() for s in gap_severities if str(s).strip()]
@@ -93,6 +95,8 @@ def classify_impact(
         triggers.append("gap_severity_critical")
     if has_medium_kind:
         triggers.append("gap_kind_topology_or_boundary")
+    if touched_files_invalid:
+        triggers.append(f"invalid_touched_files_count={touched_files_count!r}")
     if touched_files > 3:
         triggers.append(f"touched_files={touched_files}")
     if layer_upper == "L2" and touched_files > 1:
@@ -103,6 +107,7 @@ def classify_impact(
         or introduces_infra
         or introduces_external_dep
         or security_privacy_compliance
+        or touched_files_invalid
     )
     medium_trigger = (
         touched_files > 3
@@ -122,7 +127,9 @@ def classify_impact(
     # ------------------------------------------------------------------
     # Blast radius
     # ------------------------------------------------------------------
-    if cross_library_contract:
+    if touched_files_invalid:
+        blast_radius = "CROSS_SLICE"
+    elif cross_library_contract:
         blast_radius = "SYSTEM"
     elif introduces_infra or introduces_external_dep or security_privacy_compliance:
         blast_radius = "CROSS_SLICE"
@@ -134,7 +141,9 @@ def classify_impact(
     # ------------------------------------------------------------------
     # Reversibility
     # ------------------------------------------------------------------
-    if introduces_infra or introduces_external_dep:
+    if touched_files_invalid:
+        reversibility = "MEDIUM"
+    elif introduces_infra or introduces_external_dep:
         reversibility = "HARD"
     elif (
         cross_library_contract

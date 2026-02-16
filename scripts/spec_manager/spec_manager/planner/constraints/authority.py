@@ -6,12 +6,21 @@ escalate to a human.  Fully deterministic (no LLM).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from spec_manager.planner.constraints.types import (
     DecisionRequirement,
     ImpactClassification,
 )
+
+_CANONICAL_DIMENSIONS = {
+    "software",
+    "legal",
+    "economic",
+    "organizational",
+    "temporal",
+    "operational",
+}
 
 
 def check_authority(
@@ -26,6 +35,7 @@ def check_authority(
     Rules (any match → ``human_required``):
         * Impact is HIGH.
         * Dimension is ``legal`` or ``economic``.
+        * Dimension is unknown/non-canonical.
         * More than 3 new constraints are introduced at once.
         * No existing policy covers the dimension (when *existing_policies*
           is non-empty but does not contain the dimension).
@@ -41,15 +51,20 @@ def check_authority(
     Returns:
         ``"planner_ok"`` or ``"human_required"``.
     """
-    if existing_policies is None:
-        existing_policies = []
+    normalized_dimension = str(dimension or "").strip().lower()
+    normalized_policies = {
+        str(policy).strip().lower() for policy in (existing_policies or []) if str(policy).strip()
+    }
+
+    if normalized_dimension not in _CANONICAL_DIMENSIONS:
+        return "human_required"
 
     # HIGH impact always requires human
     if impact.impact == "HIGH":
         return "human_required"
 
     # Legal and economic dimensions always require human
-    if dimension in ("legal", "economic"):
+    if normalized_dimension in {"legal", "economic"}:
         return "human_required"
 
     # Too many constraints at once
@@ -57,7 +72,7 @@ def check_authority(
         return "human_required"
 
     # Dimension not covered by existing policies
-    if existing_policies and dimension not in existing_policies:
+    if normalized_policies and normalized_dimension not in normalized_policies:
         return "human_required"
 
     return "planner_ok"
@@ -65,7 +80,7 @@ def check_authority(
 
 def build_question_pack(
     *, decision_requirements: list[DecisionRequirement]
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Build a list of questions for human review.
 
     Transforms :class:`DecisionRequirement` objects into simple
@@ -75,19 +90,20 @@ def build_question_pack(
         decision_requirements: The decisions that need human input.
 
     Returns:
-        List of dicts with ``question``, ``kind``, ``dimension``,
-        ``scope``, ``options``, and ``needed_for`` keys.
+        List of dicts preserving all decision-requirement fields.
     """
-    pack: list[dict[str, str]] = []
+    pack: list[dict[str, Any]] = []
     for dr in decision_requirements:
         pack.append(
             {
+                "decision_id": dr.decision_id,
                 "question": dr.question,
                 "kind": dr.kind,
                 "dimension": dr.dimension,
                 "scope": dr.scope,
-                "options": ", ".join(dr.options) if dr.options else "",
-                "needed_for": ", ".join(dr.needed_for) if dr.needed_for else "",
+                "impact": dr.impact,
+                "options": list(dr.options),
+                "needed_for": list(dr.needed_for),
             }
         )
     return pack

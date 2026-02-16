@@ -288,6 +288,77 @@ _ENTITY_STOPWORDS = {
 _SCOPE_HINTS = {"intra", "inter", "system"}
 
 _TRACE_PREFIX = "bootstrap.meta."
+_TEXT_UNAVAILABLE_ANSWER = "[text-unavailable: full constraint text missing from constraints.md]"
+
+_DIMENSION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "legal",
+        (
+            "legal",
+            "license",
+            "licensing",
+            "compliance",
+            "regulation",
+            "regulatory",
+            "contract",
+            "privacy",
+        ),
+    ),
+    (
+        "economic",
+        (
+            "cost",
+            "budget",
+            "pricing",
+            "fee",
+            "expense",
+            "economic",
+            "vendor lock-in",
+        ),
+    ),
+    (
+        "organizational",
+        (
+            "team",
+            "staffing",
+            "headcount",
+            "ownership",
+            "organizational",
+            "hiring",
+            "capacity",
+        ),
+    ),
+    (
+        "temporal",
+        (
+            "timeline",
+            "deadline",
+            "schedule",
+            "deprecation",
+            "sunset",
+            "eol",
+            "migration window",
+            "rollout date",
+            "time-bound",
+        ),
+    ),
+    (
+        "operational",
+        (
+            "operations",
+            "operational",
+            "runbook",
+            "incident",
+            "uptime",
+            "deployment",
+            "monitoring",
+            "maintenance",
+            "on-call",
+            "sla",
+            "slo",
+        ),
+    ),
+)
 
 ParsedConstraint = tuple[str, str, str]
 
@@ -505,10 +576,35 @@ def _index_to_facts(
 
     for entry in index_entries:
         heading, body = parsed_lookup.get(entry.element_id, ("", ""))
-
+        heading = str(heading).strip()
+        body = str(body).strip()
         preview = str(entry.text_preview).strip()
-        question = heading if heading else (preview or f"Constraint {entry.element_id}")
-        answer = body if body else (preview or question)
+        question = heading if heading else f"Constraint {entry.element_id}"
+        trace = _trace_from_index(entry)
+
+        if body:
+            answer = body
+            confidence = 1.0
+            validated = True
+        elif heading:
+            answer = heading
+            confidence = 1.0
+            validated = True
+            trace.append(f"{_TRACE_PREFIX}answer_source=heading_only")
+        else:
+            answer = _TEXT_UNAVAILABLE_ANSWER
+            confidence = 0.0
+            validated = False
+            trace.append(f"{_TRACE_PREFIX}text_unavailable=true")
+            if preview:
+                trace.append(f"{_TRACE_PREFIX}text_preview={preview}")
+
+        dimension = _dimension_from_subtype(
+            entry.subtype,
+            text=f"{heading}\n{body}\n{preview}",
+        )
+        if dimension == "unknown":
+            trace.append(f"{_TRACE_PREFIX}dimension_unknown=true")
 
         facts.append(
             ConstraintFact(
@@ -516,11 +612,11 @@ def _index_to_facts(
                 question=question,
                 answer=answer,
                 source=source,
-                confidence=1.0,
-                validated=True,
-                dimension=_dimension_from_subtype(entry.subtype),
+                confidence=confidence,
+                validated=validated,
+                dimension=dimension,  # type: ignore[arg-type]
                 scope=_scope_from_hint(entry.scope_hint, slice_id),
-                trace=_trace_from_index(entry),
+                trace=trace,
             )
         )
 
@@ -538,12 +634,36 @@ def _scope_from_hint(scope_hint: str, slice_id: str) -> str:
 
 def _dimension_from_subtype(
     subtype: str,
-) -> Literal["software", "legal", "economic", "organizational", "temporal", "operational"]:
-    if subtype in {"compliance", "privacy"}:
+    *,
+    text: str = "",
+) -> Literal[
+    "software",
+    "legal",
+    "economic",
+    "organizational",
+    "temporal",
+    "operational",
+    "unknown",
+]:
+    subtype_token = str(subtype).strip().lower()
+
+    if subtype_token in {"compliance", "privacy"}:
         return "legal"
-    if subtype in {"ops", "performance"}:
+    if subtype_token == "tradeoff_preference":
+        return "economic"
+    if subtype_token == "domain_marker":
+        return "organizational"
+    if subtype_token in {"ops", "performance"}:
         return "operational"
-    return "software"
+
+    text_lower = str(text).lower()
+    for dimension, keywords in _DIMENSION_KEYWORDS:
+        if any(keyword in text_lower for keyword in keywords):
+            return dimension  # type: ignore[return-value]
+
+    if subtype_token in {"security", "dependency_declaration", "policy", "invariant"}:
+        return "software"
+    return "unknown"
 
 
 def _trace_from_index(entry: ConstraintIndexEntry) -> list[str]:

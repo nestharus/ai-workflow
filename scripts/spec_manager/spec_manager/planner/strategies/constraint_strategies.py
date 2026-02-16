@@ -59,10 +59,7 @@ class ImpactClassifierStrategy:
         gap_kinds = [g.get("kind", "") for g in session.gaps if g.get("kind")]
         gap_severities = _collect_gap_severities(session.gaps)
 
-        try:
-            touched = max(int(session.ctx.get("touched_files_count", 0) or 0), 0)
-        except (TypeError, ValueError):
-            touched = 0
+        touched = session.ctx.get("touched_files_count", 0)
         ext_dep = _coerce_bool(session.ctx.get("introduces_external_dep", False))
         infra = _coerce_bool(session.ctx.get("introduces_infra", False))
         cross_lib = _coerce_bool(session.ctx.get("cross_library_contract", False))

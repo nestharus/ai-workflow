@@ -95,9 +95,9 @@ class ConstraintsTool:
 
         try:
             rows = self._store.load(slice_id)
-        except Exception:
+        except Exception as exc:
             logger.debug("Failed to load constraints for slice %s", slice_id, exc_info=True)
-            rows = []
+            raise RuntimeError(f"Failed to load constraints for slice '{slice_id}'") from exc
 
         records = [
             ConstraintRecord(

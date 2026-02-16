@@ -9,88 +9,28 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Protocol, TypeVar
 
-if TYPE_CHECKING:
-    from spec_manager.orchestration.under_spec.manager import UnderSpecEvent
+from spec_manager.planner.constraints.types import ConstraintFact
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class Constraint:
-    """A resolved constraint that answers an under-spec question.
+Constraint = ConstraintFact
 
-    Attributes:
-        constraint_id: Unique identifier (matches event_id it resolves).
-        question: The original question.
-        answer: The constraint answer text.
-        source: How the constraint was obtained.
-        confidence: 0.0-1.0 (only relevant for auto-resolved).
-        validated: Whether the constraint passed validation.
-        decision_type: Optional classifier that marks prior planner decisions.
-    """
 
-    constraint_id: str = ""
-    question: str = ""
-    answer: str = ""
-    source: Literal[
-        "user",
-        "research",
-        "steering",
-        "existing",
-        "planner",
-        "research_coordinator",
-    ] = "existing"
-    confidence: float = 1.0
-    validated: bool = True
-    dimension: str = "software"
-    authority_required: str = "planner_ok"
-    decision_type: str = ""
-    scope: str = ""
-    applies_to_layers: list[str] = field(default_factory=list)
-    status: str = "ACTIVE"
-    supersedes: list[str] = field(default_factory=list)
-    trace: list[str] = field(default_factory=list)
+class ConstraintLoadError(RuntimeError):
+    """Raised when constraint persistence cannot be loaded as authoritative data."""
 
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> Constraint:
-        return cls(
-            constraint_id=d.get("constraint_id", ""),
-            question=d.get("question", ""),
-            answer=d.get("answer", ""),
-            source=d.get("source", "existing"),
-            confidence=d.get("confidence", 1.0),
-            validated=d.get("validated", True),
-            dimension=d.get("dimension", "software"),
-            authority_required=d.get("authority_required", "planner_ok"),
-            decision_type=d.get("decision_type", ""),
-            scope=d.get("scope", ""),
-            applies_to_layers=d.get("applies_to_layers", []),
-            status=d.get("status", "ACTIVE"),
-            supersedes=d.get("supersedes", []),
-            trace=d.get("trace", []),
-        )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "constraint_id": self.constraint_id,
-            "question": self.question,
-            "answer": self.answer,
-            "source": self.source,
-            "confidence": self.confidence,
-            "validated": self.validated,
-            "dimension": self.dimension,
-            "authority_required": self.authority_required,
-            "decision_type": self.decision_type,
-            "scope": self.scope,
-            "applies_to_layers": self.applies_to_layers,
-            "status": self.status,
-            "supersedes": self.supersedes,
-            "trace": self.trace,
-        }
+class HasEventId(Protocol):
+    """Boundary contract for coverage checks."""
+
+    event_id: str
+
+
+EventT = TypeVar("EventT", bound=HasEventId)
 
 
 class ConstraintsStore:
@@ -114,17 +54,19 @@ class ConstraintsStore:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             if raw is None:
-                return []
+                raise ConstraintLoadError(f"Constraints file {path} is null payload")
             if isinstance(raw, list):
                 data = raw
             elif isinstance(raw, dict):
                 data = raw.get("constraints", [])
             else:
-                data = []
+                raise ConstraintLoadError(
+                    f"Constraints file {path} is neither list nor mapping payload",
+                )
             return [Constraint.from_dict(c) for c in data]
         except (json.JSONDecodeError, OSError, KeyError, AttributeError, TypeError) as exc:
             logger.warning("Failed to load constraints for %s: %s", slice_id, exc)
-            return []
+            raise ConstraintLoadError(f"Failed to load constraints for slice '{slice_id}'") from exc
 
     def load_merged(self, slice_id: str) -> list[Constraint]:
         """Load constraints from both ``__system__`` and *slice_id*, merged.
@@ -230,8 +172,10 @@ class ConstraintsStore:
         return path
 
     def find_covering(
-        self, slice_id: str, events: list[UnderSpecEvent]
-    ) -> tuple[list[UnderSpecEvent], list[UnderSpecEvent]]:
+        self,
+        slice_id: str,
+        events: list[EventT],
+    ) -> tuple[list[EventT], list[EventT]]:
         """Partition events into covered (have constraint) and uncovered.
 
         Returns:
@@ -244,10 +188,13 @@ class ConstraintsStore:
             if str(c.constraint_id).strip() and str(c.status).strip().upper() == "ACTIVE"
         }
 
-        covered = []
-        uncovered = []
+        covered: list[EventT] = []
+        uncovered: list[EventT] = []
         for event in events:
-            if event.event_id in constraint_ids:
+            event_id = str(getattr(event, "event_id", "")).strip()
+            if not event_id:
+                raise ValueError("Event is missing required event_id for coverage matching")
+            if event_id in constraint_ids:
                 covered.append(event)
             else:
                 uncovered.append(event)
