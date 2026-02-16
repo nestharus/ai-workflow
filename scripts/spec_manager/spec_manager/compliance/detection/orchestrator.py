@@ -13,14 +13,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from spec_manager.compliance.detection.coverage_analyzer import (
-    coverage_to_gap_evidence,
-    parse_coverage_report,
-    run_coverage,
+    CoverageGapDetector,
+    SubprocessCoverageDetector,
 )
 from spec_manager.compliance.detection.runtime_detector import (
+    ExecutableGapDetector,
     RuntimeProbeResult,
-    probe_stubs,
-    runtime_results_to_gap_evidence,
+    SubprocessRuntimeDetector,
 )
 from spec_manager.core.gap import GapEvidence, GapSynthesizer
 from spec_manager.core.gap_queue import GapQueue
@@ -63,6 +62,8 @@ def scan_executable_gaps(
     plugin_evidence: list[GapEvidence] | None = None,
     runtime_stub_candidates: list[StubFunction] | None = None,
     pin_registry: PinFunctionRegistry | None = None,
+    runtime_detector: ExecutableGapDetector | None = None,
+    coverage_detector: CoverageGapDetector | None = None,
 ) -> ExecutableGapReport:
     """Run enabled plugin verifiers and aggregate executable gap evidence.
 
@@ -74,12 +75,18 @@ def scan_executable_gaps(
         plugin_evidence: Gap evidence collected upstream (for example EvidenceBundle facts).
         runtime_stub_candidates: Optional runtime probe targets prepared by upstream plugins.
         pin_registry: Optional pin registry used for pin-span coverage mapping.
+        runtime_detector: Optional runtime detector implementation.
+        coverage_detector: Optional coverage detector implementation.
 
     Returns:
         ExecutableGapReport with aggregated evidence.
     """
     if config is None:
         config = ScanConfig()
+    if runtime_detector is None:
+        runtime_detector = SubprocessRuntimeDetector()
+    if coverage_detector is None:
+        coverage_detector = SubprocessCoverageDetector()
 
     start_time = time.monotonic()
     report = ExecutableGapReport()
@@ -89,32 +96,49 @@ def scan_executable_gaps(
     all_evidence.extend(report.plugin_evidence)
 
     if config.enable_runtime and runtime_stub_candidates:
-        runtime_results = probe_stubs(
+        runtime_results = runtime_detector.probe_stubs(
             runtime_stub_candidates,
             project_root,
             timeout_seconds=config.runtime_timeout_seconds,
         )
         report.runtime_gaps = runtime_results
-        all_evidence.extend(runtime_results_to_gap_evidence(runtime_results))
+        all_evidence.extend(runtime_detector.results_to_gap_evidence(runtime_results))
 
     if config.enable_coverage and test_command is not None:
         source_dirs = list({fp.parent for fp in filepaths})
         try:
-            coverage_data_file = run_coverage(test_command, source_dirs, project_root)
-            cov_report = parse_coverage_report(coverage_data_file, filepaths)
-            coverage_evidence = coverage_to_gap_evidence(
-                cov_report,
+            coverage_result = coverage_detector.detect(
+                test_command=test_command,
+                source_dirs=source_dirs,
+                source_files=filepaths,
+                project_root=project_root,
                 pin_registry=pin_registry,
                 changed_line_spans=config.changed_line_spans,
                 min_uncovered_ratio=config.coverage_min_uncovered_ratio,
             )
-            report.coverage_gaps = coverage_evidence
-            all_evidence.extend(coverage_evidence)
-        except Exception:
-            logger.debug(
-                "Coverage analysis failed; continuing without coverage evidence",
+            report.coverage_gaps = coverage_result.evidence
+            all_evidence.extend(coverage_result.evidence)
+        except Exception as exc:
+            logger.warning(
+                "Coverage analysis failed unexpectedly; emitting diagnostic evidence",
                 exc_info=True,
             )
+            verification_failure = GapEvidence(
+                invariant_family="executable_coverage",
+                description=f"Coverage verification unavailable: {exc}",
+                details={
+                    "gap_type": "coverage_failure",
+                    "evidence_type": "verification_unavailable",
+                    "stage": "orchestrator",
+                    "code": "unexpected_exception",
+                    "message": str(exc),
+                },
+                confidence=1.0,
+                location=str(project_root),
+                detector="coverage_analyzer",
+            )
+            report.coverage_gaps = [verification_failure]
+            all_evidence.append(verification_failure)
 
     report.all_evidence = all_evidence
     report.scan_duration_ms = (time.monotonic() - start_time) * 1000

@@ -12,6 +12,7 @@ centralised language constants used elsewhere.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -66,7 +67,7 @@ class RuntimeProbeResult:
 
     function_name: str
     module_path: str
-    status: Literal["ok", "not_implemented", "error", "timeout"]
+    status: Literal["ok", "not_implemented", "error", "timeout", "unprobeable"]
     error_message: str = ""
     traceback_summary: str = ""
     call_chain: list[str] = field(default_factory=list)
@@ -150,7 +151,7 @@ def generate_probe_script(
             except TypeError as exc:
                 if "argument" in str(exc) or "required" in str(exc):
                     result = {{
-                        "status": "error",
+                        "status": "unprobeable",
                         "message": f"Cannot probe without proper arguments: {{exc}}",
                         "traceback": "",
                         "call_chain": [],
@@ -184,6 +185,7 @@ def probe_function(
     test_inputs: dict[str, Any] | None = None,
     timeout_seconds: float = 5.0,
     python_executable: str | None = None,
+    project_root: Path | None = None,
 ) -> RuntimeProbeResult:
     """Run a function in a subprocess and check for NotImplementedError.
 
@@ -212,11 +214,24 @@ def probe_function(
         tmp_path = tmp.name
 
     try:
+        execution_env = None
+        execution_cwd = None
+        if project_root is not None:
+            root = str(project_root.resolve())
+            execution_env = dict(os.environ)
+            existing_path = execution_env.get("PYTHONPATH")
+            execution_env["PYTHONPATH"] = (
+                root if not existing_path else f"{root}{os.pathsep}{existing_path}"
+            )
+            execution_cwd = root
+
         result = subprocess.run(
             [python_executable, tmp_path],
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            cwd=execution_cwd,
+            env=execution_env,
         )
         duration_ms = (time.monotonic() - start_time) * 1000
 
@@ -339,6 +354,7 @@ def probe_stubs(
             module_path=module_path,
             function_name=stub.name,
             timeout_seconds=timeout_seconds,
+            project_root=project_root,
         )
         results.append(result)
 
@@ -350,7 +366,9 @@ def runtime_results_to_gap_evidence(
 ) -> list[GapEvidence]:
     """Convert RuntimeProbeResult list to GapEvidence.
 
-    Only "not_implemented" status results become gaps.
+    "not_implemented" becomes a confirmed executable runtime gap.
+    "unprobeable" becomes indeterminate evidence so unresolved runtime
+    coverage is not silently dropped.
     invariant_family = "executable_runtime"
     detector = "runtime_detector"
 
@@ -362,28 +380,49 @@ def runtime_results_to_gap_evidence(
     """
     evidence: list[GapEvidence] = []
     for result in results:
-        if result.status != "not_implemented":
+        if result.status == "not_implemented":
+            details: dict[str, Any] = {
+                "module_path": result.module_path,
+                "error_message": result.error_message,
+                "call_chain": result.call_chain,
+                "duration_ms": result.duration_ms,
+            }
+            evidence.append(
+                GapEvidence(
+                    invariant_family="executable_runtime",
+                    description=(
+                        f"NotImplementedError at runtime: {result.function_name}"
+                        + (f" - {result.error_message}" if result.error_message else "")
+                    ),
+                    details=details,
+                    confidence=1.0,
+                    location=f"{result.module_path}:{result.function_name}",
+                    detector="runtime_detector",
+                )
+            )
             continue
 
-        details: dict[str, Any] = {
-            "module_path": result.module_path,
-            "error_message": result.error_message,
-            "call_chain": result.call_chain,
-            "duration_ms": result.duration_ms,
-        }
-        evidence.append(
-            GapEvidence(
-                invariant_family="executable_runtime",
-                description=(
-                    f"NotImplementedError at runtime: {result.function_name}"
-                    + (f" - {result.error_message}" if result.error_message else "")
-                ),
-                details=details,
-                confidence=1.0,
-                location=f"{result.module_path}:{result.function_name}",
-                detector="runtime_detector",
+        if result.status == "unprobeable":
+            evidence.append(
+                GapEvidence(
+                    invariant_family="executable_runtime",
+                    description=(
+                        f"Runtime probe is indeterminate for {result.function_name}"
+                        + (f": {result.error_message}" if result.error_message else "")
+                    ),
+                    details={
+                        "gap_type": "uncertainty_marker",
+                        "evidence_type": "indeterminate",
+                        "probe_status": result.status,
+                        "module_path": result.module_path,
+                        "error_message": result.error_message,
+                        "duration_ms": result.duration_ms,
+                    },
+                    confidence=1.0,
+                    location=f"{result.module_path}:{result.function_name}",
+                    detector="runtime_detector",
+                )
             )
-        )
     return evidence
 
 
