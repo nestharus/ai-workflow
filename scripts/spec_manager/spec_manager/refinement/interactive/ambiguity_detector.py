@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class AmbiguityDetectionError(RuntimeError):
+    """Raised when ambiguity detection cannot produce authoritative output."""
+
+
 @dataclass
 class Ambiguity:
     """A detected ambiguity in a specification.
@@ -67,9 +71,9 @@ class AmbiguityDetector:
                 prompt=prompt,
                 workspace=workspace,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Ambiguity detection failed")
-            return []
+            raise AmbiguityDetectionError("Failed to run ambiguity detector agent") from exc
 
         return self._parse_output(output)
 
@@ -118,24 +122,59 @@ SPECIFICATION:
             data = extract_json_from_llm_output(
                 output, allow_array=True, allow_object=True, location="ambiguity_detector"
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
             logger.exception("Failed to parse ambiguity detector output")
-            return []
+            raise AmbiguityDetectionError("Ambiguity detector output was not valid JSON") from exc
 
-        items = data if isinstance(data, list) else data.get("ambiguities", [])
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = data.get("ambiguities")
+        else:
+            raise AmbiguityDetectionError("Ambiguity detector payload must be a list or object")
+
+        if not isinstance(items, list):
+            raise AmbiguityDetectionError("Ambiguity detector 'ambiguities' field must be a list")
 
         ambiguities: list[Ambiguity] = []
-        for i, item in enumerate(items):
+        for i, item in enumerate(items, start=1):
             if not isinstance(item, dict):
-                continue
+                raise AmbiguityDetectionError(
+                    f"Ambiguity entry at index {i} is not an object: {item!r}"
+                )
+
+            missing_fields = [
+                field_name
+                for field_name in (
+                    "ambiguity_id",
+                    "source_text",
+                    "source_location",
+                    "ambiguity_type",
+                    "suggested_question",
+                )
+                if not str(item.get(field_name, "")).strip()
+            ]
+            if missing_fields:
+                raise AmbiguityDetectionError(
+                    f"Ambiguity entry at index {i} missing required fields: {missing_fields}"
+                )
+
+            try:
+                confidence = float(item["confidence"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise AmbiguityDetectionError(
+                    "Ambiguity entry at index "
+                    f"{i} has invalid confidence: {item.get('confidence')!r}"
+                ) from exc
+
             ambiguities.append(
                 Ambiguity(
-                    ambiguity_id=item.get("ambiguity_id", f"AMB-{i + 1:03d}"),
-                    source_text=item.get("source_text", ""),
-                    source_location=item.get("source_location", ""),
-                    ambiguity_type=item.get("ambiguity_type", "undefined_boundary"),
-                    confidence=float(item.get("confidence", 0.5)),
-                    suggested_question=item.get("suggested_question", ""),
+                    ambiguity_id=str(item["ambiguity_id"]).strip(),
+                    source_text=str(item["source_text"]),
+                    source_location=str(item["source_location"]),
+                    ambiguity_type=str(item["ambiguity_type"]).strip(),
+                    confidence=confidence,
+                    suggested_question=str(item["suggested_question"]),
                 )
             )
 

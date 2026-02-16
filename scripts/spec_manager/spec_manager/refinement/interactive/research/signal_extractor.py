@@ -13,6 +13,10 @@ from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 logger = logging.getLogger(__name__)
 
 
+class SignalExtractionError(RuntimeError):
+    """Raised when search signals cannot be extracted authoritatively."""
+
+
 class SignalExtractor:
     """Extracts search signals from ambiguities using Opus agent."""
 
@@ -54,9 +58,30 @@ Return JSON with:
             data = extract_json_from_llm_output(
                 output, allow_object=True, location="signal_extractor"
             )
-            if isinstance(data, dict):
-                return data
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
             logger.exception("Failed to parse signal extractor output")
+            raise SignalExtractionError("Signal extractor output was not valid JSON") from exc
 
-        return {"search_queries": [], "relevance_reasons": []}
+        if not isinstance(data, dict):
+            raise SignalExtractionError("Signal extractor output must be a JSON object")
+
+        search_queries = data.get("search_queries")
+        relevance_reasons = data.get("relevance_reasons")
+
+        if not isinstance(search_queries, list):
+            raise SignalExtractionError(
+                "Signal extractor output missing list field 'search_queries'"
+            )
+        if not isinstance(relevance_reasons, list):
+            raise SignalExtractionError(
+                "Signal extractor output missing list field 'relevance_reasons'"
+            )
+
+        normalized_queries = [str(query).strip() for query in search_queries if str(query).strip()]
+        normalized_reasons = [
+            str(reason).strip() for reason in relevance_reasons if str(reason).strip()
+        ]
+        return {
+            "search_queries": normalized_queries,
+            "relevance_reasons": normalized_reasons,
+        }

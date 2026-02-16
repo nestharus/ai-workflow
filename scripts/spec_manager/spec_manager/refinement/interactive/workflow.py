@@ -16,14 +16,11 @@ from spec_manager.refinement.interactive.input_signal import (
     InputSignal,
     WorkContext,
 )
-from spec_manager.refinement.interactive.question_generator import QuestionGenerator
 from spec_manager.refinement.interactive.signal_resolver import (
-    InteractiveSignalResolver,
-    PlannerSignalResolver,
     SignalResolver,
+    create_resolver,
 )
 from spec_manager.refinement.interactive.spec_patcher import SpecPatcher, SteeringResponse
-from spec_manager.refinement.interactive.steering.steering_script import SteeringScript
 
 logger = logging.getLogger(__name__)
 
@@ -73,41 +70,19 @@ class InteractiveWorkflow:
         self._max_iterations = max_iterations
 
         self._detector = AmbiguityDetector()
-        self._question_gen = QuestionGenerator()
         self._patcher = SpecPatcher(workspace)
 
         if signal_resolver is not None:
             self._resolver = signal_resolver
         else:
-            # Build resolver from legacy flags
-            evidence_index = None
-            if use_evidence_store:
-                try:
-                    from spec_manager.core.evidence_index import EvidenceIndex
-
-                    index_path = workspace / "workspace" / "indexes" / "evidence_store_index.json"
-                    if index_path.exists():
-                        evidence_index = EvidenceIndex.load(index_path)
-                        logger.info("Loaded evidence index from %s", index_path)
-                except Exception as exc:
-                    logger.warning("Failed to load evidence index: %s", exc)
-
-            steering = SteeringScript.from_file(steering_path) if steering_path else None
-
-            if interactive:
-                self._resolver = InteractiveSignalResolver(
-                    steering_script=steering,
-                    use_research=use_research,
-                    workspace=workspace,
-                    evidence_index=evidence_index,
-                )
-            else:
-                self._resolver = PlannerSignalResolver(
-                    steering_script=steering,
-                    use_research=use_research,
-                    workspace=workspace,
-                    evidence_index=evidence_index,
-                )
+            mode = "interactive" if interactive else "auto"
+            self._resolver = create_resolver(
+                mode=mode,
+                workspace=workspace,
+                steering_path=steering_path,
+                use_research=use_research,
+                use_evidence_store=use_evidence_store,
+            )
 
     def run(
         self,
@@ -152,9 +127,12 @@ class InteractiveWorkflow:
                 if response is not None:
                     responses.append(response)
 
-            if not responses:
-                logger.info("No responses obtained - stopping")
-                break
+            unresolved_ids = self._find_unresolved_signal_ids(signals, responses)
+            if unresolved_ids:
+                raise RuntimeError(
+                    "Interactive refinement stopped with unresolved ambiguities: "
+                    + ", ".join(unresolved_ids)
+                )
 
             resolved_slice_id = slice_id
             if resolved_slice_id == "__interactive__":
@@ -183,6 +161,17 @@ class InteractiveWorkflow:
     def _resolve_signal(self, signal: InputSignal) -> SteeringResponse | None:
         """Resolve a single signal."""
         return self._resolver.resolve(signal)
+
+    @staticmethod
+    def _find_unresolved_signal_ids(
+        signals: list[InputSignal], responses: list[SteeringResponse]
+    ) -> list[str]:
+        resolved_ids = {response.ambiguity_id for response in responses}
+        unresolved: list[str] = []
+        for signal in signals:
+            if signal.signal_id not in resolved_ids:
+                unresolved.append(signal.signal_id)
+        return unresolved
 
     @staticmethod
     def _infer_slice_id(signals: list[InputSignal]) -> str:

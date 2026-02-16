@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 
 from spec_manager.refinement.interactive.ambiguity_detector import AmbiguityDetector
-from spec_manager.refinement.interactive.input_signal import WorkContext
+from spec_manager.refinement.interactive.input_signal import InputSignal, WorkContext
 from spec_manager.refinement.interactive.signal_resolver import SignalResolver
 from spec_manager.refinement.interactive.spec_patcher import SpecPatcher, SteeringResponse
 
@@ -92,12 +92,12 @@ class PhaseResolver:
                 if response is not None:
                     responses.append(response)
 
-            if not responses:
-                logger.info(
-                    "PhaseResolver %s: no responses obtained - stopping",
-                    phase_name,
+            unresolved_ids = self._find_unresolved_signal_ids(signals, responses)
+            if unresolved_ids:
+                raise RuntimeError(
+                    "PhaseResolver "
+                    f"{phase_name} stopped with unresolved ambiguities: {', '.join(unresolved_ids)}"
                 )
-                break
 
             current_text = self._patcher.apply(
                 current_text,
@@ -112,3 +112,15 @@ class PhaseResolver:
             )
 
         return current_text
+
+    @staticmethod
+    def _find_unresolved_signal_ids(
+        signals: list[InputSignal], responses: list[SteeringResponse]
+    ) -> list[str]:
+        resolved_ids = {response.ambiguity_id for response in responses}
+        unresolved: list[str] = []
+        for signal in signals:
+            signal_id = signal.signal_id
+            if signal_id and signal_id not in resolved_ids:
+                unresolved.append(signal_id)
+        return unresolved

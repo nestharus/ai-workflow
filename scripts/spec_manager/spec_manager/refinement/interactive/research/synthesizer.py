@@ -12,6 +12,10 @@ from spec_manager.refinement.formats import extract_json_from_llm_output
 logger = logging.getLogger(__name__)
 
 
+class SynthesisError(RuntimeError):
+    """Raised when synthesis output is invalid or unresolved."""
+
+
 class Synthesizer:
     """Synthesizes research findings into decisions using GPT agent."""
 
@@ -61,9 +65,25 @@ Return JSON with:
     def _parse_output(self, output: str) -> dict[str, Any]:
         try:
             data = extract_json_from_llm_output(output, allow_object=True, location="synthesizer")
-            if isinstance(data, dict):
-                return data
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
             logger.exception("Failed to parse synthesizer output")
+            raise SynthesisError("Synthesizer output was not valid JSON") from exc
 
-        return {"decision": "", "confidence": 0.0, "reasoning": ""}
+        if not isinstance(data, dict):
+            raise SynthesisError("Synthesizer output must be a JSON object")
+
+        decision = str(data.get("decision", "")).strip()
+        reasoning = str(data.get("reasoning", "")).strip()
+        if not decision:
+            raise SynthesisError("Synthesizer output missing non-empty 'decision'")
+
+        try:
+            confidence = float(data.get("confidence"))
+        except (TypeError, ValueError) as exc:
+            raise SynthesisError("Synthesizer output has invalid 'confidence' value") from exc
+
+        return {
+            "decision": decision,
+            "confidence": confidence,
+            "reasoning": reasoning,
+        }

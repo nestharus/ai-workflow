@@ -43,7 +43,10 @@ class InteractiveIO:
         print(f"\nQuestion: {question}")
         print()
 
-        response_text = input("Your response: ").strip()
+        response_text = self._prompt_response(
+            prompt="Your response: ",
+            request_id=ambiguity.ambiguity_id,
+        )
 
         return SteeringResponse(
             ambiguity_id=ambiguity.ambiguity_id,
@@ -94,7 +97,10 @@ class InteractiveIO:
                 print(f"  {i}. {opt}")
 
         print()
-        response_text = input("Your response: ").strip()
+        response_text = self._prompt_response(
+            prompt="Your response: ",
+            request_id=signal.signal_id,
+        )
 
         return SteeringResponse(
             ambiguity_id=signal.signal_id,
@@ -102,6 +108,16 @@ class InteractiveIO:
             source="interactive",
             signal=signal,
         )
+
+    @staticmethod
+    def _prompt_response(*, prompt: str, request_id: str) -> str:
+        while True:
+            response_text = input(prompt).strip()
+            if response_text.lower() == "/defer":
+                raise RuntimeError(f"Interactive response deferred for {request_id}")
+            if response_text:
+                return response_text
+            print("Response cannot be empty. Enter a concrete answer or '/defer'.")
 
     def _write_constraint_request(
         self,

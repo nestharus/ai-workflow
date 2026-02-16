@@ -100,14 +100,22 @@ class SpecPatcher:
             if not question:
                 question = response.ambiguity_id
 
+            mapped_source = self._map_source(response.source)
+            confidence, validated = self._source_quality(mapped_source)
+            trace = [f"response_source={response.source}"]
+            if response.signal is not None:
+                trace.append(f"signal_id={response.signal.signal_id}")
+                trace.append(f"signal_type={response.signal.signal_type}")
+
             constraints.append(
                 Constraint(
                     constraint_id=response.ambiguity_id,
                     question=question,
                     answer=answer,
-                    source=self._map_source(response.source),
-                    confidence=1.0,
-                    validated=True,
+                    source=mapped_source,
+                    confidence=confidence,
+                    validated=validated,
+                    trace=trace,
                 )
             )
 
@@ -119,10 +127,27 @@ class SpecPatcher:
 
     @staticmethod
     def _map_source(source: str) -> str:
-        if source in {"interactive", "user"}:
+        normalized = source.strip().lower()
+        if normalized in {"interactive", "user"}:
             return "user"
-        if source in {"steering", "steering_script"}:
+        if normalized in {"steering", "steering_script"}:
             return "steering"
-        if source in {"research", "planner"}:
+        if normalized in {
+            "research",
+            "research_web",
+            "research_tradeoff",
+            "evidence_store",
+            "planner",
+        }:
             return "research"
         return "existing"
+
+    @staticmethod
+    def _source_quality(source: str) -> tuple[float, bool]:
+        if source == "user":
+            return (1.0, True)
+        if source == "steering":
+            return (0.9, True)
+        if source == "research":
+            return (0.6, False)
+        return (0.5, False)

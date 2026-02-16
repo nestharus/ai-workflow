@@ -11,6 +11,8 @@ from spec_manager.refinement.evals.metrics import _fuzzy_ratio
 from spec_manager.refinement.interactive.ambiguity_detector import Ambiguity
 from spec_manager.refinement.interactive.spec_patcher import SteeringResponse
 
+MIN_FUZZY_MATCH_SCORE = 0.75
+
 
 class SteeringScript:
     """Matches ambiguities against a pre-defined steering script.
@@ -86,7 +88,7 @@ class SteeringScript:
                 best_score = score
                 best_entry = entry
 
-        if best_entry is not None and best_score >= 0.4:
+        if best_entry is not None and best_score >= MIN_FUZZY_MATCH_SCORE:
             return SteeringResponse(
                 ambiguity_id=ambiguity.ambiguity_id,
                 response_text=best_entry["response"],

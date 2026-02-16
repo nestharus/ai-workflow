@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Confidence threshold below which we generate a tradeoff analysis
 TRADEOFF_CONFIDENCE_THRESHOLD = 0.5
+# Confidence threshold required to auto-apply a tradeoff option.
+TRADEOFF_AUTO_RESOLUTION_THRESHOLD = 0.8
 
 
 class ResearchCoordinator:
@@ -39,7 +41,7 @@ class ResearchCoordinator:
         """
         self._evidence_index = evidence_index
 
-    def research(self, ambiguity: Ambiguity, workspace: Path) -> SteeringResponse:
+    def research(self, ambiguity: Ambiguity, workspace: Path) -> SteeringResponse | None:
         """Research an ambiguity using multi-agent coordination.
 
         Args:
@@ -47,7 +49,7 @@ class ResearchCoordinator:
             workspace: Working directory.
 
         Returns:
-            SteeringResponse with the research result.
+            SteeringResponse when confidence is sufficient, else None.
         """
         # Step 0: Search evidence store first (if available)
         evidence_response = self._search_evidence_store(ambiguity, workspace)
@@ -83,17 +85,33 @@ class ResearchCoordinator:
 
         # Step 4: Check confidence and optionally run tradeoff analysis
         confidence = self._extract_confidence(decision_json)
+        if confidence is None:
+            logger.warning(
+                "Research confidence missing for %s; escalating via tradeoff/human path",
+                ambiguity.ambiguity_id,
+            )
+            tradeoff_response = self._run_tradeoff_analysis(
+                ambiguity, decision_json, findings_json, research_dir
+            )
+            if tradeoff_response is not None:
+                return tradeoff_response
+            self._flag_spec_gap(ambiguity, workspace)
+            return None
+
         if confidence < TRADEOFF_CONFIDENCE_THRESHOLD:
             tradeoff_response = self._run_tradeoff_analysis(
                 ambiguity, decision_json, findings_json, research_dir
             )
             if tradeoff_response is not None:
                 return tradeoff_response
+            self._flag_spec_gap(ambiguity, workspace)
+            return None
 
         # Step 5: Flag as spec gap if web search also fails
         response = self._parse_decision(ambiguity, decision_json)
-        if not response.response_text.strip():
+        if response is None:
             self._flag_spec_gap(ambiguity, workspace)
+            return None
 
         return response
 
@@ -109,6 +127,7 @@ class ResearchCoordinator:
         In auto mode, chooses the highest-confidence option. Returns a
         SteeringResponse with the chosen option, or None if analysis fails.
         """
+        best = None
         try:
             from spec_manager.refinement.interactive.research.tradeoff_analyzer import (
                 TradeoffAnalyzer,
@@ -126,7 +145,7 @@ class ResearchCoordinator:
             analyzer.save(analysis, research_dir / "tradeoff.json")
 
             best = analysis.best_option()
-            if best and best.confidence > 0:
+            if best and best.confidence >= TRADEOFF_AUTO_RESOLUTION_THRESHOLD:
                 logger.info(
                     "Tradeoff analysis for %s chose %s (confidence=%.0f%%)",
                     ambiguity.ambiguity_id,
@@ -141,19 +160,35 @@ class ResearchCoordinator:
         except Exception as exc:
             logger.warning("Tradeoff analysis failed for %s: %s", ambiguity.ambiguity_id, exc)
 
+        if best is not None:
+            logger.info(
+                "Tradeoff analysis for %s requires human resolution "
+                "(best confidence %.0f%% below %.0f%% threshold)",
+                ambiguity.ambiguity_id,
+                best.confidence * 100,
+                TRADEOFF_AUTO_RESOLUTION_THRESHOLD * 100,
+            )
+
         return None
 
-    def _extract_confidence(self, decision_json: str) -> float:
-        """Extract confidence from decision JSON, defaulting to 0.0."""
+    def _extract_confidence(self, decision_json: str) -> float | None:
+        """Extract confidence from decision JSON."""
         try:
             data = extract_json_from_llm_output(
                 decision_json, allow_object=True, location="research_coordinator_confidence"
             )
             if isinstance(data, dict):
-                return float(data.get("confidence", 0.0))
-        except (ValueError, TypeError):
-            pass
-        return 0.0
+                confidence = data.get("confidence")
+                if confidence is None:
+                    logger.warning("Research decision JSON missing 'confidence' field")
+                    return None
+                return float(confidence)
+        except (ValueError, TypeError) as exc:
+            logger.warning("Failed to parse research confidence: %s", exc)
+            return None
+
+        logger.warning("Research decision payload is not an object")
+        return None
 
     def _search_evidence_store(
         self, ambiguity: Ambiguity, workspace: Path
@@ -226,23 +261,32 @@ Return JSON with:
 - reasoning: why this decision was made
 """
 
-    def _parse_decision(self, ambiguity: Ambiguity, decision_json: str) -> SteeringResponse:
+    def _parse_decision(self, ambiguity: Ambiguity, decision_json: str) -> SteeringResponse | None:
         """Parse decision JSON into a SteeringResponse."""
         try:
             data = extract_json_from_llm_output(
                 decision_json, allow_object=True, location="research_coordinator"
             )
             if isinstance(data, dict):
+                decision = str(data.get("decision", "")).strip()
+                if not decision:
+                    logger.warning(
+                        "Research decision for %s was empty after parsing",
+                        ambiguity.ambiguity_id,
+                    )
+                    return None
                 return SteeringResponse(
                     ambiguity_id=ambiguity.ambiguity_id,
-                    response_text=data.get("decision", decision_json),
+                    response_text=decision,
                     source="research_web",
                 )
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "Failed to parse research decision for %s: %s",
+                ambiguity.ambiguity_id,
+                exc,
+            )
+            return None
 
-        return SteeringResponse(
-            ambiguity_id=ambiguity.ambiguity_id,
-            response_text=decision_json,
-            source="research_web",
-        )
+        logger.warning("Research decision for %s is not a JSON object", ambiguity.ambiguity_id)
+        return None
