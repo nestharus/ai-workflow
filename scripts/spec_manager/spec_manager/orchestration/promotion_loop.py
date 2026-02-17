@@ -58,6 +58,11 @@
 # `WorkItemStore.create/upsert` with `shape_id` + `created_in_phase=active_phase`
 # + `required_change_type`; phase-local remediation checks should read
 # `list_open(phase=active_phase, shape_id=...)` (no cross-phase reroute).
+# IMPL(single-layer): IMPLEMENT-step integration with
+# `implementation.runner.ImplementationRunner.run_for_slice` should pass
+# `phase=active_phase`, shape execution scope (shape_id + allowed files), and
+# active-phase work items; consume runner-emitted completion metadata to close
+# only the corresponding phase-local work items.
 # IMPL(single-layer): As `orchestration.demotion` shifts from `apply()` patching to
 # `escalate()` work-item persistence, remove PromotionLoop demotion-apply/commit paths
 # in the same change and consume QUEUED/BLOCKED escalation outcomes only.

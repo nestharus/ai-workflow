@@ -1,3 +1,36 @@
+# TODO(single-layer): KEEP/RESTRUCTURE — ImplementationRunner survives but loses
+#   layer-aware dispatch. Currently selects implementor strategy by layer (L1→function
+#   implementation, L2→arch assembler, L3→clean-code refactorer). In single-layer,
+#   each phase (Libraries, Architecture, Quality) edits code via its own PromotionLoop
+#   IMPLEMENT step with phase-appropriate behaviors. Runner is used by ALL phases:
+#   Libraries produces code + tests, Architecture wires components + contracts,
+#   Quality refactors without behavior change. Runner's file-based artifact IO,
+#   implementor schema parsing, and function-by-function execution model all KEEP.
+#   Shape_id should be used to scope implementation to the relevant shape's files.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 9.1, 9.2, 8.2; evaluation modification #5.
+#   Data structures:
+#     - ImplementationRunResult keeps artifact fields; add phase: PhaseId='libraries' and shape_ids_touched: list[ShapeId].
+#     - PhaseExecutionScope: {shape_id: ShapeId, allowed_files: set[str], work_item_ids: list[str]}.
+#   Interface contracts:
+#     - def run_for_slice(..., phase: PhaseId = 'libraries', phase_scope: PhaseExecutionScope|None = None, work_items: list[WorkItem]|None = None) -> ImplementationRunResult
+#   Control flow:
+#     1. Accept any phase (Libraries, Architecture, Quality) — all phases edit code.
+#     2. Build candidate list from unresolved code plus incoming work items for the current phase.
+#     3. If shape scope provided, restrict edits/tests to files owned by that shape.
+#     4. Execute implementor loop, capture patches/tests/under-spec events as today.
+#     5. Emit work-item-completion metadata for successfully applied changes.
+#   Error handling:
+#     - Shape scope with empty owned files results in blocked output and no edits.
+#     - Under-spec events continue to emit coordination signals and stop unsafe edits.
+#   Integration points:
+#     - Called by promotion loop IMPLEMENT step for all three phases.
+#     - Consumes WorkItem and shape ownership map.
+#   Test requirements:
+#     - All phases can invoke runner successfully.
+#     - Shape-scoped run edits only allowed files.
+#     - Existing artifact outputs remain compatible.
+
 """ImplementationRunner: per-slice IMPLEMENT execution for PromotionLoop.
 
 Runs function-by-function implementation with file-based artifact IO and strict
@@ -16,6 +49,7 @@ from difflib import unified_diff
 from pathlib import Path
 from typing import Any
 
+from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.orchestration.coordination.signals import (
     CoordinationSignal,
     FunctionRef,
@@ -25,6 +59,7 @@ from spec_manager.orchestration.coordination.signals import (
     SignalProgress,
     SpecRef,
 )
+from spec_manager.orchestration.coordination.work_items import WorkItem
 from spec_manager.orchestration.implementation.types import (
     EdgeProposal,
     FunctionTarget,
@@ -34,16 +69,22 @@ from spec_manager.orchestration.implementation.types import (
     UnderSpecEvent,
     implementor_output_json_schema,
 )
+from spec_manager.routing.shapes import ShapeId
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
+# IMPL(single-layer): This result remains the artifact compatibility boundary, but
+# it is the canonical place to add phase/shape/work-item completion metadata for
+# all-phase IMPLEMENT calls (Sections 9.1/9.2, 8.2).
 class ImplementationRunResult:
     """Result of running implementation on a slice."""
 
     patch_path: str = ""
     applied_edits: list[dict[str, Any]] = field(default_factory=list)
+    phase: PhaseId = "libraries"
+    shape_ids_touched: list[ShapeId] = field(default_factory=list)
     pin_proposals_path: str = ""
     edge_proposals_path: str = ""
     under_spec_events_path: str = ""
@@ -57,6 +98,15 @@ class ImplementationRunResult:
     functions_implemented: int = 0
     functions_skipped: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class PhaseExecutionScope:
+    """Shape-scoped execution boundary for ImplementationRunner."""
+
+    shape_id: ShapeId
+    allowed_files: set[str] = field(default_factory=set)
+    work_item_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -77,6 +127,9 @@ class ImplementationRunner:
         self._workspace = workspace_root
         self._run_id = run_id
 
+    # IMPL(single-layer): `run_for_slice` is the shared IMPLEMENT entrypoint for
+    # Libraries/Architecture/Quality. Extend this contract with active phase,
+    # optional shape execution scope, and current-phase work items.
     def run_for_slice(
         self,
         *,
@@ -88,17 +141,23 @@ class ImplementationRunner:
         gaps_path: Path | None,
         constraints_paths: list[Path] | None = None,
         max_functions: int = 50,
+        phase: PhaseId = "libraries",
+        phase_scope: PhaseExecutionScope | None = None,
+        work_items: list[WorkItem] | None = None,
     ) -> ImplementationRunResult:
         """Run implementation on one slice and materialize all artifacts."""
         from spec_manager.core.edit_in_place import TranslationState, analyze_project
 
-        result = ImplementationRunResult()
+        # IMPL(single-layer): Initialize run metadata from caller-provided phase/scope
+        # so emitted artifacts/signals remain attributable across all phases.
+        result = ImplementationRunResult(phase=self._normalize_phase(phase))
         iteration_dir.mkdir(parents=True, exist_ok=True)
         worktree_branch, latest_commit = self._resolve_git_context(slice_root)
         patch_path_hint = (iteration_dir / "patch.diff").as_posix()
         notes_path_hint = (iteration_dir / "notes.md").as_posix()
 
         before_snapshot = self._snapshot_text_files(slice_root)
+        after_snapshot = before_snapshot
         plan_intentions, plan_load_errors = self._load_plan_intentions(plan_path)
         gap_report, gap_load_errors = self._load_gap_report(gaps_path)
         constraints_context, constraint_load_errors = self._load_constraints_context(
@@ -108,17 +167,81 @@ class ImplementationRunner:
         result.errors.extend(gap_load_errors)
         result.errors.extend(constraint_load_errors)
 
+        scope_allowed_files: set[str] = set()
+        scope_work_item_ids: set[str] = set()
+        active_work_items: list[WorkItem] = []
+        if phase_scope is not None:
+            scope_allowed_files = self._normalize_scope_files(phase_scope.allowed_files)
+            scope_work_item_ids = self._normalize_string_ids(phase_scope.work_item_ids)
+            if not scope_allowed_files:
+                result.errors.append(
+                    {
+                        "file": str(slice_root),
+                        "error": (
+                            f"Shape scope {phase_scope.shape_id!s} has no owned files; "
+                            "IMPLEMENT execution blocked."
+                        ),
+                    }
+                )
+                self._write_artifacts(
+                    iteration_dir,
+                    result,
+                    all_pin_proposals=[],
+                    all_edge_proposals=[],
+                    under_spec_events=[],
+                    tests=[],
+                    notes=[],
+                    signals=[],
+                    patch_text=self._build_patch(
+                        before_snapshot=before_snapshot,
+                        after_snapshot=after_snapshot,
+                    ),
+                )
+                return result
+            active_work_items = self._filter_work_items(
+                work_items=work_items,
+                allowed_ids=scope_work_item_ids,
+            )
+        else:
+            active_work_items = self._normalize_work_items(work_items)
+
         project_state = analyze_project(str(slice_root))
+        # IMPL(single-layer): Candidate targeting should combine unresolved function
+        # discovery with routed work-item anchors for the active phase; scope routing is
+        # deterministic by ownership first, then intra-scope function hints (Section 8.2).
         candidates, under_spec_without_requirements = self._collect_unresolved_candidates(
             project_state=project_state,
             slice_root=slice_root,
             unresolved_states={TranslationState.UNRESOLVED, TranslationState.STUB},
         )
+        work_item_candidates, work_item_lookup_errors = self._collect_work_item_candidates(
+            project_state=project_state,
+            slice_root=slice_root,
+            work_items=active_work_items,
+            scope_allowed_files=scope_allowed_files,
+        )
+        result.errors.extend(work_item_lookup_errors)
+        candidates.extend(work_item_candidates)
+        candidates = self._dedupe_candidate_functions(candidates)
+        if scope_allowed_files:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if self._file_in_scope(
+                    candidate.get("file_rel", ""),
+                    scope_allowed_files,
+                )
+            ]
         prioritized = self._prioritize_candidates(
             candidates=candidates,
             plan_intentions=plan_intentions,
             gap_report=gap_report,
         )
+        if scope_work_item_ids:
+            prioritized = self._prioritize_candidates_for_work_items(
+                candidates=prioritized,
+                allowed_ids=scope_work_item_ids,
+            )
 
         all_pin_proposals: list[PinProposal] = []
         all_edge_proposals: list[EdgeProposal] = []
@@ -127,6 +250,7 @@ class ImplementationRunner:
         all_edits: list[dict[str, Any]] = []
         all_notes: list[str] = []
         all_signals: list[CoordinationSignal] = []
+        shape_ids_touched: list[ShapeId] = []
 
         if under_spec_without_requirements:
             all_under_spec.extend(under_spec_without_requirements)
@@ -204,6 +328,9 @@ class ImplementationRunner:
                 remaining_candidates = len(prioritized) - idx
                 result.functions_skipped += remaining_candidates
 
+                # IMPL(single-layer): Under-spec coordination must be phase-aware; this
+                # branch currently hardcodes `layer="l1"` and should instead emit active
+                # phase/scope context because all phases execute IMPLEMENT (Sections 9.1/9.2).
                 function_ref = FunctionRef(
                     file=candidate["file_rel"],
                     symbol=candidate["qualified_name"],
@@ -231,7 +358,7 @@ class ImplementationRunner:
                         )
                     signal = CoordinationSignal(
                         run_id=self._run_id,
-                        layer="l1",
+                        layer=result.phase,
                         slice_id=slice_id,
                         iteration=iteration,
                         classification=classification,
@@ -278,7 +405,21 @@ class ImplementationRunner:
 
             applied_for_function: list[dict[str, Any]] = []
             apply_failed = False
+            # IMPL(single-layer): Before applying diffs, enforce optional shape-owned
+            # allowed-files scope. Empty ownership scope should block safely with diagnostics.
             for edit in output.edits:
+                if scope_allowed_files and not self._file_in_scope(
+                    self._normalize_path(edit.path),
+                    scope_allowed_files,
+                ):
+                    result.errors.append(
+                        {
+                            "file": edit.path,
+                            "error": "Implementation edit blocked by shape-owned file scope",
+                        }
+                    )
+                    apply_failed = True
+                    break
                 applied, apply_error = self._apply_unified_diff(
                     slice_root=slice_root,
                     unified_diff=edit.unified_diff,
@@ -298,6 +439,12 @@ class ImplementationRunner:
                         "file": edit.path,
                         "method": "unified_diff",
                         "diff": edit.unified_diff,
+                        "work_item_ids": [
+                            item_id
+                            for item_id in candidate.get("work_item_ids", [])
+                            if item_id
+                        ],
+                        "shape_ids": candidate.get("shape_id") and [candidate["shape_id"]],
                     }
                 )
 
@@ -328,9 +475,17 @@ class ImplementationRunner:
             all_tests.extend(output.tests)
             if output.notes_md:
                 all_notes.append(output.notes_md)
+            candidate_shape_id = candidate.get("shape_id")
+            if candidate_shape_id and candidate_shape_id not in shape_ids_touched:
+                shape_ids_touched.append(candidate_shape_id)
+            if phase_scope is not None and phase_scope.shape_id not in shape_ids_touched:
+                shape_ids_touched.append(phase_scope.shape_id)
             result.functions_implemented += 1
 
+        # IMPL(single-layer): Populate per-work-item completion metadata for applied
+        # edits so PromotionLoop can close/remediate phase-local queues deterministically.
         result.applied_edits = all_edits
+        result.shape_ids_touched = shape_ids_touched
         result.pin_proposals = [p.to_dict() for p in all_pin_proposals]
         result.edge_proposals = [e.to_dict() for e in all_edge_proposals]
         result.under_spec_events = [e.to_dict() for e in all_under_spec]
@@ -338,6 +493,7 @@ class ImplementationRunner:
             slice_root=slice_root,
             tests=all_tests,
             errors=result.errors,
+            allowed_files=scope_allowed_files,
         )
         result.signals = [s.to_dict() for s in all_signals]
 
@@ -676,6 +832,280 @@ class ImplementationRunner:
             if diff_lines:
                 patch_chunks.extend(diff_lines)
         return "".join(patch_chunks)
+
+    @staticmethod
+    def _normalize_phase(value: PhaseId) -> PhaseId:
+        normalized = str(value).strip().lower()
+        if normalized not in {"libraries", "architecture", "quality"}:
+            raise ValueError(
+                f"Invalid phase '{value}'. Expected libraries, architecture, or quality."
+            )
+        return normalized  # type: ignore[return-value]
+
+    @staticmethod
+    def _normalize_scope_files(files: set[str] | None) -> set[str]:
+        normalized: set[str] = set()
+        for raw_file in files or []:
+            normalized_file = ImplementationRunner._normalize_path(str(raw_file))
+            if normalized_file:
+                normalized.add(normalized_file)
+        return normalized
+
+    @staticmethod
+    def _normalize_string_ids(values: list[str] | None) -> set[str]:
+        normalized: set[str] = set()
+        for raw_value in values or []:
+            value = str(raw_value).strip()
+            if value:
+                normalized.add(value)
+        return normalized
+
+    @classmethod
+    def _normalize_work_items(
+        cls,
+        work_items: list[WorkItem] | None,
+    ) -> list[WorkItem]:
+        normalized: list[WorkItem] = []
+        seen_ids: set[str] = set()
+        for item in work_items or []:
+            if item is None:
+                continue
+            item_id = str(item.work_item_id).strip()
+            if not item_id or item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            normalized.append(item)
+        return normalized
+
+    @classmethod
+    def _filter_work_items(
+        cls,
+        *,
+        work_items: list[WorkItem] | None,
+        allowed_ids: set[str] | None = None,
+    ) -> list[WorkItem]:
+        normalized = cls._normalize_work_items(work_items)
+        if not allowed_ids:
+            return normalized
+        return [item for item in normalized if str(item.work_item_id).strip() in allowed_ids]
+
+    @staticmethod
+    def _file_in_scope(file_path: str, allowed_files: set[str]) -> bool:
+        if not allowed_files:
+            return True
+        target = ImplementationRunner._normalize_path(file_path)
+        if not target:
+            return False
+        for allowed_file in allowed_files:
+            if not allowed_file:
+                continue
+            if target == allowed_file or target.startswith(f"{allowed_file}/"):
+                return True
+        return False
+
+    @staticmethod
+    def _function_symbol_match(func_qualified_name: str, target_symbol: str) -> bool:
+        qualified_name = str(func_qualified_name).strip()
+        symbol = str(target_symbol).strip()
+        if not qualified_name or not symbol:
+            return False
+        if qualified_name == symbol:
+            return True
+        for sep in ("::", ".", "#"):
+            if qualified_name.endswith(f"{sep}{symbol}"):
+                return True
+            parts = qualified_name.rsplit(sep, 1)
+            if parts[-1] == symbol:
+                return True
+        return False
+
+    @classmethod
+    def _resolve_file_state_from_path(
+        cls,
+        project_state: Any,
+        *,
+        slice_root: Path,
+        path: str,
+    ) -> tuple[str, Path] | tuple[None, None]:
+        normalized_target = cls._normalize_path(path)
+        if not normalized_target:
+            return None, None
+        for file_key in project_state.files.keys():
+            normalized_key = cls._normalize_path(str(file_key))
+            if not normalized_key:
+                continue
+            if normalized_key == normalized_target or normalized_key.endswith(
+                f"/{normalized_target}"
+            ):
+                file_path = Path(file_key)
+                if not file_path.is_absolute():
+                    file_path = (slice_root / file_path).resolve()
+                return str(file_key), file_path
+            if normalized_target.endswith(f"/{normalized_key}"):
+                file_path = Path(file_key)
+                if not file_path.is_absolute():
+                    file_path = (slice_root / file_path).resolve()
+                return str(file_key), file_path
+        return None, None
+
+    @classmethod
+    def _collect_work_item_candidates(
+        cls,
+        *,
+        project_state: Any,
+        slice_root: Path,
+        work_items: list[WorkItem],
+        scope_allowed_files: set[str],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        candidates: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+
+        for item in work_items:
+            item_id = str(item.work_item_id).strip()
+            if not item_id:
+                continue
+            locations = list(getattr(item, "file_locations", []) or [])
+            if not locations:
+                errors.append(
+                    {
+                        "file": "",
+                        "error": f"Work item {item_id} has no file_locations",
+                    }
+                )
+                continue
+
+            for location in locations:
+                if location is None:
+                    continue
+                file_path = str(getattr(location, "file_path", "")).strip()
+                if not file_path:
+                    errors.append(
+                        {
+                            "file": "",
+                            "error": f"Work item {item_id} has an empty file location",
+                        }
+                    )
+                    continue
+
+                if scope_allowed_files and not cls._file_in_scope(file_path, scope_allowed_files):
+                    continue
+
+                file_key, resolved_file = cls._resolve_file_state_from_path(
+                    project_state,
+                    slice_root=slice_root,
+                    path=file_path,
+                )
+                if not file_key or resolved_file is None:
+                    errors.append(
+                        {
+                            "file": file_path,
+                            "error": f"Work item {item_id} targets an unresolvable file",
+                        }
+                    )
+                    continue
+
+                file_state = project_state.files.get(file_key)
+                if file_state is None:
+                    continue
+
+                symbol = str(getattr(location, "symbol", "")).strip()
+                if not symbol:
+                    errors.append(
+                        {
+                            "file": file_path,
+                            "error": f"Work item {item_id} has no symbol for function targeting",
+                        }
+                    )
+                    continue
+
+                function = None
+                for fn in getattr(file_state, "functions", []):
+                    if cls._function_symbol_match(
+                        getattr(fn, "qualified_name", ""),
+                        symbol,
+                    ):
+                        function = fn
+                        break
+
+                if function is None:
+                    errors.append(
+                        {
+                            "file": file_path,
+                            "error": (
+                                f"Work item {item_id} references unknown function "
+                                f"symbol '{symbol}'"
+                            ),
+                        }
+                    )
+                    continue
+
+                qualified_name = str(getattr(function, "qualified_name", "")).strip()
+                if not qualified_name:
+                    continue
+
+                candidates.append(
+                    {
+                        "file_key": file_key,
+                        "file_path": resolved_file,
+                        "file_rel": cls._normalize_path(
+                            cls._rel_to_slice(resolved_file, slice_root)
+                        ),
+                        "qualified_name": qualified_name,
+                        "function": function,
+                        "work_item_ids": [item_id],
+                        "shape_id": getattr(item, "shape_id", ""),
+                    }
+                )
+
+        return candidates, errors
+
+    @classmethod
+    def _dedupe_candidate_functions(
+        cls,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        order: list[tuple[str, str]] = []
+
+        for candidate in candidates:
+            file_key = cls._normalize_path(str(candidate.get("file_key", "")))
+            qualified = str(candidate.get("qualified_name", "")).strip()
+            if not file_key or not qualified:
+                continue
+            key = (file_key, cls._normalize_path(qualified))
+            if key not in merged:
+                merged[key] = dict(candidate)
+                merged[key].setdefault("work_item_ids", [])
+                merged[key].setdefault("shape_id", "")
+                order.append(key)
+                continue
+
+            existing = merged[key]
+            for work_item_id in candidate.get("work_item_ids", []):
+                item_id = str(work_item_id).strip()
+                if item_id and item_id not in existing.get("work_item_ids", []):
+                    existing.setdefault("work_item_ids", []).append(item_id)
+            shape_id = candidate.get("shape_id")
+            if shape_id and not existing.get("shape_id"):
+                existing["shape_id"] = shape_id
+
+        return [merged[key] for key in order]
+
+    @staticmethod
+    def _prioritize_candidates_for_work_items(
+        candidates: list[dict[str, Any]],
+        allowed_ids: set[str],
+    ) -> list[dict[str, Any]]:
+        if not allowed_ids:
+            return candidates
+        return sorted(
+            candidates,
+            key=lambda candidate: (
+                0
+                if set(candidate.get("work_item_ids", [])) & allowed_ids
+                else 1,
+            ),
+        )
 
     @staticmethod
     def _load_json(path: Path | None) -> _JsonLoadResult:
@@ -1097,8 +1527,11 @@ class ImplementationRunner:
         slice_root: Path,
         tests: list[TestArtifact],
         errors: list[dict[str, str]],
+        allowed_files: set[str] | None = None,
     ) -> list[str]:
         """Apply implementor-emitted test artifacts to the slice worktree."""
+        # IMPL(single-layer): Test artifact writes should follow the same phase scope /
+        # allowed-files ownership guard used for source edits to prevent cross-shape leakage.
         materialized: list[str] = []
         seen: set[str] = set()
         slice_root_resolved = slice_root.resolve()
@@ -1107,6 +1540,16 @@ class ImplementationRunner:
             raw_path = str(test.path).strip().replace("\\", "/").lstrip("./")
             if not raw_path:
                 errors.append({"file": "", "error": "Test artifact missing path"})
+                continue
+
+            allowed = allowed_files or set()
+            if allowed and not self._file_in_scope(raw_path, allowed):
+                errors.append(
+                    {
+                        "file": raw_path,
+                        "error": "Test artifact path blocked by phase scope",
+                    }
+                )
                 continue
 
             target = (slice_root / raw_path).resolve()
