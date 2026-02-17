@@ -1,3 +1,42 @@
+# TODO(single-layer): RESTRUCTURE — "Introduced algorithm" concept changes. In multi-layer,
+#   INTRODUCTION was a ProjectionType for arch-only code with no L1 atom origin. In
+#   single-layer, all code is in one place — there's no "introduced without atom origin."
+#   This check may survive as "does new code have a shape contract?" (NOT comment markers —
+#   Section 8.1 replaces marker-based enforcement with external work items + shape verifiers).
+#   Authority must come from shape ownership + verifier presence, not comment scanning.
+#   The pin-coverage dependency (PinCoverageReport import) must be removed.
+# IMPL(single-layer): Shape ownership resolution should reuse
+# `routing.shapes.resolve_shape_for_file` to stay consistent with matcher/router routing.
+# IMPL(single-layer): `Shape.status` is verifier-driven (`ACTIVE` iff verifiers exist);
+# introduced behavior mapped to PROPOSAL shapes should emit actionable findings until
+# verifier linkage is present.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 8.1, 10.2, 13.3.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'] — three-phase forward-only pipeline.
+#     - IntroducedChange: {file_path: str, line_start: int, line_end: int, shape_id: ShapeId|None, has_contract: bool, has_verifier: bool, evidence_ref: str, rationale: str}.
+#   Interface contracts:
+#     - def find_uncontracted_introductions(changed_files: list[Path], shape_index: ShapePackIndex, verifier_summary: dict[ShapeId, VerifierRunSummary]) -> list[IntroducedChange]
+#     - def check_introduced_algorithm_specs(...) -> GateCheckResult
+#   Control flow:
+#     1. Determine newly introduced code spans from deterministic diff metadata.
+#     2. Resolve each changed file to owning shape.
+#     3. Mark compliant only when owning shape has matching contract section and at least one relevant verifier.
+#     4. Emit findings as work-item-ready diagnostics; do not scan for comment markers.
+#     5. This check runs across Libraries and Architecture phases (both do work via PromotionLoop).
+#     6. Three phases (Libraries -> Architecture -> Quality), forward-only; no cycling back.
+#     7. Phase-local remediation if within authority; block if outside authority (no backtracking).
+#   Error handling:
+#     - Unknown owner shape or missing verifier summary => fail with actionable finding.
+#     - LLM semantic classifier may assist categorization but never decides pass/fail.
+#   Integration points:
+#     - Called by behavior/architecture gate orchestration during Libraries and Architecture phases.
+#     - Consumes routing.shapes and routing.verifiers outputs.
+#   Test requirements:
+#     - New code without shape contract fails.
+#     - New code with contract + passing verifier passes.
+#     - Comment marker presence/absence does not affect result.
+
 """Introduced algorithm spec checker for layer promotion gating."""
 
 from __future__ import annotations

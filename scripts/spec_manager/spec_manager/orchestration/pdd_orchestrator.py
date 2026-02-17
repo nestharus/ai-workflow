@@ -1,3 +1,45 @@
+# TODO(single-layer): RESTRUCTURE — Phase 0 intake (routing-based) KEEPS. Phases 1-3
+#   (structure, decomposition, compliance) survive as Libraries phase sub-steps. Phase 4
+#   (library/atom registration) and Phase 5 (pin_functions) are eliminated. Phase 6-7
+#   (adjacency/projection) restructure around shapes. Phase 8-9 (planning/implementation)
+#   survive as Libraries phase core. Phase 10 (continuous QA) becomes Quality phase.
+#   The sequential P0-P10 concept itself is replaced by forward-only Libraries →
+#   Architecture → Quality phases.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 9 and 12; evaluation modification #1.
+#   Data structures:
+#     - Keep intake payload types; add BootstrapOutput: {draft_shapes: list[DraftShape], algorithm_inventory: list[AlgorithmEntry], store_inventory: list[StoreEntry], libraries_seed_inputs: dict[str, Any]}.
+#     - DraftShape: {library_id: str, ownership_paths: list[str], declared_dependencies: list[str], initial_contracts: list[str]}.
+#     - AlgorithmEntry: {name: str, owning_library: str, entrypoints: list[str], required_invariants: list[str]}.
+#     - StoreEntry: {store_id: str, owning_library: str, access_boundaries: list[str], required_adapters: list[str]}.
+#   Interface contracts:
+#     - def run_intake_only(self, ...) -> dict[str, Any]
+#     - def bootstrap_single_layer(self, ...) -> BootstrapOutput
+#     - def run(self, ...) -> dict[str, Any]  # delegates to PddLifecycle forward-only phases
+#   Control flow:
+#     1. Keep Phase 0 intake as-is for routing/decomposition extraction.
+#     2. Phase 0 produces: draft shapes (one per library, ownership paths, declared dependencies, initial contracts); algorithm inventory (names + owning library + entrypoints + required invariants); store inventory (IDs + owning library + access boundaries + required adapters).
+#     3. Convert intake decomposition into bootstrap shapes, algorithm inventory, and store inventory.
+#     4. Seed Libraries phase inputs from decomposition output, draft shapes, and intake artifacts.
+#     5. Skip legacy P4/P5 pin registration paths; skip pin projection phases.
+#     6. Delegate iterative execution to PddLifecycle (Libraries -> Architecture -> Quality, forward-only).
+#   Error handling:
+#     - If bootstrap shape/inventory generation fails, block before entering Libraries phase with explicit diagnostics.
+#     - If any legacy phase entrypoint is invoked, return explicit unsupported-path error.
+#   Integration points:
+#     - Called by lifecycle bootstrap path.
+#     - Calls routing.shapes bootstrap/load and lifecycle.run.
+# IMPL(single-layer): Phase 0 bootstrap should persist shape artifacts via
+# `routing.shapes.write_shape_index` so downstream matcher/router consumers read a
+# deterministic `routing/INDEX.md` + `routing/index.json` view.
+# IMPL(single-layer): Libraries may start with proposal-only shapes from bootstrap; shape
+# metadata should enqueue verifier refresh/creation work items in the first cycle.
+#   Test requirements:
+#     - Intake artifacts still generated.
+#     - Bootstrap output includes draft shapes, algorithm inventory, store inventory, and Libraries phase seeds.
+#     - Legacy pin phases are unreachable in single-layer mode.
+#     - Phase 0 output contains all three inventory types (draft shapes, algorithms, stores).
+
 """PDD orchestrator: loop-authoritative execution with optional intake entrypoint.
 
 This orchestrator's authoritative path is the per-slice iterative

@@ -1,3 +1,46 @@
+# TODO(single-layer): RESTRUCTURE — Router converts failures to work items (not
+#   DemotionTickets targeting layers). Remove _normalize_layer, _GATE_FINDING_PIN_KEYS.
+#   Add shape_id resolution: map failing file -> owning shape (Section 8.2 step 1).
+#   The evidence extraction logic (gate findings, test failures) survives.
+#   No cross-phase routing: router routes within current phase or blocks.
+#   3 phases (libraries, architecture, quality), forward-only, no cycling back.
+# IMPL(single-layer): Ownership mapping should call
+# `routing.shapes.resolve_shape_for_file` (most-specific package prefix) rather than
+# maintaining a router-local prefix matcher.
+# IMPL(single-layer): If ownership resolves to a PROPOSAL shape or metadata requests
+# verifier refresh, emit verifier/spec work items for the current phase instead of
+# treating the finding as converged.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 8.2 and 11.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'] (3 forward-only phases).
+#     - RoutingBatch: {created_work_items: list[WorkItem], blocked_findings: list[dict[str, Any]], diagnostics: list[str]}.
+#     - GateFindingProjection keeps file/evidence extraction but replaces pin fields with shape owner fields.
+#   Interface contracts:
+#     - class DemotionRouter:
+#       - def route_gate_failures(..., shape_index: ShapePackIndex) -> RoutingBatch
+#       - def route_test_failures(..., shape_index: ShapePackIndex) -> RoutingBatch
+#       - def route_review_findings(..., shape_index: ShapePackIndex) -> RoutingBatch
+#   Control flow:
+#     1. Parse failure payloads and normalize deterministic fields.
+#     2. Resolve owning shape from failing file path using routing.shapes ownership.
+#     3. Build EscalationContext and call triage() for phase-local routing decision.
+#     4. If within current phase authority: materialize WorkItem with shape_id, required_change_type, evidence refs.
+#     5. If outside current phase authority: block (no demotion to earlier phase).
+#        Architecture can remediate algorithm issues in-place; Quality blocks on behavior change.
+#     6. Aggregate blocked cases when owner shape cannot be resolved.
+#   Error handling:
+#     - Invalid failure payload type logs warning and creates blocked diagnostic entry.
+#     - No cross-phase re-routing; out-of-authority findings block with diagnostics.
+#   Integration points:
+#     - Called by promotion loop VERIFY/PROMOTE failures and review finding conversion.
+#     - Calls demotion.triage and coordination.work_items store.
+#   Test requirements:
+#     - File-to-shape routing works for nested package ownership.
+#     - Gate/test/review payloads all convert to work items within current phase.
+#     - Out-of-authority findings produce block, not cross-phase routing.
+#     - Missing ownership produces block entry, not silent drop.
+
 """Demotion router: converts failure evidence into DemotionTickets.
 
 Consumes gate violations, test failures, and review findings, and
