@@ -37,6 +37,9 @@
 # IMPL(single-layer): Any lineage assembly handoff from this orchestrator (legacy Phase 7
 # paths included) should feed deterministic dependency-scan records + shape index inputs
 # into `projection.lineage.builder`, not `PinFunctionRegistry` import-edge projection.
+# IMPL(single-layer): Keep orchestration handoff aligned with
+# `orchestration.demotion` escalation migration; Phase 0 may still consume intake
+# routing types, but phase remediation should consume work-item escalation outcomes.
 #   Test requirements:
 #     - Intake artifacts still generated.
 #     - Bootstrap output includes draft shapes, algorithm inventory, store inventory, and Libraries phase seeds.

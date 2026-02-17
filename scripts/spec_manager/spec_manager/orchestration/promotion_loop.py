@@ -58,6 +58,9 @@
 # `WorkItemStore.create/upsert` with `shape_id` + `created_in_phase=active_phase`
 # + `required_change_type`; phase-local remediation checks should read
 # `list_open(phase=active_phase, shape_id=...)` (no cross-phase reroute).
+# IMPL(single-layer): As `orchestration.demotion` shifts from `apply()` patching to
+# `escalate()` work-item persistence, remove PromotionLoop demotion-apply/commit paths
+# in the same change and consume QUEUED/BLOCKED escalation outcomes only.
 # IMPL(single-layer): Planner-provided monitor payload normalization/registration should
 # preserve the `coordination.monitors` condition schema (shape-aware + bounds/convergence
 # fields) so `condition_from_dict` can deserialize without lossy field drops.

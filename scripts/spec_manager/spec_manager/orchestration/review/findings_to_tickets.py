@@ -1,3 +1,50 @@
+# TODO(single-layer): RESTRUCTURE — Findings-to-tickets pipeline loses layer routing.
+#   Currently: finding category -> layer literal (L1/L2/L3). In single-layer:
+#   finding category -> phase literal (Libraries/Architecture/Quality).
+#   Mapping: LOGIC/SPEC/UNDER_SPEC -> Libraries, ARCH -> Architecture, STYLE/QUALITY -> Quality.
+#   "Route via pins" becomes "route via shape_id" — finding references a file,
+#   file->shape ownership determines shape_id for the work item (Section 6.3 rule #1).
+#   Findings are routed within the current phase or block if outside that phase's authority.
+#   DownwardFlowEngine reference -> remove (DELETE'd). DemotionRouter reference -> keep
+#   but with phase-based targeting.
+#   LLM authority constraint (Section 13.2/13.3): reviewer/LLM findings are advisory
+#   only — they must NOT become hard gate results unless converted to deterministic
+#   verifier tasks, explicit human decisions, or blocked ambiguity signals.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 8.2, 11, 13.2, 13.3.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'] (3 forward-only phases; no cycling back).
+#     - Each phase edits code via its own PromotionLoop with IMPLEMENT step (no "refinement-only" phases).
+#     - ReviewFinding keeps parsed reviewer payload; add resolved_shape_ids: list[ShapeId].
+#     - ConversionResult returns produced_work_items and blocked_findings.
+#   Interface contracts:
+#     - def convert_findings(findings: list[dict[str, Any]], *, run_id: str, slice_id: str, shape_index: ShapePackIndex, active_phase: PhaseId) -> ConversionResult
+#   Control flow:
+#     1. Normalize categories/severity and reject malformed findings.
+#     2. Resolve file->shape ownership for each finding; include multiple shapes when multiple files.
+#     3. Convert each finding into WorkItem via demotion router/triage path.
+#     4. Route by active-phase authority (not rigid category→phase mapping):
+#        - If finding is within current phase authority: fix_in_phase or queue_work_item.
+#        - If finding is outside current phase authority: block with diagnostics.
+#        - Architecture can handle LOGIC/behavior findings in-place (algorithm remediation).
+#        - Quality blocks on behavior-changing findings.
+#     5. Mark LLM-origin findings advisory unless converted to deterministic verifier/test tasks or explicit block signals.
+#   Error handling:
+#     - Missing category/files yields blocked finding entry with validation errors.
+#     - Unknown file owner creates blocked ambiguity requiring user input.
+#   Integration points:
+#     - Called by reviewer pipelines and promotion loop COORDINATE step within each phase.
+#     - Calls demotion router + work item store.
+# IMPL(single-layer): Keep finding-conversion payloads aligned with
+# `orchestration.demotion` ticket-schema migration (`shape_id`,
+# `required_change_type`, QUEUED/BLOCKED outcomes) so this module does not re-introduce
+# layer-targeting fields after escalation cutover.
+#   Test requirements:
+#     - Authority-based routing: Architecture handles behavior findings in-place; Quality blocks on behavior.
+#     - Multi-file finding produces one work item per owner shape or grouped by shape policy.
+#     - Advisory-only finding cannot produce hard gate pass/fail side effects.
+#     - Findings targeting a phase outside the active phase produce a block, not a re-triage.
+
 """Convert reviewer agent findings into DemotionTickets.
 
 Translates structured findings from reviewer agents (chatgpt-*-reviewer.md)

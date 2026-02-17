@@ -10,6 +10,9 @@
 # IMPL(single-layer): If ownership resolves to a PROPOSAL shape or metadata requests
 # verifier refresh, emit verifier/spec work items for the current phase instead of
 # treating the finding as converged.
+# IMPL(single-layer): Keep this file aligned with `orchestration.demotion`
+# ticket-contract migration (EscalationTicket fields + QUEUED/BLOCKED outcomes);
+# router must not carry duplicate layer-era defaults once the shared schema changes.
 # ALGORITHM(single-layer):
 #   References: response3 Sections 8.2 and 11.
 #   Data structures:

@@ -70,6 +70,9 @@
 # IMPL(single-layer): Lifecycle lineage/drift checks should consume deterministic
 # dependency-scan + shape ownership inputs from `projection.lineage.builder`; do not keep
 # `PinFunctionRegistry`-derived lineage ingestion on the convergence path.
+# IMPL(single-layer): When `orchestration.demotion` replaces layer-targeted `apply()`
+# with phase-local `escalate()`, lifecycle QA/demotion rounds should persist escalation
+# work items and block on QUEUED/BLOCKED outcomes instead of patch-apply retries.
 #   Test requirements:
 #     - Forward-only phase ordering (Libraries -> Architecture -> Quality).
 #     - Phase-appropriate behaviors (L1/L2/L3) in each phase's PromotionLoop.
