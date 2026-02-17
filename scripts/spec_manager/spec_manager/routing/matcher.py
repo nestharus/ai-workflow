@@ -107,6 +107,9 @@
 #     - Calls: routing.shapes, routing.verifiers, coordination.work_items, call_graph hint provider (non-authoritative only).
 # IMPL(single-layer): Downstream modules should import matcher contracts via
 # `spec_manager.routing` re-exports to keep a single stable routing API surface.
+# IMPL(single-layer): Inside `routing` modules, prefer direct sibling imports
+# (`routing.shapes`, `routing.verifiers`) rather than package re-export imports to
+# avoid `routing.__init__` cycle/re-entry during import resolution.
 #   Test requirements:
 #     - Dependency drift scenarios for each policy mode.
 #     - Contract failure routes to producer+consumer shape IDs.

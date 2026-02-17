@@ -40,6 +40,9 @@
 #     - def enforce_non_ship_policy(shape_summaries: dict[ShapeId, VerifierRunSummary], required_contract_shape_ids: set[ShapeId]) -> tuple[bool, list[str]]
 # IMPL(single-layer): Keep verifier APIs imported via `spec_manager.routing`
 # re-exports so downstream modules do not bind to module-local paths.
+# IMPL(single-layer): Inside the `routing` package, keep sibling-module imports
+# (`routing.shapes`, etc.) instead of package re-export imports to avoid
+# `routing.__init__` import-cycle/re-entry during module load.
 #   Control flow:
 #     1. Skip PROPOSAL shapes for pass/fail authority, but emit missing-verifier diagnostics.
 #     2. For ACTIVE shapes, execute each verifier deterministically by kind: TEST via core testing runner, IMPORT_BOUNDARY via import scan policy, COMMAND via strict command allowlist.
