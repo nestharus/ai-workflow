@@ -1,3 +1,46 @@
+# TODO(single-layer): KEEP/EXTEND — MonitorExecutor checks conditions and fires wake
+#   events. Extend ConditionChecker to evaluate shape-related conditions (verifier
+#   status, dependency match, contract satisfaction). The hybrid event/poll model
+#   is unchanged. Executor operates identically across all 3 phases
+#   (Libraries, Architecture, Quality).
+# ALGORITHM(single-layer):
+#   References: response3 Sections 6.3 and 9.3.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'] (3 forward-only phases).
+#     - Each phase edits code via its own PromotionLoop with IMPLEMENT step; executor fires wake events within the active phase.
+#     - ConditionChecker dependencies gain optional shape_match_provider and verifier_provider interfaces.
+#   Interface contracts:
+#     - def check(self, condition: MonitorCondition) -> bool dispatches to new checkers:
+#       - _check_shape_verifiers_pass(cond)
+#       - _check_shape_dependency_clean(cond)
+#   Control flow:
+#     1. For ShapeVerifiersPassCondition, load latest verifier summary and return true only when all required verifiers pass.
+#     2. For ShapeDependencyCleanCondition, load latest ShapeMatchReport and ensure dependency drift sets are empty.
+# IMPL(single-layer): Treat matcher `status in {'AMBIGUOUS','BLOCKED'}` as not clean
+# even when drift sets are empty, because these states indicate unresolved routing or
+# missing deterministic evidence rather than convergence.
+#     3. Keep hybrid poll/event execution and wake queue logic unchanged.
+#     4. Phases are forward-only (Libraries -> Architecture -> Quality); monitors that detect issues outside the active phase's authority cause a block, not backtracking.
+#   Error handling:
+#     - Missing provider/evidence returns False and logs debug warning; monitor remains active.
+#   Integration points:
+#     - Called by PromotionLoop COORDINATE/monitor tick within each phase's cycle.
+#     - Calls routing.verifiers and routing.matcher caches.
+#   Bounds and convergence enforcement (§§9.5-9.6):
+#     - ConditionChecker dispatches to bound-enforcement checkers:
+#       - _check_iteration_cap(cond): compare current iteration count against max_iterations_per_slice (default 20).
+#       - _check_work_item_cap(cond): compare open work items against max_work_items_per_phase (default 50).
+#       - _check_stagnation(cond): detect same verifier failing with no diff progress within stagnation_window (default 2).
+#       - _check_phase_convergence(cond): skeleton non-draft + all shape verifiers pass + no open work items + within bounds.
+#     - Cap/stagnation hits produce block-with-diagnostics wake events (not retry).
+#     - Phase convergence success produces phase-complete wake event.
+#   Test requirements:
+#     - New condition checks pass/fail behavior.
+#     - Missing evidence does not crash executor.
+#     - Wake event generated when condition flips true.
+#     - Bound enforcement: cap hits produce block events, not retries.
+#     - Phase convergence fires only when all criteria met simultaneously.
+
 """Hybrid event/poll runtime for JIT monitors.
 
 The MonitorExecutor checks active monitors against current workspace

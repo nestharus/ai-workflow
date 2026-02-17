@@ -1,3 +1,44 @@
+# TODO(single-layer): RESTRUCTURE — These become "Architecture gates" (Section 10.1 group B).
+#   DELETE: check_no_inlined_atom_logic (atom/arch divide concept eliminated),
+#     check_pin_consumption_coverage, check_edge_realization (pin-dependent).
+#   REPLACE: check_arch_drift_pass → shape drift check (declared vs observed deps).
+#   KEEP/ADAPT: check_function_recomposition (if not pin-dependent),
+#     check_no_orphan_components, check_event_handler_coverage, check_config_externalization.
+#   Import boundary verification per shape is the new primary architecture gate.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 10.1(B), 10.2, 6.3.
+#   Data structures:
+#     - ArchitectureGateContext: {shape_reports: dict[ShapeId, ShapeMatchReport], component_manifest: dict[str, Any]|None, analyzed_files: list[Any]|None}.
+#   Interface contracts:
+#     - Remove pin-only contracts: check_no_inlined_atom_logic, check_pin_consumption_coverage, check_edge_realization.
+#     - Add/rename:
+#       - def check_import_boundary_per_shape(...) -> GateCheckResult
+#       - def check_shape_drift_resolved(...) -> GateCheckResult
+#       - def check_function_recomposition(...), check_no_orphan_components(...), check_event_handler_coverage(...), check_config_externalization(...) remain with shape-aware inputs.
+#   Control flow:
+#     1. These gates run in the Architecture phase (phase='architecture').
+#     2. Three phases (Libraries -> Architecture -> Quality), forward-only; no cycling back.
+#     3. The Architecture phase edits code via its own PromotionLoop with IMPLEMENT step.
+#     4. Drive architecture checks from ShapeMatchReport deltas and declared contracts.
+#     5. Import boundary gate fails when observed dependency violates shape allow/deny policy.
+#     6. Shape drift gate fails when missing/unexpected dependencies remain unresolved.
+# IMPL(single-layer): Architecture drift/boundary checks should also treat matcher
+# `AMBIGUOUS` or `BLOCKED` statuses as deterministic gate failures (stale/unclear
+# routing evidence), not as pass or advisory-only outcomes.
+#     7. Keep deterministic architecture checks that do not depend on pins.
+#     8. Phase-local remediation if within Architecture authority; block if outside authority (no backtracking).
+#   Error handling:
+#     - Missing shape reports -> STALE_EVIDENCE failure.
+#     - LLM-only architecture findings become advisory diagnostics only.
+#   Integration points:
+#     - Called by compliance orchestrator architecture group during Architecture phase.
+#     - Architecture phase gates: shape matching + contract verifiers + integration tests (hard) + L2 reviewers (soft).
+#     - Consumes matcher output and shape verifier summaries.
+#   Test requirements:
+#     - Boundary violation fails gate.
+#     - Drift resolved passes only when deltas are empty.
+#     - Legacy pin-only functions are unreachable/removed.
+
 """Architectural quality checks for layer promotion gating.
 
 Verifies:
