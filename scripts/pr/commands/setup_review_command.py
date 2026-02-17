@@ -64,10 +64,7 @@ def setup_review_command(
         Exit code (0 for success).
     """
     # Determine mode
-    if ticket is not None or worktree is not None:
-        mode = "worktree"
-    else:
-        mode = "local"
+    mode = "worktree" if ticket is not None or worktree is not None else "local"
 
     # Setup working directory based on mode
     working_dir: Path
@@ -88,6 +85,9 @@ def setup_review_command(
 
         info = _get_default_client().get_ticket_info(ticket)
         linear_branch_name = info.get("branch_name")
+        if linear_branch_name is None:
+            print(f"Error: No branch name found for ticket {ticket}", file=sys.stderr)
+            return 1
 
         # Find the actual branch (may have counter suffix)
         from .util import _find_existing_branch_for_ticket, _get_expected_branch_name

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -47,10 +48,8 @@ def _parse_review_block(block: str) -> dict[str, str | int | None] | None:
         if line.startswith("File:"):
             file_path = line[5:].strip()
         elif line.startswith("Line:"):
-            try:
+            with contextlib.suppress(ValueError):
                 line_num = int(line[5:].strip())
-            except ValueError:
-                pass
         elif (
             line.startswith("Issue:")
             or line.startswith("Action:")

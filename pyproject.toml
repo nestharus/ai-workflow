@@ -355,6 +355,18 @@ convention = "google"
 "scripts/spec_manager/spec_manager/core/gaps.py" = ["ANN001", "E501", "S311", "S112"]  # Complex type inference module with domain-specific long lines
 "scripts/dev/ensure_dev_env.py" = ["S108"]  # S108 for /tmp socket directory creation
 
+# Scripts: Demo scripts have relaxed rules
+"scripts/demos/**/*.py" = ["ANN", "D", "E741", "RUF005", "RUF059", "SIM108", "SIM102", "TRY401", "SIM105"]
+
+# Scripts: Article writer scripts have relaxed rules
+"scripts/article_writer/**/*.py" = ["ANN", "D", "E402", "RUF059"]
+
+# Scripts: PR commands have relaxed rules
+"scripts/pr/commands/**/*.py" = ["SIM105", "SIM108"]
+
+# Scripts: Demo scripts for sorting visualization with relaxed rules
+"scripts/repo_manager/**/*.py" = ["F401"]
+
 # Scripts: S103 for world-writable socket permissions (security: host/container user isolation)
 "scripts/servers/sandbox/server.py" = ["S103"]  # S103: socket world-writable for host CLI access
 "scripts/tests/integration/mcp/test_integration.py" = ["S103"]  # S103: socket world-writable for container compatibility
