@@ -1,3 +1,40 @@
+# TODO(single-layer): RESTRUCTURE -> merge into Architecture phase planner.
+#   L2's architecture discovery (manifests, entrypoints, wiring declarations) and
+#   decision-point planning maps to the Architecture phase: emit wiring work items,
+#   component structure changes, contract/adapter tasks, import-boundary violations,
+#   shape-drift work items. Pin registry references must be removed. The discovery
+#   and planning logic survives as the Architecture phase's strategy.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 9.2 and 6.3.
+#   Data structures:
+#     - Planner identity becomes ArchitecturePhasePlanner.
+#     - ArchitectureFinding: {shape_id: ShapeId, category: str, required_change_type: Literal['wiring_only','spec_change','behavior_change'], evidence_refs: list[str], target_files: list[str]}.
+#       behavior_change is allowed within existing library boundaries (in-place algorithm remediation, §9.3).
+#   Interface contracts:
+#     - def discover(self, ctx: PlanningContext) -> dict[str, Any]
+#     - def build_plan(self, ctx: PlanningContext, gaps: list[dict[str, Any]], discovery: dict[str, Any]) -> dict[str, Any]
+#   Control flow:
+#     1. Keep topology discovery (manifests/entrypoints/wiring) but remove pin registry assumptions.
+#     2. Convert findings into architecture-phase outputs: wiring fixes, boundary violations,
+#        shape drift tasks, component structure, contracts, adapters.
+#     3. Architecture phase edits code via PromotionLoop IMPLEMENT step — can edit component
+#        structure AND algorithm implementations in-place.
+#     4. Any refactor-only finding is outside Architecture authority: BLOCK with diagnostics
+#        (no forward-routing to Quality phase; phases are forward-only but work items
+#        do not route across phases).
+#   Error handling:
+#     - Missing topology evidence returns blocked architecture finding with diagnostic.
+#   Integration points:
+#     - Selected by PhaseRouter for phase='architecture'.
+#     - Consumes ShapeMatchReport and dependency scans.
+# IMPL(single-layer): Architecture findings converted to work items should target
+# `shape_id` + `created_in_phase='architecture'` and include
+# `required_change_type`/`evidence_refs`; persistence should use
+# `WorkItemStore.create/upsert` so evidence merges stay explicit.
+#   Test requirements:
+#     - Emits only allowed change types for architecture phase.
+#     - Out-of-authority findings (e.g. refactor-only) produce block, not cross-phase re-route.
+
 """L2 (architecture) layer planner.
 
 L2 routes architecture source artifacts (manifests, pin registries,

@@ -60,6 +60,10 @@
 # `PatternLibrary` prompt sections should use the same scoped contract-template set as
 # PromotionLoop so Architecture-phase contract findings and verifier requirements are
 # consistent across entry/exit refinement and per-slice execution.
+# IMPL(single-layer): Phase convergence/open-item accounting should consume
+# `WorkItemStore.list_open(phase=...)` over shape-routed work items; the work-item
+# `created_in_phase` field is audit metadata and must not be used for cross-phase
+# triage.
 #   Test requirements:
 #     - Forward-only phase ordering (Libraries -> Architecture -> Quality).
 #     - Phase-appropriate behaviors (L1/L2/L3) in each phase's PromotionLoop.

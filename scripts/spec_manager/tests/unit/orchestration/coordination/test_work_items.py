@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 from spec_manager.orchestration.coordination.work_items import (
     SearchQuery,
-    SearchResult,
     WorkItem,
     WorkItemLocation,
     WorkItemStore,
@@ -16,138 +16,173 @@ from spec_manager.orchestration.coordination.work_items import (
     _tokenize,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _make_item(
-    spec_text: str = "Calculate risk exposure for the portfolio",
-    owner: str = "slice-treasury",
+    title: str = "Calculate risk exposure for the portfolio",
+    description: str = "",
+    slice_id: str = "slice-treasury",
     status: str = "NEW",
     symbol: str = "RiskEngine.check_exposure",
-    file: str = "risk_engine.py",
-    tags: list[str] | None = None,
+    file_path: str = "risk_engine.py",
+    shape_id: str = "shape.risk",
+    phase: str = "architecture",
+    required_change_type: str = "behavior_change",
+    evidence_refs: list[str] | None = None,
+    work_item_id: str | None = None,
 ) -> WorkItem:
+    search_text = f"{title}\n{description}".strip()
     return WorkItem(
-        work_item_id=_fingerprint(spec_text),
-        spec_text=spec_text,
-        owner_slice_id=owner,
+        work_item_id=work_item_id or _fingerprint(search_text),
+        run_id="run-001",
+        slice_id=slice_id,
+        title=title,
+        description=description,
+        shape_id=shape_id,
+        created_in_phase=phase,
+        required_change_type=required_change_type,
         status=status,
-        location=WorkItemLocation(file=file, symbol=symbol, line_hint=10),
-        tags=tags or [],
+        file_locations=[
+            WorkItemLocation(file_path=file_path, symbol=symbol, line_start=10),
+        ],
+        evidence_refs=evidence_refs or [],
     )
-
-
-# ---------------------------------------------------------------------------
-# WorkItem serialization
-# ---------------------------------------------------------------------------
 
 
 class TestWorkItemSerialization:
     def test_to_dict_roundtrip(self):
-        item = _make_item()
-        d = item.to_dict()
-        restored = WorkItem.from_dict(d)
+        item = _make_item(evidence_refs=["tests/unit/test_file.py::test_case"])
+        restored = WorkItem.from_dict(item.to_dict())
         assert restored.work_item_id == item.work_item_id
-        assert restored.spec_text == item.spec_text
-        assert restored.owner_slice_id == item.owner_slice_id
-        assert restored.status == item.status
-        assert restored.location.file == item.location.file
-        assert restored.location.symbol == item.location.symbol
-        assert restored.location.line_hint == item.location.line_hint
-        assert restored.tags == item.tags
+        assert restored.run_id == item.run_id
+        assert restored.slice_id == item.slice_id
+        assert restored.title == item.title
+        assert restored.description == item.description
+        assert restored.shape_id == item.shape_id
+        assert restored.created_in_phase == item.created_in_phase
+        assert restored.required_change_type == item.required_change_type
+        assert restored.file_locations[0].file_path == item.file_locations[0].file_path
+        assert restored.file_locations[0].symbol == item.file_locations[0].symbol
+        assert restored.file_locations[0].line_start == item.file_locations[0].line_start
+        assert restored.evidence_refs == item.evidence_refs
 
-    def test_from_dict_defaults(self):
-        d = {"work_item_id": "abc", "spec_text": "something", "owner_slice_id": "s1"}
-        item = WorkItem.from_dict(d)
-        assert item.status == "NEW"
-        assert item.location.file == ""
-        assert item.tags == []
+    def test_from_dict_requires_shape_id(self):
+        with pytest.raises(ValueError, match="shape_id is required"):
+            WorkItem.from_dict(
+                {
+                    "work_item_id": "abc",
+                    "run_id": "run-001",
+                    "slice_id": "slice-1",
+                    "title": "T",
+                    "description": "",
+                    "created_in_phase": "architecture",
+                    "required_change_type": "behavior_change",
+                    "status": "NEW",
+                }
+            )
 
     def test_location_roundtrip(self):
-        loc = WorkItemLocation(file="foo.py", symbol="Foo.bar", line_hint=42)
-        d = loc.to_dict()
-        restored = WorkItemLocation.from_dict(d)
-        assert restored.file == "foo.py"
+        loc = WorkItemLocation(
+            file_path="foo.py",
+            symbol="Foo.bar",
+            line_start=42,
+            line_end=45,
+        )
+        restored = WorkItemLocation.from_dict(loc.to_dict())
+        assert restored.file_path == "foo.py"
         assert restored.symbol == "Foo.bar"
-        assert restored.line_hint == 42
+        assert restored.line_start == 42
+        assert restored.line_end == 45
 
-
-# ---------------------------------------------------------------------------
-# WorkItemStore CRUD
-# ---------------------------------------------------------------------------
+    def test_location_legacy_fields_are_mapped(self):
+        restored = WorkItemLocation.from_dict(
+            {"file": "legacy.py", "symbol": "Legacy.run", "line_hint": "9", "end_line": "12"}
+        )
+        assert restored.file_path == "legacy.py"
+        assert restored.symbol == "Legacy.run"
+        assert restored.line_start == 9
+        assert restored.line_end == 12
 
 
 class TestWorkItemStore:
-    def test_add_and_get(self, tmp_path):
+    def test_create_and_get(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         item = _make_item()
-        store.add(item)
+        store.create(item)
         fetched = store.get(item.work_item_id)
         assert fetched is not None
-        assert fetched.spec_text == item.spec_text
+        assert fetched.title == item.title
 
     def test_get_missing_returns_none(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         assert store.get("nonexistent") is None
 
-    def test_update_status(self, tmp_path):
+    def test_upsert_updates_status(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         item = _make_item()
-        store.add(item)
-        store.update_status(item.work_item_id, "IN_PROGRESS")
+        created = store.create(item)
+        store.upsert(replace(created, status="IN_PROGRESS"))
         fetched = store.get(item.work_item_id)
         assert fetched is not None
         assert fetched.status == "IN_PROGRESS"
         assert fetched.updated_at != ""
 
-    def test_update_status_invalid(self, tmp_path):
+    def test_upsert_invalid_status(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         item = _make_item()
-        store.add(item)
+        created = store.create(item)
         with pytest.raises(ValueError, match="Invalid status"):
-            store.update_status(item.work_item_id, "INVALID")
+            store.upsert(replace(created, status="INVALID"))
 
-    def test_update_status_missing_item(self, tmp_path):
+    def test_upsert_missing_item_creates(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        with pytest.raises(KeyError, match="Work item not found"):
-            store.update_status("no-such-id", "DONE")
+        item = _make_item(work_item_id="upsert-created-id")
+        created = store.upsert(item)
+        assert created.work_item_id == "upsert-created-id"
+        assert store.get("upsert-created-id") is not None
 
-    def test_get_by_slice(self, tmp_path):
+    def test_list_open_filters(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        item_a = _make_item(spec_text="task A", owner="slice-1")
-        item_b = _make_item(spec_text="task B", owner="slice-2")
-        item_c = _make_item(spec_text="task C", owner="slice-1")
-        store.add(item_a)
-        store.add(item_b)
-        store.add(item_c)
-        results = store.get_by_slice("slice-1")
-        assert len(results) == 2
-        ids = {r.work_item_id for r in results}
-        assert item_a.work_item_id in ids
-        assert item_c.work_item_id in ids
+        open_arch = _make_item(
+            title="open-arch",
+            shape_id="shape.alpha",
+            phase="architecture",
+            status="NEW",
+            work_item_id="open-arch",
+        )
+        open_lib = _make_item(
+            title="open-lib",
+            shape_id="shape.alpha",
+            phase="libraries",
+            status="IN_PROGRESS",
+            work_item_id="open-lib",
+        )
+        done_arch = _make_item(
+            title="done-arch",
+            shape_id="shape.beta",
+            phase="architecture",
+            status="DONE",
+            work_item_id="done-arch",
+        )
+        store.create(open_arch)
+        store.create(open_lib)
+        store.create(done_arch)
 
-    def test_get_by_status(self, tmp_path):
-        store = WorkItemStore(tmp_path / "coordination")
-        item_a = _make_item(spec_text="task A", status="NEW")
-        item_b = _make_item(spec_text="task B", status="DONE")
-        store.add(item_a)
-        store.add(item_b)
-        new_items = store.get_by_status("NEW")
-        assert len(new_items) == 1
-        assert new_items[0].work_item_id == item_a.work_item_id
+        all_open = {item.work_item_id for item in store.list_open()}
+        assert "open-arch" in all_open
+        assert "open-lib" in all_open
+        assert "done-arch" not in all_open
+
+        arch_open = {item.work_item_id for item in store.list_open(phase="architecture")}
+        assert arch_open == {"open-arch"}
+
+        shape_open = {item.work_item_id for item in store.list_open(shape_id="shape.alpha")}
+        assert shape_open == {"open-arch", "open-lib"}
 
     def test_all_items(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        store.add(_make_item(spec_text="alpha"))
-        store.add(_make_item(spec_text="beta"))
+        store.create(_make_item(title="alpha", work_item_id="alpha-id"))
+        store.create(_make_item(title="beta", work_item_id="beta-id"))
         assert len(store.all_items()) == 2
-
-
-# ---------------------------------------------------------------------------
-# JSONL persistence
-# ---------------------------------------------------------------------------
 
 
 class TestPersistence:
@@ -155,7 +190,7 @@ class TestPersistence:
         coord_dir = tmp_path / "coordination"
         store = WorkItemStore(coord_dir)
         item = _make_item()
-        store.add(item)
+        store.create(item)
         jsonl_path = coord_dir / "work_items.jsonl"
         assert jsonl_path.exists()
         lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
@@ -167,66 +202,58 @@ class TestPersistence:
         coord_dir = tmp_path / "coordination"
         store = WorkItemStore(coord_dir)
         item = _make_item()
-        store.add(item)
-
-        # Create a new store pointing at the same directory
+        store.create(item)
         store2 = WorkItemStore(coord_dir)
         fetched = store2.get(item.work_item_id)
         assert fetched is not None
-        assert fetched.spec_text == item.spec_text
+        assert fetched.title == item.title
 
-    def test_update_appends_to_jsonl(self, tmp_path):
+    def test_upsert_appends_to_jsonl(self, tmp_path):
         coord_dir = tmp_path / "coordination"
         store = WorkItemStore(coord_dir)
         item = _make_item()
-        store.add(item)
-        store.update_status(item.work_item_id, "DONE")
+        created = store.create(item)
+        store.upsert(replace(created, status="DONE"))
 
         jsonl_path = coord_dir / "work_items.jsonl"
         lines = jsonl_path.read_text(encoding="utf-8").strip().splitlines()
-        # Should have 2 lines: initial add + status update
         assert len(lines) == 2
         last_entry = json.loads(lines[-1])
         assert last_entry["status"] == "DONE"
 
-    def test_index_rebuild_on_add(self, tmp_path):
+    def test_index_rebuild_on_create(self, tmp_path):
         coord_dir = tmp_path / "coordination"
         store = WorkItemStore(coord_dir)
         item = _make_item()
-        store.add(item)
+        store.create(item)
 
         index_path = coord_dir / "work_items_index.json"
         assert index_path.exists()
         index = json.loads(index_path.read_text(encoding="utf-8"))
         assert item.work_item_id in index
         assert index[item.work_item_id]["status"] == "NEW"
-        assert index[item.work_item_id]["owner"] == item.owner_slice_id
-        assert "spec_text_preview" in index[item.work_item_id]
+        assert index[item.work_item_id]["owner_slice_id"] == item.slice_id
+        assert index[item.work_item_id]["title"] == item.title
+        assert "spec_fingerprint" in index[item.work_item_id]
 
     def test_reload_last_write_wins(self, tmp_path):
-        """JSONL may contain duplicate IDs; last write wins on reload."""
         coord_dir = tmp_path / "coordination"
         store = WorkItemStore(coord_dir)
-        item = _make_item()
-        store.add(item)
-        store.update_status(item.work_item_id, "BLOCKED")
+        item = _make_item(work_item_id="stable-id")
+        created = store.create(item)
+        store.upsert(replace(created, status="BLOCKED"))
 
         store2 = WorkItemStore(coord_dir)
-        fetched = store2.get(item.work_item_id)
+        fetched = store2.get("stable-id")
         assert fetched is not None
         assert fetched.status == "BLOCKED"
-
-
-# ---------------------------------------------------------------------------
-# Search Stage A: exact
-# ---------------------------------------------------------------------------
 
 
 class TestSearchExact:
     def test_fingerprint_match(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        item = _make_item(spec_text="Validate settlement amounts")
-        store.add(item)
+        item = _make_item(title="Validate settlement amounts", description="")
+        store.create(item)
 
         results = store.search(SearchQuery(spec_text="Validate settlement amounts"))
         assert len(results) >= 1
@@ -237,8 +264,7 @@ class TestSearchExact:
 
     def test_fingerprint_case_insensitive(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        item = _make_item(spec_text="Validate settlement amounts")
-        store.add(item)
+        store.create(_make_item(title="Validate settlement amounts", description=""))
 
         results = store.search(SearchQuery(spec_text="  VALIDATE  Settlement  Amounts  "))
         assert len(results) >= 1
@@ -247,104 +273,88 @@ class TestSearchExact:
 
     def test_substring_containment(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        item = _make_item(spec_text="Validate settlement amounts and reconcile with ledger")
-        store.add(item)
+        store.create(
+            _make_item(title="Validate settlement amounts and reconcile with ledger", description="")
+        )
 
-        # Query is a substring of the stored spec_text
         results = store.search(SearchQuery(spec_text="validate settlement amounts"))
-        # Should get either fingerprint or substring match
-        assert len(results) >= 1
         exact_results = [r for r in results if r.match_stage == "EXACT"]
         assert len(exact_results) >= 1
-
-
-# ---------------------------------------------------------------------------
-# Search Stage B: fuzzy
-# ---------------------------------------------------------------------------
+        assert any(r.match_reason == "substring_containment" for r in exact_results)
 
 
 class TestSearchFuzzy:
     def test_fuzzy_token_matching(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         item = _make_item(
-            spec_text="Calculate risk exposure for the portfolio",
+            title="Calculate risk exposure for the portfolio",
             symbol="RiskEngine.check_exposure",
-            tags=["risk", "exposure"],
+            evidence_refs=["risk", "exposure"],
         )
-        store.add(item)
+        store.create(item)
 
         results = store.search(SearchQuery(artifact_key="RiskEngine.check_exposure"))
         assert len(results) >= 1
-        # Should match via fuzzy tokens + identifier boost
         assert any(r.work_item.work_item_id == item.work_item_id for r in results)
 
     def test_keyword_fuzzy_match(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         item = _make_item(
-            spec_text="Process incoming trade confirmations and validate",
+            title="Process incoming trade confirmations and validate",
             symbol="TradeProcessor.validate",
-            tags=["trade", "confirmation"],
+            evidence_refs=["trade", "confirmation"],
         )
-        store.add(item)
+        store.create(item)
 
         results = store.search(SearchQuery(keywords=["trade", "validate"]))
         assert len(results) >= 1
         assert any(r.work_item.work_item_id == item.work_item_id for r in results)
 
 
-# ---------------------------------------------------------------------------
-# Search: edge cases
-# ---------------------------------------------------------------------------
-
-
 class TestSearchEdgeCases:
-    def test_no_match_returns_empty(self, tmp_path):
+    def test_no_match_returns_no_exact(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        store.add(_make_item(spec_text="Calculate risk exposure for the portfolio"))
+        store.create(_make_item(title="Calculate risk exposure for the portfolio"))
         results = store.search(
             SearchQuery(spec_text="completely unrelated database migration query")
         )
-        # Might have some low-scoring fuzzy matches that don't meet threshold
         exact = [r for r in results if r.match_stage == "EXACT"]
         assert len(exact) == 0
 
     def test_empty_query_returns_empty(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        store.add(_make_item())
+        store.create(_make_item())
         results = store.search(SearchQuery())
         assert results == []
 
     def test_multiple_matches_sorted_by_score(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
-        store.add(
+        store.create(
             _make_item(
-                spec_text="Validate settlement amounts",
+                title="Validate settlement amounts",
                 symbol="Settlement.validate",
+                work_item_id="item-a",
             )
         )
-        store.add(
+        store.create(
             _make_item(
-                spec_text="Calculate exposure for settlement risk",
+                title="Calculate exposure for settlement risk",
                 symbol="Settlement.calculate_exposure",
+                work_item_id="item-b",
             )
         )
-        store.add(
+        store.create(
             _make_item(
-                spec_text="Process incoming trade confirmations",
+                title="Process incoming trade confirmations",
                 symbol="TradeProcessor.process",
+                work_item_id="item-c",
             )
         )
 
         results = store.search(SearchQuery(keywords=["settlement", "validate"]))
         assert len(results) >= 1
-        # Results should be sorted by score descending
         for i in range(len(results) - 1):
             assert results[i].score >= results[i + 1].score
-
-
-# ---------------------------------------------------------------------------
-# Tokenizer and helpers
-# ---------------------------------------------------------------------------
 
 
 class TestTokenizer:
@@ -379,25 +389,19 @@ class TestTokenizer:
         assert fp1 != fp2
 
 
-# ---------------------------------------------------------------------------
-# Rerank placeholder
-# ---------------------------------------------------------------------------
-
-
 class TestRerankPlaceholder:
     def test_rerank_returns_semantic_stage(self, tmp_path):
         store = WorkItemStore(tmp_path / "coordination")
         items = [
-            _make_item(spec_text="alpha task", symbol="Alpha.run"),
-            _make_item(spec_text="beta task", symbol="Beta.run"),
+            _make_item(title="alpha task", symbol="Alpha.run", work_item_id="alpha-task"),
+            _make_item(title="beta task", symbol="Beta.run", work_item_id="beta-task"),
         ]
-        for it in items:
-            store.add(it)
+        for item in items:
+            store.create(item)
 
         query = SearchQuery(keywords=["alpha"])
         results = store.rerank_with_llm(query, items)
         assert all(r.match_stage == "SEMANTIC" for r in results)
         assert all(r.match_reason == "llm_rerank_placeholder" for r in results)
-        # Should be sorted by score
         for i in range(len(results) - 1):
             assert results[i].score >= results[i + 1].score

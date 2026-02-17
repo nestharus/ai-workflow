@@ -1,3 +1,41 @@
+# TODO(single-layer): RESTRUCTURE — Architecture strategy loses L2 gate. Instead
+#   activates during Architecture phase (Section 9.1 phase 2 of 3). The core
+#   algorithm (detect decision points -> propose candidates -> evaluate -> persist ->
+#   create work items -> manage WaitGraph) all KEEPS. Shape docs inform which
+#   components are affected by architecture decisions. Decision artifacts route by
+#   shape_id instead of pin references.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 9.1 and 7.2.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'].
+#     - DecisionOutcome metadata must include shape_id and contract_ids.
+#     - ARCH_DECISION work items must include shape_id routing handle.
+#   Interface contracts:
+#     - def run(self, session: PlanningSession) -> PlanningSession
+#     - def _should_run(self, session: PlanningSession) -> bool  # phase == 'architecture' and impact threshold
+#   Control flow:
+#     1. Replace L2 gating with architecture-phase gating (phase == 'architecture').
+#     2. Keep detector/proposer/evaluator/persistence pipeline.
+#     3. Build ScopePacket from shape ownership and shape contracts, not pin references.
+#     4. Architecture phase edits code via PromotionLoop IMPLEMENT step — can edit
+#        component structure AND algorithm implementations in-place.
+#     5. Persist decision artifacts. Architecture can refine algorithms in-place within
+#        existing library boundaries (no target_phase routing to libraries). If a decision
+#        requires new library creation or ownership change, BLOCK with diagnostics.
+#   Error handling:
+#     - Missing shape mapping for a decision point creates blocked architecture decision and wait graph edge.
+#   Integration points:
+#     - Called by planner API capability PLAN during architecture phase.
+#     - Calls work_item_store and wait_graph unchanged.
+# IMPL(single-layer): ARCH_DECISION emissions from this strategy should populate the
+# shared work-item routing contract (`shape_id`, `created_in_phase='architecture'`,
+# `required_change_type`, `evidence_refs`, `contract_ids`) and persist through
+# `WorkItemStore.create/upsert` rather than legacy status-only update paths.
+#   Test requirements:
+#     - Strategy runs only in architecture phase.
+#     - Decision artifacts include shape IDs.
+#     - Blocked decisions create wait graph edges.
+
 """Architecture planning strategy.
 
 Gated by L2 + impact >= MEDIUM. Detects decision points, proposes candidates,

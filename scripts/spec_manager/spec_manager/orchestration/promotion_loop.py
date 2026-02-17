@@ -54,6 +54,10 @@
 # `PatternLibrary` contract dimensions/templates (EVENT_FLOW, DI_BINDING,
 # MIDDLEWARE_ORDERING) and surface missing-verifier-template coverage as
 # deterministic contract work items before convergence checks.
+# IMPL(single-layer): Routing/finding registration should persist work via
+# `WorkItemStore.create/upsert` with `shape_id` + `created_in_phase=active_phase`
+# + `required_change_type`; phase-local remediation checks should read
+# `list_open(phase=active_phase, shape_id=...)` (no cross-phase reroute).
 #   Test requirements:
 #     - Step dispatch is independent of L1/L2/L3 but phase-aware (Libraries/Architecture/Quality).
 #     - VERIFY failure yields phase-local remediation or BLOCK, not layer demotion ticket.

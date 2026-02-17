@@ -1,3 +1,38 @@
+# TODO(single-layer): RESTRUCTURE -> merge into Libraries phase planner. L1's skeleton
+#   analysis (discover functions, spec comments, produce implementation intentions)
+#   is what the Libraries phase does. The L1DiscoveryRouter and L1IntentionPlanner
+#   logic survives as the Libraries phase's discovery/planning strategy. Remove layer
+#   naming; this becomes the primary "discover what needs implementing" capability.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 8 and 9; evaluation modifications #3 and #5.
+#   Data structures:
+#     - Rename planner identity to LibrariesPhasePlanner while preserving discovery/planning payload shapes.
+#     - LibrariesIntent: {shape_id: ShapeId|None, file_targets: list[str], function_targets: list[str], required_change_type: str, spec_refs: list[str]}.
+#   Interface contracts:
+#     - def discover(self, ctx: PlanningContext) -> dict[str, Any]
+#     - def build_plan(self, ctx: PlanningContext, gaps: list[dict[str, Any]], discovery: dict[str, Any]) -> dict[str, Any]
+#   Control flow:
+#     1. Iteration 1: discover from spec skeleton/decomposition inputs (L1 behaviors).
+#     2. Later iterations: consume queued libraries-phase work items and shape-scoped gaps.
+#     3. Preserve under-spec resolution strategy and work-item monitor generation.
+#     4. When intent changes shape contracts or shape docs, emit automatic verifier-create/update work item.
+#     5. Libraries phase edits code via PromotionLoop IMPLEMENT step (Gap: algorithmic gaps;
+#        Plan/Implement: create/edit code+tests; Promote/Verify: deterministic verifiers + routing signals).
+#   Error handling:
+#     - Missing slice root/spec catalog emits under-spec block, not guessed plan.
+#   Integration points:
+#     - Selected by PhaseRouter for phase='libraries'.
+#     - Emits WorkItem payloads consumed by implementation runner.
+# IMPL(single-layer): Libraries intent/work-item emission should adopt the shared
+# contract (`shape_id`, `created_in_phase='libraries'`, `required_change_type`,
+# `evidence_refs`, `verifier_ids`) and use `WorkItemStore.create/upsert`; when
+# shape docs change (`requires_verifier_refresh=True`), emit verifier-refresh work
+# items keyed to the same `shape_id`.
+#   Test requirements:
+#     - First-pass spec-driven discovery.
+#     - Subsequent-pass work-item-driven planning.
+#     - Verifier-refresh work item emitted on shape changes.
+
 """L1 layer planner — code-as-spec skeleton analysis.
 
 L1 works with PDD skeleton files that contain spec comments and function
