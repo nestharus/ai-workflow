@@ -50,6 +50,10 @@
 # IMPL(single-layer): PROMOTE must treat orchestrator `STALE_EVIDENCE` failures on
 # required deterministic gates and non-ship hard-stop outcomes as terminal blocks,
 # not demotion/retry signals.
+# IMPL(single-layer): Architecture-review prompt assembly should consume
+# `PatternLibrary` contract dimensions/templates (EVENT_FLOW, DI_BINDING,
+# MIDDLEWARE_ORDERING) and surface missing-verifier-template coverage as
+# deterministic contract work items before convergence checks.
 #   Test requirements:
 #     - Step dispatch is independent of L1/L2/L3 but phase-aware (Libraries/Architecture/Quality).
 #     - VERIFY failure yields phase-local remediation or BLOCK, not layer demotion ticket.

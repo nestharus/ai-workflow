@@ -1,3 +1,73 @@
+# TODO(single-layer): RESTRUCTURE — This is the core file that changes. The L1→L2→L3
+#   cascade with inter-layer transitions, demotion, and typed refinement per layer
+#   becomes three forward-only phases: Libraries → Architecture → Quality. Key changes:
+#   - Remove Layer enum dispatch and _LAYER_REFINEMENT mapping
+#   - Remove inter-layer transition gates and demotion propagation
+#   - Remove L1 completion gating that blocks L2
+#   - Replace with three forward-only phases; each phase runs its own PromotionLoop
+#     with bounded iterations per slice (max_iterations_per_slice), NOT a repeating
+#     4-phase cycle
+#   - Each phase edits code via its PromotionLoop IMPLEMENT step (not just Build)
+#   - Termination is per-phase convergence: skeleton non-draft + verifiers pass +
+#     no open work items + within iteration bounds; global termination after Quality
+#   - Phase authority boundary: if a phase encounters something outside its authority
+#     it BLOCKS (does not re-triage to an earlier phase — no backtracking)
+#     Libraries: full code+test authority within library boundaries.
+#     Architecture: wiring, components, contracts, adapters; can edit algorithms in-place;
+#       cannot create new libraries or change library/store ownership; blocks if needed.
+#     Quality: refactoring only; cannot change behavior; blocks if behavior change needed.
+#   - Iteration cap enforcement: max_work_items_per_phase overflow must hard-stop and
+#     emit UserQuestionSignal (block and ask), not silently continue
+#   - Stagnation rule: same verifier fails with no diff progress twice → block with
+#     diagnostics (not retry indefinitely)
+#   - Skeleton lifecycle per phase: propose skeleton (draft) → work (PromotionLoop) →
+#     refine skeleton (non-draft); track via commit tags
+#   - Worktree management, human approval loop, and workspace infrastructure KEEP.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 9.1, 9.2, 9.3, 9.4, 11; evaluation modifications #1, #2, #5.
+#   Data structures:
+#     - LifecycleConfig: {max_iterations_per_slice: int = 20, max_work_items_per_phase: int = 50, stagnation_window: int = 2, governance_enabled: bool}.
+#     - PhaseSnapshot: {phase: PhaseId, iteration_count: int, slice_results: dict[str, dict[str, Any]], verifier_failures: dict[ShapeId, list[str]], changed_files: list[str], open_work_items: int, skeleton_draft: bool, blocked_reason: str|None}.
+#     - Uses RunState/PhaseId from run_state.py as the authoritative state contract.
+#   Interface contracts:
+#     - def run(self) -> dict[str, Any]
+#     - def _run_phase(self, phase: PhaseId) -> PhaseSnapshot
+#     - def _propose_skeleton(self, phase: PhaseId) -> SkeletonDraft
+#     - def _refine_skeleton(self, phase: PhaseId, draft: SkeletonDraft) -> SkeletonFinal
+#     - def _check_phase_convergence(self, snapshot: PhaseSnapshot) -> tuple[bool, str|None]
+#   Control flow:
+#     1. Phase 0 intake/bootstrap runs once; produces draft shapes + algorithm inventory + store inventory (evaluation modification #1).
+#     2. Phase order is forward-only: Libraries -> Architecture -> Quality; no cycling back (evaluation modification #2).
+#     3. Libraries phase uses L1 behaviors (algorithmic gaps, code+test creation); Architecture uses L2 behaviors (wiring, contracts, adapters); Quality uses L3 behaviors (refactoring only) (evaluation modification #5).
+#     4. Each phase edits code via its own PromotionLoop IMPLEMENT step — all phases do work, not just one.
+#     5. Each phase follows skeleton lifecycle: propose skeleton (draft) -> PromotionLoop per slice -> refine skeleton (non-draft, freeze structural invariants, record commit tag).
+#     6. Phase-local remediation: if a finding is within the phase's authority, handle locally; if outside authority, BLOCK (never re-triage to an earlier phase).
+#     7. Enforce caps: overflow of per-phase work items blocks run and emits user question signal.
+#     8. Track stagnation by verifier-id + unchanged diff hash; block after two no-progress windows.
+#     9. Per-phase convergence: skeleton non-draft + verifiers pass + no open work items + within iteration bounds.
+#        Libraries: skeleton non-draft + verifiers pass + no open work items + within bounds.
+#        Architecture: skeleton non-draft + contract verifiers pass + import boundaries satisfied + no open work items + within bounds.
+#        Quality: all tests + all contract verifiers green + refactor items closed + within bounds.
+#     10. Global: run terminates after Quality phase convergence.
+#   Error handling:
+#     - Missing deterministic evidence (tests/import scan/shape index) causes BLOCKED state; no heuristic completion.
+#     - Phase failure preserves artifacts and returns retryable diagnostics unless cap exceeded.
+#     - If phase needs earlier-phase authority: BLOCK with diagnostics (no demotion/backtracking).
+#   Integration points:
+#     - Called by: pdd_orchestrator for authoritative execution.
+#     - Calls: promotion_loop, routing matcher/verifiers, work_item store, monitors, compliance orchestrator.
+# IMPL(single-layer): Lifecycle-level reviewer orchestration that builds
+# `PatternLibrary` prompt sections should use the same scoped contract-template set as
+# PromotionLoop so Architecture-phase contract findings and verifier requirements are
+# consistent across entry/exit refinement and per-slice execution.
+#   Test requirements:
+#     - Forward-only phase ordering (Libraries -> Architecture -> Quality).
+#     - Phase-appropriate behaviors (L1/L2/L3) in each phase's PromotionLoop.
+#     - Skeleton lifecycle (draft -> work -> non-draft) per phase.
+#     - Cap/stagnation hard-stop behavior.
+#     - Per-phase convergence criteria.
+#     - Block (not re-triage) on out-of-authority findings.
+
 """PDD lifecycle orchestrator: L1 → L2 → L3 layer pipeline.
 
 Orchestrates the multi-layer promotion model from WORKFLOW_ANALYSIS.md.
