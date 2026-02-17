@@ -47,6 +47,9 @@
 # IMPL(single-layer): PROMOTE-step gate orchestration should consume the public
 # `spec_manager.compliance.promotion` exports so gate-class renames roll out
 # without submodule-level compatibility aliases.
+# IMPL(single-layer): PROMOTE must treat orchestrator `STALE_EVIDENCE` failures on
+# required deterministic gates and non-ship hard-stop outcomes as terminal blocks,
+# not demotion/retry signals.
 #   Test requirements:
 #     - Step dispatch is independent of L1/L2/L3 but phase-aware (Libraries/Architecture/Quality).
 #     - VERIFY failure yields phase-local remediation or BLOCK, not layer demotion ticket.
