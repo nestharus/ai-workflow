@@ -39,6 +39,9 @@
 # `orchestration.demotion` ticket-schema migration (`shape_id`,
 # `required_change_type`, QUEUED/BLOCKED outcomes) so this module does not re-introduce
 # layer-targeting fields after escalation cutover.
+# IMPL(single-layer): Router integration should pass `shape_index` and consume
+# explicit blocked-finding outputs (ownership ambiguity / out-of-authority)
+# rather than assuming DemotionTicket-only conversion succeeds.
 #   Test requirements:
 #     - Authority-based routing: Architecture handles behavior findings in-place; Quality blocks on behavior.
 #     - Multi-file finding produces one work item per owner shape or grouped by shape policy.
