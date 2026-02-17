@@ -134,6 +134,29 @@ without sacrificing fidelity. But an efficiency optimization that risks
 serving stale or incorrect results is rejected — efficiency never
 overrides correctness.
 
+### Fidelity-preserving continuation over fail-fast for non-critical items
+
+When a pipeline processes a collection of items and one item is
+malformed, the system continues processing the remaining items rather
+than aborting the entire batch. This preserves fidelity for the items
+that CAN be processed. The alternative — aborting on the first error —
+loses all the work that would have been done on valid items.
+
+However, continuation without diagnostic capture is not continuation —
+it is silent loss. Every skipped, defaulted, or degraded item must
+produce a structured diagnostic record (see C08). The output must
+explicitly indicate that it is partial and identify what was excluded.
+Downstream consumers must be able to distinguish "complete result" from
+"partial result with N items skipped."
+
+This tradeoff does NOT apply to structural failures (missing required
+configuration, unreachable services, corrupted state files). Structural
+failures should fail fast — they affect ALL items, not individual ones.
+
+This sits under "Fidelity over speed" — continuing is slower than
+aborting, but produces more faithful (complete) output for the items
+that succeed.
+
 ---
 
 ## How to make decisions
@@ -335,3 +358,11 @@ demotion pipelines, evidence bundles, gate systems, and multi-layer
 promotion. This infrastructure exists because the primary objective
 requires it. A simpler system that drops requirements or misses errors
 is not an acceptable alternative to a complex system that doesn't.
+
+**Single-format outputs.** The system produces both machine-readable
+(JSON) and human-readable (Markdown/text) representations of evaluation
+and compliance results. The machine-readable form is authoritative. The
+human-readable form is a derived projection for review convenience.
+This duplication is deliberate — it supports both automated pipeline
+consumption and human audit without requiring consumers to parse the
+authoritative format.
