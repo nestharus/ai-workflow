@@ -24,6 +24,9 @@
 # IMPL(single-layer): Keep checker dispatch branches in lockstep with
 # `coordination.monitors._TYPE_MAP`/`condition_from_dict`; newly persisted condition
 # payload types must not be treated as implicitly passing when dispatch is missing.
+# IMPL(single-layer): Condition evaluation must be grounded in deterministic matcher/
+# verifier evidence (§6.3); call-graph outputs remain routing hints and must not be
+# treated as direct pass/fail monitor authority.
 #     3. Keep hybrid poll/event execution and wake queue logic unchanged.
 #     4. Phases are forward-only (Libraries -> Architecture -> Quality); monitors that detect issues outside the active phase's authority cause a block, not backtracking.
 #   Error handling:
@@ -65,12 +68,29 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from spec_manager.compliance.promotion.config import PhaseId
+from spec_manager.orchestration.run_state import RunStateManager
+from spec_manager.routing.matcher import (
+    MatchPolicy,
+    ShapeMatchReport,
+    build_observed_dependency_graph,
+    match_all_shapes,
+)
+from spec_manager.routing.shapes import ShapeId, ShapePackIndex, load_shape_pack
+from spec_manager.routing.verifiers import VerifierRunSummary, run_all_active_shape_verifiers
+
 from .monitors import (
     ConstraintPresentCondition,
     GitSymbolExistsCondition,
+    IterationCapCondition,
     MonitorCondition,
     MonitorRegistry,
     MonitorSpec,
+    PhaseConvergenceCondition,
+    ShapeDependencyCleanCondition,
+    ShapeVerifiersPassCondition,
+    StagnationCondition,
+    WorkItemCapCondition,
     WorkItemDoneCondition,
     condition_from_dict,
 )
@@ -84,6 +104,32 @@ class ConstraintLookupStore(Protocol):
 
     def load_merged(self, slice_id: str) -> list[Any]:
         """Return merged constraints for a slice."""
+
+
+class ShapeIndexProvider(Protocol):
+    """Load the active shape index used by shape-aware monitor checks."""
+
+    def __call__(self) -> ShapePackIndex:
+        ...
+
+
+class ShapeVerifierSummaryProvider(Protocol):
+    """Build verifier summaries keyed by shape id."""
+
+    def __call__(self, shape_index: ShapePackIndex) -> dict[ShapeId, VerifierRunSummary]:
+        ...
+
+
+class ShapeMatchReportProvider(Protocol):
+    """Build matcher reports for shape dependency checks."""
+
+    def __call__(
+        self,
+        shape_index: ShapePackIndex,
+        observed_graph: dict[str, set[str]],
+        policy: MatchPolicy,
+    ) -> dict[ShapeId, ShapeMatchReport]:
+        ...
 
 
 # ------------------------------------------------------------------
@@ -102,19 +148,44 @@ class ConditionChecker:
         workspace_root: Path,
         work_item_store: Any = None,
         constraints_store: ConstraintLookupStore | None = None,
+        shape_index_provider: ShapeIndexProvider | None = None,
+        verifier_provider: ShapeVerifierSummaryProvider | None = None,
+        shape_match_provider: ShapeMatchReportProvider | None = None,
+        run_state_manager: RunStateManager | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._work_item_store = work_item_store
         self._constraints_store = constraints_store
+        self._shape_index_provider = shape_index_provider
+        self._verifier_provider = verifier_provider
+        self._shape_match_provider = shape_match_provider
+        self._run_state_manager = run_state_manager
+        self._shape_index: ShapePackIndex | None = None
+        self._shape_verifier_summaries: dict[ShapeId, VerifierRunSummary] | None = None
+        self._shape_match_reports: dict[str, dict[ShapeId, ShapeMatchReport]] = {}
 
     def check(self, condition: MonitorCondition) -> bool:
         """Dispatch to the appropriate checker."""
+        # IMPL(single-layer): Unknown/new condition payloads must evaluate False
+        # until explicit deterministic checker wiring is added here.
         if isinstance(condition, GitSymbolExistsCondition):
             return self._check_git_symbol_exists(condition)
         if isinstance(condition, WorkItemDoneCondition):
             return self._check_work_item_done(condition)
         if isinstance(condition, ConstraintPresentCondition):
             return self._check_constraint_present(condition)
+        if isinstance(condition, ShapeVerifiersPassCondition):
+            return self._check_shape_verifiers_pass(condition)
+        if isinstance(condition, ShapeDependencyCleanCondition):
+            return self._check_shape_dependency_clean(condition)
+        if isinstance(condition, IterationCapCondition):
+            return self._check_iteration_cap(condition)
+        if isinstance(condition, WorkItemCapCondition):
+            return self._check_work_item_cap(condition)
+        if isinstance(condition, StagnationCondition):
+            return self._check_stagnation(condition)
+        if isinstance(condition, PhaseConvergenceCondition):
+            return self._check_phase_convergence(condition)
         return False
 
     def _check_git_symbol_exists(self, cond: GitSymbolExistsCondition) -> bool:
@@ -180,6 +251,275 @@ class ConditionChecker:
         if not constraint_dir.exists():
             return False
         return any(cond.constraint_key in p.name for p in constraint_dir.iterdir())
+
+    def _check_shape_verifiers_pass(self, cond: ShapeVerifiersPassCondition) -> bool:
+        shape_index = self._shape_index_for_checks()
+        if shape_index is None:
+            logger.debug("ShapeVerifiersPassCondition missing shape index for shape=%s", cond.shape_id)
+            return False
+        shape = shape_index.shapes.get(cond.shape_id)
+        if shape is None:
+            logger.debug("ShapeVerifiersPassCondition missing shape=%s", cond.shape_id)
+            return False
+        if str(shape.status).strip().lower() != "active":
+            logger.debug("ShapeVerifiersPassCondition ignored for non-ACTIVE shape=%s", cond.shape_id)
+            return False
+        summaries = self._shape_verifier_summaries()
+        if summaries is None:
+            logger.debug("ShapeVerifiersPassCondition missing verifier summaries for shape=%s", cond.shape_id)
+            return False
+        summary = summaries.get(cond.shape_id)
+        if summary is None:
+            logger.debug("ShapeVerifiersPassCondition no summary for shape=%s", cond.shape_id)
+            return False
+        return bool(summary.all_passed and not summary.non_ship_block)
+
+    def _check_shape_dependency_clean(self, cond: ShapeDependencyCleanCondition) -> bool:
+        shape_index = self._shape_index_for_checks()
+        if shape_index is None:
+            logger.debug(
+                "ShapeDependencyCleanCondition missing shape index for shape=%s",
+                cond.shape_id,
+            )
+            return False
+        shape = shape_index.shapes.get(cond.shape_id)
+        if shape is None:
+            logger.debug("ShapeDependencyCleanCondition missing shape=%s", cond.shape_id)
+            return False
+        if str(shape.status).strip().lower() != "active":
+            logger.debug("ShapeDependencyCleanCondition ignored for non-ACTIVE shape=%s", cond.shape_id)
+            return False
+        reports = self._shape_match_reports_for(cond.policy)
+        if reports is None:
+            logger.debug(
+                "ShapeDependencyCleanCondition missing matcher reports for shape=%s policy=%s",
+                cond.shape_id,
+                cond.policy,
+            )
+            return False
+        report = reports.get(cond.shape_id)
+        if report is None:
+            logger.debug(
+                "ShapeDependencyCleanCondition missing report for shape=%s policy=%s",
+                cond.shape_id,
+                cond.policy,
+            )
+            return False
+        if str(report.status).strip().upper() in {"AMBIGUOUS", "BLOCKED"}:
+            return False
+        if report.missing_dependencies or report.unexpected_dependencies:
+            return False
+        return True
+
+    def _check_iteration_cap(self, cond: IterationCapCondition) -> bool:
+        state = self._current_run_state()
+        if state is None:
+            logger.debug("IterationCapCondition missing run state for phase=%s", cond.phase)
+            return False
+        if cond.phase != state.active_phase:
+            logger.debug(
+                "IterationCapCondition ignored for inactive phase=%s (active=%s)",
+                cond.phase,
+                state.active_phase,
+            )
+            return False
+        iteration_count = state.phase_iteration_counts.get(cond.phase, 0)
+        return iteration_count >= cond.max_iterations
+
+    def _check_work_item_cap(self, cond: WorkItemCapCondition) -> bool:
+        state = self._current_run_state()
+        if state is None:
+            logger.debug("WorkItemCapCondition missing run state for phase=%s", cond.phase)
+            return False
+        if cond.phase != state.active_phase:
+            logger.debug(
+                "WorkItemCapCondition ignored for inactive phase=%s (active=%s)",
+                cond.phase,
+                state.active_phase,
+            )
+            return False
+        open_work_items = self._open_work_item_count(phase=cond.phase, fallback_state=state)
+        if open_work_items is None:
+            logger.debug("WorkItemCapCondition missing open-work-item evidence for phase=%s", cond.phase)
+            return False
+        return open_work_items >= cond.max_work_items
+
+    def _check_stagnation(self, cond: StagnationCondition) -> bool:
+        state = self._current_run_state()
+        if state is None:
+            logger.debug("StagnationCondition missing run state for phase=%s", cond.phase)
+            return False
+        if cond.phase != state.active_phase:
+            logger.debug(
+                "StagnationCondition ignored for inactive phase=%s (active=%s)",
+                cond.phase,
+                state.active_phase,
+            )
+            return False
+        if not cond.verifier_id:
+            logger.debug("StagnationCondition missing verifier_id for phase=%s", cond.phase)
+            return False
+        failure_count = state.verifier_failure_counts.get(cond.verifier_id, 0)
+        if failure_count <= 0:
+            return False
+        configured_window = self._stagnation_window_default()
+        window = max(1, cond.window)
+        allowed_remaining = max(0, configured_window - window + 1)
+        return failure_count >= window and state.stagnation_window_remaining <= allowed_remaining
+
+    def _check_phase_convergence(self, cond: PhaseConvergenceCondition) -> bool:
+        state = self._current_run_state()
+        if state is None:
+            logger.debug("PhaseConvergenceCondition missing run state for phase=%s", cond.phase)
+            return False
+        if cond.phase != state.active_phase:
+            logger.debug(
+                "PhaseConvergenceCondition ignored for inactive phase=%s (active=%s)",
+                cond.phase,
+                state.active_phase,
+            )
+            return False
+        if not self._all_active_shape_verifiers_pass():
+            return False
+        phase_convergence = state.phase_convergence.get(cond.phase)
+        if not phase_convergence:
+            return False
+        if not all(phase_convergence.values()):
+            return False
+        open_work_items = self._open_work_item_count(phase=cond.phase, fallback_state=state)
+        if open_work_items is None:
+            logger.debug("PhaseConvergenceCondition missing open-work-item evidence for phase=%s", cond.phase)
+            return False
+        return open_work_items == 0
+
+    def _shape_index_for_checks(self) -> ShapePackIndex | None:
+        if self._shape_index is not None:
+            return self._shape_index
+        try:
+            if self._shape_index_provider is not None:
+                self._shape_index = self._shape_index_provider()
+            else:
+                self._shape_index = load_shape_pack(self._workspace_root)
+            return self._shape_index
+        except Exception:
+            logger.debug("MonitorConditionChecker failed to load shape index", exc_info=True)
+            return None
+
+    def _shape_verifier_summaries(self) -> dict[ShapeId, VerifierRunSummary] | None:
+        if self._shape_verifier_summaries is not None:
+            return self._shape_verifier_summaries
+        index = self._shape_index_for_checks()
+        if index is None:
+            logger.debug("MonitorConditionChecker cannot evaluate verifier summaries without shape index")
+            return None
+        try:
+            if self._verifier_provider is not None:
+                self._shape_verifier_summaries = self._verifier_provider(index)
+            else:
+                self._shape_verifier_summaries = run_all_active_shape_verifiers(
+                    index,
+                    self._workspace_root,
+                )
+            return self._shape_verifier_summaries
+        except Exception:
+            logger.debug("MonitorConditionChecker failed to load shape verifier summaries", exc_info=True)
+            return None
+
+    def _shape_match_reports_for(self, policy: str) -> dict[ShapeId, ShapeMatchReport] | None:
+        normalized_policy = str(policy).strip().lower()
+        if normalized_policy in self._shape_match_reports:
+            return self._shape_match_reports[normalized_policy]
+        index = self._shape_index_for_checks()
+        if index is None:
+            logger.debug("MonitorConditionChecker cannot evaluate matcher reports without shape index")
+            return None
+        summaries = self._shape_verifier_summaries()
+        if summaries is None:
+            logger.debug(
+                "MonitorConditionChecker cannot evaluate matcher reports without verifier summaries"
+            )
+            return None
+        try:
+            observed_graph = build_observed_dependency_graph(self._workspace_root)
+            policy_obj = MatchPolicy(dependency_mode=normalized_policy)
+            if self._shape_match_provider is not None:
+                reports = self._shape_match_provider(index, observed_graph, policy_obj)
+            else:
+                reports = match_all_shapes(
+                    index=index,
+                    observed_graph=observed_graph,
+                    verifier_results_by_shape={
+                        shape_id: summary.results for shape_id, summary in summaries.items()
+                    },
+                    policy=policy_obj,
+                )
+            self._shape_match_reports[normalized_policy] = reports
+            return reports
+        except Exception:
+            logger.debug("MonitorConditionChecker failed to load matcher reports", exc_info=True)
+            return None
+
+    def _current_run_state(self):
+        if self._run_state_manager is None:
+            return None
+        try:
+            return self._run_state_manager.read_state()
+        except Exception:
+            logger.debug("MonitorConditionChecker failed to read run state", exc_info=True)
+            return None
+
+    def _stagnation_window_default(self) -> int:
+        if self._run_state_manager is None:
+            return 2
+        try:
+            config = self._run_state_manager.read_config()
+            if config is None:
+                return 2
+            return max(1, int(config.stagnation_window))
+        except Exception:
+            logger.debug("MonitorConditionChecker failed to read run config for stagnation window", exc_info=True)
+            return 2
+
+    def _open_work_item_count(self, phase: PhaseId, *, fallback_state: Any | None = None) -> int | None:
+        if self._work_item_store is not None:
+            try:
+                return len(self._work_item_store.list_open(phase=phase))
+            except TypeError:
+                logger.debug(
+                    "MonitorConditionChecker cannot count open work items via list_open for phase=%s",
+                    phase,
+                )
+            except AttributeError:
+                logger.debug(
+                    "MonitorConditionChecker work_item_store missing list_open for phase=%s",
+                    phase,
+                )
+        if fallback_state is not None and hasattr(fallback_state, "open_work_item_count"):
+            return int(fallback_state.open_work_item_count)
+        state = self._current_run_state()
+        if state is None:
+            return None
+        return int(state.open_work_item_count)
+
+    def _all_active_shape_verifiers_pass(self) -> bool:
+        index = self._shape_index_for_checks()
+        if index is None:
+            logger.debug("PhaseConvergenceCondition cannot evaluate verifier pass for missing shape index")
+            return False
+        summaries = self._shape_verifier_summaries()
+        if summaries is None:
+            logger.debug("PhaseConvergenceCondition cannot evaluate verifier pass")
+            return False
+        for shape_id, shape in index.shapes.items():
+            if str(shape.status).strip().lower() != "active":
+                continue
+            summary = summaries.get(shape_id)
+            if summary is None:
+                logger.debug("PhaseConvergenceCondition missing summary for shape=%s", shape_id)
+                return False
+            if not summary.all_passed or summary.non_ship_block:
+                return False
+        return True
 
     def _git_list_files(self, ref: str) -> list[str] | None:
         output = self._run_git("ls-tree", "-r", "--name-only", ref)
@@ -339,6 +679,8 @@ class MonitorExecutor:
                 failures=0,
                 receipt_event="monitor_fired",
             )
+            # IMPL(single-layer): Wake routing is phase-local and forward-only; monitor
+            # actions should not encode demotion/backtracking hops to earlier phases.
             wake = WakeEvent(
                 monitor_id=spec.monitor_id,
                 signal_id=spec.signal_id,
@@ -397,6 +739,8 @@ class MonitorExecutor:
 
     def _handle_timeout(self, spec: MonitorSpec) -> None:
         """Apply the timeout policy."""
+        # IMPL(single-layer): Bounds/convergence monitors should use FAIL/ESCALATE
+        # timeout policies; RETRY loops conflict with §9.5 bounded-cycle enforcement.
         action = spec.timeout.on_timeout
         if action == "FAIL":
             self._registry.update_status(
@@ -445,6 +789,9 @@ class MonitorExecutor:
         extra: dict[str, Any] | None = None,
     ) -> None:
         classification = self._classification_for_event(event_type)
+        # IMPL(single-layer): Planner updates are the block/escalation handoff for
+        # out-of-authority and timeout paths; include phase/shape diagnostics in
+        # extension fields as shape-aware conditions are added.
         event: dict[str, Any] = {
             "type": event_type,
             "event_kind": event_type,

@@ -43,6 +43,9 @@
 # IMPL(single-layer): Condition payloads carrying phase semantics should align to the
 # shared forward-only phase vocabulary (`libraries`/`architecture`/`quality`) used by
 # run state, work items, and lifecycle convergence checks.
+# IMPL(single-layer): Bound-enforcement monitor specs (iteration/work-item/stagnation)
+# should default timeout handling to FAIL/ESCALATE rather than RETRY so §9.5 caps can
+# terminate bounded cycles with diagnostics instead of re-arming indefinitely.
 
 """JIT monitor specifications and registry.
 
