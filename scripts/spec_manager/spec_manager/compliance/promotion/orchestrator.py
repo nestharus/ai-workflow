@@ -50,6 +50,9 @@
 #   Integration points:
 #     - Called by promotion loop PROMOTE step and lifecycle termination checks.
 #     - Calls algorithmic_gates (Libraries phase), architectural_quality (Architecture phase), routing verifiers/matcher.
+# IMPL(single-layer): Libraries behavior-group orchestration should treat
+# `check_call_graph_connected`/`check_no_stub_functions` (and store-monogamy when
+# non-deterministic) as advisory defaults, with blocking controlled by GateSpec mode.
 #   Test requirements:
 #     - Group composition and required/advisory behavior.
 #     - Non-ship trigger on missing critical verifiers.
