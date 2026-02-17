@@ -34,6 +34,9 @@
 # deterministic `routing/INDEX.md` + `routing/index.json` view.
 # IMPL(single-layer): Libraries may start with proposal-only shapes from bootstrap; shape
 # metadata should enqueue verifier refresh/creation work items in the first cycle.
+# IMPL(single-layer): Any lineage assembly handoff from this orchestrator (legacy Phase 7
+# paths included) should feed deterministic dependency-scan records + shape index inputs
+# into `projection.lineage.builder`, not `PinFunctionRegistry` import-edge projection.
 #   Test requirements:
 #     - Intake artifacts still generated.
 #     - Bootstrap output includes draft shapes, algorithm inventory, store inventory, and Libraries phase seeds.

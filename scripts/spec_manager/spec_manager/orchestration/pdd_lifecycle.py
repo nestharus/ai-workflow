@@ -67,6 +67,9 @@
 # IMPL(single-layer): Coordination bootstrap should wire monitor checker inputs
 # (work-item snapshots, verifier/matcher evidence, phase iteration state) from the same
 # lifecycle authority surfaces used for per-phase bounds and convergence decisions.
+# IMPL(single-layer): Lifecycle lineage/drift checks should consume deterministic
+# dependency-scan + shape ownership inputs from `projection.lineage.builder`; do not keep
+# `PinFunctionRegistry`-derived lineage ingestion on the convergence path.
 #   Test requirements:
 #     - Forward-only phase ordering (Libraries -> Architecture -> Quality).
 #     - Phase-appropriate behaviors (L1/L2/L3) in each phase's PromotionLoop.
