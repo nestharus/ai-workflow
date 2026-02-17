@@ -36,6 +36,12 @@
 #     5. Libraries phase gates: library verifiers (hard) + LLM gap scans (soft).
 #     6. Architecture phase gates: shape matching + contract verifiers + integration tests (hard) + L2 reviewers (soft).
 #        Import boundary check + shape drift resolved from matcher reports.
+# IMPL(single-layer): Keep Architecture-group dispatch aligned with
+# `architectural_quality` migration: once `check_import_boundary_per_shape` and
+# `check_shape_drift_resolved` exist, they become the hard structural gates and
+# legacy pin-era architecture gates (`NO_INLINED_ATOM_LOGIC`,
+# `PIN_CONSUMPTION_COVERAGE`, `EDGE_REALIZATION`, `ARCH_DRIFT_PASS`) should not be
+# scheduled.
 #     7. Quality phase gates: all tests + contract verifiers + style checks (hard) + quality reviewers (soft).
 #        Deterministic formatter/lint/static checks only; non-deterministic findings become advisory work items.
 #     8. Merge results into PromotionReport and set overall pass only if all required hard gates pass.
