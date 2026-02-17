@@ -6,6 +6,9 @@
 # IMPL(single-layer): `DemotionRouter.route_*` migrates to shape-index-aware
 # routing and returns work-item/blocked-finding batches; this engine should not
 # enrich router output with pin traces once that contract lands.
+# IMPL(single-layer): Triage no longer yields cross-layer demotion targets; once
+# router consumes phase-local `block`/`queue` decisions directly, this engine should
+# be removed from orchestration call paths.
 """DownwardFlowEngine: traces failures to pin origins and creates tickets.
 
 Given failure evidence (test results, gate violations, review findings),

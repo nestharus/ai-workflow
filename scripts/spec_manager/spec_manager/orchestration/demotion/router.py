@@ -13,6 +13,11 @@
 # IMPL(single-layer): Keep this file aligned with `orchestration.demotion`
 # ticket-contract migration (EscalationTicket fields + QUEUED/BLOCKED outcomes);
 # router must not carry duplicate layer-era defaults once the shared schema changes.
+# IMPL(single-layer): Consume triage as action authority (`queue_work_item`,
+# `fix_in_phase`, `block`) and stop deriving synthetic target phases/layers in router code.
+# IMPL(single-layer): Canonicalize gate IDs before triage so Section 10.2 gate
+# collapse (`TESTS_PASS` -> `ALL_TESTS_PASS`) and retired-gate blocking are visible in
+# `blocked_findings` diagnostics.
 # ALGORITHM(single-layer):
 #   References: response3 Sections 8.2 and 11.
 #   Data structures:
