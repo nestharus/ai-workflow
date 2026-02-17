@@ -46,6 +46,9 @@
 # Libraries and Architecture groups once `introduction_checker` consumes deterministic
 # diff + shape/verifier inputs; remove PinFunctionRegistry gating for this check in the
 # same migration change.
+# IMPL(single-layer): `PROVENANCE_COMPLETE` should consume work-item provenance
+# requirements from routing/work-item queues (`required_work_items`) instead of
+# PinFunctionRegistry-wide scans, and only deterministic evidence fields can satisfy it.
 #     7. Quality phase gates: all tests + contract verifiers + style checks (hard) + quality reviewers (soft).
 #        Deterministic formatter/lint/static checks only; non-deterministic findings become advisory work items.
 #     8. Merge results into PromotionReport and set overall pass only if all required hard gates pass.
