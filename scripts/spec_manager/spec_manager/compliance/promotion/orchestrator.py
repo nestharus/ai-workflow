@@ -42,6 +42,10 @@
 # legacy pin-era architecture gates (`NO_INLINED_ATOM_LOGIC`,
 # `PIN_CONSUMPTION_COVERAGE`, `EDGE_REALIZATION`, `ARCH_DRIFT_PASS`) should not be
 # scheduled.
+# IMPL(single-layer): `INTRODUCED_ALGORITHM_SPECS` should be scheduled for both
+# Libraries and Architecture groups once `introduction_checker` consumes deterministic
+# diff + shape/verifier inputs; remove PinFunctionRegistry gating for this check in the
+# same migration change.
 #     7. Quality phase gates: all tests + contract verifiers + style checks (hard) + quality reviewers (soft).
 #        Deterministic formatter/lint/static checks only; non-deterministic findings become advisory work items.
 #     8. Merge results into PromotionReport and set overall pass only if all required hard gates pass.
@@ -297,6 +301,9 @@ class LayerPromotionGate:
             return result, pin_coverage_report
 
         if gate_id == GateId.INTRODUCED_ALGORITHM_SPECS:
+            # IMPL(single-layer): Rewire this branch to pass deterministic diff metadata,
+            # shape ownership, and verifier summaries into `introduction_checker`;
+            # remove pin coverage construction as part of Section 10.2 pin-gate retirement.
             if self._pin_registry is None:
                 return (
                     self._missing_evidence_gate(

@@ -17,6 +17,9 @@
 #       - Architecture phase: shape matching + contract verifiers + integration tests + ALL_TESTS_PASS (hard) + L2 reviewers (soft).
 #       - Quality phase: ALL_TESTS_PASS + all contract verifiers + style checks (hard) + quality reviewers (soft).
 #       - Gate execution policy maps gate → list of phases it applies to (not 1:1).
+# IMPL(single-layer): Keep `INTRODUCED_ALGORITHM_SPECS` phase policy aligned with
+# `introduction_checker` ALGORITHM (Libraries + Architecture) once the gate is fully
+# shape/verifier-driven and no longer pin-coverage-coupled.
 #   Interface contracts:
 #     - def default() -> PromotionGateConfig sets deterministic hard gates required and advisory defaults for soft signals.
 #     - def get_gate(gate_id: GateId) -> GateSpec
@@ -112,6 +115,9 @@ GATE_PHASES: dict[GateId, tuple[PhaseId, ...]] = {
     GateId.ALL_TESTS_PASS: ALL_PHASES,
     GateId.CALL_GRAPH_CONNECTED: ("libraries", "architecture"),
     GateId.STORE_MONOGAMY: ("libraries", "architecture", "quality"),
+    # IMPL(single-layer): Expand to ("libraries", "architecture") when
+    # introduced-algorithm compliance migrates to deterministic diff + shape/verifier
+    # evidence and can run in both phases without pin registry inputs.
     GateId.INTRODUCED_ALGORITHM_SPECS: ("libraries",),
     GateId.FUNCTION_RECOMPOSITION: ("architecture", "quality"),
     GateId.NO_ORPHAN_COMPONENTS: ("architecture", "quality"),

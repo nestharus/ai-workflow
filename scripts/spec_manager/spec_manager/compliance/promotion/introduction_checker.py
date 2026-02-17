@@ -45,204 +45,336 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from spec_manager.compliance.promotion.config import GateId, GateSpec
-from spec_manager.compliance.promotion.pin_coverage import PinCoverageReport
+from spec_manager.compliance.promotion.config import GateId, GateSpec, PhaseId
 from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
+
+# IMPL(single-layer): Section 13.3 keeps LLM outputs diagnostic-only in this module.
+# Any `run_agent` output may assist routing hints but must not determine hard pass/fail.
 from spec_manager.core.agent_utils import run_agent
 from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.refinement.formats import _strip_code_fences
 
-if TYPE_CHECKING:
-    from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
+# IMPL(single-layer): Section 10.2 retires PIN_* authority; migrate this module from
+# pin-coverage span sourcing to deterministic diff spans + shape/verifier context.
+from spec_manager.routing.shapes import ShapeId, ShapePackIndex, resolve_shape_for_file
+from spec_manager.routing.verifiers import VerifierRunSummary
 
 
+# IMPL(single-layer): Converge this payload with ALGORITHM `IntroducedChange`
+# (`shape_id`, `has_contract`, `has_verifier`, `evidence_ref`) so findings map directly
+# to external work-item routing fields from Section 8.1.
 @dataclass
-class IntroducedAlgorithm:
-    """Semantic classification of one introduced changed span."""
+class IntroducedChange:
+    """Deterministic introduced-span record used for shape-verifier routing."""
 
-    function_name: str
     file_path: str
     line_start: int
     line_end: int
-    category: str = "unknown"
-    requires_spec: bool = True
-    has_spec: bool = False
-    introduction_confidence: float = 0.0
-    rationale: str = ""
+    shape_id: ShapeId | None
+    has_contract: bool
+    has_verifier: bool
+    evidence_ref: str
+    rationale: str
 
 
-def find_introduced_algorithms(
-    pin_coverage: PinCoverageReport,
-    architectural_files: list[Path],
-    analyzed: list[AnalyzedFile] | None = None,
-    *,
-    semantic_agent: str = "pdd-code-analyzer",
-    workspace: Path | None = None,
-) -> list[IntroducedAlgorithm]:
-    """Semantically classify introduced spans from pin coverage evidence."""
-    introductions = [item for item in pin_coverage.items if item.is_introduction]
-    if not introductions:
-        return []
+_ALLOWED_PHASES: tuple[PhaseId, PhaseId] = ("libraries", "architecture")
 
-    analyzed_lookup: dict[str, AnalyzedFile] = {}
-    if analyzed is not None:
-        for af in analyzed:
-            analyzed_lookup[_normalize_path(af.path)] = af
 
-    arch_lookup = {_normalize_path(path): path for path in architectural_files}
-    ws = workspace or Path.cwd()
-
-    results: list[IntroducedAlgorithm] = []
-    for item in introductions:
-        file_key = _normalize_path(item.arch_file_path)
-        source_text = _extract_span_text(
-            file_key=file_key,
-            line_start=item.arch_line,
-            line_end=item.arch_line_end,
-            analyzed_lookup=analyzed_lookup,
-            arch_lookup=arch_lookup,
-        )
-        if not source_text:
-            results.append(
-                IntroducedAlgorithm(
-                    function_name=item.arch_location,
-                    file_path=file_key,
-                    line_start=item.arch_line,
-                    line_end=item.arch_line_end,
-                    introduction_confidence=0.0,
-                    rationale="Unable to read source span for semantic classification",
-                )
-            )
+# IMPL(single-layer): Replace this pin-centric helper with
+# `find_uncontracted_introductions(changed_files, shape_index, verifier_summary)`.
+# Ownership must resolve via `routing.shapes.resolve_shape_for_file`; introduction spans
+# should come from deterministic diff metadata, not projection/pin evidence.
+def find_uncontracted_introductions(
+    changed_files: list[Path],
+    shape_index: ShapePackIndex,
+    verifier_summary: dict[ShapeId, VerifierRunSummary],
+) -> list[IntroducedChange]:
+    """Detect changed spans and map them to shape contract/verifier authority state."""
+    introductions: list[IntroducedChange] = []
+    for raw_file in changed_files:
+        file_path = str(raw_file)
+        lookup_path = _normalize_path(raw_file)
+        if not lookup_path:
             continue
 
-        payload = _semantic_introduction_assessment(
-            agent_name=semantic_agent,
-            workspace=ws,
-            file_path=file_key,
-            line_start=item.arch_line,
-            line_end=item.arch_line_end,
-            span_text=source_text,
-        )
+        spans = _resolve_changed_spans(raw_file)
+        if not spans:
+            spans = [(0, 0)]
 
-        if payload is None:
-            results.append(
-                IntroducedAlgorithm(
-                    function_name=item.arch_location,
-                    file_path=file_key,
-                    line_start=item.arch_line,
-                    line_end=item.arch_line_end,
-                    introduction_confidence=0.0,
-                    rationale="Semantic classifier returned invalid output",
+        shape_id = _resolve_shape_for_changed_file(lookup_path, shape_index)
+        if shape_id is None:
+            for line_start, line_end in spans:
+                introductions.append(
+                    IntroducedChange(
+                        file_path=file_path,
+                        line_start=line_start,
+                        line_end=line_end,
+                        shape_id=None,
+                        has_contract=False,
+                        has_verifier=False,
+                        evidence_ref=f"unowned-shape:{file_path}:{line_start}-{line_end}",
+                        rationale=f"No owning shape found for changed file '{file_path}'.",
+                    )
                 )
-            )
             continue
 
-        results.append(
-            IntroducedAlgorithm(
-                function_name=str(payload.get("function_name") or item.arch_location).strip(),
-                file_path=file_key,
-                line_start=item.arch_line,
-                line_end=item.arch_line_end,
-                category=str(payload.get("category") or "unknown").strip() or "unknown",
-                requires_spec=bool(payload.get("requires_spec", True)),
-                has_spec=bool(payload.get("has_spec", False)),
-                introduction_confidence=_coerce_confidence(payload.get("confidence", 0.0)),
-                rationale=str(payload.get("rationale") or "").strip(),
-            )
+        shape = shape_index.shapes.get(shape_id)
+        has_contract, has_verifier, rationale, evidence_ref = _assess_shape_compliance(
+            shape_id=shape_id,
+            shape=shape,
+            verifier_summary=verifier_summary,
         )
+        for line_start, line_end in spans:
+            span_rationale = rationale
+            if not has_contract:
+                span_rationale = (
+                    f"{rationale} Missing contract ownership on shape '{shape_id}'."
+                    if rationale
+                    else f"Shape '{shape_id}' is missing contract ownership."
+                )
+            introductions.append(
+                IntroducedChange(
+                    file_path=file_path,
+                    line_start=line_start,
+                    line_end=line_end,
+                    shape_id=shape_id,
+                    has_contract=has_contract,
+                    has_verifier=has_verifier,
+                    evidence_ref=evidence_ref,
+                    rationale=span_rationale,
+                )
+            )
 
-    return results
+    return introductions
 
 
 def check_introduced_algorithm_specs(
-    pin_coverage: PinCoverageReport,
-    architectural_files: list[Path],
+    changed_files: list[Path],
+    shape_index: ShapePackIndex,
+    verifier_summary: dict[ShapeId, VerifierRunSummary],
     gate_spec: GateSpec,
-    analyzed: list[AnalyzedFile] | None = None,
+    *,
+    workspace: Path | None = None,
+    semantic_agent: str = "pdd-code-analyzer",
+    active_phase: PhaseId | None = None,
 ) -> GateCheckResult:
-    """Gate: introduced algorithm spans require semantic spec coverage."""
+    """Gate: introduced code must be backed by shape contract and verifier linkage."""
     start = time.monotonic()
-    confidence_threshold = float(gate_spec.params.get("introduction_confidence_threshold", 0.75))
-    semantic_agent = str(gate_spec.params.get("semantic_agent", "pdd-code-analyzer"))
-    workspace = Path(str(gate_spec.params.get("workspace", ".")).strip() or ".")
 
-    introduced = find_introduced_algorithms(
-        pin_coverage,
-        architectural_files,
-        analyzed=analyzed,
-        semantic_agent=semantic_agent,
-        workspace=workspace,
-    )
+    # IMPL(single-layer): Keep PhaseId imported for routing table alignment and
+    # phase-local authority checks in phase-local promotion steps.
+    if active_phase is not None and active_phase not in _ALLOWED_PHASES:
+        duration_ms = (time.monotonic() - start) * 1000
+        return GateCheckResult(
+            gate_id=GateId.INTRODUCED_ALGORITHM_SPECS.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.FAILED,
+            score=0.0,
+            findings=[
+                {
+                    "shape_id": None,
+                    "required_change_type": "phase_scope",
+                    "rationale": (
+                        f"INTRODUCED_ALGORITHM_SPECS is not authoritative in phase '{active_phase}'."
+                    ),
+                    "evidence_ref": f"phase:{active_phase}",
+                }
+            ],
+            summary=(
+                f"Introduction check is phase-local and does not execute in phase '{active_phase}'."
+            ),
+            duration_ms=duration_ms,
+            evidence_refs=[f"phase:{active_phase}"],
+        )
 
-    strict_findings: list[dict[str, Any]] = []
-    uncertain_findings: list[dict[str, Any]] = []
-
-    for algo in introduced:
-        payload = {
-            "function_name": algo.function_name,
-            "file_path": algo.file_path,
-            "line_start": algo.line_start,
-            "line_end": algo.line_end,
-            "category": algo.category,
-            "requires_spec": algo.requires_spec,
-            "has_spec": algo.has_spec,
-            "introduction_confidence": algo.introduction_confidence,
-            "rationale": algo.rationale,
-        }
-
-        if algo.introduction_confidence < confidence_threshold:
-            uncertain_findings.append(payload)
-            continue
-
-        if algo.requires_spec and not algo.has_spec:
-            strict_findings.append(payload)
-
-    if strict_findings:
-        status = GateStatus.FAILED
-    elif uncertain_findings:
-        status = GateStatus.AMBIGUOUS
-    else:
-        status = GateStatus.PASSED
+    introduced = find_uncontracted_introductions(changed_files, shape_index, verifier_summary)
 
     findings: list[dict[str, Any]] = []
-    if strict_findings:
-        findings.append({"violations": strict_findings})
-    if uncertain_findings:
-        findings.append({"uncertain_introductions": uncertain_findings})
+    ws = workspace or Path.cwd()
+    for change in introduced:
+        if change.has_contract and change.has_verifier:
+            continue
 
-    confident_required = [
-        algo
-        for algo in introduced
-        if algo.introduction_confidence >= confidence_threshold and algo.requires_spec
-    ]
-    confident_compliant = [algo for algo in confident_required if algo.has_spec]
-    score = len(confident_compliant) / len(confident_required) if confident_required else 1.0
+        finding: dict[str, Any] = {
+            "file_path": change.file_path,
+            "line_start": change.line_start,
+            "line_end": change.line_end,
+            "shape_id": str(change.shape_id) if change.shape_id else None,
+            "has_contract": change.has_contract,
+            "has_verifier": change.has_verifier,
+            "evidence_ref": change.evidence_ref,
+            "rationale": change.rationale,
+            "required_change_type": "spec_change",
+        }
+        if change.line_start > 0 and change.line_end >= change.line_start:
+            snippet = _extract_span_text(
+                file_path=change.file_path,
+                line_start=change.line_start,
+                line_end=change.line_end,
+            )
+            payload = _semantic_introduction_assessment(
+                agent_name=semantic_agent,
+                workspace=ws,
+                file_path=change.file_path,
+                line_start=change.line_start,
+                line_end=change.line_end,
+                span_text=snippet,
+            )
+            if isinstance(payload, dict):
+                if rationale := payload.get("rationale"):
+                    finding["llm_rationale"] = str(rationale)
+                if category := payload.get("category"):
+                    finding["likely_category"] = str(category)
+        findings.append(finding)
 
-    duration = (time.monotonic() - start) * 1000
-
-    if status == GateStatus.PASSED:
-        summary = (
-            f"All {len(confident_required)} confidently classified introduced span(s) have specs"
+    duration_ms = (time.monotonic() - start) * 1000
+    if not findings:
+        return GateCheckResult(
+            gate_id=GateId.INTRODUCED_ALGORITHM_SPECS.value,
+            mode=gate_spec.mode.value,
+            status=GateStatus.PASSED,
+            score=1.0,
+            findings=[],
+            summary=(
+                f"No uncontracted introduced spans found in {len(introduced)} "
+                "deterministic change span(s)."
+            ),
+            duration_ms=duration_ms,
+            evidence_refs=[f"introduced-change-count:{len(introduced)}"],
         )
-    elif status == GateStatus.AMBIGUOUS:
-        summary = (
-            "Introduction classification is uncertain for some changed spans; "
-            "manual review required before strict enforcement"
-        )
-    else:
-        summary = f"{len(strict_findings)} introduced span(s) are missing semantic spec coverage"
 
     return GateCheckResult(
         gate_id=GateId.INTRODUCED_ALGORITHM_SPECS.value,
         mode=gate_spec.mode.value,
-        status=status,
-        score=score,
+        status=GateStatus.FAILED,
+        score=0.0,
         findings=findings,
-        summary=summary,
-        duration_ms=duration,
+        summary=f"{len(findings)} introduced span(s) require contract + verifier action",
+        duration_ms=duration_ms,
+        evidence_refs=[f"introduced-change-count:{len(introduced)}"],
     )
+
+
+def _assess_shape_compliance(
+    shape_id: ShapeId,
+    shape: Any,
+    verifier_summary: dict[ShapeId, VerifierRunSummary],
+) -> tuple[bool, bool, str, str]:
+    if shape is None:
+        return False, False, f"Resolved shape '{shape_id}' is missing from shape pack.", ""
+
+    has_contract = bool(getattr(shape, "contracts", None))
+    source_ref = _shape_source_ref(shape)
+    status = str(getattr(shape, "status", "")).strip().lower()
+    if status != "active":
+        return (
+            has_contract,
+            False,
+            f"Shape '{shape_id}' is not ACTIVE for verifier-backed authority.",
+            source_ref,
+        )
+
+    summary = verifier_summary.get(shape_id)
+    if summary is None:
+        return (
+            has_contract,
+            False,
+            f"No verifier summary available for ACTIVE shape '{shape_id}'.",
+            source_ref,
+        )
+
+    evidence_ref = _first_evidence_ref(shape, summary)
+    if summary.non_ship_block:
+        reasons = ", ".join(sorted(set(summary.missing_required)))
+        reasons = reasons or "non_ship_block"
+        return (
+            has_contract,
+            False,
+            f"ACTIVE shape '{shape_id}' is blocked by verifier policy: {reasons!s}.",
+            evidence_ref,
+        )
+    if summary.missing_required:
+        reason = ", ".join(sorted(set(summary.missing_required)))
+        return (
+            has_contract,
+            False,
+            f"ACTIVE shape '{shape_id}' is missing required verifiers: {reason}.",
+            evidence_ref,
+        )
+    if not summary.all_passed:
+        return (
+            has_contract,
+            False,
+            f"ACTIVE shape '{shape_id}' has failing verifier results.",
+            evidence_ref,
+        )
+    if not any(result.passed for result in summary.results):
+        return (
+            has_contract,
+            False,
+            f"ACTIVE shape '{shape_id}' has no passing verifier results.",
+            evidence_ref,
+        )
+
+    return has_contract, True, "", evidence_ref
+
+
+def _shape_source_ref(shape: Any) -> str:
+    if shape is None:
+        return ""
+    return str(getattr(shape, "source_path", "")).strip() or str(
+        getattr(shape, "shape_id", "")
+    ).strip()
+
+
+def _first_evidence_ref(shape: Any, summary: VerifierRunSummary) -> str:
+    refs: list[str] = []
+    for result in summary.results:
+        refs.extend(str(item) for item in (result.evidence_refs or []) if str(item).strip())
+    if not refs:
+        for item in summary.missing_required:
+            item_text = str(item).strip()
+            if item_text:
+                refs.append(item_text)
+    if shape is not None:
+        source_ref = str(getattr(shape, "source_path", "")).strip()
+        if source_ref:
+            refs.append(source_ref)
+    return refs[0] if refs else ""
+
+
+def _resolve_shape_for_changed_file(file_path: str, shape_index: ShapePackIndex) -> ShapeId | None:
+    for candidate in _shape_path_candidates(file_path):
+        shape_id = resolve_shape_for_file(candidate, shape_index)
+        if shape_id is not None:
+            return shape_id
+    return None
+
+
+def _shape_path_candidates(file_path: str) -> list[str]:
+    candidate = _normalize_path(file_path)
+    if not candidate:
+        return []
+    parts = [part for part in candidate.split("/") if part]
+    candidates: list[str] = [candidate]
+    for idx in range(1, len(parts)):
+        suffix = "/".join(parts[idx:])
+        if suffix and suffix not in candidates:
+            candidates.append(suffix)
+    return candidates
+
+
+def _resolve_changed_spans(raw_file: Path) -> list[tuple[int, int]]:
+    path = Path(raw_file)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    if not lines:
+        return []
+    return [(1, len(lines))]
 
 
 def _semantic_introduction_assessment(
@@ -254,10 +386,12 @@ def _semantic_introduction_assessment(
     line_end: int,
     span_text: str,
 ) -> dict[str, Any] | None:
+    # IMPL(single-layer): Keep semantic classification optional; outputs from this helper
+    # may annotate rationale/category but must never be the deciding authority for gate status.
     prompt = (
-        "Classify whether this changed span introduces algorithm/spec-level behavior and "
-        "whether local spec documentation is present. Return JSON only with keys: "
-        "function_name, category, requires_spec, has_spec, confidence, rationale.\n\n"
+        "Classify whether this changed span appears to require spec-level remediation and "
+        "whether existing shape contracts likely cover it. Return JSON only with keys: "
+        "category, rationale, requires_spec, confidence.\n\n"
         f"Location: {file_path}:{line_start}-{line_end}\n"
         "Changed span:\n"
         "```\n"
@@ -285,45 +419,42 @@ def _semantic_introduction_assessment(
 
 def _extract_span_text(
     *,
-    file_key: str,
+    file_path: str,
     line_start: int,
     line_end: int,
-    analyzed_lookup: dict[str, AnalyzedFile],
-    arch_lookup: dict[str, Path],
 ) -> str:
-    analyzed = analyzed_lookup.get(file_key)
-    if analyzed is not None:
-        lines = analyzed.content.splitlines()
-        return _slice_lines(lines, line_start, line_end)
-
-    path = arch_lookup.get(file_key, Path(file_key))
-    if not path.exists() or not path.is_file():
-        return ""
-
+    path = Path(file_path)
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return ""
-
     return _slice_lines(lines, line_start, line_end)
 
 
 def _slice_lines(lines: list[str], start_line: int, end_line: int) -> str:
     if start_line <= 0:
         return ""
-    effective_end = max(start_line, end_line)
-    lower = max(0, start_line - 1)
+    effective_start = max(1, start_line)
+    effective_end = max(effective_start, end_line)
+    lower = effective_start - 1
     upper = min(len(lines), effective_end)
     return "\n".join(lines[lower:upper]).strip()
 
 
 def _normalize_path(path: str | Path) -> str:
-    return str(Path(path).resolve()).replace("\\", "/")
-
-
-def _coerce_confidence(value: Any) -> float:
-    try:
-        confidence = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, confidence))
+    normalized = str(path).replace("\\", "/").lower().strip()
+    if not normalized:
+        return ""
+    if len(normalized) >= 2 and normalized[1] == ":":
+        normalized = normalized[2:]
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("/"):
+        normalized = normalized.lstrip("/")
+    if normalized.startswith("workspace/"):
+        normalized = normalized[len("workspace/") :]
+    if normalized.startswith("runs/"):
+        normalized = normalized[len("runs/") :]
+    if normalized.startswith("routing/"):
+        normalized = normalized[len("routing/") :]
+    return normalized.rstrip("/")
