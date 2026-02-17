@@ -7,9 +7,12 @@ import tempfile
 from pathlib import Path
 
 from spec_manager.compliance.promotion.config import (
+    ALL_PHASES,
+    GATE_PHASES,
     GateId,
     GateMode,
     GateSpec,
+    PhaseId,
     PromotionGateConfig,
 )
 from spec_manager.compliance.promotion.result import (
@@ -38,16 +41,34 @@ class TestGateId:
             "all_tests_pass",
             "call_graph_connected",
             "store_monogamy",
-            "pin_coverage",
             "introduced_algorithm_specs",
-            "no_inlined_atom_logic",
             "function_recomposition",
+            "no_orphan_components",
+            "event_handler_coverage",
+            "config_externalization",
+            "shape_verifiers_pass",
+            "import_boundary_check",
+            "shape_drift_resolved",
             "provenance_complete",
             "entity_coverage",
-            "test_pin_alignment",
         }
         actual = {g.value for g in GateId}
         assert actual == expected
+
+
+class TestPhaseIdAndGatePhases:
+    def test_all_phases_tuple(self) -> None:
+        assert ALL_PHASES == ("libraries", "architecture", "quality")
+
+    def test_every_gate_has_phase_mapping(self) -> None:
+        for gate_id in GateId:
+            assert gate_id in GATE_PHASES, f"{gate_id} missing from GATE_PHASES"
+
+    def test_all_tests_pass_runs_in_all_phases(self) -> None:
+        assert GATE_PHASES[GateId.ALL_TESTS_PASS] == ALL_PHASES
+
+    def test_shape_verifiers_pass_runs_in_all_phases(self) -> None:
+        assert GATE_PHASES[GateId.SHAPE_VERIFIERS_PASS] == ALL_PHASES
 
 
 class TestGateSpec:
@@ -60,7 +81,7 @@ class TestGateSpec:
 
     def test_custom_values(self) -> None:
         spec = GateSpec(
-            gate_id=GateId.PIN_COVERAGE,
+            gate_id=GateId.SHAPE_VERIFIERS_PASS,
             mode=GateMode.ADVISORY,
             threshold=0.95,
             enabled=False,
@@ -81,37 +102,32 @@ class TestPromotionGateConfig:
 
     def test_default_advisory_gates(self) -> None:
         config = PromotionGateConfig.default()
-        assert config.gates[GateId.ALL_TESTS_PASS].mode == GateMode.ADVISORY
         assert config.gates[GateId.CALL_GRAPH_CONNECTED].mode == GateMode.ADVISORY
+        assert config.gates[GateId.NO_STUB_FUNCTIONS].mode == GateMode.ADVISORY
         assert config.gates[GateId.ENTITY_COVERAGE].mode == GateMode.ADVISORY
-        assert config.gates[GateId.TEST_PIN_ALIGNMENT].mode == GateMode.ADVISORY
 
     def test_default_required_gates(self) -> None:
         config = PromotionGateConfig.default()
         required_gates = [
-            GateId.NO_REMAINING_COMMENTS,
-            GateId.NO_STUB_FUNCTIONS,
-            GateId.STORE_MONOGAMY,
-            GateId.PIN_COVERAGE,
-            GateId.INTRODUCED_ALGORITHM_SPECS,
-            GateId.NO_INLINED_ATOM_LOGIC,
-            GateId.FUNCTION_RECOMPOSITION,
-            GateId.PROVENANCE_COMPLETE,
+            GateId.ALL_TESTS_PASS,
+            GateId.SHAPE_VERIFIERS_PASS,
+            GateId.IMPORT_BOUNDARY_CHECK,
+            GateId.SHAPE_DRIFT_RESOLVED,
         ]
         for gate_id in required_gates:
             assert config.gates[gate_id].mode == GateMode.REQUIRED
 
     def test_get_gate_configured(self) -> None:
         config = PromotionGateConfig()
-        spec = GateSpec(gate_id=GateId.PIN_COVERAGE, threshold=0.9)
-        config.gates[GateId.PIN_COVERAGE] = spec
-        result = config.get_gate(GateId.PIN_COVERAGE)
+        spec = GateSpec(gate_id=GateId.SHAPE_VERIFIERS_PASS, threshold=0.9)
+        config.gates[GateId.SHAPE_VERIFIERS_PASS] = spec
+        result = config.get_gate(GateId.SHAPE_VERIFIERS_PASS)
         assert result.threshold == 0.9
 
     def test_get_gate_default(self) -> None:
         config = PromotionGateConfig()
-        result = config.get_gate(GateId.PIN_COVERAGE)
-        assert result.gate_id == GateId.PIN_COVERAGE
+        result = config.get_gate(GateId.SHAPE_VERIFIERS_PASS)
+        assert result.gate_id == GateId.SHAPE_VERIFIERS_PASS
         assert result.mode == GateMode.REQUIRED
         assert result.threshold == 0.0
 
