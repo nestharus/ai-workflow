@@ -18,6 +18,9 @@
 # IMPL(single-layer): Canonicalize gate IDs before triage so Section 10.2 gate
 # collapse (`TESTS_PASS` -> `ALL_TESTS_PASS`) and retired-gate blocking are visible in
 # `blocked_findings` diagnostics.
+# IMPL(single-layer): Keep `route_review_findings` input schema synchronized with
+# `orchestration.review.findings_to_tickets.ReviewFinding.to_router_finding` so
+# finding-index diagnostics and authority triage fields are preserved end-to-end.
 # ALGORITHM(single-layer):
 #   References: response3 Sections 8.2 and 11.
 #   Data structures:

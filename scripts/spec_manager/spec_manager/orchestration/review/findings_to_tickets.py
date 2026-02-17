@@ -42,6 +42,10 @@
 # IMPL(single-layer): Router integration should pass `shape_index` and consume
 # explicit blocked-finding outputs (ownership ambiguity / out-of-authority)
 # rather than assuming DemotionTicket-only conversion succeeds.
+# IMPL(single-layer): Keep this module as the normalization boundary for reviewer
+# payloads, then hand off a stable finding schema to `demotion.router.route_review_findings`
+# (`finding_index`, `category`, `description`, `files`, `pins`, `evidence_paths`,
+# `required_change_type`, source-phase hints) so routing semantics stay centralized.
 #   Test requirements:
 #     - Authority-based routing: Architecture handles behavior findings in-place; Quality blocks on behavior.
 #     - Multi-file finding produces one work item per owner shape or grouped by shape policy.
@@ -66,11 +70,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from spec_manager.orchestration.demotion import DemotionTicket
-from spec_manager.orchestration.downward_flow.engine import (
-    DownwardFlowEngine,
-    FailureEvidence,
-)
+from spec_manager.compliance.promotion.config import PhaseId
+from spec_manager.orchestration.coordination.work_items import WorkItem
+from spec_manager.orchestration.demotion.router import DemotionRouter
+from spec_manager.routing.shapes import ShapeId, ShapePackIndex, resolve_shape_for_file
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +115,70 @@ def _coerce_text_field(
     return text, None
 
 
+def _normalize_shape_id(value: Any) -> ShapeId | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    return ShapeId(text)
+
+
+def _normalize_shape_id_list(value: Any) -> list[ShapeId]:
+    normalized: list[ShapeId] = []
+    if value is None:
+        return normalized
+
+    values: list[Any]
+    if isinstance(value, (list, tuple, set)):
+        values = list(value)
+    else:
+        values = [value]
+
+    for item in values:
+        shape_id = _normalize_shape_id(item)
+        if shape_id is None:
+            continue
+        if shape_id in normalized:
+            continue
+        normalized.append(shape_id)
+    return normalized
+
+
+def _resolve_shape_owners(
+    files: list[str],
+    shape_index: ShapePackIndex,
+) -> tuple[list[ShapeId], list[str], list[str], list[str]]:
+    resolved_shape_ids: list[ShapeId] = []
+    unresolved_files: list[str] = []
+    resolved_files: list[str] = []
+    diagnostics: list[str] = []
+
+    for file_path in files:
+        normalized = file_path.strip()
+        if not normalized:
+            unresolved_files.append(file_path)
+            diagnostics.append("file path is empty")
+            continue
+
+        try:
+            shape_id = resolve_shape_for_file(normalized, shape_index)
+        except Exception as exc:
+            unresolved_files.append(normalized)
+            diagnostics.append(f"shape resolution failed: {type(exc).__name__}: {exc}")
+            continue
+
+        if shape_id is None:
+            unresolved_files.append(normalized)
+            diagnostics.append(f"shape owner not found for file: {normalized}")
+            continue
+
+        if shape_id not in resolved_shape_ids:
+            resolved_shape_ids.append(shape_id)
+        if normalized not in resolved_files:
+            resolved_files.append(normalized)
+
+    return resolved_shape_ids, unresolved_files, diagnostics, resolved_files
+
+
 @dataclass
 class ReviewFinding:
     """A single finding from a reviewer agent."""
@@ -129,7 +196,11 @@ class ReviewFinding:
     failure_layer: str = ""
     layer: str = ""
     origin_layer: str = ""
+    resolved_shape_ids: list[ShapeId] = field(default_factory=list)
     normalization_notes: list[str] = field(default_factory=list)
+    # IMPL(single-layer): Add `resolved_shape_ids: list[ShapeId]` once ownership is
+    # resolved during conversion, so multi-file findings can fan out deterministically
+    # without recomputing file ownership in downstream steps.
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReviewFinding:
@@ -150,6 +221,7 @@ class ReviewFinding:
             failure_layer=str(data.get("failure_layer", "")).strip(),
             layer=str(data.get("layer", "")).strip(),
             origin_layer=str(data.get("origin_layer", "")).strip(),
+            resolved_shape_ids=_normalize_shape_id_list(data.get("resolved_shape_ids")),
         )
 
     @classmethod
@@ -296,12 +368,16 @@ class ReviewFinding:
                 failure_layer=failure_layer,
                 layer=layer,
                 origin_layer=origin_layer,
+                resolved_shape_ids=[],
                 normalization_notes=notes,
             ),
             None,
         )
 
     def to_router_finding(self, *, finding_index: int) -> dict[str, Any]:
+        # IMPL(single-layer): Keep this projection as the single normalized payload
+        # contract for router review-finding ingestion; retire layer-era fields here
+        # when all callers use phase vocabulary.
         payload: dict[str, Any] = {
             "finding_index": finding_index,
             "category": self.category,
@@ -309,8 +385,9 @@ class ReviewFinding:
             "files": list(self.files),
             "pins": list(self.pins),
             "evidence_paths": list(self.evidence_paths),
-            "severity": self.severity,
         }
+        if self.severity:
+            payload["severity"] = self.severity
         if self.dimension:
             payload["dimension"] = self.dimension
         if self.tags:
@@ -325,6 +402,8 @@ class ReviewFinding:
             payload["layer"] = self.layer
         if self.origin_layer:
             payload["origin_layer"] = self.origin_layer
+        if self.resolved_shape_ids:
+            payload["resolved_shape_ids"] = [str(shape_id) for shape_id in self.resolved_shape_ids]
         return payload
 
 
@@ -332,48 +411,68 @@ class ReviewFinding:
 class ConversionResult:
     """Result of converting review findings to demotion tickets."""
 
-    tickets: list[DemotionTicket] = field(default_factory=list)
-    under_spec_events: list[dict[str, Any]] = field(default_factory=list)
-    skipped: int = 0
-    skipped_details: list[dict[str, Any]] = field(default_factory=list)
+    # IMPL(single-layer): Replace `tickets`/`skipped` outputs with router-native
+    # `produced_work_items` + `blocked_findings` once escalation switches from
+    # DemotionTicket artifacts to phase-local work-item persistence.
+    produced_work_items: list[WorkItem] = field(default_factory=list)
+    blocked_findings: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
 
 
 def convert_findings(
     *,
     findings: list[dict[str, Any]],
+    shape_index: ShapePackIndex,
     run_id: str = "",
     slice_id: str = "",
-    active_layer: str = "L1",
-    pin_registry: Any = None,
+    active_phase: PhaseId = "libraries",
 ) -> ConversionResult:
-    """Convert reviewer findings into DemotionTickets.
-
-    For SPEC/UNDER_SPEC findings, also emits under_spec_events that
-    can be fed into the UnderSpecManager for constraint resolution.
+    """Convert reviewer findings into phase-local work items.
 
     Args:
         findings: Raw finding dicts from reviewer agents.
         run_id: Current run identifier.
         slice_id: Slice identifier.
-        active_layer: Currently active promotion layer.
-        pin_registry: PinFunctionRegistry for pin tracing.
+        shape_index: Shape pack index used for ownership resolution.
+        active_phase: Currently active phase.
 
     Returns:
-        ConversionResult with tickets and any under-spec events.
+        ConversionResult with produced_work_items and blocked_findings.
     """
+    # IMPL(single-layer): Signature migrates to
+    # `convert_findings(..., shape_index: ShapePackIndex, active_phase: PhaseId)` and
+    # drops `active_layer`/`pin_registry` once DownwardFlowEngine is removed.
     result = ConversionResult()
 
-    engine = DownwardFlowEngine(
+    # IMPL(single-layer): Replace engine construction with direct demotion-router
+    # review routing so conversion is phase-authority aware and returns blocked
+    # ambiguity/out-of-authority diagnostics explicitly.
+    router = DemotionRouter(
         run_id=run_id,
-        active_layer=active_layer,
-        pin_registry=pin_registry,
+        active_layer=active_phase,
     )
+
+    if not isinstance(findings, list):
+        reason = "findings must be a list"
+        logger.warning("convert_findings payload invalid: %s", reason)
+        result.blocked_findings.append(
+            {
+                "index": 0,
+                "reason": reason,
+                "errors": [reason],
+                "finding": findings,
+            }
+        )
+        result.diagnostics.append(f"FINDINGS_BATCH_INVALID:{reason}")
+        return result
 
     for idx, raw in enumerate(findings):
         finding, invalid = ReviewFinding.from_external_dict(index=idx, data=raw)
         if invalid:
-            result.skipped += 1
-            result.skipped_details.append(invalid)
+            blocked = dict(invalid)
+            blocked["finding_index"] = idx
+            blocked.setdefault("phase", active_phase)
+            result.blocked_findings.append(blocked)
             logger.warning(
                 "Skipping invalid review finding at index %s: %s",
                 idx,
@@ -382,47 +481,82 @@ def convert_findings(
             continue
         assert finding is not None
 
-        # SPEC/UNDER_SPEC findings produce under-spec events.
-        if finding.category in {"SPEC", "UNDER_SPEC"}:
-            needed_for = ", ".join(finding.files)
-            source_file = finding.files[0] if finding.files else ""
-            result.under_spec_events.append(
+        if not finding.files:
+            result.blocked_findings.append(
                 {
-                    "kind": "REVIEW_UNDER_SPEC",
-                    "question": finding.description,
-                    "needed_for": needed_for,
                     "source": "REVIEW",
-                    "source_file": source_file,
-                    "severity": finding.severity,
-                    "evidence_paths": list(finding.evidence_paths),
-                    "context": {
-                        "finding_index": idx,
-                        "category": finding.category,
-                        "files": list(finding.files),
-                        "pins": list(finding.pins),
-                        "evidence_paths": list(finding.evidence_paths),
-                        "severity": finding.severity,
-                        "normalization_notes": list(finding.normalization_notes),
-                    },
+                    "source_id": f"finding_{idx}",
+                    "slice_id": slice_id,
+                    "finding_index": idx,
+                    "phase": active_phase,
+                    "failing_files": [],
+                    "failing_pins": list(finding.pins),
+                    "evidence_refs": list(finding.evidence_paths),
+                    "reason": "review finding has no parseable file paths",
+                    "diagnostics": ["missing_file_paths"],
                 }
+            )
+            logger.warning(
+                "Skipping review finding at index %s: no parseable file paths",
+                idx,
             )
             continue
 
-        # Route through DownwardFlowEngine for pin tracing
-        projected_finding = finding.to_router_finding(finding_index=idx)
-        evidence = FailureEvidence(
-            source="REVIEW",
-            review_findings=[projected_finding],
-            evidence_paths=finding.evidence_paths,
+        resolved_shape_ids, unresolved_files, owner_diagnostics, resolved_files = _resolve_shape_owners(
+            finding.files,
+            shape_index,
+        )
+        finding.files = resolved_files
+        finding.resolved_shape_ids = resolved_shape_ids
+        if unresolved_files:
+            result.blocked_findings.append(
+                {
+                    "source": "REVIEW",
+                    "source_id": finding.category or f"finding_{idx}",
+                    "slice_id": slice_id,
+                    "finding_index": idx,
+                    "phase": active_phase,
+                    "failing_files": unresolved_files,
+                    "failing_pins": list(finding.pins),
+                    "evidence_refs": list(finding.evidence_paths),
+                    "reason": "ownership could not be resolved for one or more finding files",
+                    "diagnostics": owner_diagnostics,
+                }
+            )
+
+        if not resolved_shape_ids:
+            logger.warning(
+                "Skipping review finding at index %s: no resolvable file owners",
+                idx,
+            )
+            continue
+
+        normalized_finding = finding.to_router_finding(finding_index=idx)
+        normalized_finding["files"] = [str(path) for path in finding.files]
+        batch = router.route_review_findings(
+            slice_id=slice_id,
+            findings=[normalized_finding],
+            shape_index=shape_index,
         )
 
-        batch = engine.trace_and_route(evidence)
-        for ticket in batch.tickets:
-            ticket.slice_id = slice_id
-            ticket.diagnosis = finding.description
-            ticket.severity = finding.severity
-            for note in finding.normalization_notes:
-                ticket.questions.append(f"FINDING_NORMALIZATION:{note}")
-            result.tickets.append(ticket)
+        for finding_item in batch.created_work_items:
+            if finding_item.shape_id and finding_item.shape_id not in finding.resolved_shape_ids:
+                finding.resolved_shape_ids.append(finding_item.shape_id)
+            metadata = dict(finding_item.metadata)
+            metadata["finding_index"] = idx
+            finding_item.metadata = metadata
+            result.produced_work_items.append(finding_item)
+
+        for blocked in batch.blocked_findings:
+            blocked_finding = dict(blocked)
+            blocked_finding["source_id"] = finding.category or blocked_finding.get(
+                "source_id"
+            )
+            blocked_finding["finding_index"] = idx
+            blocked_finding["phase"] = active_phase
+            blocked_finding.setdefault("slice_id", slice_id)
+            result.blocked_findings.append(blocked_finding)
+
+        result.diagnostics.extend(batch.diagnostics)
 
     return result
