@@ -1,3 +1,58 @@
+# TODO(single-layer): RESTRUCTURE — The 10-step state machine concept survives but
+#   layer-aware dispatch is eliminated. Key changes:
+#   - Remove Layer-dependent step dispatch (the L1/L2/L3 dispatch matrix in MEMORY.md)
+#   - Remove DownwardFlowEngine integration (pin-based backward trace)
+#   - Remove DemotionManager/DemotionTicket cross-layer routing
+#   - Remove _DISABLE_L1_GAP_SCAN_KEY, _L3_REVIEWERS_CONFIG_KEY layer-specific config
+#   - GAP step: phase-aware gap detection — Libraries: algorithmic gaps; Architecture:
+#     wiring/contract gaps; Quality: refactoring opportunities
+#   - PLAN step: phase-aware intention planning — Libraries: code+test intentions;
+#     Architecture: wiring/adapter intentions; Quality: refactor intentions
+#   - IMPLEMENT step: ALL phases edit code via PromotionLoop IMPLEMENT (not Build-only)
+#     Libraries: create/edit code+tests; Architecture: wiring, contracts, adapters, and
+#     algorithm edits in-place; Quality: extract helpers, rename, restructure files
+#   - PROMOTE step: aspect gates mapped to active phase (not layer gates)
+#   - VERIFY step: shape verifier checks replace governance+lineage/topology/closure
+#   - Work items (shape_id as routing handle) replace pin-based propagation (Section 8)
+#   - Phase-local remediation: within authority → fix locally; outside authority → BLOCK
+#     (no demotion-to-layer, no re-triage to earlier phase)
+#   - The state machine loop with bounded convergence (Section 9.3) is the right pattern
+# ALGORITHM(single-layer):
+#   References: response3 Sections 8, 9.1, 9.2, 9.3, 10, 11.
+#   Data structures:
+#     - Keep step result dataclasses; replace layer fields with phase: PhaseId.
+#     - LoopContext: {run_id: str, slice_id: str, iteration_index: int, active_phase: PhaseId, shape_scope: list[ShapeId], pending_work_items: list[WorkItem]}.
+#   Interface contracts:
+#     - def run_slice(self, slice_ref: SliceRef, run_context: RunContext) -> SliceResult
+#     - def _execute_step(self, step_name: str, ctx: LoopContext) -> StepResult
+#     - def _emit_work_items(self, findings: list[dict[str, Any]], source_phase: PhaseId) -> list[WorkItem]
+#   Control flow:
+#     1. Preserve 10-step state machine shell, but step semantics become phase-aware (not layer-aware).
+#     2. IMPLEMENT step runs in ALL phases — each phase edits code via its PromotionLoop:
+#        Libraries (L1 behaviors): create/edit code + tests within library boundaries.
+#        Architecture (L2 behaviors): wiring, components, contracts, adapters; can edit algorithm implementations in-place; cannot create new libraries or change ownership.
+#        Quality (L3 behaviors): refactoring only (extract helpers, rename, restructure); cannot change behavior (tests + contract verifiers must stay green).
+#     3. PROMOTE step runs aspect gates mapped to active phase, not layer gates.
+#     4. VERIFY step runs shape verifiers and matcher drift checks; failures create phase-local remediation work items if within authority, or BLOCK if outside authority (no demotion-to-layer).
+#     5. COORDINATE/ANALYZE steps keep diagnostics and hint generation, but cannot declare convergence.
+#     6. DONE decision uses deterministic signals only (verifiers/tests/work item emptiness).
+#     7. Phase-local remediation or block: if a finding is within the active phase's authority, handle it; if not, BLOCK (never demote to an earlier phase).
+#   Error handling:
+#     - Removed dependencies (DownwardFlowEngine, pin demotion) must hard-fail if still referenced.
+#     - Ambiguous target from hints emits coordination block signal.
+#     - Out-of-authority finding triggers BLOCK with diagnostics (not demotion).
+#   Integration points:
+#     - Called by lifecycle per-slice scheduler (once per phase, with phase-appropriate behaviors).
+#     - Calls planner/api, implementation runner, compliance orchestrator, routing matcher/verifiers.
+# IMPL(single-layer): PROMOTE-step gate orchestration should consume the public
+# `spec_manager.compliance.promotion` exports so gate-class renames roll out
+# without submodule-level compatibility aliases.
+#   Test requirements:
+#     - Step dispatch is independent of L1/L2/L3 but phase-aware (Libraries/Architecture/Quality).
+#     - VERIFY failure yields phase-local remediation or BLOCK, not layer demotion ticket.
+#     - IMPLEMENT runs in all three phases with appropriate behaviors.
+#     - Convergence loop respects iteration caps from lifecycle.
+
 """Per-slice iterative PromotionLoop.
 
 Replaces the sequential P0-P10 pipeline with a per-slice loop that
