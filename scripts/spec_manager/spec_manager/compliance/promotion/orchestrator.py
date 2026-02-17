@@ -1,3 +1,61 @@
+# TODO(single-layer): RESTRUCTURE — Gate orchestrator reorganizes from layer gates to
+#   aspect gates (Section 10). Three gate groups replace the current mix:
+#   A) Behavior gates (hard): ALL_TESTS_PASS, contract verifier tests, no under-spec blocks
+#   B) Architecture gates (hard where deterministic): import boundary per shape, shape drift
+#   C) Quality gates (hard only if deterministic): formatter/linter/static;
+#     non-deterministic quality checks route to work items + optional human approval
+#     instead of hard gating (Section 10.1 fallback)
+#   DELETE: All PIN_* gates, ARCH_DRIFT_PASS (pin-registry drift), NO_INLINED_ATOM_LOGIC
+#   KEEP: ALL_TESTS_PASS (primary authority), check_no_remaining_comments (if adapted)
+#   CONVERT to soft: CALL_GRAPH_CONNECTED (routing signal), NO_STUB_FUNCTIONS
+#   Section 10.2 has the complete mapping.
+#   Non-ship enforcement (Section 15): if key structural contracts cannot be
+#   verifier-backed, gate orchestrator must emit a hard-stop / do-not-ship decision.
+#   Deterministic authority boundary (Section 13.1): gate orchestrator must only use
+#   deterministic evidence (test results, import scans, file diffs, shape doc parsing,
+#   manifests, config parsing) for convergence checks. LLM outputs are advisory only —
+#   never determine pass/fail of hard gates.
+# ALGORITHM(single-layer):
+#   References: response3 Sections 10.1, 10.2, 13.1, 15.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'] — three-phase forward-only pipeline.
+#     - AspectGateGroup = Literal['behavior', 'architecture', 'quality']
+#     - AspectGatePlan: {group: AspectGateGroup, gate_ids: list[GateId], hard_required: bool}
+#     - GateRunContext: {shape_reports: dict[ShapeId, ShapeMatchReport], verifier_summaries: dict[ShapeId, VerifierRunSummary], evidence_bundle: EvidenceBundle}
+# IMPL(single-layer): Gate context consumes verifier summaries keyed by shape;
+# pass/fail authority comes from ACTIVE-shape verifier outcomes, not proposal diagnostics.
+#   Interface contracts:
+#     - class AspectPromotionGate: run_all_checks() -> PromotionReport
+#     - def run_group(self, group: AspectGateGroup, ctx: GateRunContext) -> list[GateCheckResult]
+#     - def evaluate_non_ship(self, ctx: GateRunContext) -> GateCheckResult
+#   Control flow:
+#     1. Three phases (Libraries -> Architecture -> Quality), forward-only, no cycling back.
+#     2. Each phase edits code via its own PromotionLoop with IMPLEMENT step.
+#     3. Each phase is its own cycle with bounded iterations per slice.
+#     4. Build gate plan by aspect group, removing PIN_* and layer-only gates.
+#     5. Libraries phase gates: library verifiers (hard) + LLM gap scans (soft).
+#     6. Architecture phase gates: shape matching + contract verifiers + integration tests (hard) + L2 reviewers (soft).
+#        Import boundary check + shape drift resolved from matcher reports.
+#     7. Quality phase gates: all tests + contract verifiers + style checks (hard) + quality reviewers (soft).
+#        Deterministic formatter/lint/static checks only; non-deterministic findings become advisory work items.
+#     8. Merge results into PromotionReport and set overall pass only if all required hard gates pass.
+#     9. Enforce non-ship hard stop when critical contracts lack verifier backing (Section 15).
+# IMPL(single-layer): Non-ship evaluation should consume
+# `routing.verifiers.enforce_non_ship_policy` output directly; `non_ship_block=True`
+# is a terminal hard-stop signal.
+#     10. No backtracking: phases block if outside their authority; phase-local remediation if within authority.
+#   Error handling:
+#     - Missing deterministic inputs yields STALE_EVIDENCE failed gate, never silent pass.
+#     - LLM-only evidence is ignored for hard pass/fail.
+#   Integration points:
+#     - Called by promotion loop PROMOTE step and lifecycle termination checks.
+#     - Calls algorithmic_gates (Libraries phase), architectural_quality (Architecture phase), routing verifiers/matcher.
+#   Test requirements:
+#     - Group composition and required/advisory behavior.
+#     - Non-ship trigger on missing critical verifiers.
+#     - LLM advisory findings do not flip hard gate status.
+#     - Phase forward-only ordering enforced (no backtracking).
+
 """Promotion gate orchestrator."""
 
 from __future__ import annotations

@@ -17,6 +17,8 @@
 #     - Re-export from matcher.py: ShapeMatchReport, match_all_shapes, generate_work_items_from_reports.
 # IMPL(single-layer): Keep matcher access package-scoped through these re-exports;
 # avoid direct `from spec_manager.routing.matcher ...` imports in downstream modules.
+# IMPL(single-layer): Keep verifier runner/result usage package-scoped as well;
+# downstream modules should consume verifier APIs through this module.
 #   Control flow:
 #     1. Keep __all__ explicit and stable.
 #     2. Avoid backward-compat aliases to pin/layer terminology.

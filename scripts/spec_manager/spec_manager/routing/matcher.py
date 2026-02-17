@@ -69,6 +69,8 @@
 # captures deterministic dependency/contract deltas; `AMBIGUOUS` is reserved for
 # unresolved intra-scope targeting; `BLOCKED` is for missing deterministic inputs or
 # scanner/tooling failure states.
+# IMPL(single-layer): Treat `routing.verifiers.VerifierResult` as the canonical
+# verifier payload contract when normalizing matcher input/output surfaces.
 #   Interface contracts:
 #     - def build_observed_dependency_graph(workspace_root: Path) -> dict[str, set[str]]
 #     - def match_shape(shape: Shape, index: ShapePackIndex, observed_graph: dict[str, set[str]], verifier_results: list[VerifierResult], policy: MatchPolicy) -> ShapeMatchReport

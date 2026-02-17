@@ -15,6 +15,8 @@
 #       - _check_shape_dependency_clean(cond)
 #   Control flow:
 #     1. For ShapeVerifiersPassCondition, load latest verifier summary and return true only when all required verifiers pass.
+# IMPL(single-layer): `ShapeVerifiersPassCondition` should evaluate ACTIVE-shape
+# verifier summaries for convergence authority; PROPOSAL-only diagnostics stay non-blocking.
 #     2. For ShapeDependencyCleanCondition, load latest ShapeMatchReport and ensure dependency drift sets are empty.
 # IMPL(single-layer): Treat matcher `status in {'AMBIGUOUS','BLOCKED'}` as not clean
 # even when drift sets are empty, because these states indicate unresolved routing or
