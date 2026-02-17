@@ -21,6 +21,9 @@
 # IMPL(single-layer): Treat matcher `status in {'AMBIGUOUS','BLOCKED'}` as not clean
 # even when drift sets are empty, because these states indicate unresolved routing or
 # missing deterministic evidence rather than convergence.
+# IMPL(single-layer): Keep checker dispatch branches in lockstep with
+# `coordination.monitors._TYPE_MAP`/`condition_from_dict`; newly persisted condition
+# payload types must not be treated as implicitly passing when dispatch is missing.
 #     3. Keep hybrid poll/event execution and wake queue logic unchanged.
 #     4. Phases are forward-only (Libraries -> Architecture -> Quality); monitors that detect issues outside the active phase's authority cause a block, not backtracking.
 #   Error handling:
