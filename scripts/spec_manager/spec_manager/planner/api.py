@@ -23,6 +23,9 @@
 #   Integration points:
 #     - Called from promotion loop PLAN/UNDER_SPEC steps and lifecycle refinement phases.
 #     - Calls planner.router PhaseRouter.
+# IMPL(single-layer): Keep API request/trace/result schema migration atomic with
+# `planner.router` (`layer` -> `phase`, `layer_skeleton` -> `phase_skeleton`) so
+# trace persistence/replay and planner outputs never mix both vocabularies.
 #   Test requirements:
 #     - Phase dispatch for all three phases.
 #     - Trace persistence still works on success and error.

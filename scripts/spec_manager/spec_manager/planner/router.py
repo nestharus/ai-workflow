@@ -1,5 +1,5 @@
-# TODO(single-layer): RESTRUCTURE — LayerRouter (L1/L2/L3 dispatch) becomes
-#   PhaseRouter (Libraries/Architecture/Quality dispatch). The Layer type
+# TODO(single-layer): RESTRUCTURE — LayerRouter (L1/L2/L3 dispatch) now routes
+#   by phase (Libraries/Architecture/Quality). The Layer type
 #   alias and per-layer planner selection are eliminated. ModelRouter and
 #   CapabilityRouter likely survive — they route by work-type, not by layer.
 #   The _DEFAULT_CAPABILITY_WORK_TYPES and _DEFAULT_WORK_TYPE_MODELS mappings
@@ -8,12 +8,13 @@
 #   References: response3 Section 9.1.
 #   Data structures:
 #     - PhaseId = Literal['libraries', 'architecture', 'quality'] imported from run_state.py.
-#     - PhasePlanner protocol replaces LayerPlanner: field phase: PhaseId and same discover/extract/build/resolve methods.
-#     - PhaseRouter registry: dict[PhaseId|'any', PhasePlanner].
+#     - LayerPlanner protocol carries field phase: PhaseId and keeps
+#       discover/extract/build/resolve methods.
+#     - LayerRouter registry: dict[PhaseId|'any', LayerPlanner].
 #   Interface contracts:
-#     - class PhaseRouter:
-#       - def register(self, phase: PhaseId, planner: PhasePlanner) -> None
-#       - def select(self, phase: PhaseId|'any') -> PhasePlanner
+#     - class LayerRouter:
+#       - def register(self, phase: PhaseId, planner: LayerPlanner) -> None
+#       - def select(self, phase: PhaseId|'any') -> LayerPlanner
 #     - ModelRouter/CapabilityRouter APIs remain unchanged.
 #   Control flow:
 #     1. Replace layer literals and docs with phase literals (3 phases: libraries, architecture, quality).
@@ -31,11 +32,12 @@
 #     - Registration and selection for all three phases.
 #     - 'any' resolves to libraries planner.
 
-"""Layer routing, model routing, and NextAction planning for planner execution.
+"""Phase routing, model routing, and NextAction planning for planner execution.
 
-LayerRouter selects per-layer planners (L1/L2/L3). ModelRouter resolves
-work-type model decisions. CapabilityRouter expresses capability execution as
-``NextAction`` steps; execution is handled by GeneralPlanner.
+LayerRouter selects per-phase planners (libraries/architecture/quality).
+ModelRouter resolves work-type model decisions. CapabilityRouter expresses
+capability execution as ``NextAction`` steps; execution is handled by
+GeneralPlanner.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.planner.jit.actions import ActionType, NextAction
 from spec_manager.planner.jit.state_machine import PlanPhase
 from spec_manager.planner.tools.integration_tool import IntegrationAnalyzer, IntegrationTool
@@ -55,7 +58,10 @@ logger = logging.getLogger(__name__)
 
 # Re-use the type aliases from the api module at runtime; we define the
 # same literals here to avoid a circular import (api imports router).
-Layer = Literal["l1", "l2", "l3", "any"]
+# IMPL(single-layer): Replace this alias with `PhaseId | Literal["any"]`
+# (`libraries`/`architecture`/`quality`) and keep `"any"` as router-level
+# dispatch sentinel only; concrete registrations stay phase-specific.
+Phase = PhaseId | Literal["any"]
 PlannerWorkType = Literal[
     "integration_analysis",
     "plan_synthesis",
@@ -130,28 +136,30 @@ class ReviewPack:
 
 @runtime_checkable
 class LayerPlanner(Protocol):
-    """Protocol that every per-layer planner must satisfy.
+    """Protocol that every per-phase planner must satisfy.
 
-    Each layer planner is composed from three collaborators:
+    Each phase planner is composed from three collaborators:
     ``discovery_router``, ``skeleton_planner``, and
     ``layer_research_adapter``.
     """
 
-    layer: Layer
+    # IMPL(single-layer): Migrate to `LayerPlanner` with `phase: PhaseId`
+    # while preserving discover/extract/build/resolve method contracts.
+    phase: PhaseId
     discovery_router: Any
     skeleton_planner: Any
     layer_research_adapter: Any
 
     def bind_trace(self, trace: Any | None) -> None:
-        """Bind per-request trace context for layer-level instrumentation."""
+        """Bind per-request trace context for phase-level instrumentation."""
         ...
 
     def discover(self, ctx: Any) -> dict[str, Any]:
-        """Gather layer-specific discovery data for the slice."""
+        """Gather phase-specific discovery data for the slice."""
         ...
 
     def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
-        """Return layer-typed skeleton graph payload for planner lifecycle steps."""
+        """Return phase-typed skeleton graph payload for planner lifecycle steps."""
         ...
 
     def build_plan(
@@ -181,31 +189,32 @@ class LayerPlanner(Protocol):
 
 
 class LayerRouter:
-    """Routes planning requests to the appropriate layer planner.
+    """Routes planning requests to the appropriate phase planner.
 
-    Each layer (l1/l2/l3) has a registered ``LayerPlanner``.  Requesting
-    ``"any"`` returns the L1 planner as the default.
+    Each phase (libraries/architecture/quality) has a registered
+    ``LayerPlanner``. Requesting ``"any"`` returns the libraries planner as
+    the default.
     """
 
+    # IMPL(single-layer): Rename to `LayerRouter` and preserve deterministic
+    # default dispatch (`"any"` -> libraries) defined in proposal Section 9.1.
     def __init__(self) -> None:
-        self._planners: dict[Layer, LayerPlanner] = {}
+        self._planners: dict[Phase, LayerPlanner] = {}
 
-    def register(self, layer: Layer, planner: LayerPlanner) -> None:
-        """Register a planner for *layer*."""
-        if layer == "any":
-            raise ValueError("Cannot register a planner for 'any'; use a concrete layer.")
-        self._planners[layer] = planner
+    def register(self, phase: PhaseId, planner: LayerPlanner) -> None:
+        """Register a planner for *phase*."""
+        self._planners[phase] = planner
 
-    def select(self, layer: Layer) -> LayerPlanner:
-        """Return the planner for *layer*.  ``"any"`` resolves to L1."""
-        if layer == "any":
-            planner = self._planners.get("l1")
+    def select(self, phase: Phase) -> LayerPlanner:
+        """Return the planner for *phase*. ``"any"`` resolves to libraries."""
+        if phase == "any":
+            planner = self._planners.get("libraries")
             if planner is None:
-                raise ValueError("No planner registered for layer 'l1'")
+                raise ValueError("No planner registered for phase 'libraries'")
             return planner
-        planner = self._planners.get(layer)
+        planner = self._planners.get(phase)
         if planner is None:
-            raise ValueError(f"No planner registered for layer {layer!r}")
+            raise ValueError(f"No planner registered for phase {phase!r}")
         return planner
 
 
@@ -753,6 +762,9 @@ class CapabilityRouter:
             return
 
         if tool_name == "extract_layer_skeleton":
+            # IMPL(single-layer): Rename this tool/interim contract to
+            # `extract_phase_skeleton` + `phase_skeleton` together with planner.api
+            # and layer planners; each phase carries its own skeleton lifecycle (§9.2).
             discovery = self._ensure_discovery(planner=planner, ctx=ctx, interim=interim)
             output_payload = self._extract_layer_skeleton(
                 planner=planner,
@@ -994,9 +1006,11 @@ class CapabilityRouter:
         action_inputs: dict[str, Any] | None,
     ) -> str:
         context = getattr(req, "context", None)
+        # IMPL(single-layer): Trace prompt payload schema must migrate
+        # `layer` -> `phase` atomically with PlanningContext/router renames.
         payload = {
             "capability": str(getattr(req, "capability", "")).strip().upper(),
-            "layer": str(getattr(context, "layer", "")).strip().lower(),
+            "phase": str(getattr(context, "phase", "")).strip().lower(),
             "invocation_kind": invocation_kind,
             "invocation_name": invocation_name,
             "action_inputs": dict(action_inputs) if isinstance(action_inputs, dict) else {},
@@ -1040,7 +1054,9 @@ class CapabilityRouter:
         metadata = self._context_metadata(req)
         route = metadata.get("model_route") if isinstance(metadata.get("model_route"), dict) else {}
         model_id = str(route.get("primary_model", metadata.get("primary_model", ""))).strip()
-        context_layer = str(getattr(getattr(req, "context", None), "layer", "")).strip().lower()
+        # IMPL(single-layer): Keep model/tool trace params on one vocabulary;
+        # migrate this context key and downstream trace readers in one change.
+        context_phase = str(getattr(getattr(req, "context", None), "phase", "")).strip().lower()
         tokens_in, tokens_out = self._extract_usage_tokens(output_payload)
         prompt_text = self._to_prompt_text(
             req=req,
@@ -1058,7 +1074,7 @@ class CapabilityRouter:
                 tokens_out=tokens_out,
                 model_params={
                     "capability": str(getattr(req, "capability", "")).strip().upper(),
-                    "layer": context_layer,
+                    "phase": context_phase,
                     "work_type": str(route.get("work_type", "")).strip(),
                     "secondary_model": str(route.get("secondary_model", "")).strip(),
                 },
@@ -1083,7 +1099,9 @@ class CapabilityRouter:
             return
         metadata = self._context_metadata(req)
         route = metadata.get("model_route") if isinstance(metadata.get("model_route"), dict) else {}
-        context_layer = str(getattr(getattr(req, "context", None), "layer", "")).strip().lower()
+        # IMPL(single-layer): Keep tool-call payload keys aligned with agent-call
+        # payload keys (`phase` rename should land atomically in both paths).
+        context_phase = str(getattr(getattr(req, "context", None), "phase", "")).strip().lower()
         invocation_payload = {
             "capability": str(getattr(req, "capability", "")).strip().upper(),
             "tool_name": tool_name,
@@ -1103,7 +1121,7 @@ class CapabilityRouter:
                 tokens_out=tokens_out,
                 tool_params={
                     "capability": str(getattr(req, "capability", "")).strip().upper(),
-                    "layer": context_layer,
+                    "phase": context_phase,
                     "work_type": str(route.get("work_type", "")).strip(),
                     "model": str(
                         route.get("primary_model", metadata.get("primary_model", ""))
@@ -1154,6 +1172,8 @@ class CapabilityRouter:
                 if key == "intentions":
                     continue
                 outputs[key] = value
+            # IMPL(single-layer): Rename exported skeleton artifact key to
+            # `phase_skeleton` only when all PlanningResult consumers migrate.
             layer_skeleton = interim.get("layer_skeleton")
             if isinstance(layer_skeleton, dict):
                 outputs.setdefault("layer_skeleton", layer_skeleton)
@@ -1205,6 +1225,8 @@ class CapabilityRouter:
             return PlanningResult(status=status, outputs=triage_result)
 
         if capability == "INGEST_USER_ANSWER":
+            # IMPL(single-layer): Keep this path explicit because
+            # INGEST_USER_ANSWER bypasses per-phase planners.
             return PlanningResult(
                 status="ERROR",
                 error="INGEST_USER_ANSWER must be handled by GeneralPlanner, not LayerPlanner",
@@ -1233,6 +1255,9 @@ class CapabilityRouter:
         ctx: Any,
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
+        # IMPL(single-layer): Rename helper + diagnostic payload fields to
+        # phase terminology and switch fallback context lookup to `ctx.phase` /
+        # `planner.phase` during router migration.
         if hasattr(planner, "extract_skeleton") and callable(planner.extract_skeleton):
             try:
                 extracted = planner.extract_skeleton(ctx, discovery)
@@ -1252,11 +1277,11 @@ class CapabilityRouter:
                     "payload_type": type(extracted).__name__,
                 }
             }
-        layer = str(getattr(ctx, "layer", "") or getattr(planner, "layer", "")).strip().lower()
+        phase = str(getattr(ctx, "phase", "") or getattr(planner, "phase", "")).strip().lower()
         return {
             "layer_skeleton_unavailable": {
                 "reason": "extract_skeleton_not_implemented",
-                "layer": layer,
+                "phase": phase,
             }
         }
 
