@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from spec_manager.core.evidence_index import EvidenceIndex
 from spec_manager.refinement.hollowed_spec.extractor import hollow_out_spec
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 
 SPEC_A = """\
 # Library A

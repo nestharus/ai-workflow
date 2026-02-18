@@ -11,7 +11,7 @@ from spec_manager.branches.layout import BranchLayout
 from spec_manager.branches.types import AtomDescriptor, AtomKind
 from spec_manager.compliance.coverage.analyzer import EntityCoverageAnalyzer
 from spec_manager.compliance.coverage.report import EntityCoverageReport
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+from spec_manager.core.evidence_index import EvidenceIndex
 from spec_manager.schemas.entities import (
     EntitiesArtifact,
     Entity,

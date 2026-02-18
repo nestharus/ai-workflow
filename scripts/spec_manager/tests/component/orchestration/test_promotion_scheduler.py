@@ -1,6 +1,6 @@
 """Component tests for orchestration.promotion_scheduler module.
 
-Tests PromotionScheduler bounded-concurrency execution, SchedulerConfig,
+Tests ReactivePromotionScheduler bounded-concurrency execution, SchedulerConfig,
 SchedulerResult, priority ordering, and aggregate result computation.
 """
 
@@ -17,7 +17,7 @@ from spec_manager.orchestration.promotion_loop import (
     SliceResult,
 )
 from spec_manager.orchestration.promotion_scheduler import (
-    PromotionScheduler,
+    ReactivePromotionScheduler,
     SchedulerConfig,
     SchedulerResult,
 )
@@ -138,17 +138,17 @@ class TestSchedulerConfig:
 
 
 # ======================================================================
-# PromotionScheduler.run() with empty slices
+# ReactivePromotionScheduler.run() with empty slices
 # ======================================================================
 
 
 class TestPromotionSchedulerRunEmpty:
-    """Test PromotionScheduler.run() with empty slice_refs."""
+    """Test ReactivePromotionScheduler.run() with empty slice_refs."""
 
     def test_empty_slice_refs_returns_all_complete(self) -> None:
         """run() with empty slice_refs returns all_complete=True."""
         mock_loop = MagicMock(spec=PromotionLoop)
-        scheduler = PromotionScheduler(loop=mock_loop)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop)
 
         result = scheduler.run([], _make_run_context())
 
@@ -160,12 +160,12 @@ class TestPromotionSchedulerRunEmpty:
 
 
 # ======================================================================
-# PromotionScheduler.run() with single slice
+# ReactivePromotionScheduler.run() with single slice
 # ======================================================================
 
 
 class TestPromotionSchedulerRunSingle:
-    """Test PromotionScheduler.run() with a single slice."""
+    """Test ReactivePromotionScheduler.run() with a single slice."""
 
     def test_single_slice_delegates_to_run_slices(self) -> None:
         """run() with single slice delegates to loop.run_slices() (sequential)."""
@@ -175,7 +175,7 @@ class TestPromotionSchedulerRunSingle:
         ]
 
         config = SchedulerConfig(max_parallel=1)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("s1")]
         result = scheduler.run(refs, _make_run_context())
@@ -187,12 +187,12 @@ class TestPromotionSchedulerRunSingle:
 
 
 # ======================================================================
-# PromotionScheduler.run() sequential (max_parallel=1)
+# ReactivePromotionScheduler.run() sequential (max_parallel=1)
 # ======================================================================
 
 
 class TestPromotionSchedulerRunSequential:
-    """Test PromotionScheduler.run() with max_parallel=1."""
+    """Test ReactivePromotionScheduler.run() with max_parallel=1."""
 
     def test_runs_sequentially(self) -> None:
         """run() with max_parallel=1 calls run_slices (sequential path)."""
@@ -203,7 +203,7 @@ class TestPromotionSchedulerRunSequential:
         ]
 
         config = SchedulerConfig(max_parallel=1)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("s1"), _make_slice_ref("s2")]
         result = scheduler.run(refs, _make_run_context())
@@ -222,7 +222,7 @@ class TestPromotionSchedulerRunSequential:
         ]
 
         config = SchedulerConfig(max_parallel=1)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("s1"), _make_slice_ref("s2")]
         result = scheduler.run(refs, _make_run_context())
@@ -232,18 +232,18 @@ class TestPromotionSchedulerRunSequential:
 
 
 # ======================================================================
-# PromotionScheduler._prioritize()
+# ReactivePromotionScheduler._prioritize()
 # ======================================================================
 
 
 class TestPromotionSchedulerPrioritize:
-    """Test PromotionScheduler._prioritize() sorting."""
+    """Test ReactivePromotionScheduler._prioritize() sorting."""
 
     def test_sorts_by_gap_count_when_enabled(self) -> None:
         """_prioritize() sorts slices by gap count (highest first)."""
         mock_loop = MagicMock(spec=PromotionLoop)
         config = SchedulerConfig(priority_by_gaps=True)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [
             _make_slice_ref("low"),
@@ -260,7 +260,7 @@ class TestPromotionSchedulerPrioritize:
         """_prioritize() preserves original order when priority_by_gaps=False."""
         mock_loop = MagicMock(spec=PromotionLoop)
         config = SchedulerConfig(priority_by_gaps=False)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [
             _make_slice_ref("first"),
@@ -277,7 +277,7 @@ class TestPromotionSchedulerPrioritize:
         """_prioritize() preserves order when gap_counts is None."""
         mock_loop = MagicMock(spec=PromotionLoop)
         config = SchedulerConfig(priority_by_gaps=True)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("a"), _make_slice_ref("b")]
         ordered = scheduler._prioritize(refs, None)
@@ -288,7 +288,7 @@ class TestPromotionSchedulerPrioritize:
         """_prioritize() treats missing slice IDs as 0 gap count."""
         mock_loop = MagicMock(spec=PromotionLoop)
         config = SchedulerConfig(priority_by_gaps=True)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("known"), _make_slice_ref("unknown")]
         gap_counts = {"known": 5}
@@ -300,17 +300,17 @@ class TestPromotionSchedulerPrioritize:
 
 
 # ======================================================================
-# PromotionScheduler._aggregate()
+# ReactivePromotionScheduler._aggregate()
 # ======================================================================
 
 
 class TestPromotionSchedulerAggregate:
-    """Test PromotionScheduler._aggregate() result computation."""
+    """Test ReactivePromotionScheduler._aggregate() result computation."""
 
     def test_identifies_blocked_slices(self) -> None:
         """_aggregate() correctly identifies blocked slices."""
         mock_loop = MagicMock(spec=PromotionLoop)
-        scheduler = PromotionScheduler(loop=mock_loop)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop)
 
         results = [
             _make_slice_result("s1", "COMPLETE", iterations=1),
@@ -327,7 +327,7 @@ class TestPromotionSchedulerAggregate:
     def test_identifies_failed_slices(self) -> None:
         """_aggregate() correctly identifies failed slices."""
         mock_loop = MagicMock(spec=PromotionLoop)
-        scheduler = PromotionScheduler(loop=mock_loop)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop)
 
         results = [
             _make_slice_result("s1", "COMPLETE", iterations=2),
@@ -343,7 +343,7 @@ class TestPromotionSchedulerAggregate:
     def test_all_complete_when_all_slices_complete(self) -> None:
         """_aggregate() sets all_complete=True when every slice is COMPLETE."""
         mock_loop = MagicMock(spec=PromotionLoop)
-        scheduler = PromotionScheduler(loop=mock_loop)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop)
 
         results = [
             _make_slice_result("s1", "COMPLETE", iterations=1),
@@ -360,7 +360,7 @@ class TestPromotionSchedulerAggregate:
     def test_sums_total_iterations(self) -> None:
         """_aggregate() sums iterations across all slices."""
         mock_loop = MagicMock(spec=PromotionLoop)
-        scheduler = PromotionScheduler(loop=mock_loop)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop)
 
         results = [
             _make_slice_result("s1", "COMPLETE", iterations=5),
@@ -374,7 +374,7 @@ class TestPromotionSchedulerAggregate:
     def test_empty_results(self) -> None:
         """_aggregate() handles empty results list."""
         mock_loop = MagicMock(spec=PromotionLoop)
-        scheduler = PromotionScheduler(loop=mock_loop)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop)
 
         agg = scheduler._aggregate([])
 
@@ -385,12 +385,12 @@ class TestPromotionSchedulerAggregate:
 
 
 # ======================================================================
-# PromotionScheduler.run() with parallel execution
+# ReactivePromotionScheduler.run() with parallel execution
 # ======================================================================
 
 
 class TestPromotionSchedulerRunParallel:
-    """Test PromotionScheduler.run() with parallel execution."""
+    """Test ReactivePromotionScheduler.run() with parallel execution."""
 
     def test_parallel_with_multiple_slices(self) -> None:
         """run() with max_parallel>1 and multiple slices uses parallel path."""
@@ -402,7 +402,7 @@ class TestPromotionSchedulerRunParallel:
         ]
 
         config = SchedulerConfig(max_parallel=4)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("s1"), _make_slice_ref("s2")]
         result = scheduler.run(refs, _make_run_context())
@@ -425,7 +425,7 @@ class TestPromotionSchedulerRunWithGapPriority:
         ]
 
         config = SchedulerConfig(max_parallel=1, priority_by_gaps=True)
-        scheduler = PromotionScheduler(loop=mock_loop, config=config)
+        scheduler = ReactivePromotionScheduler(loop=mock_loop, config=config)
 
         refs = [_make_slice_ref("low"), _make_slice_ref("high")]
         gap_counts = {"low": 1, "high": 10}

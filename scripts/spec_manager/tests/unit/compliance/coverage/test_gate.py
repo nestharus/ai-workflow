@@ -13,7 +13,7 @@ from spec_manager.compliance.coverage.gate import (
     check_entity_coverage,
 )
 from spec_manager.compliance.promotion.config import GateId, GateMode, GateSpec
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
+from spec_manager.core.evidence_index import EvidenceIndex
 from spec_manager.schemas.entities import (
     EntitiesArtifact,
     Entity,

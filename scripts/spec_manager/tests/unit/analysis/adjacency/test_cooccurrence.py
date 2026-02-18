@@ -9,7 +9,7 @@ import pytest
 from spec_manager.analysis.adjacency.extractors.cooccurrence import (
     _build_cooccurrence_edges,
     _extract_entity_mentions,
-    extract_cooccurrence_graph,
+    build_cooccurrence_verifier_graph,
 )
 
 
@@ -36,7 +36,7 @@ class TestExtractCooccurrenceGraph:
             Binary search implementation.
             """,
         )
-        graph = extract_cooccurrence_graph([path])
+        graph = build_cooccurrence_verifier_graph([path])
 
         # Algorithm 1 and Algorithm 2 co-occur in the first section
         # (Algorithm 1 is declared, Algorithm 2 is referenced)
@@ -55,7 +55,7 @@ class TestExtractCooccurrenceGraph:
             Uses (@[+Algorithm 1]) and (@[+Algorithm 2]) together.
             """,
         )
-        graph = extract_cooccurrence_graph([path])
+        graph = build_cooccurrence_verifier_graph([path])
 
         # All three algorithms co-occur in the same section
         nodes = set(graph.nodes())
@@ -94,8 +94,8 @@ class TestExtractCooccurrenceGraph:
             """,
         )
 
-        graph_small = extract_cooccurrence_graph([path_small])
-        graph_large = extract_cooccurrence_graph([path_large])
+        graph_small = build_cooccurrence_verifier_graph([path_small])
+        graph_large = build_cooccurrence_verifier_graph([path_large])
 
         # Small section (2 entities) has proximity = 0.5
         # Large section (5 entities) has proximity = 0.2
@@ -120,7 +120,7 @@ class TestExtractCooccurrenceGraph:
             This section defines Algorithm 1. See also (@[+Algorithm 2]).
             """,
         )
-        graph = extract_cooccurrence_graph([path])
+        graph = build_cooccurrence_verifier_graph([path])
 
         # No self-edge on Algorithm 1
         self_edge = graph.get_edge("Algorithm 1", "Algorithm 1")
@@ -146,7 +146,7 @@ class TestExtractCooccurrenceGraph:
             References (@[+Algorithm 1]) from another file.
             """,
         )
-        graph = extract_cooccurrence_graph([path_a, path_b])
+        graph = build_cooccurrence_verifier_graph([path_a, path_b])
 
         # file_b has Algorithm 2 and Algorithm 1 in same section
         edge = graph.get_edge("Algorithm 1", "Algorithm 2")
@@ -154,7 +154,7 @@ class TestExtractCooccurrenceGraph:
         assert edge is not None or reverse is not None
 
     def test_empty_spec_list(self) -> None:
-        graph = extract_cooccurrence_graph([])
+        graph = build_cooccurrence_verifier_graph([])
         assert len(graph.nodes()) == 0
         assert len(graph.edges()) == 0
 
@@ -168,7 +168,7 @@ class TestExtractCooccurrenceGraph:
             No annotations here.
             """,
         )
-        graph = extract_cooccurrence_graph([path])
+        graph = build_cooccurrence_verifier_graph([path])
         assert len(graph.nodes()) == 0
         assert len(graph.edges()) == 0
 
@@ -185,7 +185,7 @@ class TestExtractCooccurrenceGraph:
             This paragraph only has (@[+Algorithm 4]).
             """,
         )
-        graph = extract_cooccurrence_graph([path], window_mode="paragraph")
+        graph = build_cooccurrence_verifier_graph([path], window_mode="paragraph")
 
         # In paragraph mode, Algorithm 2 and Algorithm 3 co-occur in the same paragraph
         nodes = set(graph.nodes())
@@ -208,17 +208,15 @@ class TestExtractEntityMentions:
 
             Independent section.
         """)
-        mentions = _extract_entity_mentions(content, "test.md")
-
-        assert "Algorithm 1" in mentions
-        algo1_section = mentions["Algorithm 1"]
-        assert "Algorithm 1" in algo1_section
-        assert "Algorithm 2" in algo1_section
-        assert "Algorithm 3" in algo1_section
+        mentions = _extract_entity_mentions(content)
+        assert any(
+            {"Algorithm 1", "Algorithm 2", "Algorithm 3"}.issubset(set(section_entities))
+            for section_entities in mentions.values()
+        )
 
     def test_no_declarations(self) -> None:
         content = "Just plain text without annotations."
-        mentions = _extract_entity_mentions(content, "test.md")
+        mentions = _extract_entity_mentions(content)
         assert len(mentions) == 0
 
 

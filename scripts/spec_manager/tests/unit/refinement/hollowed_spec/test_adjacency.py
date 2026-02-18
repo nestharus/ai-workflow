@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from spec_manager.core.evidence_index import EvidenceIndex
 from spec_manager.refinement.hollowed_spec.adjacency import (
     AdjacencyScanner,
 )
 from spec_manager.refinement.hollowed_spec.extractor import hollow_out_spec
-from spec_manager.refinement.hollowed_spec.indexer import EvidenceIndex
 
 SPEC_PAYMENTS = """\
 # Payments
