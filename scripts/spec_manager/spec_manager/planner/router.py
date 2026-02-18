@@ -1,3 +1,36 @@
+# TODO(single-layer): RESTRUCTURE — LayerRouter (L1/L2/L3 dispatch) becomes
+#   PhaseRouter (Libraries/Architecture/Quality dispatch). The Layer type
+#   alias and per-layer planner selection are eliminated. ModelRouter and
+#   CapabilityRouter likely survive — they route by work-type, not by layer.
+#   The _DEFAULT_CAPABILITY_WORK_TYPES and _DEFAULT_WORK_TYPE_MODELS mappings
+#   are layer-independent and KEEP.
+# ALGORITHM(single-layer):
+#   References: response3 Section 9.1.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'] imported from run_state.py.
+#     - PhasePlanner protocol replaces LayerPlanner: field phase: PhaseId and same discover/extract/build/resolve methods.
+#     - PhaseRouter registry: dict[PhaseId|'any', PhasePlanner].
+#   Interface contracts:
+#     - class PhaseRouter:
+#       - def register(self, phase: PhaseId, planner: PhasePlanner) -> None
+#       - def select(self, phase: PhaseId|'any') -> PhasePlanner
+#     - ModelRouter/CapabilityRouter APIs remain unchanged.
+#   Control flow:
+#     1. Replace layer literals and docs with phase literals (3 phases: libraries, architecture, quality).
+#     2. Default 'any' selection resolves to libraries planner.
+#     3. Keep capability/model routing independent from phase.
+#     4. Each phase has its own planner strategy; each phase edits code via PromotionLoop IMPLEMENT step.
+#   Error handling:
+#     - Missing planner for requested phase raises ValueError.
+#   Integration points:
+#     - Used by planner.api GeneralPlanner.
+# IMPL(single-layer): `planner.api` and this module must migrate together:
+# switch `PlanningContext.layer`/trace keys to phase semantics in the same
+# change that renames `LayerRouter`/`register_layer_planner` APIs.
+#   Test requirements:
+#     - Registration and selection for all three phases.
+#     - 'any' resolves to libraries planner.
+
 """Layer routing, model routing, and NextAction planning for planner execution.
 
 LayerRouter selects per-layer planners (L1/L2/L3). ModelRouter resolves

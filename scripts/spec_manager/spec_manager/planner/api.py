@@ -1,3 +1,32 @@
+# TODO(single-layer): KEEP/RESTRUCTURE — GeneralPlanner is the single decision
+#   authority, unchanged. PlanningContext may reference layer->phase. PlanningRequest
+#   and PlanningResult are mostly layer-independent. The planner's constraint/decision
+#   recording, strategy dispatch, and auto-mode logic all survive. Phase-awareness
+#   replaces layer-awareness for strategy selection (Section 9.1).
+# ALGORITHM(single-layer):
+#   References: response3 Section 9.1.
+#   Data structures:
+#     - PhaseId = Literal['libraries', 'architecture', 'quality'].
+#     - PlanningContext replaces layer with phase: PhaseId|'any'; keep mode/workspace/signal metadata.
+#     - GeneralPlanner stores PhaseRouter instead of LayerRouter.
+#   Interface contracts:
+#     - def register_phase_planner(self, phase: PhaseId, planner: Any) -> None
+#     - def plan(self, req: PlanningRequest) -> PlanningResult  # phase-aware dispatch
+#   Control flow:
+#     1. Keep GeneralPlanner as single decision authority and trace pipeline unchanged.
+#     2. Select planner by req.context.phase, defaulting 'any' to libraries planner.
+#     3. Capability routing/model routing remain independent from phase and reusable.
+#     4. Register default planners for libraries/architecture/quality (3 phases, forward-only).
+#     5. Each phase edits code via its own PromotionLoop with IMPLEMENT step.
+#   Error handling:
+#     - Unknown phase in request returns ERROR PlanningResult with trace id and persisted trace.
+#   Integration points:
+#     - Called from promotion loop PLAN/UNDER_SPEC steps and lifecycle refinement phases.
+#     - Calls planner.router PhaseRouter.
+#   Test requirements:
+#     - Phase dispatch for all three phases.
+#     - Trace persistence still works on success and error.
+
 """Core types and planner API for the planning module.
 
 Defines the public data types (PlanningContext, PlanningRequest,
@@ -19,15 +48,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.planner.jit.actions import ActionType
 from spec_manager.planner.jit.state_machine import PlannerStateMachine, PlanPhase, PlanStatus
 from spec_manager.planner.router import (
     CapabilityRouter,
-    LayerRouter,
     ModelRouteDecision,
     ModelRouter,
     ReviewPack,
 )
+from spec_manager.planner.router import (
+    LayerRouter as PhaseRouter,
+)
+
+# IMPL(single-layer): Switch this import to `PhaseRouter` in lockstep with
+# `planner.router` so planner dispatch migrates atomically to
+# libraries/architecture/quality while ModelRouter/CapabilityRouter stay unchanged.
 from spec_manager.planner.tools.constraints_tool import ConstraintsTool
 from spec_manager.planner.trace import ReplayBundle
 
@@ -40,12 +76,17 @@ _VALID_UNDER_SPEC_DIMENSIONS = frozenset(
 _VALID_UNDER_SPEC_DECISION_TYPES = frozenset(
     {"dependency", "infrastructure", "data_policy", "security", "performance", "architecture"}
 )
+_VALID_PHASES = frozenset({"libraries", "architecture", "quality"})
+_DEFAULT_PHASE: PhaseId = "libraries"
 
 # ---------------------------------------------------------------------------
 # Type aliases
 # ---------------------------------------------------------------------------
 
-Layer = Literal["l1", "l2", "l3", "any"]
+Phase = PhaseId | Literal["any"]
+# IMPL(single-layer): Replace `Layer` with `PhaseId` (`libraries`,
+# `architecture`, `quality`, plus `any` sentinel) and update all uses in this
+# file and its consumers in one change.
 Capability = Literal[
     "RESOLVE_SIGNAL",  # interactive refinement + under-spec questions
     "GAP",  # gap understanding / clustering / prioritization
@@ -69,7 +110,9 @@ class PlanningContext:
     run_id: str | None = None
     slice_id: str | None = None
     iteration: int | None = None
-    layer: Layer = "any"
+    # IMPL(single-layer): Rename this field to `phase` and migrate every caller
+    # together; keep `any -> libraries` default routing behavior from Section 9.1.
+    phase: Phase = "any"
     mode: Literal["auto", "interactive"] = "auto"
     workspace_root: str = ""
     slice_root: str | None = None
@@ -117,15 +160,16 @@ class PromotionLoopAdapters:
 class GeneralPlanner:
     """Single auto-mode decision authority across the spec manager lifecycle.
 
-    Routes each ``PlanningRequest`` to the appropriate layer planner
-    (L1/L2/L3) via a ``LayerRouter`` and resolves model selection using
+    Routes each ``PlanningRequest`` to the appropriate phase planner
+    (libraries/architecture/quality) via a ``PhaseRouter`` and resolves model
+    selection using
     ``ModelRouter``. Capability dispatch is expressed as ``NextAction``
     sequences and executed against planner adapters. Every invocation is
     tagged with a trace id for observability.
 
-    If *register_defaults* is True (the default), real L1/L2/L3 planners
+    If *register_defaults* is True (the default), real phase planners
     are registered automatically.  Pass False and call
-    ``register_layer_planner`` manually for testing.
+    ``register_phase_planner`` manually for testing.
     """
 
     def __init__(
@@ -149,7 +193,9 @@ class GeneralPlanner:
         self._mode = mode
         self._default_model_id = str(model_id).strip()
         self._model_id = self._default_model_id
-        self._layer_router = LayerRouter()
+        # IMPL(single-layer): Router storage shifts from LayerRouter to
+        # PhaseRouter; model/capability routers remain phase-independent.
+        self._phase_router = PhaseRouter()
         self._model_router = ModelRouter(default_model_id=self._default_model_id)
         self._capability_router = CapabilityRouter(integration_tool=integration_tool)
         self._override_provider = override_provider
@@ -186,13 +232,16 @@ class GeneralPlanner:
         integration_tool: Any = None,
         constraints_tool: Any = None,
     ) -> None:
-        """Register real L1/L2/L3 planners with injected tools."""
+        # IMPL(single-layer): Keep three default planners but register by
+        # forward-only phases (libraries/architecture/quality) rather than
+        # l1/l2/l3 identifiers.
+        """Register phase planners with injected tools."""
         from spec_manager.planner.layers.l1 import L1Planner
         from spec_manager.planner.layers.l2 import L2Planner
         from spec_manager.planner.layers.l3 import L3Planner
 
-        self._layer_router.register(
-            "l1",
+        self._phase_router.register(
+            "libraries",
             L1Planner(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
@@ -200,8 +249,8 @@ class GeneralPlanner:
                 constraints_store_adapter=self._constraints_store_tool,
             ),
         )
-        self._layer_router.register(
-            "l2",
+        self._phase_router.register(
+            "architecture",
             L2Planner(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
@@ -211,8 +260,8 @@ class GeneralPlanner:
                 wait_graph=self._wait_graph,
             ),
         )
-        self._layer_router.register(
-            "l3",
+        self._phase_router.register(
+            "quality",
             L3Planner(
                 research_tool=research_tool,
                 integration_tool=integration_tool,
@@ -220,16 +269,49 @@ class GeneralPlanner:
             ),
         )
 
-    def register_layer_planner(self, layer: str, planner: Any) -> None:
-        """Register a custom planner for a layer (useful for testing)."""
-        self._layer_router.register(layer, planner)
+    def register_phase_planner(self, phase: PhaseId, planner: Any) -> None:
+        # IMPL(single-layer): Rename to `register_phase_planner(phase, planner)`
+        # and update all call sites atomically with router/type alias migration.
+        """Register a custom planner for a phase (useful for testing)."""
+        self._phase_router.register(phase, planner)
+
+    @staticmethod
+    def _normalize_phase_token(value: Any, *, allow_any: bool = True) -> str:
+        token = str(value or "").strip().lower()
+        if not token:
+            return "any" if allow_any else _DEFAULT_PHASE
+        if allow_any and token == "any":
+            return "any"
+        if token in _VALID_PHASES:
+            return token
+        expected = (
+            "any, libraries, architecture, quality"
+            if allow_any
+            else "libraries, architecture, quality"
+        )
+        raise ValueError(f"Unknown phase {value!r}; expected one of: {expected}")
+
+    @classmethod
+    def _resolve_dispatch_phase(cls, value: Any) -> PhaseId:
+        token = cls._normalize_phase_token(value, allow_any=True)
+        if token == "any":
+            return _DEFAULT_PHASE
+        if token == "libraries":
+            return "libraries"
+        if token == "architecture":
+            return "architecture"
+        if token == "quality":
+            return "quality"
+        raise ValueError(
+            f"Unknown phase {value!r}; expected one of: any, libraries, architecture, quality"
+        )
 
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
     def plan(self, req: PlanningRequest) -> PlanningResult:
-        """Route *req* to the correct layer planner and capability handler.
+        """Route *req* to the correct phase planner and capability handler.
 
         Returns a ``PlanningResult`` with a unique ``trace_id`` for
         every invocation regardless of outcome.  Every call persists a
@@ -242,7 +324,11 @@ class GeneralPlanner:
         )
 
         trace_id = _new_trace_id()
-        layer = req.context.layer
+        # IMPL(single-layer): Dispatch key becomes request context phase; `any`
+        # resolves to libraries and unknown phases must return ERROR with trace
+        # persisted (Section 9.1 error handling).
+        requested_phase = str(req.context.phase or "").strip().lower() or "any"
+        dispatch_phase = _DEFAULT_PHASE if requested_phase == "any" else requested_phase
         ctx = req.context
         run_id = str(ctx.run_id or "").strip()
         slice_id = str(ctx.slice_id or "").strip()
@@ -265,7 +351,7 @@ class GeneralPlanner:
             self._model_id = selected_model
 
         decision_key = compute_decision_key(
-            layer=str(layer),
+            layer=str(dispatch_phase),
             capability=req.capability,
             slice_id=slice_id,
             iteration=iteration,
@@ -287,29 +373,35 @@ class GeneralPlanner:
             run_id=run_id,
             model_id=selected_model,
             planner_version=PLANNER_VERSION,
-            layer=str(layer),
+            layer=str(dispatch_phase),
             capability=req.capability,
             slice_id=slice_id,
         )
         state_machine = PlannerStateMachine()
         executed_actions: list[dict[str, Any]] = []
+        selected_planner: Any | None = None
 
         logger.debug(
-            "planner.plan  trace=%s  key=%s  capability=%s  layer=%s  slice=%s",
+            "planner.plan  trace=%s  key=%s  capability=%s  phase=%s  slice=%s",
             trace_id,
             decision_key,
             req.capability,
-            layer,
+            dispatch_phase,
             slice_id,
         )
 
         context_token = ConstraintsTool.push_planner_update_context(
             run_id=run_id,
-            layer=str(layer),
+            layer=str(dispatch_phase),
             capability=req.capability,
         )
         self._capability_router.bind_trace(trace)
         try:
+            if dispatch_phase not in _VALID_PHASES:
+                raise ValueError(
+                    f"Unknown phase {requested_phase!r}; expected one of: "
+                    "any, libraries, architecture, quality"
+                )
             state_machine = self._load_state_machine(req)
             # Override hook (for counterfactual testing / ground truth injection)
             if self._override_provider is not None:
@@ -365,11 +457,13 @@ class GeneralPlanner:
                 result = self._handle_ingest_user_answer(req)
                 state_machine.complete()
             else:
-                planner = self._layer_router.select(layer)
-                planner.bind_trace(trace)
+                # IMPL(single-layer): Planner selection is phase-aware only at the
+                # router boundary; capability/model gates remain shared.
+                selected_planner = self._phase_router.select(dispatch_phase)
+                selected_planner.bind_trace(trace)
                 result, effective_route, dispatch_gates, executed_actions = (
                     self._route_request_with_gates(
-                        planner=planner,
+                        planner=selected_planner,
                         req=req,
                         initial_route=resolved_route,
                         state_machine=state_machine,
@@ -482,11 +576,11 @@ class GeneralPlanner:
             )
             return result
         finally:
-            if req.capability != "INGEST_USER_ANSWER":
+            if selected_planner is not None:
                 try:
-                    self._layer_router.select(layer).bind_trace(None)
+                    selected_planner.bind_trace(None)
                 except Exception:
-                    logger.debug("Failed to clear layer trace binding", exc_info=True)
+                    logger.debug("Failed to clear phase trace binding", exc_info=True)
             self._capability_router.bind_trace(None)
             ConstraintsTool.pop_planner_update_context(context_token)
 
@@ -780,7 +874,9 @@ class GeneralPlanner:
     ) -> ReviewPack | None:
         if not self._should_run_critique_gate(req, model_route):
             return None
-        layer = str(req.context.layer or "any").strip().lower()
+        # IMPL(single-layer): Replace layer-derived review labels/branches with
+        # phase names and keep stronger reviewer packs for quality/high-risk paths.
+        phase = self._resolve_dispatch_phase(req.context.phase)
         risk = "high" if self._is_high_risk_request(req) else "standard"
         agents: list[dict[str, Any]] = []
         if model_route.secondary_model:
@@ -798,7 +894,7 @@ class GeneralPlanner:
                 "model": model_route.primary_model,
             }
         )
-        if layer == "l3" or risk == "high":
+        if phase == "quality" or risk == "high":
             agents.append(
                 {
                     "name": "adversarial_reviewer",
@@ -808,7 +904,7 @@ class GeneralPlanner:
             )
         merge_strategy = "all_must_pass" if len(agents) > 1 else "single"
         return ReviewPack(
-            name=f"{layer}_{str(req.capability).lower()}_{risk}_review",
+            name=f"{phase}_{str(req.capability).lower()}_{risk}_review",
             agents=agents,
             merge_strategy=merge_strategy,
             acceptance_checks=["status_not_error", "risk_profile_present"],
@@ -1498,13 +1594,17 @@ class GeneralPlanner:
 
     def _is_high_risk_request(self, req: PlanningRequest) -> bool:
         capability = str(req.capability).strip().upper()
-        layer = str(req.context.layer or "").strip().lower()
+        # IMPL(single-layer): High-risk defaults should map to phase semantics
+        # (`architecture`/`quality`) instead of l2/l3 tokens.
+        phase = str(req.context.phase or "").strip().lower()
+        if phase not in _VALID_PHASES:
+            phase = "any"
         inputs = req.inputs if isinstance(req.inputs, dict) else {}
         metadata = req.context.metadata if isinstance(req.context.metadata, dict) else {}
 
-        if capability in {"PLAN", "UNDER_SPEC"} and layer in {"l2", "l3"}:
+        if capability in {"PLAN", "UNDER_SPEC"} and phase in {"architecture", "quality"}:
             return True
-        if capability == "INTEGRATION_ANALYSIS" and layer == "l3":
+        if capability == "INTEGRATION_ANALYSIS" and phase == "quality":
             return True
 
         high_risk_flags = (
@@ -1893,7 +1993,7 @@ class GeneralPlanner:
         run_id: str,
         trace_id: str,
         slice_id: str,
-        layer: str,
+        phase: str,
         decision_key: str,
         canonical_keys: list[str],
         decision_ids: list[str],
@@ -1928,7 +2028,7 @@ class GeneralPlanner:
                 "kind": "PLANNER",
                 "trace_id": trace_id,
                 "slice_id": slice_id,
-                "layer": layer,
+                "phase": phase,
                 "signal_id": signal_id,
             },
             "question": {
@@ -1986,7 +2086,7 @@ class GeneralPlanner:
             "created_at": datetime.now(UTC).isoformat(),
             "run_id": context.run_id,
             "slice_id": context.slice_id,
-            "layer": str(getattr(trace, "layer", "") or context.layer),
+            "phase": str(getattr(trace, "layer", "") or context.phase),
             "capability": capability,
             "decision_key": decision_key,
             "status": str(getattr(trace, "status", "") or ""),
@@ -2014,7 +2114,7 @@ class GeneralPlanner:
                     run_id=context.run_id,
                     trace_id=event["trace_id"],
                     slice_id=context.slice_id,
-                    layer=event["layer"],
+                    phase=event["phase"],
                     decision_key=decision_key,
                     canonical_keys=canonical_keys,
                     decision_ids=decision_ids,
@@ -2053,16 +2153,18 @@ class GeneralPlanner:
             logger.debug("Failed to persist planner_state for %s", trace.trace_id, exc_info=True)
 
     def _persist_planner_state(self, trace: Any) -> None:
-        """Persist a per-layer planner decision digest for attribution/debugging."""
+        """Persist a per-phase planner decision digest for attribution/debugging."""
         run_id = str(getattr(trace, "run_id", "") or "")
-        layer = str(getattr(trace, "layer", "") or "")
+        phase = str(getattr(trace, "layer", "") or "")
         slice_id = str(getattr(trace, "slice_id", "") or "")
-        if not run_id or not layer or not slice_id:
+        if not run_id or not phase or not slice_id:
             return
-        if layer not in {"l1", "l2", "l3"}:
+        # IMPL(single-layer): Persist planner state by phase key so lifecycle and
+        # planner artifacts use the same forward-only vocabulary.
+        if phase not in _VALID_PHASES:
             return
 
-        state_dir = self._workspace_root / "analysis" / "planner_state" / run_id / layer
+        state_dir = self._workspace_root / "analysis" / "planner_state" / run_id / phase
         state_dir.mkdir(parents=True, exist_ok=True)
 
         outputs = {}
@@ -2083,7 +2185,7 @@ class GeneralPlanner:
         payload = {
             "updated_at": datetime.now(tz=UTC).isoformat(),
             "run_id": run_id,
-            "layer": layer,
+            "phase": phase,
             "slice_id": slice_id,
             "trace_id": str(getattr(trace, "trace_id", "") or ""),
             "decision_key": str(getattr(trace, "decision_key", "") or ""),
@@ -2200,10 +2302,12 @@ class GeneralPlanner:
             inputs["slice_id"] = slice_id
 
         if context is None:
+            # IMPL(single-layer): Convenience APIs should default to `phase='any'`
+            # (which routes to libraries) once PlanningContext is phase-native.
             context = PlanningContext(
                 run_id=run_id_hint,
                 slice_id=slice_id,
-                layer="any",
+                phase="any",
                 mode=self._mode if self._mode in {"auto", "interactive"} else "auto",
                 workspace_root=str(self._workspace_root),
             )
@@ -2763,8 +2867,10 @@ class GeneralPlanner:
 
     def resolve_signal(self, signal: Any) -> dict[str, Any] | None:
         """Resolve an ambiguity signal via the planner API wrapper."""
+        # IMPL(single-layer): Keep default dispatch at `any` sentinel so wrapper
+        # callers route through the libraries phase entrypoint.
         context = PlanningContext(
-            layer="any",
+            phase="any",
             mode=self._mode if self._mode in {"auto", "interactive"} else "auto",
             workspace_root=str(self._workspace_root),
             signal_ref=signal,
@@ -2887,7 +2993,7 @@ class GeneralPlanner:
         self,
         *,
         run_id: str,
-        layer: str,
+        phase: str,
         slice_id: str,
         constraints: list[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -2899,8 +3005,11 @@ class GeneralPlanner:
         constraint_ids: list[str] = []
         dropped_constraints: list[dict[str, Any]] = []
         target_slice = str(slice_id or "__system__").strip() or "__system__"
-        layer_token = str(layer or "any").strip().lower()
-        default_layers = [layer_token.upper()] if layer_token in {"l1", "l2", "l3"} else []
+        # IMPL(single-layer): Persisted constraint metadata should migrate from
+        # layer ids to phase ids; remove l1/l2/l3-only defaults when constraint
+        # schema adopts phase fields.
+        phase_token = self._normalize_phase_token(phase, allow_any=True)
+        default_phases = [phase_token] if phase_token in _VALID_PHASES else []
         run_token = str(run_id or "").strip()
         authoritative_facts = self._constraints_store_tool.load_merged(target_slice)
 
@@ -3053,8 +3162,8 @@ class GeneralPlanner:
 
             source = self._coerce_under_spec_constraint_source(row.get("source", "research"))
             applies_to_layers = self._normalize_constraint_layers(
-                row.get("applies_to_layers", default_layers),
-                fallback=default_layers,
+                row.get("applies_to_layers", default_phases),
+                fallback=default_phases,
             )
             fact = ConstraintFact(
                 constraint_id=constraint_id,
@@ -3073,7 +3182,7 @@ class GeneralPlanner:
                 trace=[
                     *trace,
                     "ingest_capability=UNDER_SPEC",
-                    f"layer={layer_token}",
+                    f"phase={phase_token}",
                     f"slice_id={target_slice}",
                 ],
             )
@@ -3091,7 +3200,7 @@ class GeneralPlanner:
 
         context_token = ConstraintsTool.push_planner_update_context(
             run_id=run_token,
-            layer=layer_token,
+            layer=phase_token,
             capability="UNDER_SPEC",
         )
         try:
@@ -3309,6 +3418,8 @@ class GeneralPlanner:
 
     @staticmethod
     def _normalize_constraint_layers(value: Any, *, fallback: list[str]) -> list[str]:
+        # IMPL(single-layer): Replace this helper with phase normalization once
+        # constraint facts stop carrying `applies_to_layers`.
         raw_values: list[str]
         if isinstance(value, str):
             raw_values = [value]
@@ -3320,18 +3431,18 @@ class GeneralPlanner:
         normalized: list[str] = []
         for raw in raw_values:
             for token in raw.replace("|", ",").split(","):
-                layer = token.strip().upper()
-                if layer in {"L1", "L2", "L3"} and layer not in normalized:
-                    normalized.append(layer)
+                phase = token.strip().lower()
+                if phase in _VALID_PHASES and phase not in normalized:
+                    normalized.append(phase)
         if normalized:
             return normalized
 
-        fallback_layers: list[str] = []
+        fallback_phases: list[str] = []
         for raw in fallback:
-            layer = str(raw).strip().upper()
-            if layer in {"L1", "L2", "L3"} and layer not in fallback_layers:
-                fallback_layers.append(layer)
-        return fallback_layers
+            phase = str(raw).strip().lower()
+            if phase in _VALID_PHASES and phase not in fallback_phases:
+                fallback_phases.append(phase)
+        return fallback_phases
 
     def _expand_under_spec_via_triage(
         self,
@@ -3365,11 +3476,14 @@ class GeneralPlanner:
             triage_metadata: dict[str, Any] = {"source": "UNDER_SPEC_EXPANSION"}
             if event_proposal_models:
                 triage_metadata["proposal_models"] = event_proposal_models
+            # IMPL(single-layer): Under-spec expansion currently defaults triage to
+            # the libraries entrypoint; migrate this hardcoded `l1` token to
+            # phase-native defaults with the rest of planner dispatch.
             triage_ctx = PlanningContext(
                 run_id=context.run_id,
                 slice_id=context.slice_id,
                 iteration=context.iteration,
-                layer="l1",
+                phase="libraries",
                 mode=context.mode,
                 workspace_root=context.workspace_root,
                 slice_root=context.slice_root,
@@ -3524,7 +3638,9 @@ class GeneralPlanner:
             "signal_version": 1,
             "signal_id": signal_id,
             "run_id": context.run_id,
-            "layer": context.layer,
+            # IMPL(single-layer): Coordination signal payloads must move from
+            # `layer` to `phase` keys atomically with monitor/work-item consumers.
+            "phase": context.phase,
             "slice_id": context.slice_id,
             "iteration": context.iteration,
             "status": "HALT",
@@ -3653,7 +3769,10 @@ def _request_snapshot(
     ctx = req.context
     return {
         "capability": req.capability,
-        "layer": ctx.layer,
+        # IMPL(single-layer): Trace/request snapshots should persist phase identity
+        # (not layer identity) so replay and attribution stay aligned with
+        # lifecycle PhaseId semantics.
+        "phase": ctx.phase,
         "run_id": ctx.run_id,
         "slice_id": ctx.slice_id,
         "iteration": ctx.iteration,
