@@ -8,6 +8,7 @@ Phase 7 Work Item 2: Atom-Aware Drift Comparator
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from spec_manager.schemas.atoms import LineAtom
     from spec_manager.schemas.projection import ProjectionArtifact
     from spec_manager.schemas.spec_index_v2 import SpecIndexV2
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -221,10 +224,12 @@ class AtomAwareDriftComparator:
         if target_kind == "ATOM_RANGE":
             return len(spec_index.get_elements_for_atom(target_id)) > 0
         if target_kind == "ATOM_FUNCTION":
-            raise NotImplementedError(
-                "ATOM_FUNCTION pin targets cannot be validated against SpecIndexV2 without a "
-                "pin-function authority source."
+            logger.warning(
+                "ATOM_FUNCTION pin target cannot be validated against SpecIndexV2 "
+                "without a pin-function authority source: %s",
+                target_id,
             )
+            return False
         raise ValueError(f"Unsupported pin target kind: {target_kind}")
 
     def _extract_excerpt(self, content: str, offset: int) -> str:

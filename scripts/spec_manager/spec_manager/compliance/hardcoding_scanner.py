@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from spec_manager.core.code_analysis import analyze_source
+from spec_manager.core.language import is_test_path
 
 # =============================================================================
 # Finding Data Structure
@@ -165,11 +166,6 @@ ALLOWLIST_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"""["']\$schema["']"""),
     # JSON field names
     re.compile(r"""["'](atom_id|elem_id|lib_id|file_uid|rev_id)["']"""),
-    # Test file patterns (tests are allowed to use these)
-    # Match only actual test files, not temp directories with "test_" in path
-    # NOTE: Language-specific regex; see core.language.TEST_FILE_PATTERNS for the
-    # canonical list of test file globs.
-    re.compile(r"""(?:^|[/\\])test_[^/\\]*\.py$|_test\.py$|conftest\.py$"""),
 ]
 
 
@@ -188,6 +184,8 @@ def _is_allowlisted(line: str, file_path: str) -> bool:
     Returns:
         True if the line/file is allowlisted, False otherwise.
     """
+    if is_test_path(file_path) or Path(file_path).name == "conftest.py":
+        return True
     return any(pattern.search(line) or pattern.search(file_path) for pattern in ALLOWLIST_PATTERNS)
 
 

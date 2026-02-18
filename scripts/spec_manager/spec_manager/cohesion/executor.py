@@ -8,7 +8,6 @@ operation either fully completes or fully rolls back.  Supports:
 - MERGE: Combine two vertical slices into one.
 - CREATE: Register a new vertical slice.
 - REMOVE: Remove a vertical slice (entities redistributed first).
-- MODIFY: Update entity metadata.
 """
 
 from __future__ import annotations
@@ -89,8 +88,6 @@ class RefinementExecutor:
                 changes = self._execute_create(operation)
             elif operation.op_type == "remove":
                 changes = self._execute_remove(operation)
-            elif operation.op_type == "modify":
-                changes = self._execute_modify(operation)
             else:
                 self._snapshots.pop(op_key, None)
                 return ExecutionResult(
@@ -279,13 +276,6 @@ class RefinementExecutor:
             changes.append(f"Removed slice '{source}'.")
 
         return changes
-
-    def _execute_modify(self, op: RefinementOperation) -> list[str]:
-        """Modify entity metadata."""
-        raise NotImplementedError(
-            "MODIFY operations are not supported because RefinementOperation "
-            "does not define metadata patch payloads."
-        )
 
     # --- Private helpers ---
 

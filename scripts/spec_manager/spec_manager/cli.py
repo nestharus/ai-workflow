@@ -630,9 +630,6 @@ def cmd_phase(args: argparse.Namespace) -> int:
             for key, value in outputs.items():
                 print(f"  {key}: {value}")
         return 0
-    except NotImplementedError as exc:
-        print(f"\nPhase {phase_number} ({phase.value}) not yet implemented: {exc}")
-        return 1
     except Exception as exc:
         print(f"\nPhase {phase_number} ({phase.value}) failed: {exc}", file=sys.stderr)
         return 1

@@ -231,7 +231,7 @@ def _extract_evidence_pointers(text: str) -> list[str]:
 
 def _build_tfidf_vectors(
     spec_indexes: dict[str, SpecIndex],
-) -> tuple[dict[str, np.ndarray], TfidfVectorizer]:
+) -> tuple[dict[str, np.ndarray], TfidfVectorizer | None]:
     """Build TF-IDF vectors for each library spec index.
 
     Args:
@@ -269,8 +269,7 @@ def _build_tfidf_vectors(
     )
 
     if not lib_ids:
-        vectorizer.fit(["placeholder"])
-        return {}, vectorizer
+        return {}, None
 
     try:
         if any(doc.strip() for doc in documents):
@@ -461,6 +460,8 @@ def detect_overlap_candidates(
         return []
 
     vectors, vectorizer = _build_tfidf_vectors(spec_indexes)
+    if vectorizer is None:
+        return []
     similarities = _compute_pairwise_similarity(vectors)
 
     candidates: list[dict[str, Any]] = []
@@ -568,6 +569,8 @@ def detect_split_candidates(
         return []
 
     _vectors, vectorizer = _build_tfidf_vectors(spec_indexes)
+    if vectorizer is None:
+        return []
 
     candidates: list[dict[str, Any]] = []
     for lib_id in sorted(spec_indexes):

@@ -2062,7 +2062,7 @@ def main(argv: list[str] | None = None) -> int:
     p_spec_review.add_argument(
         "--apply-moves",
         action="store_true",
-        help="Apply move actions (not yet implemented)",
+        help="Apply move actions after generating review actions report",
     )
     p_spec_review.set_defaults(func=cmd_spec_review_structure)
 

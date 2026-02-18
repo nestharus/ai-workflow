@@ -33,7 +33,7 @@ class RefinementOperation:
             proposed, tracing back to the detected issue.
     """
 
-    op_type: Literal["create", "modify", "remove", "split", "merge", "move"]
+    op_type: Literal["create", "remove", "split", "merge", "move"]
     source: str | list[str]
     target: str | list[str]
     entities: list[str]

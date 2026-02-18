@@ -713,12 +713,6 @@ def insert_decision_ids(
             ids_assigned += 1
         updated_lines.append(updated_line + line_ending)
 
-    # Future: Structured decision parsing
-    # After ID insertion, optionally invoke LLM-based normalization
-    # to extract: question, options, default, impact, status
-    # This would populate the decisions_index.json with structured fields
-    # Agent: glm-decision-normalizer (to be implemented in later phase)
-
     final_content = "".join(updated_lines)
     logger.info("Assigned %s decision IDs to %s", ids_assigned, lib_id)
     return final_content, ids_assigned

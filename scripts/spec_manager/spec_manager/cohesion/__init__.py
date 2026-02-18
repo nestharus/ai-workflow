@@ -1,7 +1,7 @@
 """Continuous coupling/cohesion refinement engine for PDD.
 
 Detects structural issues (overlap, divergence, overload) in the entity
-graph and proposes atomic restructuring operations (create, modify, remove,
+graph and proposes atomic restructuring operations (create, remove,
 split, merge, move).
 
 This module replaces the old discovery/ TF-IDF approach with mechanical,
