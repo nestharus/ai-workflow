@@ -40,16 +40,21 @@ class TestPhase3Integration:
 
         # Create sections covering all 5 lines
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[
                 SectionSpan(
                     section_id="SEC-001",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
                     start_line=1,
                     end_line=3,
                     label="Introduction",
                 ),
                 SectionSpan(
                     section_id="SEC-002",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
                     start_line=4,
                     end_line=5,
                     label="Methods",
@@ -150,16 +155,21 @@ class TestPhase3Integration:
 
         # Create sections with a gap (lines 4-5 not covered)
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[
                 SectionSpan(
                     section_id="SEC-001",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
                     start_line=1,
                     end_line=3,
                     label="Introduction",
                 ),
                 SectionSpan(
                     section_id="SEC-002",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
                     start_line=6,
                     end_line=7,
                     label="Methods",
@@ -220,9 +230,17 @@ class TestPhase3Integration:
         rev_id = "R0001"
 
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[
-                SectionSpan(section_id="SEC-001", start_line=1, end_line=2, label="Section"),
+                SectionSpan(
+                    section_id="SEC-001",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
+                    start_line=1,
+                    end_line=2,
+                    label="Section",
+                ),
             ],
             total_lines=2,
         )
@@ -267,9 +285,17 @@ class TestPhase3Integration:
         rev_id = "R0001"
 
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[
-                SectionSpan(section_id="SEC-001", start_line=1, end_line=3, label="Section"),
+                SectionSpan(
+                    section_id="SEC-001",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
+                    start_line=1,
+                    end_line=3,
+                    label="Section",
+                ),
             ],
             total_lines=3,
         )
@@ -318,7 +344,8 @@ class TestPhase3EdgeCases:
 
         # Empty file needs empty sections (total_lines=0)
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[],
             total_lines=0,
         )
@@ -343,9 +370,17 @@ class TestPhase3EdgeCases:
         rev_id = "R0001"
 
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[
-                SectionSpan(section_id="SEC-001", start_line=1, end_line=1, label="Only"),
+                SectionSpan(
+                    section_id="SEC-001",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
+                    start_line=1,
+                    end_line=1,
+                    label="Only",
+                ),
             ],
             total_lines=1,
         )
@@ -370,9 +405,17 @@ class TestPhase3EdgeCases:
         rev_id = "R0001"
 
         sections = FileSections(
-            file_id=file_uid,
+            file_uid=file_uid,
+            rev_id=rev_id,
             sections=[
-                SectionSpan(section_id="SEC-001", start_line=1, end_line=2, label="Unicode"),
+                SectionSpan(
+                    section_id="SEC-001",
+                    file_uid=file_uid,
+                    rev_id=rev_id,
+                    start_line=1,
+                    end_line=2,
+                    label="Unicode",
+                ),
             ],
             total_lines=2,
         )

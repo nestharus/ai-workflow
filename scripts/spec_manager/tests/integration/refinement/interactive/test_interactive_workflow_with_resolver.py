@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from spec_manager.refinement.interactive.input_signal import InputSignal, WorkContext
 from spec_manager.refinement.interactive.signal_resolver import (
     InteractiveSignalResolver,
     PlannerSignalResolver,
     SignalResolver,
 )
-from spec_manager.refinement.interactive.spec_patcher import SteeringResponse
+from spec_manager.refinement.interactive.spec_patcher import SpecPatcher, SteeringResponse
 from spec_manager.refinement.interactive.workflow import InteractiveWorkflow
 
 
@@ -125,7 +126,7 @@ def test_no_signals_returns_original(tmp_path: Path) -> None:
 
 
 def test_resolver_returns_none_stops(tmp_path: Path) -> None:
-    """When the resolver returns None the workflow stops without patching."""
+    """When the resolver returns None unresolved ambiguities raise an error."""
     signal = _make_signal()
 
     mock_resolver = MagicMock(spec=SignalResolver)
@@ -143,7 +144,13 @@ def test_resolver_returns_none_stops(tmp_path: Path) -> None:
             workspace=tmp_path,
             signal_resolver=mock_resolver,
         )
-        result = workflow.run("original spec")
+        with (
+            patch.object(SpecPatcher, "apply") as mock_apply,
+            pytest.raises(
+                RuntimeError,
+                match="Interactive refinement stopped with unresolved ambiguities: SIG-001",
+            ),
+        ):
+            workflow.run("original spec")
 
-    assert result == "original spec"
-    assert "Clarifications" not in result
+    mock_apply.assert_not_called()

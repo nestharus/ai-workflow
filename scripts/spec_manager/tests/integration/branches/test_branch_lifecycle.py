@@ -177,11 +177,15 @@ class TestBranchWorkflowInit:
             introduced_by="collapse",
         )
         collapse_result = CollapseResult(
-            extracted_atoms=[atom1],
-            extracted_stores=[],
-            extracted_shapes=[],
-            architectural_remnants=[],
-            ambiguous_code=[],
+            atom_candidates=[atom1],
+            pin_spans=[],
+            slice_entrypoints=[],
+            store_touches=[],
+            event_routes=[],
+            architecture_promotions=[],
+            adjacency_edges=[],
+            gaps=[],
+            ambiguities=[],
             warnings=[],
         )
 
@@ -226,7 +230,7 @@ class TestBranchWorkflowGaps:
                 run_branch_gaps("test-run")
 
     def test_gaps_after_init(self, tmp_path: Path) -> None:
-        from spec_manager.branches.gap_detection import GapItem
+        from spec_manager.branches.gap_detection import GapInventoryItem
         from spec_manager.refinement.workflows.branch_lifecycle import run_branch_gaps
 
         with (
@@ -248,7 +252,13 @@ class TestBranchWorkflowGaps:
             # Mock gap detector
             mock_detector = mock_detector_cls.return_value
             mock_detector.scan_branch.return_value = [
-                GapItem(file="test.py", line=1, text="stub", gap_type="stub_function"),
+                GapInventoryItem(
+                    kind="stub_gap",
+                    file="test.py",
+                    description="Stub function: placeholder (pass)",
+                    reason="stub_function",
+                    span={"start_line": 1, "end_line": 1},
+                ),
             ]
 
             result = run_branch_gaps("test-run")
@@ -256,7 +266,7 @@ class TestBranchWorkflowGaps:
         assert result["success"] is True
         outputs = result["outputs"]
         assert outputs["total_gaps"] == 1
-        assert outputs["gaps_by_type"]["stub_function"] == 1
+        assert outputs["gaps_by_type"]["stub_gap"] == 1
 
         # Verify gap report was written
         gap_report = json.loads((analysis_dir / "gap_report.json").read_text())

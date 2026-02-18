@@ -16,7 +16,6 @@ import pytest
 from spec_manager.compliance import (
     ContractValidationResult,
     SchemaRegistry,
-    get_default_registry,
     validate_artifact_contract,
 )
 from spec_manager.core.coverage import CoverageTracker, FragmentStatus
@@ -67,13 +66,6 @@ class TestSchemaRegistryInvariants:
             assert "type" in schema or "properties" in schema, (
                 f"Schema {schema_id} missing type/properties"
             )
-
-    def test_default_registry_singleton(self) -> None:
-        """get_default_registry must return the same instance."""
-        registry1 = get_default_registry()
-        registry2 = get_default_registry()
-
-        assert registry1 is registry2
 
 
 class TestContractValidationResultInvariants:

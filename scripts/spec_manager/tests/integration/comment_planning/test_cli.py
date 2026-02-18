@@ -49,29 +49,6 @@ class TestSetupParser:
         assert args.function == "process"
         assert args.intention == "add validation"
 
-    def test_reverse_subcommand(self) -> None:
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        setup_plan_v2_parser(subparsers)
-
-        args = parser.parse_args(
-            [
-                "plan-v2",
-                "reverse",
-                "--file",
-                "/test.py",
-                "--function",
-                "process",
-                "--start-line",
-                "5",
-                "--end-line",
-                "10",
-            ]
-        )
-        assert args.plan_v2_command == "reverse"
-        assert args.start_line == 5
-        assert args.end_line == 10
-
     def test_adjacency_subcommand(self) -> None:
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
