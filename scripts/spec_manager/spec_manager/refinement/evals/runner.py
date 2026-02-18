@@ -1,3 +1,46 @@
+# TODO(single-layer): KEEP/EXTEND — Evaluation runner needs single-layer evaluation support
+#   (Section 14). Add A/B comparison capability: run same spec through L1→L2→L3 pipeline
+#   vs single-layer three-phase forward-only model (Libraries→Architecture→Quality),
+#   compare outcomes. Success criteria (Section 14.2): shape verifier pass rate, work
+#   item convergence, iteration count. Failure criteria (Section 14.3): stagnation,
+#   unbounded growth, shape drift, architecture issues previously caught by pins
+#   escaping without verifier replacement, any reliance on LLM heuristics to declare
+#   success (must be flagged as failure). Proof-of-feasibility milestone (Section 14.4):
+#   single library end-to-end with shape routing. Proof-of-feasibility assertions:
+#   failing verifier routes to correct owner shape, Libraries phase fixes converge
+#   (verifier passes after fix), no manual intervention needed.
+#   A/B control requirements (Section 14.1): same fixtures, same seeds/models, same
+#   budgets for both pipelines to ensure fair comparison.
+#   Spec fidelity criterion (Section 14.2): QA/judge pass rate >= baseline, no increase
+#   in dropped requirements. Complexity reduction criterion (Section 14.2): measure pin/
+#   layer machinery deletion, fewer gate definitions, fewer dispatch branches.
+# ALGORITHM(single-layer):
+#   References: response3 Section 14.1, 14.2, 14.3, 14.4.
+#   Data structures:
+#     - EvalVariant = Literal['baseline_layers', 'single_layer_shapes'].
+#     - VariantRunResult: {variant: EvalVariant, run_id: str, metrics: dict[str, Any], failures: list[str], artifacts: dict[str, str]}.
+#     - ABComparison: {spec_id: str, baseline: VariantRunResult, single_layer: VariantRunResult, deltas: dict[str, float], passed: bool, failure_reasons: list[str]}.
+#   Interface contracts:
+#     - def run_ab_evaluation(self, spec: SequenceSpec, cfg: EvalConfig) -> ABComparison
+#     - def run_single_layer_variant(self, spec: SequenceSpec, cfg: EvalConfig) -> VariantRunResult
+#   Control flow:
+#     1. For each fixture/spec, run baseline and single-layer variants with identical seeds/models/budgets.
+#     2. Collect shape-specific outputs for single-layer: verifier pass rates, work-item convergence, per-phase iteration counts, shape drift incidents.
+#     3. Compute success criteria: spec fidelity not worse, reduced thrash, complexity reduction.
+#     4. Apply failure criteria: stagnation, unbounded growth, unresolved drift, escaped architecture issues, heuristic-only success claims.
+#     5. Support proof-of-feasibility mode that validates one-library end-to-end routing/fix within Libraries phase.
+#   Error handling:
+#     - If either variant fails to execute, mark comparison invalid with explicit infrastructure failure reason.
+#   Integration points:
+#     - Calls lifecycle/orchestrator in both modes and metrics module extensions.
+#   Test requirements:
+#     - A/B fairness constraints enforced.
+#     - Failure criteria flags trigger correctly.
+#     - PoF assertions: owner-shape routing and Libraries phase convergence.
+# IMPL(single-layer): `refinement.evals.metrics` is the source of truth for Section 14.2/
+# 14.3 metric computations; runner should aggregate/apply pass-fail policy using those
+# outputs instead of duplicating formula logic.
+
 """Evaluation runner for spec refinement system.
 
 Orchestrates evaluation of sequence specs through the refinement pipeline,
