@@ -1,0 +1,18 @@
+[project]
+name = "web-gpt"
+version = "0.1.0"
+description = "Automate ChatGPT Pro via screenshot-based browser interaction"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python-headless>=4.9.0",
+    "numpy>=1.26.0",
+    "pillow>=10.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+web-gpt = "web_gpt.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

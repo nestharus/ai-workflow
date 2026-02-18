@@ -53,6 +53,29 @@ def load_models(models_dir: Path) -> dict[str, ModelConfig]:
     return models
 
 
+def load_agent_file(agent_path: Path) -> AgentConfig | None:
+    """Load a single agent from an arbitrary .md file path."""
+    if not agent_path.exists():
+        return None
+
+    content = agent_path.read_text()
+    frontmatter_match = re.match(r"^---\n(.*?)\n---\n?(.*)", content, re.DOTALL)
+    if not frontmatter_match:
+        return None
+
+    frontmatter_str = frontmatter_match.group(1)
+    instructions = frontmatter_match.group(2).strip()
+    frontmatter = yaml.safe_load(frontmatter_str) or {}
+
+    return AgentConfig(
+        name=agent_path.stem,
+        description=frontmatter.get("description", ""),
+        model=frontmatter.get("model", ""),
+        output_format=frontmatter.get("output_format", ""),
+        instructions=instructions,
+    )
+
+
 def load_agents(agents_dir: Path) -> dict[str, AgentConfig]:
     """Load agent configurations from .agents/agents/ directory."""
     agents: dict[str, AgentConfig] = {}
